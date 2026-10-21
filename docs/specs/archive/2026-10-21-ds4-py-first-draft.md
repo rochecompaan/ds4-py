@@ -2,6 +2,8 @@
 
 Oct 21, 2026 · @Roché Compaan
 
+> **Superseded** by [`2026-10-21-ds4-py-design.md`](../2026-10-21-ds4-py-design.md). Kept for the framework comparison and the LocalHarness findings.
+
 ## Summary
 
 Build `ds4-py` on **Pydantic AI with the Harness package**, with one `Model` subclass (`DS4Model`) talking to a Python facade that owns a single `ctypes` module over a new `libds4` shared library. Python owns the conversation, the token loop, tool parsing, tools, policy, context management and run records; C owns weights, the live KV cache, logits and the KV payload bytes. One process, no HTTP, no C host loop. About 3,400 lines of Python replace the 13,635-line `ds4_agent.c`, because the harness supplies the tools, guards, tracing and persistence, and `ds4.h` already exposes the engine as `ds4_engine` + `ds4_session` with full-prefix `sync`, per-token `eval`/`sample`, `rewind`, progress and cancel callbacks, and payload save/load.
