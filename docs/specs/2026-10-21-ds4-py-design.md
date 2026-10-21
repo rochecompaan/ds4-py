@@ -34,7 +34,7 @@ The aim is to own as little agent machinery as possible. The harness supplies th
 - Engine work that runs between turns, such as compaction while the user reads.
 - Any change to ds4's inference code. ds4-py adds a library build next to it.
 - DFlash itself. DFlash lives in the downstream fork; ds4-py provides the seam it needs.
-- Subagents. The engine allows one session per process (section 24).
+- Subagents. `ds4-agent` has none, and a delegation tool would change the tool list that KV compatibility depends on (decisions 3 and 5). The engine also makes them costly (section 24).
 - Saving sessions that contain images. The C agent refuses this too.
 - Any HTTP server or socket between the agent and the engine.
 
@@ -44,7 +44,7 @@ Each of these counts as a failure even if the code works:
 
 - A local HTTP shim between the agent and the engine.
 - Re-rendering sampled tokens from their text. That breaks KV reuse and changes how `<think>` content and tool markup replay.
-- Chat templates written in Python. The engine owns the templates.
+- Chat templates written in Python. The engine renders each family's role markers, think tags and tool-result framing in C (`ds4_chat_append_*`). A Python copy would drift from it without any error.
 - Loading a library whose struct layout or function signatures differ from what ds4-py expects. That corrupts memory instead of failing.
 - Code specific to the downstream agent inside ds4-py.
 
@@ -53,7 +53,7 @@ Each of these counts as a failure even if the code works:
 - Python 3.11 or later, the harness's minimum.
 - Pin the harness to an exact version. It releases often (0.17.0 on 2026-08-05, 0.59.0 on 2026-10-21) and pins its core to an exact version. Upgrade on purpose, one bump at a time, with the full test suite.
 - Pin upstream ds4 by commit. `ds4.h` changes often.
-- One engine per process. `ds4_engine_open` takes an instance lock.
+- One engine per machine. `ds4_engine_open` takes an exclusive lock on `/tmp/ds4.lock` (or `DS4_LOCK_FILE`) and exits if another process holds it.
 - Support development on a machine without a suitable GPU. Every non-live test runs against `FakeNative`, a fake of the native layer. Live tests and the bake-off run on a machine with 96 GB of GPU memory, which is not chosen yet.
 - The Metal backend loads its kernels relative to the ds4 checkout, so a Metal library needs that path at run time.
 
@@ -459,9 +459,9 @@ Each item in this list either matches something the C agent does or adds nothing
 - `AskUser`: it is a tool the model can call, and the C agent has no such tool.
 - `ToolOutputLimits`: the C tools enforce their own 128 KiB cap with the C agent's truncation note.
 - The guardrail classes (`InputGuardrail`, `OutputGuardrail`, `ToolGuardrail`): the C agent has none. They stay available to extensions.
-- `SubAgents`: the engine allows one session (section 24).
+- `SubAgents`: subagents are a non-goal (sections 2 and 24).
 - `RepairToolArguments`: arguments arrive as strings from the native parser, not as JSON.
-- `ToolCallJudge` and `ApprovalReviewer`: a second model call on the only session would destroy the cached prefix. Policy here is rules, not a judge model.
+- `ToolCallJudge` and `ApprovalReviewer`: a second model call on the live session would destroy the cached prefix. Policy here is rules, not a judge model.
 
 ### The harness-tools option
 
@@ -607,7 +607,7 @@ Sessions are saved in the C agent's file format, so `ds4-agent` and ds4-py can o
 
 The file name is `sha1(title_bytes + created_at.to_bytes(8, 'little'))`, where the title is the normalized first user prompt. The M4 plan confirms this against the C code at `ds4_agent.c:4709`. Files are written to `path.tmp.XXXXXX` and renamed, as in C.
 
-A session restored with `/switch` keeps its `created_at`, so saving it again overwrites its own file, as in C. A fork is different: the live session takes a new identity and continues from the same transcript, while the original stays in its saved file. The engine allows one session per process, so `session.fork()` keeps the transcript and the live KV and changes only the identity. A fork keeps the title but takes the fork time as its `created_at`, so it gets its own file under the same naming formula. It also gets a new session id; existing message keys are kept. ds4-py has no `/fork` command in M1 to M4. Forks come from `session.fork()`, which extensions and the conformance test use.
+A session restored with `/switch` keeps its `created_at`, so saving it again overwrites its own file, as in C. A fork is different: the live session takes a new identity and continues from the same transcript, while the original stays in its saved file. `session.fork()` keeps the transcript and the live KV and changes only the identity, so a fork needs no prefill and no second KV cache. A fork keeps the title but takes the fork time as its `created_at`, so it gets its own file under the same naming formula. It also gets a new session id; existing message keys are kept. ds4-py has no `/fork` command in M1 to M4. Forks come from `session.fork()`, which extensions and the conformance test use.
 
 ### Save
 
@@ -802,7 +802,7 @@ Done when:
 
 - **`ds4.h` churn.** The probes turn a silent mismatch into a refused library, but every pin move still needs a review of the bindings. Keep the wrapped surface small.
 - **Porting the tools exactly.** This is the largest single piece of new work. The golden tests are the defence; the web tools are the hardest to test because they need Chrome.
-- **Instance lock.** The engine refuses a second instance per machine, so subagents would have to share the one session, as a nested conversation in the same KV that is then rewound. That is a later milestone, not M3.
+- **Subagents later.** ds4 allows one ds4 process per machine (an exclusive lock on `/tmp/ds4.lock`), so a subagent cannot be a second process. One engine can hold several sessions, as `ds4-server --batched-session N` does, but each reserves its own KV cache when the engine opens, and forward passes run one at a time. A subagent that shares the main session either sees the parent's context or needs the parent's KV saved and loaded back around it.
 - **GIL and callbacks.** Progress callbacks re-acquire the GIL about 10 times a second during prefill, which is negligible. The real risk is a Python exception inside a callback, which ctypes swallows. The facade stores and re-raises it, and the callbacks stay trivial.
 - **Compaction fidelity.** The C recipe cuts the tail at a `<｜User｜>` boundary and resumes an open assistant message after compaction. Both are reproduced. The resume case is the hardest to test; it gets a `FakeNative` scenario and one live run.
 - **Harness churn.** `pydantic-ai-harness` is 0.x and releases often. The adapter touches only `Model`, `StreamedResponse`, capability hooks and a few named capability classes. Each bump is a deliberate change with the full suite.
