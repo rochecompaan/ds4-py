@@ -59,8 +59,8 @@ Each of these counts as a failure even if the code works:
 
 ## 4. Decisions
 
-1. **The token transcript is the engine's truth, the message list is the harness's truth, and `DS4Model` binds them.** Sampled tokens are appended by id and never re-rendered from text, so `<think>` content and native tool markup replay byte for byte and the live KV is reused. When the harness rewrites history, only the part after the first change is re-rendered.
-2. **Context management is a plug-in point with one cost rule.** A strategy is a capability. It rewrites either the request view (paging) or the stored history (compaction, bookmarks). Every change costs one prefill of the tokens after the first changed position, and `session.plan()` reports that cost exactly before a move. The default strategy is the C agent's compaction recipe.
+1. **The token transcript is the engine's truth, the message list is the harness's truth, and `DS4Model` binds them.** Sampled tokens are appended by id and never re-rendered from text, so `<think>` content and native tool markup replay byte for byte and the live KV is reused. When the harness rewrites history, only the part after the first change is re-rendered. What a rewrite costs in prefill is set by the engine's reuse rule (section 10).
+2. **Context management is a plug-in point with exact costs.** A strategy is a capability. It rewrites either the request view (paging) or the stored history (compaction, bookmarks). The engine reuses its KV only when the new tokens extend the whole live checkpoint. Any other change either restores a saved checkpoint that is a prefix of the new tokens and prefills the rest, or rebuilds from token 0. `session.plan()` reports which of these three cases applies, and its exact cost, before a move. The default strategy is the C agent's compaction recipe.
 3. **The C agent's tools and system prompt are the default.** `DS4AgentTools` provides the C agent's tools with their names, schemas and output bytes. `DS4Model` renders the C agent's prompt text word for word. The harness's own coding tools are a swap-in option. This follows from decision 5: a session file opened in `ds4-agent` only works if the model's tools exist there (section 12).
 4. **Native tool format, rendered and parsed in ds4-py.** The tools prompt is rendered for the model's family. A streaming parser over sampled text produces `ToolCallPart`s, switches sampling to greedy inside tool syntax, and stops generation when a block closes.
 5. **KV files stay compatible with `ds4-agent`.** Same location (`~/.ds4/kvcache/<sha40>.kv`), same 48-byte `KVC` header, rendered text, payload and title trailer. Sessions move between the two agents.
@@ -70,7 +70,7 @@ Each of these counts as a failure even if the code works:
 
 ## 5. What ds4 exposes
 
-`ds4.h` (675 lines) is already the boundary this design needs. `ds4_engine` is the loaded model and `ds4_session` is one mutable inference timeline that owns the live KV cache and logits. The caller passes a full token prefix and `ds4_session_sync()` reuses, extends or rebuilds the state. `AGENT.md` makes this a rule: CLI and server code must not know tensor internals. So Python can sit where `ds4_agent.c` sits, with no engine changes.
+`ds4.h` (675 lines) is already the boundary this design needs. `ds4_engine` is the loaded model and `ds4_session` is one mutable inference timeline that owns the live KV cache and logits. The caller passes a full token prefix. `ds4_session_sync()` extends the live state when that prefix starts with the whole live checkpoint, and otherwise rebuilds it from token 0 (section 10). `AGENT.md` makes this a rule: CLI and server code must not know tensor internals. So Python can sit where `ds4_agent.c` sits, with no engine changes.
 
 | Group | Functions | Notes for the port |
 | --- | --- | --- |
@@ -81,6 +81,7 @@ Each of these counts as a failure even if the code works:
 | Logits | `ds4_session_copy_logits(s, out, cap)`, `ds4_session_set_logits(s, logits, n)` (`ds4.h:532–533`), `ds4_session_top_logprobs`, `ds4_session_token_logprob` | Used by the token-loop hook (section 10) |
 | Callbacks | `ds4_session_set_progress(s, fn, ud)`, `ds4_session_set_display_progress`, `ds4_session_set_cancel(s, fn, ud)` | `progress_fn(ud, event, current, total)`. Events the agent sees: `prefill_chunk`, `prefill_display`, `prefill_work`. `cancel_fn(ud) -> bool` is polled during sync |
 | Think and steering | `ds4_think_mode_for_context`, `ds4_think_mode_parse_level`, `DS4_THINK_LEVEL_BASE + N` (1000), `ds4_session_set_directional_steering_ffn`, `ds4_session_set_power` | Changing the think level rebuilds the prefix, so it costs a full prefill. Steering does not |
+| Checkpoints | `ds4_session_save_snapshot`, `ds4_session_load_snapshot`, `ds4_session_snapshot_free` (`ds4.h:659–661`) | An in-memory copy of the whole session state. Loading one restores its token prefix with no prefill (section 10). The C agent does not use them |
 | KV payload | `ds4_session_payload_bytes`, `ds4_session_stage_payload`, `ds4_session_write_staged_payload`, `ds4_session_save_payload`, `ds4_session_load_payload(s, fp, bytes, err, n)` (`ds4.h:651–658`) | The engine owns the serialized state. The file header and policy belong to the caller |
 | KV store format | `ds4_kvstore.h`: `DS4_KVSTORE_FIXED_HEADER` (48), reason codes (`5` agent-system, `6` agent-session), `ext_flags` bits (bit 3 = session title), `ds4_kvstore_render_tokens_text` | A separate object, `ds4_kvstore.o`, that both `ds4-agent` and `ds4-server` link. `libds4` includes it |
 | Vision | `ds4_engine_vision_encode_file`, `ds4_vision_embedding_free`, `ds4_vision_span` | Milestone 5 |
@@ -156,8 +157,10 @@ There is no inference server, no socket and no second process holding model weig
 | Tool execution | Python, ported from C | `ds4py.tools`, exposed as the `DS4AgentTools` capability |
 | Policy and approvals | Python | `DS4Approvals` capability |
 | Context management | Python | `DS4Compaction` (default) or another strategy |
+| Session-lifetime state of capabilities (paging cuts, bookmark tables, `bash` jobs) | Python | `session.state()` in `ds4py.engine.session` (section 13) |
 | System notes and reminders | Python | `DS4SystemNotes` capability |
-| Run records, tracing, resume | Python | `DS4RunRecord`, `StepPersistence`, `Instrumentation` |
+| Canonical history, save records, resume | Python | `StepPersistence` snapshots and `ds4py.store` save records (section 15) |
+| Run records and tracing (telemetry) | Python | `DS4RunRecord`, `Instrumentation` |
 | Model computation, live KV, logits, speculative decoding | C | `libds4` |
 | KV payload bytes | C | `ds4_session_*_payload` |
 | KV file header, naming, listing | Python | `ds4py.store` |
@@ -224,6 +227,7 @@ What the list wraps:
 | `eval(s, token)`, `eval_speculative(s, token, max, eos, sampling, rng) -> list[int]` | `ds4_session_eval`, `ds4_session_eval_speculative` | The speculative call returns the accepted ids; the first is the token that was fed. Capacity 17, as in the C agent |
 | `rewind`, `pos`, `ctx`, `tokens`, `common_prefix`, `invalidate` | the matching `ds4_session_*` | `tokens` copies out of `ds4_session_tokens` |
 | `payload_bytes`, `stage_payload`, `write_staged(p, file)`, `load_payload(s, file, n)` | `ds4_session_payload_bytes`, `ds4_session_stage_payload`, `ds4_session_write_staged_payload`, `ds4_session_payload_file_free`, `ds4_session_load_payload` | The C API wants a `FILE *`. The module opens one with libc `fdopen(os.dup(file.fileno()))`, so Python keeps ownership of its own file object |
+| `save_snapshot(s) -> Snapshot`, `load_snapshot(s, snap)` | `ds4_session_save_snapshot`, `ds4_session_load_snapshot`, `ds4_session_snapshot_free` | `Snapshot` wraps a `ds4_session_snapshot`, a struct `_native` defines and the layout check covers. The bytes stay in C-allocated memory until `Snapshot.close()` calls `ds4_session_snapshot_free`. Python sees only the size |
 | `set_steering`, `set_power`, `think_mode_for_context`, `parse_think_level` | `ds4_session_set_directional_steering_ffn`, `ds4_session_set_power`, `ds4_think_mode_*` | Think modes are an `IntEnum` mirroring `ds4_think_mode`, with `level(n) = 1000 + n` |
 | `render_tokens_text` | `ds4_kvstore_render_tokens_text` | Used by the store to write the transcript text exactly as C does |
 | `vision_encode(h, path)` | `ds4_engine_vision_encode_file`, `ds4_vision_embedding_free` | Milestone 5. The embedding's `float *` is never exposed |
@@ -248,12 +252,16 @@ Declaring `argtypes` does not protect against a changed library. ctypes cannot r
 
 3. **Header hash (informational).** The probe records the SHA-256 of `ds4.h` and `ds4_kvstore.h`. ds4-py lists the hashes of the pinned upstream commit. An unknown hash prints a warning, not a refusal; otherwise no fork could load. The signature and layout checks make the hash informational.
 
-The probe writes its results to `libds4.abi.json` next to the library. This file includes the library's own SHA-256. At load time, `_native` refuses the library if:
+The probe writes its results to `libds4.abi.json` next to the library. For each binding, the file records the normalized prototype the probe compiled and the result. Normalizing collapses whitespace and drops parameter names, so `const ds4_tokens *prompt` and `const ds4_tokens*` compare equal. The file also records the library's own SHA-256 and the version of `_native`'s type map. At load time, `_native` refuses the library if:
 
 - `libds4.abi.json` is missing;
 - the library's hash does not match the one recorded, which means the library was rebuilt without a new probe;
+- the type-map version differs from the installed one;
+- an installed binding, including an extension's, has no recorded result, or its normalized prototype differs from the recorded one, which means the bindings changed after the probe ran;
 - the layout differs; or
 - any required binding failed its signature check.
+
+The prototype comparison runs before any callable is created, so a stale probe result never reaches ctypes. Without it, an upgrade that changes a prototype, such as the `uint32_t flags` added to `ds4_session_tp_spec_cycle`, would pass with the old library and the old manifest, and ctypes would call the old function with the new `argtypes`. The error names the binding, shows both prototypes and says to run `ds4py build` again.
 
 ### Required and optional bindings
 
@@ -270,7 +278,7 @@ The library comes from `ds4py.open(..., lib=PATH)`, then the `DS4_LIB` environme
 The downstream agent needs to add its own bindings, such as the DFlash functions and `ds4_engine_sampling_defaults`, without forking ds4-py. Two rules block that: only `_native` touches ctypes, and only the worker thread calls the engine. The extension API is the documented way past both.
 
 - **Declaring bindings.** An extension lists extra `Binding` records in a module registered under the `ds4py.bindings` entry point group. `ds4py build` includes them in the probe, so the ABI guard covers them, and `ds4py check` lists them.
-- **Calling them.** `engine.native.bind(name)` returns a callable for a declared binding that passed the probe. A name that is not in the probe results is refused.
+- **Calling them.** `engine.native.bind(name)` returns a callable for a declared binding that passed the probe. A name that is not in the probe results is refused. Its prototype was already compared with the recorded one when the library loaded.
 - **Running on the worker.** `session.on_worker(fn)` runs `fn(handles)` on the worker thread between jobs and returns a future. `handles` carries the raw engine and session pointers for use with bound functions.
 - **Sampling defaults.** `engine.sampling_defaults` can be overridden per engine, so an extension can apply the values its fork's `ds4_engine_sampling_defaults` returns.
 
@@ -292,7 +300,9 @@ Every call that takes `char *err, size_t errlen` gets a 512-byte buffer and rais
 
 ### `FakeNative`
 
-`FakeNative` implements the same functions over a toy tokenizer and scripted logits. It supports logits copy and set, rewind, progress and cancel callbacks, payload save and load to bytes, and a fake multi-token decode step. Every non-live test runs on it.
+`FakeNative` implements the same functions over a toy tokenizer and scripted logits. It supports logits copy and set, rewind, progress and cancel callbacks, payload save and load to bytes, snapshots, and a fake multi-token decode step. Every non-live test runs on it.
+
+`FakeNative` follows the engine's reuse rule, not a simpler one. A sync keeps the state only when the prompt extends the whole live checkpoint; any other sync prefills from token 0. A rewind past the last speculative step invalidates the checkpoint. A snapshot restores the whole state. So a `Plan` test on `FakeNative` checks the same three cases as the engine (section 10).
 
 ## 10. The engine facade: `ds4py.engine`
 
@@ -308,7 +318,8 @@ One `threading.Thread` owns the `SessionHandle`. Callers submit jobs to a queue 
 
 | Job | What it does | Events it yields |
 | --- | --- | --- |
-| `SyncJob(tokens, images)` | `sync` with progress and cancel callbacks installed | `Prefill(done, total, cached_prefix, tps)` at most every 100 ms, then `Synced(pos)` or `Interrupted(pos)` |
+| `SyncJob(tokens, images)` | plans the sync (below), loads the checkpoint if the plan is `restore`, then calls `sync` with progress and cancel callbacks installed | `Prefill(done, total, cached_prefix, tps)` at most every 100 ms, then `Synced(pos, plan)` or `Interrupted(pos)` |
+| `CheckpointJob(key, drop=False)` | saves or frees a snapshot of the live state (below) | `Checkpointed(key, tokens, bytes)` or `Dropped(key)` |
 | `GenerateJob(sampling, stop_policy, max_tokens)` | the decode loop below | `Token(id, text_bytes)`, `Thinking(on/off)`, `ToolSyntax(state)`, `Stopped(reason)`, where the reason is `stop_token`, `tool_call_complete`, `max_tokens`, `context_reserve`, `interrupted` or `parser_error` |
 | `CompactJob(reason)` | the compaction recipe (section 13), generated with `argmax` | `Prefill…`, `Token…`, `Compacted(summary, dropped, kept)` |
 | `SaveJob(path)`, `LoadJob(path)` | section 17 | `Saved(bytes)`, `Loaded(tokens)` |
@@ -316,6 +327,30 @@ One `threading.Thread` owns the `SessionHandle`. Callers submit jobs to a queue 
 | `WorkerCallJob(fn)` | `session.on_worker(fn)` | `Done(result)` or `Failed(error)` |
 
 The UI sets one shared cancel `threading.Event` on Ctrl+C. The worker clears it when it reports `Interrupted`. This keeps the C agent's contract: an interrupted sync keeps the transcript, and the caller appends EOS; interrupted generation keeps the partial tokens.
+
+A `context_reserve` stop does not end the round. `run_round` yields `ReserveReached(needed)` and waits. Its consumer makes room, rebinds and calls `round.resume()`, which syncs the new transcript and starts a `GenerateJob` that continues the same assistant message. The partial tokens stay at the end of the new transcript, as in C. A consumer that cannot make room calls `round.fail()`, and the round ends with `Stopped(context_exhausted)`. `ds4py raw` has no context strategy, so it always fails here. Section 11 describes how `DS4Model` makes room inside an open stream.
+
+### KV reuse and `Plan`
+
+The engine keeps its KV for a sync only when the new tokens start with the whole live checkpoint. Every backend checks `prompt->len >= s->checkpoint.len && ds4_tokens_starts_with(prompt, &s->checkpoint)` (for DeepSeek V4, `ds4.c:77689`). Any other sync resets the graph and prefills from token 0. `ds4_session_common_prefix` (`ds4.c:77893`) only counts matching tokens; it does not say how much KV can be kept. `ds4_session_rewind` cannot close the gap, because the DeepSeek compressors cannot be rolled back without a saved frontier (`ds4.c:87429–87431`). The C agent relies on the same rule: `agent_worker_sync_tokens` counts any sync that does not extend the session as a full prefill (`ds4_agent.c:5291`).
+
+ds4-py adds checkpoints, which the C agent does not use. A checkpoint is an in-memory snapshot of the whole session state (`ds4_session_save_snapshot`) at a known token prefix. Loading it (`ds4_session_load_snapshot`) restores that prefix with no prefill, and the sync after it is an extension. A checkpoint costs host memory equal to `ds4_session_payload_bytes()` at that point, which grows with the prefix length.
+
+- The facade holds one checkpoint by default, `system`. It is saved when the system prefix is first synced or loaded from `sysprompt.kv` (section 17).
+- A strategy can hold more through `session.checkpoint(key)`, up to `max_checkpoints` (default 4) besides `system`. A request beyond the limit is refused; the facade never evicts a checkpoint on its own.
+- Distributed sessions cannot snapshot (`ds4.c:64881`), so they have no checkpoints.
+
+`session.plan(tokens)` renders nothing and syncs nothing. It returns `Plan(kind, reused, to_prefill, fits, checkpoint)`:
+
+| `kind` | When | `reused` | `to_prefill` |
+| --- | --- | --- | --- |
+| `extend` | the tokens start with the whole live checkpoint | the live position | the tokens after it |
+| `restore` | not an extension, and a held checkpoint's tokens are a prefix of the new tokens; the longest such checkpoint is chosen | that checkpoint's length | the tokens after it |
+| `rebuild` | neither | 0 | all the tokens |
+
+`fits` is true when the tokens plus the generation reserve fit the context. `SyncJob` carries out the plan exactly, so `Synced` reports the same `kind`, and the prefill total equals `to_prefill`. A `Plan` describes the state when it was made; the worker plans again before it acts.
+
+A restore followed by an extension may not give the same state as a rebuild, bit for bit. The two paths do not evaluate the tokens in the same batches, so their floating-point results can differ. A live check (section 20) compares them on each backend. On a backend that fails the check, `restore` is disabled, and `plan()` reports `rebuild` instead.
 
 ### Decode steps
 
@@ -391,7 +426,9 @@ session.append_tool_results(results)         # one "tool" message for the whole 
 session.append_system_note(text)             # date note, hints, reminder
 for ev in session.run_round():               # sync + generate
     ...                                      # Prefill / TextDelta / ToolCalls / Stopped
-session.plan(view_tokens)                    # exact (reused, to_prefill, fits) without syncing
+session.plan(view_tokens)                    # exact Plan(kind, reused, to_prefill, fits, checkpoint) without syncing
+session.checkpoint(key); session.drop_checkpoint(key)  # snapshots for later restores
+session.state(key, factory)                  # session-owned state for capabilities (section 13)
 session.ctx_used                             # ds4_session_pos, exact
 session.compact(reason)
 session.save(path); session.load(path)
@@ -414,15 +451,28 @@ The harness sees one `Model` subclass and a list of capabilities. The hard part 
 | `model_name` | `engine_info.model_name` |
 | `profile` | `context_window=ctx`, tools and thinking supported, `thinking_tags=('<think>', '</think>')`, inline system prompts supported (the ds4 templates accept a `system` message anywhere, which is how the C agent appends its notes), `default_structured_output_mode='prompted'`, no JSON-schema output, no tool-return schema |
 | `request()` | `prepare_request`, then `request_stream` collected into a `ModelResponse` |
-| `request_stream()` | `prepare_request`; bind the messages to the transcript (below); run `session.run_round()` on the worker; yield a `DS4StreamedResponse`. Its `_get_event_iterator` turns facade events into `handle_text_delta(vendor_part_id='content', content=…, thinking_tags=…)` and, when the parser completes a block, one `handle_tool_call_part(vendor_part_id=i, tool_name=…, args=…, tool_call_id=…)` per call. `finish_reason` is `'tool_call'`, `'stop'` or `'length'`. Usage is `RequestUsage(input_tokens=prefilled, cache_read_tokens=cached_prefix, output_tokens=generated)` |
+| `request_stream()` | `prepare_request`; bind the messages to the transcript (below); run `session.run_round()` on the worker; yield a `DS4StreamedResponse`. Its `_get_event_iterator` turns facade events into `handle_text_delta(vendor_part_id='content', content=…, thinking_tags=…)` and, when the parser completes a block, one `handle_tool_call_part(vendor_part_id=i, tool_name=…, args=…, tool_call_id=…)` per call. `finish_reason` is `'tool_call'`, `'stop'` or `'length'`, and `'length'` means only that `max_tokens` was reached. A `ReserveReached` event never ends the stream (below). Usage is `RequestUsage(input_tokens=prefilled, cache_read_tokens=cached_prefix, output_tokens=generated)` |
 | `close_stream()` | `session.cancel()`. The partial tokens stay in the transcript, as in C |
 | `count_tokens()` | renders the messages without syncing and counts the tokens |
+
+### Running out of context inside a response
+
+When generation reaches the reserve in the middle of a response, the response must not end. `before_model_request` has already run, and ending the response early does not lead to another request in the pinned harness. With `str` output, partial text becomes the final result, because a text response has no special `'length'` handling. A thinking-only or empty response with `finish_reason='length'` raises `UnexpectedModelBehavior` (`_agent_graph.py:2449–2485`).
+
+So `DS4StreamedResponse` handles `ReserveReached` itself, inside the open stream:
+
+1. It finds the context owner in session state (section 13) and awaits `owner.make_room(run_context, needed)`. The harness passes `run_context` to `request_stream`, and `run_context.messages` is the run's live history list.
+2. The owner frees space in its own way and returns the new request view. `DS4Compaction` runs its recipe with the open assistant message kept and rewrites `run_context.messages[:]`. `RollingWindow` moves its cut and returns the new view.
+3. `DS4Model` rebinds to that view, with the partial response's tokens after it, and calls `round.resume()`. Generation continues, and its text and thinking deltas extend the same parts of the same `ModelResponse`.
+4. If there is no owner, or `make_room` returns `None`, the stream raises `ContextExhausted`. The run fails instead of returning partial text as an answer. The transcript keeps the partial tokens, as after an interrupt.
+
+The TUI shows the compaction through the session event bus (`before_compact`, `compacted`), not as response text.
 
 ### Binding messages to the transcript
 
 `DS4Model` keeps a binding: for each `ModelMessage` it has rendered, the transcript segment that message produced, keyed by the message's identity and a content hash. On every request it walks `request_context.messages` from the front:
 
-1. While messages match bound segments in order, nothing is rendered. This is the common case, and the engine's `common_prefix` covers all of it.
+1. While messages match bound segments in order, nothing is rendered. This is the common case: the new transcript extends the live one, so the sync is an `extend` plan and prefills only the new tokens.
 2. A `ModelResponse` that `DS4Model` produced is bound to its sampled tokens plus EOS, so it is never re-rendered from text. A `ModelResponse` the harness made up (a compaction summary, a replayed history) is rendered as a normal assistant message.
 3. New request parts render in order:
    - `SystemPromptPart` and `InstructionPart` become `system` messages, never through the rendered tokenizer.
@@ -431,7 +481,7 @@ The harness sees one `Model` subclass and a list of capabilities. The hard part 
    - `RetryPromptPart` goes into the same `tool` message as the C agent's error text. An unknown tool reads `Tool error: unknown tool: <name>` (`ds4_agent.c:9508`). Validation failures use the C agent's text for the same case.
    - Parts that a capability marks as ds4 notes (`metadata['ds4.note']` is `date`, `hints` or `reminder`) are rendered the way C renders them (section 6, items 12–14).
 4. The first time a request has tool definitions (`params.function_tools`), the tools prompt is rendered once at the front of the transcript. If the tools carry the `DS4AgentTools` marker, the prompt is the C text from `ds4py.prompts`. Otherwise it is generated from the definitions. The harness's instructions go after it as a separate plain `system` message, in the slot where C puts `--system` text. A later change in the tool set re-renders from that point, which costs a full prefill. So capabilities that add or hide tools during a run (`ToolSearch`, deferred loading) are left out.
-5. If the message list differs from the binding, because a capability rewrote the messages, the binding keeps the common prefix and re-renders the rest. The engine then prefills only from the point where they differ.
+5. If the message list differs from the binding, because a capability rewrote the messages, the binding keeps the common prefix and re-renders the rest. That saves rendering work and keeps sampled tokens exact, but it does not limit the prefill. The engine cannot keep KV past a change, so the sync restores the longest held checkpoint before the change and prefills from there, or rebuilds from token 0 (section 10).
 6. Finally the assistant prefix for the current think mode is appended, and `run_round` syncs the whole transcript.
 
 With the default capability list and no `--system` text, the harness's instructions are empty, so the system prefix is byte-identical to `ds4-agent`'s and `sysprompt.kv` is shared between the two agents.
@@ -446,8 +496,8 @@ agent = Agent(
         DS4SystemNotes(),                             # date note, hints, 50,000-token reminder
         DS4Approvals(),                               # section 14
         DS4Compaction(soft=0.85),                     # a context strategy; swap for RollingWindow(...) or Bookmarks(...)
-        DS4RunRecord(path),                           # events.jsonl
-        StepPersistence(FileStepStore(session_dir)),
+        DS4RunRecord(path),                           # events.jsonl, telemetry only (section 15)
+        StepPersistence(FileStepStore(session_dir / 'steps')),  # canonical history; each run gets conversation_id=session.id
         Instrumentation(),
     ],
 )
@@ -491,7 +541,7 @@ The model reads the tools' output, so ds4-py's tools must produce the C agent's 
 - Errors start with `Tool error: `.
 - Long output ends with `[Output truncated at the tool byte limit. Narrow the request.]`.
 - `bash` reports `bash job=N pid=P status=running elapsed_sec=E timeout_sec=T`, or `status=done … timed_out=0|1` followed by `exit_status=`. The first observation shows the output inline when it is short and complete; otherwise it shows `output_path=…` and a `<head -N path>` excerpt. Later observations show a `<tail -N path>` excerpt. A running job ends with the `bash_status` and `bash_stop` hint. `timeout_sec` defaults to 3600 and `refresh_sec` to 60.
-- `bash` jobs keep running, and keep their timeouts, between `bash_status` calls. So the capability needs per-session state (`for_run`), and it stops the jobs when the session ends.
+- `bash` jobs keep running, and keep their timeouts, between `bash_status` calls, and those calls can come in later prompts. So the job table is session state (section 13), not part of the capability instance, and the session stops the jobs when it ends.
 
 Argument checks must be no stricter than C's. C clamps values (for example, `refresh_sec` to 0–3600) where pydantic would raise a validation error. So the functions accept loose arguments and clamp the way C does.
 
@@ -505,7 +555,12 @@ All results of a round go into one `tool` message, each starting `Tool result N 
 
 ## 13. Context strategies: the extension point
 
-Context management is a plug-in point, not a fixed recipe. A strategy is a capability. The binding makes any history change correct, and the engine makes every change cost the same thing: **one prefill of the tokens after the first changed position**. The system prefix never changes, because it is in `sysprompt.kv`, so a rewrite costs at most one window, never the whole session. Strategies differ only in *when* they move the front of the window and *what* the model can get back.
+Context management is a plug-in point, not a fixed recipe. A strategy is a capability. The binding makes any history change correct, and `session.plan()` gives its exact cost before the move (section 10). The cost follows the engine's reuse rule:
+
+- **Appending** to the view costs only the new tokens.
+- **Any other change** restores the longest held checkpoint that is a prefix of the new view and prefills the rest. If no checkpoint fits, it rebuilds from token 0.
+
+The facade always holds the `system` checkpoint, so on a backend that passed the restore check a rewrite costs at most the view minus the system prefix. A rewrite never costs only the tokens after the first change: the engine cannot keep KV past a change without a checkpoint at or before it. Strategies differ in *when* they move the front of the window, *what* the model can get back, and which checkpoints they hold.
 
 The contract a strategy implements:
 
@@ -513,20 +568,21 @@ The contract a strategy implements:
 | --- | --- |
 | `before_model_request(ctx, request_context)` | Set `request_context.messages` for a **view-only** change, which leaves the stored history alone (paging, rolling windows). Set `ctx.messages[:]` for a **persistent** change (compaction, bookmarks). The view's prefix must stay the same between moves so the KV is reused on every other request |
 | `get_toolset()` | Recovery tools that read the **stored** history and return exact text: search, browse, load and read-page, or `expand_bookmark`. They must be registered from the start of the run, because a tool-set change costs a full prefill |
-| `for_run(ctx)` | Per-session state: the cut point, the bookmark table, token accounting. Reset on `/new`, `/switch`, and after another strategy's rewrite |
+| `session.state(key, factory)` | Session-owned state: the cut point, the bookmark table, token accounting. The harness calls `for_run` once per `Agent.run`, which is once per prompt, so a strategy keeps none of this on `self`. Its `for_run` returns an instance that refers to this state (see "Session state" below) |
 | `on_event` | Turn-end bookkeeping. Stamp stable keys into `message.metadata['ds4.key']` so cut points are keyed by message, not by list index |
-| `session.plan(view) -> Plan(reused, to_prefill, fits)` | Renders a candidate view without syncing and compares it with the live `common_prefix`, so a strategy knows the exact prefill cost of a move before making it |
+| `session.plan(view) -> Plan(kind, reused, to_prefill, fits, checkpoint)` | Renders a candidate view without syncing and says whether it extends the live KV, restores a held checkpoint or rebuilds, with the exact prefill cost (section 10) |
+| `session.checkpoint(key)`, `session.drop_checkpoint(key)` | Hold or free a snapshot of the live state at its current end. A strategy holds one where it knows later moves will start, such as a turn boundary that its next batch of stubs will not cross. Each costs host memory, and the facade limits how many are held |
 | `session.compact(...)` | Only `DS4Compaction` uses the engine-side summary job. Other strategies never call the model themselves |
-| `make_room(ctx, needed_tokens) -> bool` | Called on the strategy that owns the context trigger when a tool result does not fit. The strategy frees space in its own way and returns whether it could |
+| `make_room(ctx, needed_tokens) -> list[ModelMessage] \| None` | Called on the strategy that owns the context trigger when a tool result does not fit, or when generation reaches the reserve inside a response (section 11). The strategy frees space in its own way and returns the new request view, or `None` if it cannot. A persistent strategy also rewrites `ctx.messages[:]` |
 
-Exactly one strategy owns the trigger in a session. A strategy declares `owns_context_trigger = True`, and `DS4Compaction` stands down when another owner is present. Manual `/compact` still works.
+Exactly one strategy owns the trigger in a session. A strategy declares `owns_context_trigger = True` and records itself as the owner in session state. `DS4Compaction` stands down when another owner is present, and `DS4Model` finds the owner there while a stream is open. Manual `/compact` still works.
 
 | Strategy | Kind | What moves, and when | Cost per move | What the model can recover |
 | --- | --- | --- | --- | --- |
-| `DS4Compaction` (default; the C recipe) | persistent | At 85% of the context, the history becomes `system + user(summary) + verbatim tail`; an open assistant message is resumed | the summary (at most 4096 tokens, generated with `argmax`) plus the tail | the summary and the tail |
-| `RollingWindow` (a port of `pi-context-paging`) | view-only | When the rendered view exceeds `token_budget`, drop whole oldest turns until it is at most `trim_to` (default 5/8 of the budget). The cut stays until the budget is exceeded again. A paging notice sits right after the system prefix. The active request and unread tool results are never cut | the window, once per cut; nothing between cuts | everything, exactly, through `search_history`, `browse_history`, `load_history` and `read_context_output`. Thinking stays private |
-| `Bookmarks` | persistent | Replace chosen messages (large tool results, a finished sub-task) with a one-line stub such as `[bookmark b17: bash output, 12 KiB, 3 errors; expand_bookmark("b17")]`, in batches at turn boundaries | everything after the earliest replaced message | the exact original, through `expand_bookmark` |
-| Harness `ClearToolResults`, `SlidingWindowCompaction`, `SummarizingCompaction`, `TieredCompaction` | persistent | as the harness documents | the same rule. `ClearToolResults` edits old messages, so it is the most expensive | per strategy |
+| `DS4Compaction` (default; the C recipe) | persistent | At 85% of the context, the history becomes `system + user(summary) + verbatim tail`; an open assistant message is resumed | the compaction prompt (an extension), the summary (at most 4096 tokens, generated with `argmax`), then the summary message and the tail after restoring `system`. C rebuilds the system prefix here too | the summary and the tail |
+| `RollingWindow` (a port of `pi-context-paging`) | view-only | When the rendered view exceeds `token_budget`, drop whole oldest turns until it is at most `trim_to` (default 5/8 of the budget). The cut stays until the budget is exceeded again. A paging notice sits right after the system prefix. The active request and unread tool results are never cut | the notice and the window after restoring `system`, once per cut; nothing between cuts | everything, exactly, through `search_history`, `browse_history`, `load_history` and `read_context_output`. Thinking stays private |
+| `Bookmarks` | persistent | Replace chosen messages (large tool results, a finished sub-task) with a one-line stub such as `[bookmark b17: bash output, 12 KiB, 3 errors; expand_bookmark("b17")]`, in batches at turn boundaries | everything after the latest held checkpoint before the first replaced message; with only `system`, the whole view after the system prefix | the exact original, through `expand_bookmark` |
+| Harness `ClearToolResults`, `SlidingWindowCompaction`, `SummarizingCompaction`, `TieredCompaction` | persistent | as the harness documents | the same rule: the whole view after the system prefix, each time an old message changes. `ClearToolResults` changes old messages most often, so it is the most expensive | per strategy |
 
 `DS4Compaction` in detail: a `before_model_request` hook with the C agent's trigger, `ctx_used >= 0.85 * ctx` or `ctx - used <= max(min(8192, ctx/8), reserve + 128)`. `reserve` is the rendered length of the compaction prompt, plus an assistant prefix, plus `clamp(ctx/8, 256, 4096)` for the summary. When it fires, it calls `session.compact(reason)`, which runs the whole recipe on the worker in one pass:
 
@@ -534,19 +590,31 @@ Exactly one strategy owns the trigger in a session. A strategy declares `owns_co
 2. Generate the summary with `argmax` until a stop token or the DSML special token.
 3. Choose the tail and resync `system + user(summary) + tail`.
 
-Then the hook rewrites `ctx.messages[:]` to the system parts, a `UserPromptPart(summary)` and the tail's messages, and rebinds. If generation was in the middle of a response when the reserve was hit, the hook sets `resume_open_assistant` and `DS4Model` continues the same assistant message, as the C agent does (`ds4_agent.c:9675–10229`).
+Then the hook rewrites `ctx.messages[:]` to the system parts, a `UserPromptPart(summary)` and the tail's messages, and rebinds. Step 3's resync restores the `system` checkpoint and prefills the summary message and the tail, where C rebuilds from token 0.
 
-The check before a tool result is added lives in `after_tool_execute` and is shared by every strategy. If the result does not fit, the check calls `make_room` on the strategy that owns the context trigger:
+The hook covers compaction between requests only. When generation reaches the reserve in the middle of a response, the open stream handles it (section 11): `DS4Model` calls `make_room`, and `DS4Compaction` runs the same recipe with the open assistant message kept. The partial response's tokens follow the tail, and generation continues in the same `ModelResponse`, as the C agent does (`ds4_agent.c:9675–10229`).
+
+The check before a tool result is added lives in `after_tool_execute` and is shared by every strategy. If the result does not fit, the check calls `make_room` on the strategy that owns the context trigger. The mid-response reserve uses the same call:
 
 - `DS4Compaction` compacts, as C does.
 - `RollingWindow` moves its cut forward by whole turns. It never summarises.
 - `Bookmarks` replaces more messages with stubs.
 
-If the result still does not fit, it is replaced with `Tool error: tool result still does not fit`.
+If the result still does not fit, it is replaced with `Tool error: tool result still does not fit`. If the reserve still cannot be met inside a response, the stream raises `ContextExhausted`.
 
 `DS4SystemNotes` owns the 50,000-token reminder. Its trigger is a predicate on exact transcript growth, which fits `Reminder(trigger=…)` in the harness's `SystemReminders`. `DS4Model` applies the C wrapping and the tokenizer rule when it sees the `reminder` note marker. If `SystemReminders` cannot carry that marker, `DS4SystemNotes` implements the trigger itself (builder's call, M4).
 
 `RollingWindow` gets two things from the engine that the Pi version has to estimate: exact token counts for the budget, and an exact `ctx_used`. Its design choices carry over unchanged: whole-turn cuts, stable keys, protected content, the notice counted inside the budget, no summarising, and private assistant content excluded from recovery. `ds4_session_create(ctx)` can be given the budget directly so the engine reserves only the KV the window needs.
+
+### Session state
+
+The harness calls `for_run` once per `Agent.run`, and by default it shares one capability instance across runs (`capabilities/abstract.py:447–461`). The TUI starts one run per prompt, so one ds4 session spans many runs. State that must last for the session cannot live in a per-run copy, and a shared instance has no hook for `/new` or `/switch`. The same docstring says not to acquire resources such as processes in `for_run`, and the harness skips `after_run` when a run produces no result, so neither can own `bash` jobs.
+
+ds4-py keeps this state in the session:
+
+- `session.state(key, factory)` returns the state object for `key` in the live ds4 session, and creates it with `factory()` on first use.
+- A capability keeps no session state on `self`. Its `for_run` returns an instance that refers to `session.state(...)`. So the paging cut, the bookmark table, the reminder's growth counter and the `bash` job table last from one prompt to the next.
+- The session drives the state's lifecycle through the event bus (section 22). `/new`, `/switch` and exit all send `session_end`. On it, the session calls `close()` on every state object and drops them all, so `bash` jobs stop and nothing leaks into the next session. On `forked`, the state is kept, because a fork keeps the transcript and the message keys. On `compacted`, a strategy that does not own the trigger resets its own state.
 
 ## 14. Policy: `DS4Approvals`
 
@@ -563,9 +631,43 @@ A denied call returns `Tool error:` text, so the model's next round reads as it 
 
 `ds4-agent` itself asks only for the Chrome consent. The other prompts come from the first draft and are ds4-py additions. An approved call leaves the transcript as C would have it. A denied call adds text C would never produce, so runs with a denial are left out of parity checks.
 
-## 15. Run records: `DS4RunRecord`
+## 15. History, save records and run records
 
-An `on_event` capability appends one JSON line per `AgentStreamEvent` to `<session>/events.jsonl`. It also writes the engine events the harness does not see (`Prefill`, `Compacted`, `Saved`, `Interrupted`), forwarded from the facade's event queue. The record and the KV file name are enough to reproduce a session: `StepPersistence` gives `continue_run`, and the transcript binding is rebuilt from the record on load.
+ds4-py keeps three records. Only the first two are used to recover a session.
+
+| Record | Where | What it holds | Used to recover? |
+| --- | --- | --- | --- |
+| Message history | `StepPersistence(FileStepStore(<session dir>/steps))` | `ContinuableSnapshot`s: the full harness message list, with every part and `metadata['ds4.key']` | yes; it is the canonical history |
+| Save record | `~/.ds4py/saves/<sha40>.json`, one per KV file, rewritten with each save | the snapshot the KV file was saved from, and the token provenance of the transcript (below) | yes |
+| Run record | `<session dir>/events.jsonl`, written by `DS4RunRecord` | one line per `AgentStreamEvent`, plus engine events | no; telemetry only |
+
+The session directory is `~/.ds4py/sessions/<session id>/`. The session id is kept apart from the KV file name (section 22).
+
+### Message history
+
+The TUI starts one `Agent.run` per prompt. It passes `conversation_id=session.id` and the previous messages as `message_history`. `StepPersistence` saves a snapshot at each settled tool boundary and at the end of the run, and it saves the history at the point of failure if the run fails (`step_persistence/_capability.py:50–62`). Each run has its own `run_id`, so `list_runs(conversation_id=session.id)` lists the session's runs in order.
+
+A snapshot holds what the run event stream does not:
+
+- the user prompt passed to `agent.run`, and the system and instruction parts;
+- message metadata, including the stable keys;
+- every rewrite of `ctx.messages[:]` by a persistent strategy, such as compaction or a bookmark batch.
+
+Older runs keep their snapshots, so the history before a compaction stays readable. A `RollingWindow` session's KV file holds only the request view, so the messages outside the view exist only here.
+
+### Save record
+
+The save record ties a KV file to the history it was saved from. `ds4py.store` writes it with each `/save`, after the KV file (section 17). It holds:
+
+- `session_id`, and the `run_id` and `step_index` of the save's snapshot. `/save` writes the live message list as a `complete` snapshot in a run of its own, `<session id>.save-<n>`, under the session's `conversation_id`. So every KV file has an exact snapshot, even when the last run ended in an interrupt or an error.
+- `tokens` and `tokens_sha256`: the length and hash of the saved token list.
+- `segments`: the token provenance. Each entry is `(start, end, kind, key, content_hash, source)`, where `key` is the message's `ds4.key`, or empty for the system prefix and notes, and `source` is `sampled` for tokens `DS4Model` generated or `rendered` for tokens `PromptBuilder` produced.
+
+In memory, the binding keys a message by its identity and a content hash (section 11). A restored message is a new object, so on restore the binding keys it by `ds4.key` and the content hash instead.
+
+### Run record
+
+`DS4RunRecord` is an `on_event` capability. It appends one JSON line per `AgentStreamEvent` to `<session dir>/events.jsonl`. It also writes the engine events the harness does not see (`Prefill`, `Synced` with its plan, `Compacted`, `Saved`, `Interrupted`), forwarded from the facade's event queue. The record is for reading and measuring a session, such as bake-off gate 3. Nothing is rebuilt from it: it does not hold the user prompt, the system parts, history rewrites or token ids.
 
 ## 16. Interface
 
@@ -611,21 +713,30 @@ A session restored with `/switch` keeps its `created_at`, so saving it again ove
 
 ### Save
 
-`/save` is a `SaveJob` on the worker. Before staging, the worker syncs the transcript so the live KV equals it. This evaluates the trailing EOS, which the C agent also leaves unevaluated until the next sync. Then it calls `stage_payload`, writes the header and text, streams the staged payload into the file, and appends the title trailer. Sessions with images are refused with the C agent's message.
+`/save` is a `SaveJob` on the worker. Before staging, the worker syncs the transcript so the live KV equals it. This evaluates the trailing EOS, which the C agent also leaves unevaluated until the next sync. Then it calls `stage_payload`, writes the header and text, streams the staged payload into the file, and appends the title trailer. After the KV file is renamed into place, `/save` writes the session's snapshot through the step store, then the save record (section 15) through a rename. The record comes last, so it never names a snapshot that was not written. Sessions with images are refused with the C agent's message.
 
 ### Restore
 
-`/switch <sha-prefix>` reads the header and checks `model_id` and `quant_bits` against the open engine. If `payload_bytes > 0`, the worker calls `load_payload` and **takes the token list from the session**, not from re-tokenizing the text. So the restored transcript is identical to what was saved, and nothing is prefilled. If the file is stripped, the text is re-tokenized with the rendered tokenizer and synced, which prefills from scratch. Segment data is rebuilt from the run record when it exists; otherwise the restored tokens are scanned for the role special tokens.
+`/switch <sha-prefix>` reads the header and checks `model_id` and `quant_bits` against the open engine. If `payload_bytes > 0`, the worker calls `load_payload` and **takes the token list from the session**, not from re-tokenizing the text. So the restored transcript is identical to what was saved, and nothing is prefilled. If the file is stripped and has no ds4-py save record, the text is re-tokenized with the rendered tokenizer and synced, which prefills from scratch, as in C.
+
+The history and the binding come from the save record (section 15), not from `events.jsonl`:
+
+1. **A ds4-py save.** The record exists, and its `tokens` and `tokens_sha256` match the loaded tokens. ds4-py loads the snapshot the record names and rebuilds the binding from `segments`, matching each segment to a snapshot message by `ds4.key` and content hash. Nothing is rendered or prefilled. If the snapshot is missing, or a segment matches no message, `/switch` fails with an error that names the snapshot or the key.
+2. **A file saved again without its record.** The record exists, but the token hash does not match. Usually `ds4-agent` saved the file last; a crash between the two writes of a `/save` has the same result. ds4-py says so and treats the file as a C-agent file.
+3. **A C-agent file.** There is no record. The restored tokens are scanned for the role special tokens. Each segment becomes a message bound to its tokens, under a new session id.
+4. **A stripped ds4-py save.** The file has no payload, so the token hash cannot match. The history comes from the record's snapshot, and `DS4Model` renders it fresh. This costs the same full prefill as any stripped file.
+
+Then the session sends `switched` with the save record (section 22). `RollingWindow` sets its cut at the first message bound in the transcript, so the first request after `/switch` extends the loaded KV.
 
 Two cases deliberately behave as in C: a tensor-parallel session ignores the payload and rebuilds from text, and a mismatched `model_id` is an error, not a warning.
 
 ### `sysprompt.kv`
 
-The rendered system prefix (think prefix, tools prompt, extra system text) is saved once as `sysprompt.kv` with reason `agent-system`, keyed by its rendered bytes. At start-up it is loaded if the bytes match, so a new session begins with the system prompt already in the KV. The C agent refuses a cached file whose text does not match (`ds4_agent.c:4937`).
+The rendered system prefix (think prefix, tools prompt, extra system text) is saved once as `sysprompt.kv` with reason `agent-system`, keyed by its rendered bytes. At start-up it is loaded if the bytes match, so a new session begins with the system prompt already in the KV. The facade then saves its `system` checkpoint, which later rewrites restore (section 10). The C agent refuses a cached file whose text does not match (`ds4_agent.c:4937`).
 
 ### Strip, delete and list
 
-`/strip` rewrites the file with `payload_bytes = 0` and a new token count. `/del` deletes the file. `/list` reads only headers and trailers, sorts by `last_used`, and shows only files for the open engine's `model_id`.
+`/strip` rewrites the file with `payload_bytes = 0` and a new token count, and keeps the save record. `/del` deletes the file and its save record. It keeps the session's history in `~/.ds4py/sessions/`. `/list` reads only headers and trailers, sorts by `last_used`, and shows only files for the open engine's `model_id`.
 
 ## 18. The downstream agent: what ds4-py provides
 
@@ -668,7 +779,7 @@ What the comparison of the two trees found:
 
 | Layer | How | Needs a model? |
 | --- | --- | --- |
-| ABI guard | CI builds the CPU `libds4` from the upstream pin and from the downstream fork's pin and runs `ds4py check` on both. A doctored header that changes one argument type of a required function must fail the build; one that moves a field of `ds4_engine_options` must make loading refuse; an unknown header hash must only warn | no |
+| ABI guard | CI builds the CPU `libds4` from the upstream pin and from the downstream fork's pin and runs `ds4py check` on both. A doctored header that changes one argument type of a required function must fail the build; one that moves a field of `ds4_engine_options` must make loading refuse; so must a manifest whose recorded prototype differs from an installed binding's; an unknown header hash must only warn | no |
 | `_native` | load the library and check it; open a small CPU session if `DS4_TEST_MODEL` is set | optional |
 | `Transcript`, `PromptBuilder`, `EngineWorker`, decode steps, logits hook | `FakeNative` | no |
 | Prompts | the C prompt printer's output for every variant (4 syntaxes × 2 edit variants × vision) must equal the Python builders' output byte for byte. Regenerated on every pin move | no |
@@ -679,6 +790,7 @@ What the comparison of the two trees found:
 | Extension points | the conformance test (section 22) | no |
 | Raw parity | `ds4py raw` and `ds4-agent --raw` on the same prompt, `--temp 0 --seed 1`, same model: identical tokens | yes |
 | Replay parity | below | yes |
+| Sync plans and checkpoints | on each backend, for an append, a checkpoint restore and a rebuild, the prefill count in `Synced` equals `plan().to_prefill`. Then the restore check: after a restore plus extension, 256 tokens at `--temp 0` must equal those after a rebuild of the same tokens. ds4-py disables `restore` on a backend that fails the check | yes |
 | Integration | the bake-off (section 21), the KV round trip, and a 150k-token session | yes |
 
 ### Parity with `ds4-agent`: replay, not side by side
@@ -710,9 +822,9 @@ Gates, all required:
 
 1. **Pass rate** at least `ds4-agent`'s on the same run, with one task of slack. Gate 6 proves the sampling paths match, so a larger gap is a bug.
 2. **No parser failures.** Zero `parser_error` stops and zero `Tool error: invalid …` results across the 12 runs. Every tool call the model made was executed or refused by policy.
-3. **Speed and KV reuse.** Wall time at most 1.5× `ds4-agent`'s per task. In every round, ds4-py prefills only the tokens appended since the last sync; the run record shows this for each round, except rounds after compaction or a strategy move. This replaces the first draft's "prefilled tokens per round equal within 1% of `ds4-agent`", which cannot hold once the two runs see different process ids and timings.
+3. **Speed and KV reuse.** Wall time at most 1.5× `ds4-agent`'s per task. In every round, ds4-py prefills only the tokens appended since the last sync; the run record shows an `extend` plan for each round, except rounds after compaction or a strategy move. This replaces the first draft's "prefilled tokens per round equal within 1% of `ds4-agent`", which cannot hold once the two runs see different process ids and timings.
 4. **Interrupt and approval.** One run is interrupted with Ctrl+C during prefill and resumed from the next prompt. One run triggers an approval prompt for `bash` and continues after `y`.
-5. **Records and files.** Every run leaves a complete `events.jsonl` and a saved KV file that `ds4-agent` can `/switch` into.
+5. **Records and files.** Every run leaves a complete `events.jsonl`, the session's snapshots, and a saved KV file with its save record that `ds4-agent` can `/switch` into.
 6. **Replay parity.** For every round of `ds4-agent`'s 12 runs, ds4-py produces the same tokens from the same prefix (section 20).
 
 Not tested here, on purpose: long-context behaviour (M4 adds a 150k-token session and the compaction and `RollingWindow` cases), multi-file repository tasks (M5, a 10-task SWE-bench Verified slice), and GLM, Qwen and DeepSeek V4.1 (M5).
@@ -723,9 +835,9 @@ Full plugin support is not an M1 feature, but some things are cheap to build in 
 
 | Reserved now | Why it is structural |
 | --- | --- |
-| The stored history differs from the request view. `DS4Model` binds to `request_context.messages` only and never writes `ctx.messages`. The run record stores the full harness message list with all parts, not just tokens | A strategy that pages or bookmarks needs the complete history, with thinking kept apart from public text |
+| The stored history differs from the request view. `DS4Model` binds to `request_context.messages` only and never writes `ctx.messages`. `StepPersistence` snapshots store the full harness message list with all parts and metadata, not just tokens; `events.jsonl` is telemetry only | A strategy that pages or bookmarks needs the complete history, with thinking kept apart from public text |
 | Stable message keys in `message.metadata['ds4.key']`, set at creation. The session id is kept apart from the KV file name | Cut points, bookmarks and forks all key on messages, and two forks of one title must not share a file name |
-| A session event bus in `ds4py` (`session_start`, `session_end`, `turn_end`, `before_compact`, `compacted`, `model_changed`, `switched`), separate from the harness's per-run `on_event` | Lifecycle events the harness does not model; adding them later means finding every call site |
+| A session event bus in `ds4py` (`session_start`, `session_end`, `turn_end`, `before_compact`, `compacted`, `model_changed`, `switched`, `forked`), separate from the harness's per-run `on_event`. It drives the lifecycle of `session.state` (section 13) | Lifecycle events the harness does not model; adding them later means finding every call site |
 | `session.plan()`, `session.ctx_used`, `session.system_tokens` and `session.active_tools` as public calls | Strategies need exact cost and usage, and the facade must be designed so these are cheap |
 | A command registry and a status-key registry in the TUI, open to capabilities; project settings with a trust flag | Without them, every extension needs a fork of the UI |
 | The extension API: declared bindings, `engine.native.bind`, `session.on_worker` | The downstream agent's bindings must pass the same ABI guard as ds4-py's |
@@ -736,11 +848,12 @@ The conformance test runs in CI on `FakeNative`. A stub extension must:
 1. rewrite the request view and see the binding re-render only from the cut;
 2. register tools that read paged-out history with thinking excluded;
 3. own the context trigger and see `DS4Compaction` stand down;
-4. get `plan()` costs that match the engine's `common_prefix`;
-5. survive `/switch` and a fork with its keys intact;
+4. get `plan()` kinds and costs that match what the next sync does, for an append, a checkpoint restore and a rebuild;
+5. survive `/switch` and a fork with its keys intact, with the history rebuilt from the save's snapshot and the binding from its save record, and no prefill;
 6. add a slash command and a status key;
 7. declare a binding, see it in the probe and call it through `on_worker`;
-8. install a logits hook that changes a sampled token, and run a multi-token decode step that stops mid-block with the KV equal to the kept tokens.
+8. install a logits hook that changes a sampled token, and run a multi-token decode step that stops mid-block with the KV equal to the kept tokens;
+9. keep state in `session.state` across two prompts, and see it closed on `/new` and `/switch` and kept on a fork.
 
 The first real strategy is the `RollingWindow` port in M4, and it is the acceptance test for the context half of this API.
 
@@ -750,7 +863,7 @@ Every milestone is developed against `FakeNative`. Criteria marked *live* run on
 
 ### M1: native layer and raw loop (2 to 2½ weeks)
 
-Scope: `Makefile.lib` and `ds4py build`; the binding list and the type map; the ABI probes; the loader with required and optional bindings; `ds4py check`; the extension API; `EngineWorker` with sync, sample, eval, rewind, progress and cancel; `PlainStep`; `ds4py raw`; `FakeNative`.
+Scope: `Makefile.lib` and `ds4py build`; the binding list and the type map; the ABI probes; the loader with required and optional bindings; `ds4py check`; the extension API; `EngineWorker` with sync, sample, eval, rewind, progress and cancel; checkpoints and sync plans; `PlainStep`; `ds4py raw`; `FakeNative`.
 
 Done when:
 
@@ -758,7 +871,9 @@ Done when:
 - The doctored-header tests in section 20 behave as described.
 - An extension binding declared through the entry point is probed, listed by `ds4py check` and callable through `on_worker` on `FakeNative`.
 - On `FakeNative`: prefill progress events arrive at most every 100 ms; Ctrl+C during sync returns `Interrupted` with the transcript intact; generation stops on a stop token without evaluating it.
+- On `FakeNative`: `plan()` reports `extend`, `restore` and `rebuild` as section 10 defines them, and each `Synced` reports the plan and prefill count that `plan()` predicted.
 - *Live:* `ds4py raw "<prompt>" --temp 0 --seed 1` produces the same tokens as `ds4-agent --raw`.
+- *Live:* the sync-plan and restore checks in section 20 pass on the bake-off machine, or `restore` is disabled there.
 
 ### M2: chat, tool syntax, decode steps and the hook (2½ weeks)
 
@@ -775,22 +890,24 @@ Done when:
 
 ### M3: harness, the C agent's tools, TUI and bake-off (3 to 3½ weeks)
 
-Scope: `DS4Model` and the binding; `DS4AgentTools` with every tool, including the web port; `DS4Approvals`; `DS4SystemNotes` for the date note and hints; `DS4RunRecord`; `StepPersistence`; `/save`; the one-day `clai` smoke test; the TUI with its registries; non-interactive mode; the harness-tools option; the bake-off script.
+Scope: `DS4Model` and the binding; `DS4AgentTools` with every tool, including the web port; `DS4Approvals`; `DS4SystemNotes` for the date note and hints; `DS4RunRecord`; `StepPersistence`; `/save` with its snapshot and save record; the session event bus and `session.state`; the one-day `clai` smoke test; the TUI with its registries; non-interactive mode; the harness-tools option; the bake-off script.
 
 Done when:
 
 - Every tool matches its golden output.
 - `DS4Model` passes its request-list tests, including retry and unknown-tool framing.
-- Conformance items 1, 6 and 7 pass.
+- Conformance items 1, 6, 7 and 9 pass.
+- On `FakeNative`: a `bash` job started in one prompt is reported by `bash_status` in the next and stops on `/new`; a reserve stop inside a response with no context owner raises `ContextExhausted` and does not return partial text.
 - *Live:* all six bake-off gates pass.
 
 ### M4: context and persistence (2 weeks)
 
-Scope: `DS4Compaction`; the 50,000-token reminder; `sysprompt.kv`; `/list`, `/switch`, `/strip` and `/del`; the session event bus; the `RollingWindow` port; the full conformance test.
+Scope: `DS4Compaction`, including the reserve stop inside an open stream; the 50,000-token reminder; `sysprompt.kv`; `/list`, `/switch`, `/strip` and `/del`, with history recovery from save records; the `RollingWindow` port; the full conformance test.
 
 Done when:
 
-- On `FakeNative`: the compaction trigger, recipe and tail cut match C, including resuming an open assistant message; the reminder fires after 50,000 tokens of growth.
+- On `FakeNative`: the compaction trigger, recipe and tail cut match C. A reserve stop inside a streamed response compacts and continues in the same `ModelResponse`, as C resumes an open assistant message. The reminder fires after 50,000 tokens of growth.
+- On `FakeNative`: `/switch` handles the four cases in section 17, and a missing snapshot fails with an error that names it.
 - The full conformance test passes.
 - *Live:* a 150k-token session compacts and continues; a session saved in ds4-py opens in `ds4-agent` and back again with no prefill; `RollingWindow` runs a long session within its budget.
 
@@ -804,6 +921,7 @@ Done when:
 - **Porting the tools exactly.** This is the largest single piece of new work. The golden tests are the defence; the web tools are the hardest to test because they need Chrome.
 - **Subagents later.** ds4 allows one ds4 process per machine (an exclusive lock on `/tmp/ds4.lock`), so a subagent cannot be a second process. One engine can hold several sessions, as `ds4-server --batched-session N` does, but each reserves its own KV cache when the engine opens, and forward passes run one at a time. A subagent that shares the main session either sees the parent's context or needs the parent's KV saved and loaded back around it.
 - **GIL and callbacks.** Progress callbacks re-acquire the GIL about 10 times a second during prefill, which is negligible. The real risk is a Python exception inside a callback, which ctypes swallows. The facade stores and re-raises it, and the callbacks stay trivial.
+- **Checkpoint memory.** Each checkpoint holds a full session snapshot in host memory, and its size grows with the prefix. The limit of four plus `system` bounds the total, `Checkpointed` reports each one's bytes, and the facade never evicts one on its own. A strategy that holds no extra checkpoints needs no extra memory, but each of its rewrites prefills the whole view after the system prefix.
 - **Compaction fidelity.** The C recipe cuts the tail at a `<｜User｜>` boundary and resumes an open assistant message after compaction. Both are reproduced. The resume case is the hardest to test; it gets a `FakeNative` scenario and one live run.
 - **Harness churn.** `pydantic-ai-harness` is 0.x and releases often. The adapter touches only `Model`, `StreamedResponse`, capability hooks and a few named capability classes. Each bump is a deliberate change with the full suite.
 - **Memory on the bake-off machine.** The README's "96 GB or more for DeepSeek" refers to Mac unified memory. Check that the bake-off model fits in the CUDA card's memory before booking the machine, and build `ds4-agent` and `libds4` from the same commit there.
@@ -835,6 +953,10 @@ These are my decisions, not the user's. Each can be changed.
 - The date note and hints move to M3, because they are part of every `ds4-agent` session. The reminder stays in M4.
 - When a tool result does not fit, the strategy that owns the context trigger makes room in its own way through `make_room`. Only `DS4Compaction` compacts (section 13).
 - A fork keeps its title and takes the fork time as its `created_at`, so it gets its own file under C's naming formula. Forks come from `session.fork()`; there is no `/fork` command in M1 to M4 (section 17).
+- ds4-py uses engine checkpoints, which the C agent does not. The facade holds the `system` checkpoint, and strategies may hold up to four more. `restore` is disabled on any backend that fails the live restore check (sections 10 and 20).
+- When generation reaches the reserve inside a response, the open stream asks the context owner to make room and continues. With no owner, the run fails with `ContextExhausted`, so partial text never becomes a final answer (section 11).
+- Each `/save` writes the live history as its own snapshot and a save record in `~/.ds4py/saves/`, so every KV file maps to an exact history. `events.jsonl` is telemetry only (section 15).
+- Capabilities keep session-lifetime state in `session.state`, not on `self`. The session event bus moves from M4 to M3, because `bash` jobs need it (sections 13 and 23).
 
 ## 27. Changes from the first draft
 
