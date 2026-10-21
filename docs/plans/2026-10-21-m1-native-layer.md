@@ -701,3 +701,372 @@ Expected: PASS.
 git add src/ds4py/abi/check.py src/ds4py/cli.py tests
 git commit -m "feat(abi): add ds4py check"
 ```
+
+### Task 7: Native protocols and the ctypes API
+
+**Files:**
+- Create: `src/ds4py/_native/protocol.py`, `src/ds4py/_native/api.py`, `tests/native/contract.py`
+- Modify: `tests/conftest.py`
+- Test: `tests/native/test_api.py`
+
+**Interfaces:**
+- Consumes: `Library`, `load_library`, `structs.*`, `EngineError`, `ModelFileError`, `EngineLockedError`, `MissingBinding`.
+- Produces:
+  - `protocol.py`: `ThinkMode(IntEnum)` with `NONE=0, HIGH=1, MAX=2, LOW=3, MEDIUM=4`; `THINK_LEVEL_BASE = 1000`; `BACKENDS = {"metal": 0, "cuda": 1, "rocm": 1, "cpu": 2}`; `EngineConfig(model: Path, ctx: int = 100_000, backend: str = "cpu", threads: int = 0)` (frozen); `EngineInfo(name: str, model_id: int, family: str, is_deepseek41: bool, is_glm_dsa: bool, is_qwen4: bool, has_vision: bool, routed_quant_bits: int, mtp_draft_tokens: int, vocab_size: int)` (frozen); `family_of(*, deepseek41: bool, glm: bool, qwen: bool) -> str` (`"deepseek41"`, `"glm"`, `"qwen"`, else `"deepseek4"`); `SyncStatus(Enum)` with `DONE`, `INTERRUPTED`; `ProgressFn = Callable[[str, int, int], None]`; `CancelFn = Callable[[], bool]`; protocols `Snapshot`, `SessionHandle`, `EngineHandle`, `Native` with the methods below.
+  - `api.py`: `check_model_file(path: Path) -> None`; `lock_path() -> Path`; `check_instance_lock() -> None`; `engine_options(config: EngineConfig) -> structs.EngineOptions`; `LibNative(lib: Library)`, `NativeEngine`, `NativeSession`, `NativeSnapshot` implementing the protocols.
+
+The protocols, which `FakeNative` also implements in Task 8:
+
+```python
+class Snapshot(Protocol):
+    nbytes: int
+    def close(self) -> None: ...
+
+class SessionHandle(Protocol):
+    raw: int                                  # session pointer, for extensions
+    def sync(self, tokens: Sequence[int], *, progress: ProgressFn | None = None,
+             cancel: CancelFn | None = None) -> SyncStatus: ...
+    def sample(self, temperature: float, top_k: int, top_p: float, min_p: float,
+               rng: ctypes.c_uint64) -> int: ...
+    def argmax(self) -> int: ...
+    def eval(self, token: int) -> None: ...
+    def rewind(self, pos: int) -> None: ...
+    def pos(self) -> int: ...
+    def ctx(self) -> int: ...
+    def tokens(self) -> list[int]: ...
+    def common_prefix(self, tokens: Sequence[int]) -> int: ...
+    def checkpoint_valid(self) -> bool: ...
+    def invalidate(self) -> None: ...
+    def payload_bytes(self) -> int: ...
+    def save_snapshot(self) -> Snapshot: ...
+    def load_snapshot(self, snap: Snapshot) -> None: ...
+    def close(self) -> None: ...
+
+class EngineHandle(Protocol):
+    raw: int                                  # engine pointer, for extensions
+    def info(self) -> EngineInfo: ...
+    def tokenize(self, text: str, *, rendered: bool = False) -> list[int]: ...
+    def token_text(self, token: int) -> bytes: ...
+    def eos(self) -> int: ...
+    def is_stop(self, token: int) -> bool: ...
+    def create_session(self, ctx: int) -> SessionHandle: ...
+    def close(self) -> None: ...
+
+class Native(Protocol):
+    restore_enabled: bool
+    def open_engine(self, config: EngineConfig) -> EngineHandle: ...
+    def bind(self, name: str) -> Callable[..., Any]: ...
+    def parse_think_level(self, text: str) -> int | None: ...
+    def think_mode_for_context(self, mode: int, ctx: int) -> int: ...
+```
+
+`copy_logits`, `set_logits` and the payload functions are bound by the manifest but get Python wrappers in later milestones.
+
+- [ ] **Step 1: Write the shared contract**
+
+`tests/native/contract.py` holds behaviour that both the real library and `FakeNative` must show. Each function takes an `EngineHandle` and a list of prompt tokens with at least 8 entries. `prefilled(events)` returns `total - current` from the first `"prefill_chunk"` event, or 0 when there is none.
+
+```python
+def check_sync_and_extend(engine, prompt):
+    s = engine.create_session(len(prompt) + 64)
+    assert s.sync(prompt[:-2]) is SyncStatus.DONE and s.pos() == len(prompt) - 2
+    events = []
+    assert s.sync(prompt, progress=lambda *e: events.append(e)) is SyncStatus.DONE
+    assert s.tokens() == list(prompt) and prefilled(events) == 2
+
+def check_diverged_sync_prefills_from_zero(engine, prompt):
+    s = engine.create_session(len(prompt) + 64)
+    s.sync(prompt)
+    events = []
+    s.sync(prompt[:-1] + [prompt[0]], progress=lambda *e: events.append(e))
+    assert prefilled(events) == len(prompt)
+
+def check_eval_rewind_and_greedy(engine, prompt):
+    s = engine.create_session(len(prompt) + 64)
+    s.sync(prompt)
+    tok = s.argmax()
+    assert s.sample(0.0, 0, 1.0, 0.0, ctypes.c_uint64(1)) == tok
+    s.eval(tok); assert s.pos() == len(prompt) + 1
+    s.rewind(len(prompt)); assert s.tokens() == list(prompt) and s.argmax() == tok
+
+def check_snapshot_restore(engine, prompt):
+    s = engine.create_session(len(prompt) + 64)
+    s.sync(prompt[:4]); snap = s.save_snapshot()
+    assert snap.nbytes > 0 and s.payload_bytes() > 0
+    s.sync(prompt[:2] + prompt[:2])
+    s.load_snapshot(snap); snap.close()
+    assert s.tokens() == list(prompt[:4]) and s.checkpoint_valid()
+    events = []
+    s.sync(prompt, progress=lambda *e: events.append(e))
+    assert prefilled(events) == len(prompt) - 4
+
+def check_cancel_interrupts(engine, prompt):
+    s = engine.create_session(len(prompt) + 64)
+    assert s.sync(prompt, cancel=lambda: True) is SyncStatus.INTERRUPTED
+    assert s.pos() < len(prompt)
+
+def check_context_errors(engine, prompt):
+    s = engine.create_session(len(prompt))
+    with pytest.raises(EngineError): s.sync(prompt)           # needs one free slot
+    with pytest.raises(EngineError): s.sync([])
+
+CONTRACT = [check_sync_and_extend, check_diverged_sync_prefills_from_zero, check_eval_rewind_and_greedy,
+            check_snapshot_restore, check_cancel_interrupts, check_context_errors]
+```
+
+- [ ] **Step 2: Write the failing API tests**
+
+Add a `fresh_loader` fixture to `tests/conftest.py` that sets `loader._loaded = None` before and after the test, so tests can load different libraries in one process.
+
+```python
+def test_model_file_checks(tmp_path):
+    with pytest.raises(ModelFileError, match="not found"): check_model_file(tmp_path / "x.gguf")
+    with pytest.raises(ModelFileError, match="directory"): check_model_file(tmp_path)
+    (tmp_path / "s.gguf").write_bytes(b"GGUF")
+    with pytest.raises(ModelFileError, match="too small"): check_model_file(tmp_path / "s.gguf")
+    (tmp_path / "b.gguf").write_bytes(b"GGML" + bytes(60))
+    with pytest.raises(ModelFileError, match="not a GGUF file"): check_model_file(tmp_path / "b.gguf")
+    (tmp_path / "ok.gguf").write_bytes(b"GGUF" + bytes(60))
+    check_model_file(tmp_path / "ok.gguf")
+
+def test_held_lock_is_refused(tmp_path, monkeypatch):
+    path = tmp_path / "ds4.lock"
+    monkeypatch.setenv("DS4_LOCK_FILE", str(path))
+    with open(path, "w") as held:
+        held.write("4242"); held.flush()
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(EngineLockedError, match=rf"{re.escape(str(path))}.*pid 4242"):
+            check_instance_lock()
+    check_instance_lock()          # free again: passes and leaves no lock behind
+    check_instance_lock()
+
+def test_engine_options():
+    o = engine_options(EngineConfig(Path("/m.gguf"), ctx=4096, backend="rocm", threads=3))
+    assert (o.model_path, o.backend, o.context_size, o.placement_ctx_hint, o.n_threads) == (b"/m.gguf", 1, 4096, 4096, 3)
+    assert (o.mtp_draft_tokens, o.mtp_margin) == (1, 3.0)
+    with pytest.raises(ValueError, match="vulkan"): engine_options(EngineConfig(Path("/m"), backend="vulkan"))
+
+@pytest.mark.build
+def test_library_calls_without_a_model(built_upstream, fresh_loader, tmp_path):
+    native = LibNative(load_library(built_upstream[0]))
+    assert native.parse_think_level("42") == 1042 and native.parse_think_level("high") is None
+    assert native.think_mode_for_context(ThinkMode.MAX, 4096) == ThinkMode.HIGH
+    with pytest.raises(ModelFileError):          # ds4 would exit() here
+        native.open_engine(EngineConfig(tmp_path / "missing.gguf"))
+
+@pytest.mark.live
+@pytest.mark.parametrize("check", CONTRACT, ids=lambda f: f.__name__)
+def test_contract_live(live_engine, check):
+    check(live_engine, live_engine.tokenize("The quick brown fox jumps over the lazy dog. " * 2))
+```
+
+`live_engine` is a module fixture that skips unless `DS4_TEST_MODEL` is set, loads the library from `DS4_LIB` or the default directory, and opens a CPU engine with `ctx=4096`. Add one more live test: `engine.token_text` over `engine.tokenize("Hello world")` joins to `b"Hello world"`.
+
+- [ ] **Step 3: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/native/test_api.py -v`
+Expected: FAIL with `ImportError` for `ds4py._native.api`.
+
+- [ ] **Step 4: Implement `protocol.py` and `api.py`**
+
+Prechecks, both called by `open_engine` before `ds4_engine_open`:
+
+- `check_model_file`: raise `ModelFileError` naming the path when the file does not exist, is a directory, has fewer than 32 bytes, or does not start with `b"GGUF"`. These are the cases where `model_open` (`ds4.c:2855`) calls `ds4_die`.
+- `check_instance_lock`: open `lock_path()` with `O_RDWR | O_CREAT`, mode `0600`, and try `fcntl.flock(fd, LOCK_EX | LOCK_NB)`. On `BlockingIOError`, read a pid from the file and raise `EngineLockedError("another ds4 process holds <path> (pid <n>); stop it or set DS4_LOCK_FILE")`, leaving out `(pid <n>)` when there is none. Otherwise unlock and close. ds4 takes the same `flock` in `ds4_acquire_instance_lock` (`ds4.c:61061`).
+
+`engine_options` zero-fills the struct and sets `model_path`, `backend` (from `BACKENDS`; any other name raises `ValueError`), `n_threads`, `context_size`, `placement_ctx_hint = ctx`, `mtp_draft_tokens = 1` and `mtp_margin = 3.0`, as `ds4_agent.c` does. `NativeEngine` keeps the options struct and its encoded path alive for its lifetime.
+
+For the Metal backend, `open_engine` changes the working directory to `manifest.source_path` around `ds4_engine_open`, because `ds4_metal.m` reads `metal/*.metal` relative to it. CI does not run this path; Task 14's live check on the bake-off machine does.
+
+`NativeSession`:
+- Creates one `PROGRESS_FN` and one `CANCEL_FN` object in `__init__` and keeps them on the instance. `sync` points them at the call's `progress` and `cancel`, installs them with `ds4_session_set_progress`, `ds4_session_set_display_progress` and `ds4_session_set_cancel`, and clears all three with `PROGRESS_FN()` / `CANCEL_FN()` in `finally`.
+- The callbacks never raise into C. They store the first exception, make cancel return `True`, and `sync` re-raises it after the C call returns.
+- `sync` returns `DONE` for 0 and `INTERRUPTED` for `DS4_SESSION_SYNC_INTERRUPTED` (2). Any other code raises `EngineError` with the text from the 512-byte error buffer. `eval`, `save_snapshot` and `load_snapshot` raise the same way.
+- Token lists cross into C as a `Tokens` struct over a `(c_int * n)` array that lives for the call. `tokenize` copies `v[:len]` out and then calls `ds4_tokens_free`. `token_text` copies the returned bytes and frees them with `Library.free`. `tokens()` copies the borrowed `ds4_session_tokens` array.
+- Every method asserts it runs on the thread that created the session.
+- `close()` frees the session once; `__del__` calls `close()`. `NativeSnapshot.close()` calls `ds4_session_snapshot_free` once; `nbytes` is the struct's `len`.
+
+`LibNative.restore_enabled` is `False` only when `manifest.live_checks["restore"]["ok"]` is `False`. `LibNative.bind(name)` returns `Library.fn(name)`.
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `uv run pytest tests/native/test_api.py -v`
+Expected: PASS, with `build` and `live` tests skipped.
+
+Run: `DS4_SRC_UPSTREAM=<upstream tree> uv run pytest tests/native/test_api.py -v -m build`
+Expected: 1 passed.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/ds4py/_native tests
+git commit -m "feat(native): wrap the ds4 engine and session API with ctypes"
+```
+
+### Task 8: `FakeNative`
+
+**Files:**
+- Create: `src/ds4py/_native/fake.py`
+- Test: `tests/native/test_fake.py`
+
+**Interfaces:**
+- Consumes: the Task 7 protocols, `all_bindings()`, `MissingBinding`, `EngineError`.
+- Produces: `FAKE_EOS = 0`; `Script = Callable[[Sequence[int], Sequence[int]], int]` (prompt tokens, generated tokens → next token); `reply(text: bytes) -> Script` (emits the bytes, then `FAKE_EOS`); `FakeClock` (`__call__() -> float`, `advance(seconds)`); `FakeNative(*, script: Script = reply(b"ok"), chunk: int = 4, clock: FakeClock | None = None, chunk_seconds: float = 0.0, bindings: Mapping[str, Callable] = {}, absent: Iterable[str] = (), restore_enabled: bool = True, info: EngineInfo | None = None)`; `FakeEngine`, `FakeSession` (with `calls: list[tuple]`), `FakeSnapshot`.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+@pytest.mark.parametrize("check", CONTRACT, ids=lambda f: f.__name__)
+def test_contract(check):
+    engine = FakeNative().open_engine(EngineConfig(Path("fake.gguf")))
+    check(engine, engine.tokenize("The quick brown fox"))
+
+def test_tokenizer_round_trips_bytes():
+    e = FakeNative().open_engine(EngineConfig(Path("f")))
+    assert b"".join(e.token_text(t) for t in e.tokenize("héllo")) == "héllo".encode()
+    assert e.eos() == FAKE_EOS and e.is_stop(FAKE_EOS) and not e.is_stop(e.tokenize("a")[0])
+
+def test_progress_events_follow_ds4():
+    clock = FakeClock()
+    s = FakeNative(chunk=4, clock=clock, chunk_seconds=0.05).open_engine(EngineConfig(Path("f"))).create_session(64)
+    s.sync(list(range(1, 7)))
+    events = []
+    s.sync(list(range(1, 17)), progress=lambda *e: events.append(e))
+    assert events == [("prefill_chunk", 6, 16), ("prefill_chunk", 10, 16),
+                      ("prefill_chunk", 14, 16), ("prefill_chunk", 16, 16)]
+    assert clock() == pytest.approx(0.05 * 3 + 0.05 * 3)
+
+def test_cancel_keeps_the_partial_prefix_valid():
+    s = FakeNative(chunk=4).open_engine(EngineConfig(Path("f"))).create_session(64)
+    seen = []
+    status = s.sync(list(range(1, 17)), progress=lambda *e: seen.append(e), cancel=lambda: len(seen) >= 2)
+    assert status is SyncStatus.INTERRUPTED and s.pos() == 4 and s.checkpoint_valid()
+
+def test_script_drives_sampling_and_calls_are_logged():
+    s = FakeNative(script=reply(b"hi")).open_engine(EngineConfig(Path("f"))).create_session(64)
+    s.sync([5, 6])
+    out = []
+    while (t := s.sample(1.0, 0, 1.0, 0.05, ctypes.c_uint64(3))) != FAKE_EOS:
+        s.eval(t); out.append(t)
+    assert bytes(t - 1 for t in out) == b"hi"
+    assert ("eval", FAKE_EOS) not in s.calls and s.calls[0] == ("sync", 2)
+
+def test_bind(ext_site):
+    native = FakeNative(bindings={"ds4_engine_layer_count": lambda e: 43},
+                        absent={"ds4_engine_sampling_defaults"})
+    assert native.bind("ds4_engine_layer_count")(None) == 43
+    with pytest.raises(MissingBinding, match="absent"): native.bind("ds4_engine_sampling_defaults")
+    with pytest.raises(MissingBinding, match="does not declare"): native.bind("ds4_session_tp_spec_cycle")
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/native/test_fake.py -v`
+Expected: FAIL with `ModuleNotFoundError` for `ds4py._native.fake`.
+
+- [ ] **Step 3: Implement `fake.py`**
+
+- Tokenizer: byte `b` is token `b + 1`; token 0 is `FAKE_EOS` with text `b"</s>"`; `vocab_size` 257. `rendered=True` tokenizes the same way. `is_stop` is true only for `FAKE_EOS`. The default `EngineInfo` has name `"fake"`, family `"deepseek4"` and `mtp_draft_tokens` 1.
+- `sync` follows ds4's rules. Empty input, or input with `len >= ctx`, raises `EngineError`. State is kept only when the checkpoint is valid and the new tokens start with all of it; otherwise prefill starts at 0. Progress emits `("prefill_chunk", start, total)` first, then one event after each `chunk` tokens, with absolute positions. Before each chunk, the fake checks `cancel` and returns `INTERRUPTED`, keeping the prefix done so far as a valid checkpoint. Each chunk advances `clock` by `chunk_seconds`. The sync also records `("sync", n_prefilled)` in `calls`.
+- `sample` calls `script(prompt, generated)`, where `prompt` is the token list at the end of the last sync, and steps `rng.value` with splitmix64. `argmax` calls the script without touching `rng`. `eval` appends, records `("eval", token)`, and raises `EngineError` when the context is full. `rewind` truncates and records `("rewind", pos)`; it is a no-op when `pos >= len`.
+- `payload_bytes` is `1024 * pos`. `save_snapshot` returns a `FakeSnapshot` holding a copy of the tokens and the prompt length, with that `nbytes`. `load_snapshot` restores them and marks the checkpoint valid.
+- `bind` raises `MissingBinding` with `ds4py does not declare <name>` for names not in `all_bindings()`, and `<name> is absent from this library` for names in `absent`. Otherwise it returns `bindings[name]`.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `uv run pytest tests/native -v`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/ds4py/_native/fake.py tests/native/test_fake.py
+git commit -m "feat(native): add FakeNative with ds4's sync, progress and cancel rules"
+```
+
+### Task 9: Transcript, sync plans and sampling
+
+**Files:**
+- Create: `src/ds4py/engine/__init__.py`, `src/ds4py/engine/transcript.py`, `src/ds4py/engine/plan.py`, `src/ds4py/engine/sampling.py`
+- Test: `tests/engine/test_transcript.py`, `tests/engine/test_plan.py`, `tests/engine/test_sampling.py`
+
+**Interfaces:**
+- Consumes: `EngineInfo`.
+- Produces:
+  - `transcript.py`: `KINDS = ("system", "user", "assistant_prefix", "assistant", "tool", "eos", "note", "reminder", "compaction")`; `Segment(start: int, end: int, kind: str, meta: Mapping[str, object])` (frozen); `Transcript` with `.tokens -> tuple[int, ...]`, `.segments -> tuple[Segment, ...]`, `__len__`, `append(tokens: Sequence[int], kind: str, meta: Mapping | None = None) -> Segment`, `extend(tokens: Sequence[int]) -> None` (grows the last segment), `truncate(n: int) -> None`.
+  - `plan.py`: `Plan(kind: Literal["extend", "restore", "rebuild"], reused: int, to_prefill: int, fits: bool, checkpoint: str | None)` (frozen); `plan_sync(tokens: Sequence[int], *, live: Sequence[int], live_valid: bool, checkpoints: Mapping[str, Sequence[int]], ctx: int, reserve: int = 1, restore_enabled: bool = True) -> Plan`.
+  - `sampling.py`: `SamplingPolicy(temperature: float = 1.0, top_p: float = 1.0, min_p: float = 0.05, top_k: int = 0, seed: int | None = None)` (frozen); `SamplingPolicy.for_engine(info: EngineInfo, *, temperature=None, top_p=None, min_p=None, top_k=None, seed=None) -> SamplingPolicy`; `Rng(seed: int | None)` with `.state: ctypes.c_uint64`.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+def test_transcript_segments():
+    t = Transcript()
+    t.append([1, 2, 3], "user"); t.append([4], "assistant"); t.extend([5, 6])
+    assert t.tokens == (1, 2, 3, 4, 5, 6)
+    assert [(s.start, s.end, s.kind) for s in t.segments] == [(0, 3, "user"), (3, 6, "assistant")]
+    t.truncate(4)
+    assert [(s.start, s.end) for s in t.segments] == [(0, 3), (3, 4)]
+    t.truncate(3)
+    assert len(t.segments) == 1
+    with pytest.raises(ValueError, match="kind"): t.append([7], "chat")
+    with pytest.raises(ValueError): t.append([], "user")
+
+P = list(range(1, 21))
+def plan(tokens, live=(), valid=True, cps=None, ctx=100, restore=True):
+    return plan_sync(tokens, live=list(live), live_valid=valid, checkpoints=cps or {}, ctx=ctx, restore_enabled=restore)
+
+def test_extend():
+    assert plan(P, live=P[:5]) == Plan("extend", 5, 15, True, None)
+    assert plan(P, live=P) == Plan("extend", 20, 0, True, None)
+
+def test_restore_picks_the_longest_checkpoint():
+    p = plan(P, live=[9, 9], cps={"system": P[:3], "turn": P[:8], "other": [7]})
+    assert p == Plan("restore", 8, 12, True, "turn")
+
+def test_rebuild():
+    assert plan(P, live=P[:5], valid=False) == Plan("rebuild", 0, 20, True, None)
+    assert plan(P).kind == "rebuild"                                       # empty live is not an extension
+    assert plan(P, live=[9], cps={"system": P[:3]}, restore=False).kind == "rebuild"
+
+def test_fits_leaves_the_reserve():
+    assert plan(P, ctx=21).fits and not plan(P, ctx=20).fits
+
+def test_glm_defaults_unless_set():
+    glm = replace(INFO, family="glm", is_glm_dsa=True)
+    assert SamplingPolicy.for_engine(glm) == SamplingPolicy(top_p=0.95, min_p=0.0)
+    assert SamplingPolicy.for_engine(glm, min_p=0.1).min_p == 0.1
+    assert SamplingPolicy.for_engine(INFO, temperature=0.0) == SamplingPolicy(temperature=0.0)
+
+def test_rng_seed():
+    assert Rng(7).state.value == 7
+    assert Rng(None).state.value != 0 and Rng(0).state.value != 0      # ds4: seed 0 means "pick one"
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/engine -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'ds4py.engine'`.
+
+- [ ] **Step 3: Implement the three modules**
+
+`plan_sync` follows spec section 10:
+1. `extend` when `live_valid`, `live` is not empty, and `tokens` starts with all of `live`. `reused = len(live)`.
+2. Otherwise `restore` when `restore_enabled` and some checkpoint's tokens are a non-empty prefix of `tokens`. The longest one wins; ties go to the first in mapping order. `reused` is its length.
+3. Otherwise `rebuild` with `reused = 0`.
+
+`to_prefill = len(tokens) - reused`. `fits = len(tokens) + reserve <= ctx`. ds4 refuses a prompt that leaves no free slot, so `reserve` is at least 1.
+
+`Rng(seed)` uses `seed` when it is non-zero. Otherwise it uses `int(time.time()) ^ (os.getpid() << 32) ^ time.process_time_ns()`, masked to 64 bits and forced non-zero, matching `ds4_agent.c`.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `uv run pytest tests/engine -v`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/ds4py/engine tests/engine
+git commit -m "feat(engine): add transcript, sync plans and sampling policy"
+```
