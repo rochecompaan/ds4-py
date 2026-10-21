@@ -764,41 +764,50 @@ class Native(Protocol):
 
 - [ ] **Step 1: Write the shared contract**
 
-`tests/native/contract.py` holds behaviour that both the real library and `FakeNative` must show. Each function takes an `EngineHandle` and a list of prompt tokens with at least 8 entries. `prefilled(events)` returns `total - current` from the first `"prefill_chunk"` event, or 0 when there is none.
+`tests/native/contract.py` holds behaviour that both the real library and `FakeNative` must show. Each function takes an `EngineHandle` and a list of prompt tokens with at least 8 entries, whose last token differs from its first. ds4's progress events differ by backend: the CPU path reports one event per extended token and a single `(len, len)` event for a rebuild, while Metal reports the start position first. So the contract checks reuse by its result: after an extension or a restore, the next greedy token must match a full rebuild.
 
 ```python
-def check_sync_and_extend(engine, prompt):
+def rebuilt_argmax(s, tokens):
+    s.invalidate(); s.sync(tokens)
+    return s.argmax()
+
+def check_extend_matches_rebuild(engine, prompt):
     s = engine.create_session(len(prompt) + 64)
     assert s.sync(prompt[:-2]) is SyncStatus.DONE and s.pos() == len(prompt) - 2
     events = []
     assert s.sync(prompt, progress=lambda *e: events.append(e)) is SyncStatus.DONE
-    assert s.tokens() == list(prompt) and prefilled(events) == 2
+    assert s.tokens() == list(prompt) and s.checkpoint_valid()
+    chunks = [e for e in events if e[0] == "prefill_chunk"]    # Metal interleaves prefill_display
+    assert chunks[-1] == ("prefill_chunk", len(prompt), len(prompt))
+    assert s.argmax() == rebuilt_argmax(s, prompt)
 
-def check_diverged_sync_prefills_from_zero(engine, prompt):
+def check_common_prefix(engine, prompt):
+    assert prompt[-1] != prompt[0]
     s = engine.create_session(len(prompt) + 64)
     s.sync(prompt)
-    events = []
-    s.sync(prompt[:-1] + [prompt[0]], progress=lambda *e: events.append(e))
-    assert prefilled(events) == len(prompt)
+    diverged = prompt[:-1] + [prompt[0]]
+    assert s.common_prefix(diverged) == len(prompt) - 1
+    s.sync(diverged); assert s.tokens() == diverged
+    s.invalidate(); assert s.common_prefix(diverged) == 0
 
 def check_eval_rewind_and_greedy(engine, prompt):
     s = engine.create_session(len(prompt) + 64)
     s.sync(prompt)
     tok = s.argmax()
-    assert s.sample(0.0, 0, 1.0, 0.0, ctypes.c_uint64(1)) == tok
+    assert s.sample(0.0, 0, 1.0, 0.0, ctypes.c_uint64(1)) == tok      # temperature 0 is greedy
     s.eval(tok); assert s.pos() == len(prompt) + 1
-    s.rewind(len(prompt)); assert s.tokens() == list(prompt) and s.argmax() == tok
+    s.rewind(len(prompt)); assert s.tokens() == list(prompt)
+    s.sync(prompt); assert s.argmax() == tok      # rewind usually invalidates; sync rebuilds
 
-def check_snapshot_restore(engine, prompt):
+def check_snapshot_restore_matches_rebuild(engine, prompt):
     s = engine.create_session(len(prompt) + 64)
     s.sync(prompt[:4]); snap = s.save_snapshot()
     assert snap.nbytes > 0 and s.payload_bytes() > 0
     s.sync(prompt[:2] + prompt[:2])
     s.load_snapshot(snap); snap.close()
     assert s.tokens() == list(prompt[:4]) and s.checkpoint_valid()
-    events = []
-    s.sync(prompt, progress=lambda *e: events.append(e))
-    assert prefilled(events) == len(prompt) - 4
+    s.sync(prompt)
+    assert s.argmax() == rebuilt_argmax(s, prompt)
 
 def check_cancel_interrupts(engine, prompt):
     s = engine.create_session(len(prompt) + 64)
@@ -810,8 +819,8 @@ def check_context_errors(engine, prompt):
     with pytest.raises(EngineError): s.sync(prompt)           # needs one free slot
     with pytest.raises(EngineError): s.sync([])
 
-CONTRACT = [check_sync_and_extend, check_diverged_sync_prefills_from_zero, check_eval_rewind_and_greedy,
-            check_snapshot_restore, check_cancel_interrupts, check_context_errors]
+CONTRACT = [check_extend_matches_rebuild, check_common_prefix, check_eval_rewind_and_greedy,
+            check_snapshot_restore_matches_rebuild, check_cancel_interrupts, check_context_errors]
 ```
 
 - [ ] **Step 2: Write the failing API tests**
@@ -860,7 +869,7 @@ def test_contract_live(live_engine, check):
     check(live_engine, live_engine.tokenize("The quick brown fox jumps over the lazy dog. " * 2))
 ```
 
-`live_engine` is a module fixture that skips unless `DS4_TEST_MODEL` is set, loads the library from `DS4_LIB` or the default directory, and opens a CPU engine with `ctx=4096`. Add one more live test: `engine.token_text` over `engine.tokenize("Hello world")` joins to `b"Hello world"`.
+`live_engine` is a module fixture that skips unless `DS4_TEST_MODEL` is set, loads the library from `DS4_LIB` or the default directory, and opens an engine on the manifest's backend with `ctx=4096`. `test_contract_live` skips `check_snapshot_restore_matches_rebuild` when `LibNative.restore_enabled` is `False`. Add one more live test: `engine.token_text` over `engine.tokenize("Hello world")` joins to `b"Hello world"`.
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
@@ -934,7 +943,7 @@ def test_progress_events_follow_ds4():
     s.sync(list(range(1, 17)), progress=lambda *e: events.append(e))
     assert events == [("prefill_chunk", 6, 16), ("prefill_chunk", 10, 16),
                       ("prefill_chunk", 14, 16), ("prefill_chunk", 16, 16)]
-    assert clock() == pytest.approx(0.05 * 3 + 0.05 * 3)
+    assert clock() == pytest.approx(0.05 * 2 + 0.05 * 3)       # 2 chunks, then 3
 
 def test_cancel_keeps_the_partial_prefix_valid():
     s = FakeNative(chunk=4).open_engine(EngineConfig(Path("f"))).create_session(64)
@@ -967,8 +976,8 @@ Expected: FAIL with `ModuleNotFoundError` for `ds4py._native.fake`.
 - [ ] **Step 3: Implement `fake.py`**
 
 - Tokenizer: byte `b` is token `b + 1`; token 0 is `FAKE_EOS` with text `b"</s>"`; `vocab_size` 257. `rendered=True` tokenizes the same way. `is_stop` is true only for `FAKE_EOS`. The default `EngineInfo` has name `"fake"`, family `"deepseek4"` and `mtp_draft_tokens` 1.
-- `sync` follows ds4's rules. Empty input, or input with `len >= ctx`, raises `EngineError`. State is kept only when the checkpoint is valid and the new tokens start with all of it; otherwise prefill starts at 0. Progress emits `("prefill_chunk", start, total)` first, then one event after each `chunk` tokens, with absolute positions. Before each chunk, the fake checks `cancel` and returns `INTERRUPTED`, keeping the prefix done so far as a valid checkpoint. Each chunk advances `clock` by `chunk_seconds`. The sync also records `("sync", n_prefilled)` in `calls`.
-- `sample` calls `script(prompt, generated)`, where `prompt` is the token list at the end of the last sync, and steps `rng.value` with splitmix64. `argmax` calls the script without touching `rng`. `eval` appends, records `("eval", token)`, and raises `EngineError` when the context is full. `rewind` truncates and records `("rewind", pos)`; it is a no-op when `pos >= len`.
+- `sync` follows ds4's rules. Empty input, or input with `len >= ctx`, raises `EngineError`. State is kept only when the checkpoint is valid and the new tokens start with all of it; otherwise prefill starts at 0. Progress follows ds4's Metal path: `("prefill_chunk", start, total)` first, then one event after each `chunk` tokens, with absolute positions. The fake emits no `prefill_display` events. Before each chunk, the fake checks `cancel` and returns `INTERRUPTED`, keeping the prefix done so far as a valid checkpoint. Each chunk advances `clock` by `chunk_seconds`. The sync also records `("sync", n_prefilled)` in `calls`.
+- `sample` calls `script(prompt, generated)`, where `prompt` is the token list at the end of the last sync, and steps `rng.value` with splitmix64. `argmax` calls the script without touching `rng`. `eval` appends, records `("eval", token)`, and raises `EngineError` when the context is full. `rewind` truncates, marks the checkpoint invalid and records `("rewind", pos)`; it is a no-op when `pos >= len`. This is ds4's rule for DeepSeek outside a speculative step (`ds4_session_rewind`): compressor state cannot be rolled back, so the next sync rebuilds. `sample` and `argmax` return -1 while the checkpoint is invalid, as ds4 does.
 - `payload_bytes` is `1024 * pos`. `save_snapshot` returns a `FakeSnapshot` holding a copy of the tokens and the prompt length, with that `nbytes`. `load_snapshot` restores them and marks the checkpoint valid.
 - `bind` raises `MissingBinding` with `ds4py does not declare <name>` for names not in `all_bindings()`, and `<name> is absent from this library` for names in `absent`. Otherwise it returns `bindings[name]`.
 
