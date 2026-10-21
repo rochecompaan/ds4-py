@@ -376,3 +376,328 @@ Expected: PASS. If the layout test fails, fix `structs.py`, not the test.
 git add src/ds4py/abi tests
 git commit -m "feat(abi): probe binding signatures and struct layouts against ds4 headers"
 ```
+
+### Task 4: Manifest validation and the loader
+
+**Files:**
+- Create: `src/ds4py/abi/manifest.py`, `src/ds4py/_native/loader.py`
+- Test: `tests/abi/test_manifest.py`, `tests/native/test_loader.py`
+
+**Interfaces:**
+- Consumes: `Binding`, `all_bindings()`, `typemap.ctypes_signature`, `StructLayout`, `struct_layout`, `STRUCTS`, `probe.*`.
+- Produces:
+  - `manifest.py`: `MANIFEST_NAME = "libds4.abi.json"`; `manifest_path(lib: Path) -> Path`; `BindingRecord(prototype: str, required: bool, source: str, ok: bool, message: str = "")`; `Manifest(type_map_version: int, library_file: str, library_sha256: str, source_path: str, source_commit: str | None, backend: str, headers: dict[str, str], headers_known: bool, bindings: dict[str, BindingRecord], layouts: dict[str, StructLayout], live_checks: dict[str, dict] = {})` with `Manifest.read(path) -> Manifest` and `.write(path)`; `Validation(available: frozenset[str], absent: frozenset[str], warnings: tuple[str, ...])`; `validate(m: Manifest, *, lib_sha256: str, bindings: Sequence[Binding], layouts: dict[str, StructLayout]) -> Validation`; `file_sha256(path: Path) -> str`.
+  - `loader.py`: `LIB_NAME` (`libds4.dylib` on macOS, else `libds4.so`); `default_lib_dir() -> Path` (`~/.ds4py/lib`); `resolve_lib_path(lib: str | Path | None) -> Path`; `Library` with `.path`, `.manifest`, `.validation`, `.fn(name) -> ctypes function`, `.has(name) -> bool`, `.free(ptr) -> None` (libc `free` found through the library handle); `load_library(lib: str | Path | None = None) -> Library`; module seam `_dlopen(path: Path) -> ctypes.CDLL`.
+
+- [ ] **Step 1: Write the failing manifest tests**
+
+A session fixture `probed(cc, headers_dir, bindings)` runs `probe_signatures` and `probe_layouts` once per header set and caches them. `make_manifest(tmp_path, headers_dir, bindings=CORE_BINDINGS)` writes a dummy `libds4.so` (any bytes) and returns `(lib_path, Manifest)` built from the cached probe results.
+
+```python
+def test_matching_manifest_is_accepted(cc, tmp_path, upstream_headers):
+    lib, m = make_manifest(tmp_path, upstream_headers)
+    v = manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=CORE_BINDINGS, layouts=LAYOUTS)
+    assert v.available == {b.name for b in CORE_BINDINGS} and v.warnings == ()
+
+def test_unknown_headers_only_warn(cc, tmp_path, fork_headers):
+    lib, m = make_manifest(tmp_path, fork_headers)
+    v = manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=CORE_BINDINGS, layouts=LAYOUTS)
+    assert any("b1e0ad190897" in w for w in v.warnings)
+
+def test_changed_prototype_is_refused(cc, tmp_path, upstream_headers):
+    lib, m = make_manifest(tmp_path, upstream_headers)
+    m.bindings["ds4_session_eval"].prototype = "int ds4_session_eval(ds4_session *, long, char *, size_t)"
+    with pytest.raises(AbiMismatch) as e:
+        manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=CORE_BINDINGS, layouts=LAYOUTS)
+    msg = str(e.value)
+    assert "ds4_session_eval(ds4_session *, long, char *, size_t)" in msg
+    assert "ds4_session_eval(ds4_session *, int, char *, size_t)" in msg
+    assert "ds4py build" in msg
+
+def test_moved_field_is_refused(cc, tmp_path):
+    inc = doctored(tmp_path, "    int n_threads;\n    int context_size;", "    int context_size;\n    int n_threads;")
+    lib, m = make_manifest(tmp_path, inc)
+    with pytest.raises(AbiMismatch, match=r"ds4_engine_options\.(n_threads|context_size)"):
+        manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=CORE_BINDINGS, layouts=LAYOUTS)
+
+def test_failed_required_probe_is_refused(cc, tmp_path): ...   # doctored `long token` header; message names ds4_session_eval
+def test_library_hash_mismatch_is_refused(cc, tmp_path, upstream_headers): ...  # match "ds4py build"
+def test_type_map_version_mismatch_is_refused(cc, tmp_path, upstream_headers): ...
+def test_unprobed_extension_binding_is_refused(cc, tmp_path, upstream_headers, ext_site): ...  # match "ds4_engine_layer_count"
+def test_absent_optional_binding_is_listed(cc, tmp_path, upstream_headers, ext_site):
+    lib, m = make_manifest(tmp_path, upstream_headers, bindings=all_bindings())
+    v = manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=all_bindings(), layouts=LAYOUTS)
+    assert v.absent == {"ds4_engine_sampling_defaults"} and "ds4_engine_layer_count" in v.available
+
+def test_manifest_round_trips(cc, tmp_path, upstream_headers):
+    lib, m = make_manifest(tmp_path, upstream_headers)
+    m.write(tmp_path / "m.json")
+    assert manifest.Manifest.read(tmp_path / "m.json") == m
+```
+
+`LAYOUTS = {name: struct_layout(cls) for name, cls in STRUCTS.items()}`.
+
+- [ ] **Step 2: Write the failing loader tests**
+
+```python
+def test_resolution_order(tmp_path, monkeypatch):
+    monkeypatch.setenv("DS4_LIB", str(tmp_path / "env" / LIB_NAME))
+    assert resolve_lib_path(tmp_path / "x.so") == tmp_path / "x.so"
+    assert resolve_lib_path(None) == tmp_path / "env" / LIB_NAME
+    monkeypatch.delenv("DS4_LIB")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert resolve_lib_path(None) == tmp_path / ".ds4py" / "lib" / LIB_NAME
+
+def test_missing_library_says_how_to_build(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path)); monkeypatch.delenv("DS4_LIB", raising=False)
+    with pytest.raises(LibraryNotFound, match="ds4py build --src"):
+        load_library()
+
+def test_missing_manifest_is_refused_before_dlopen(tmp_path, monkeypatch):
+    (tmp_path / LIB_NAME).write_bytes(b"x")
+    monkeypatch.setattr(loader, "_dlopen", lambda p: pytest.fail("dlopen called"))
+    with pytest.raises(AbiMismatch, match="libds4.abi.json"):
+        load_library(tmp_path / LIB_NAME)
+
+def test_one_library_per_process(cc, tmp_path, upstream_headers, monkeypatch):
+    # two valid manifests at two paths; _dlopen patched to a stub whose attributes accept argtypes/restype
+    assert load_library(lib_a) is load_library(lib_a)
+    with pytest.raises(LibraryAlreadyLoaded, match=str(lib_a)):
+        load_library(lib_b)
+
+def test_absent_optional_binding_raises_missing_binding(...):  # ext_site; lib.fn("ds4_engine_sampling_defaults") -> MissingBinding
+def test_undeclared_name_raises_missing_binding(...):         # lib.fn("ds4_session_tp_spec_cycle") -> MissingBinding
+```
+
+An autouse fixture in `tests/native/test_loader.py` resets `loader._loaded` to `None`.
+
+- [ ] **Step 3: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/abi/test_manifest.py tests/native/test_loader.py -v`
+Expected: FAIL with `ImportError` for `ds4py.abi.manifest`.
+
+- [ ] **Step 4: Implement `manifest.py` and `loader.py`**
+
+`validate` checks in this order and raises `AbiMismatch` on the first failure: type-map version, library hash, then for each installed binding: a record exists, the recorded prototype equals `binding.normalized`, and a required binding's probe passed. Then layouts: struct sizes, then each field offset. An optional binding whose probe failed goes in `absent`. Unknown headers add a warning naming the file and the first 12 hex digits of its hash. Every refusal message ends with `` Run `ds4py build` to rebuild the library and its manifest. `` The prototype refusal has this shape:
+
+```text
+ds4_session_eval: the library was probed with
+  int ds4_session_eval(ds4_session *, long, char *, size_t)
+but ds4py declares
+  int ds4_session_eval(ds4_session *, int, char *, size_t)
+```
+
+`load_library` resolves the path, reads and validates the manifest with `all_bindings()` and the `STRUCTS` layouts, and only then calls `_dlopen(path)`, which is `ctypes.CDLL(str(path), mode=os.RTLD_LOCAL)`. It sets `argtypes` and `restype` from `ctypes_signature` on every available binding. A symbol missing from the library raises `AbiMismatch`. `_loaded` holds the one `Library` for the process.
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `uv run pytest tests/abi tests/native -v`
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/ds4py/abi/manifest.py src/ds4py/_native/loader.py tests
+git commit -m "feat(abi): validate libds4.abi.json and load the library once per process"
+```
+
+### Task 5: `ds4py build`
+
+**Files:**
+- Create: `src/ds4py/abi/Makefile.lib`, `src/ds4py/abi/build.py`, `src/ds4py/cli.py`, `src/ds4py/__main__.py`
+- Test: `tests/abi/test_build.py`
+
+**Interfaces:**
+- Consumes: `probe.*`, `Manifest`, `BindingRecord`, `file_sha256`, `all_bindings()`, `LIB_NAME`, `default_lib_dir()`, `pins.UPSTREAM`.
+- Produces: `default_backend() -> str` (`"metal"` on macOS, else `"cpu"`); `build_library(src: Path, *, backend: str, out_dir: Path, jobs: int | None = None, cc: str | None = None, log: TextIO = sys.stderr) -> Path` (the installed library); `cli.main(argv: list[str] | None = None) -> int` with subcommand `build --src PATH [--backend cpu|metal|cuda|rocm] [--out DIR] [-j N]`. `--out` defaults to `default_lib_dir()`.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+def test_not_a_ds4_tree(tmp_path):
+    with pytest.raises(BuildError, match="not a ds4 source tree: missing ds4.h"):
+        build_library(tmp_path, backend="cpu", out_dir=tmp_path / "out")
+
+def test_no_compiler(tmp_path, fake_tree, monkeypatch):
+    monkeypatch.setenv("CC", str(tmp_path / "no-such-cc"))
+    with pytest.raises(BuildError, match="no C compiler"):
+        build_library(fake_tree, backend="cpu", out_dir=tmp_path / "out")
+
+def test_no_make(tmp_path, fake_tree, monkeypatch): ...      # shutil.which("make") -> None; match "make"
+def test_rocm_is_refused(tmp_path, fake_tree): ...           # match "rocm"
+def test_metal_needs_macos(tmp_path, fake_tree): ...         # skip on darwin; match "macOS"
+
+def test_changed_argument_type_fails_before_make(cc, tmp_path, monkeypatch):
+    tree = doctored(tmp_path, "int ds4_session_eval(ds4_session *s, int token,",
+                              "int ds4_session_eval(ds4_session *s, long token,")
+    (tree / "Makefile").write_text(""); (tree / "ds4.c").write_text("")
+    monkeypatch.setattr(build, "_run_make", lambda *a, **k: pytest.fail("make ran"))
+    with pytest.raises(BuildError) as e:
+        build_library(tree, backend="cpu", out_dir=tmp_path / "out", cc=cc)
+    assert "ds4_session_eval" in str(e.value) and "incompatible" in str(e.value)
+    assert not (tmp_path / "out" / LIB_NAME).exists()
+
+def test_mirror_skips_git_and_objects(tmp_path): ...  # build._mirror(src, dst): .git/ and *.o, *.a, *.so, *.dylib not linked; others are symlinks
+
+@pytest.mark.build
+def test_cpu_build_of_upstream(built_upstream):
+    lib, m = built_upstream
+    assert lib.name == LIB_NAME and m.library_sha256 == file_sha256(lib)
+    assert all(r.ok for r in m.bindings.values()) and m.headers_known and m.backend == "cpu"
+    if (Path(os.environ["DS4_SRC_UPSTREAM"]) / ".git").exists():
+        assert m.source_commit == pins.UPSTREAM.commit
+
+@pytest.mark.build
+def test_cpu_build_of_fork_with_extension(built_fork):   # built with ext_site on sys.path
+    lib, m = built_fork
+    assert not m.headers_known and m.bindings["ds4_engine_sampling_defaults"].ok
+```
+
+`fake_tree` copies the upstream fixture headers and writes empty `Makefile` and `ds4.c`. `built_upstream` and `built_fork` are session fixtures in `tests/conftest.py` that skip unless `DS4_SRC_UPSTREAM` or `DS4_SRC_FORK` is set, then call `build_library(..., backend="cpu", out_dir=tmp_path_factory.mktemp(...))` and return `(lib_path, Manifest)`.
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/abi/test_build.py -v`
+Expected: FAIL with `ImportError` for `ds4py.abi.build`.
+
+- [ ] **Step 3: Write `Makefile.lib`**
+
+```make
+# Links a ds4 tree's own objects into libds4. ds4py build runs it in a
+# mirror of the tree: make -f Makefile.lib libds4 LIBDS4_BACKEND=cpu|metal|cuda
+include Makefile
+
+LIBDS4_BACKEND ?= cpu
+CFLAGS += -fPIC
+OBJCFLAGS += -fPIC
+NVCCFLAGS += -Xcompiler -fPIC
+
+ifeq ($(UNAME_S),Darwin)
+LIBDS4 := libds4.dylib
+LIBDS4_SHARED := -dynamiclib
+else
+LIBDS4 := libds4.so
+LIBDS4_SHARED := -shared
+endif
+
+ifeq ($(LIBDS4_BACKEND),cpu)
+$(LIBDS4): $(CPU_CORE_OBJS) ds4_kvstore.o
+	$(CC) $(CFLAGS) $(LIBDS4_SHARED) -o $@ $^ $(LDLIBS)
+else ifeq ($(LIBDS4_BACKEND),metal)
+$(LIBDS4): $(CORE_OBJS) ds4_kvstore.o
+	$(CC) $(CFLAGS) $(LIBDS4_SHARED) -o $@ $^ $(METAL_LDLIBS)
+else ifeq ($(LIBDS4_BACKEND),cuda)
+$(LIBDS4): $(CORE_OBJS) ds4_kvstore.o
+	$(DS4_LINK) $(LIBDS4_SHARED) -o $@ $^ $(DS4_LINK_LIBS)
+else
+$(error LIBDS4_BACKEND must be cpu, metal or cuda)
+endif
+
+.PHONY: libds4
+libds4: $(LIBDS4)
+```
+
+Make sure `uv build` puts `Makefile.lib` in the wheel (`unzip -l dist/*.whl | grep Makefile.lib`).
+
+- [ ] **Step 4: Implement `build.py`, `cli.py` and `__main__.py`**
+
+`build_library` runs these steps in order and stops at the first error:
+
+1. Preflight. Each failure raises `BuildError` with one line: `<src> is not a ds4 source tree: missing <file>` (checks `Makefile`, `ds4.h`, `ds4_kvstore.h`, `ds4.c`); `no C compiler: set CC or put cc on PATH`; `make not found on PATH`; `backend rocm is not supported by ds4py build yet`; `backend metal needs macOS`.
+2. Probe signatures for `all_bindings()` against `src`. If any required binding fails, raise `BuildError` listing each failed name with its compiler output.
+3. Mirror the tree with symlinks into `<out_dir>/build/<backend>-<first 12 hex of sha256(resolved src path)>`, skipping `.git` and `*.o`, `*.a`, `*.so`, `*.dylib`. Objects stay between builds, so rebuilds are incremental. Copy `Makefile.lib` in from package data.
+4. `_run_make(farm, backend, cc, jobs, log)` runs `make -f Makefile.lib libds4 LIBDS4_BACKEND=<backend> CC=<cc> -j<jobs or os.cpu_count()>`, streaming output to `log`. On failure, raise `BuildError` with the last 40 lines of output.
+5. Probe layouts. Copy the library to `<out_dir>/<LIB_NAME>` through a temporary file and `os.replace`, then write the manifest. `source_commit` is `git -C <src> rev-parse HEAD`, or `None` when that fails. Log a warning when the headers are unknown.
+
+`cli.main` uses `argparse` with subparsers. For `build`, it prints the installed path. A `Ds4pyError` prints `ds4py: <message>` to stderr and returns 1.
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `uv run pytest tests/abi/test_build.py -v`
+Expected: PASS, with the `build` tests skipped.
+
+Then run the real builds against local checkouts of both pins:
+
+Run: `DS4_SRC_UPSTREAM=<upstream tree> DS4_SRC_FORK=<fork tree> uv run pytest tests/abi/test_build.py -v -m build`
+Expected: 2 passed.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/ds4py/abi src/ds4py/cli.py src/ds4py/__main__.py tests
+git commit -m "feat(abi): add ds4py build with Makefile.lib, probes and manifest"
+```
+
+### Task 6: `ds4py check`
+
+**Files:**
+- Create: `src/ds4py/abi/check.py`
+- Modify: `src/ds4py/cli.py`
+- Test: `tests/abi/test_check.py`
+
+**Interfaces:**
+- Consumes: `load_library`, `Library`, `Validation`, `Manifest`, `AbiError`.
+- Produces: `CheckReport(lib_path: Path, manifest: Manifest | None, validation: Validation | None, extensions: dict[str, str], error: str | None)`; `check_library(lib: str | Path | None) -> CheckReport`; `format_report(r: CheckReport) -> str`; CLI `ds4py check [--lib PATH]`, which prints the report and exits 0, or 1 when `error` is set.
+
+- [ ] **Step 1: Write the failing tests**
+
+A process can load only one library, so the tests that load a real library run the CLI in a subprocess: `run_check(lib, extra_env={}) -> CompletedProcess` calls `[sys.executable, "-m", "ds4py", "check", "--lib", str(lib)]`.
+
+```python
+def test_report_lines_for_unknown_headers_and_optional_bindings():
+    text = format_report(report_with(headers_known=False, absent={"ds4_engine_sampling_defaults"},
+                                     extensions={"ds4_engine_layer_count": "test_ext",
+                                                 "ds4_engine_sampling_defaults": "test_ext"}))
+    assert "warning: unknown header ds4.h b1e0ad190897" in text
+    assert "ds4_engine_sampling_defaults  absent  (test_ext)" in text
+    assert "ds4_engine_layer_count  present  (test_ext)" in text
+    assert "restore:  not verified" in text
+
+def test_refused_library_exits_1(tmp_path): ...  # lib file without manifest; stdout or stderr contains "libds4.abi.json"; returncode 1
+
+@pytest.mark.build
+def test_check_upstream_build(built_upstream):
+    r = run_check(built_upstream[0])
+    assert r.returncode == 0 and "headers:  known" in r.stdout and "layouts:  ok" in r.stdout
+
+@pytest.mark.build
+def test_check_fork_build_lists_extension(built_fork):
+    r = run_check(built_fork[0], extra_env={"PYTHONPATH": EXT_SITE})
+    assert r.returncode == 0
+    assert "warning: unknown header ds4.h b1e0ad190897" in r.stdout
+    assert "ds4_engine_sampling_defaults  present  (test_ext)" in r.stdout
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/abi/test_check.py -v`
+Expected: FAIL with `ImportError` for `ds4py.abi.check`.
+
+- [ ] **Step 3: Implement `check.py` and the `check` subcommand**
+
+The report has these lines, in this order. Fixed text is exact; `<…>` is filled in:
+
+```text
+library:  <path> (<backend>)
+ds4 tree: <source path> at <commit[:12]>        # "<source path> (not a git checkout)" when commit is None
+headers:  known                                   # or: unknown, followed by one line per warning
+          warning: unknown header ds4.h b1e0ad190897; bindings and layouts were checked, but this tree is not a tested pin
+layouts:  ok
+bindings: <n> required ok
+optional: <name>  present|absent  (<source>)      # one line per optional or extension binding; "optional: none" when there are none
+restore:  not verified (run `ds4py check --live --model PATH`)
+```
+
+Task 14 fills in the `restore:` line from `manifest.live_checks`. When loading fails, the report is `library:  <path>` followed by `error:    <AbiError message>`.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `uv run pytest tests/abi/test_check.py -v`, then again with `DS4_SRC_UPSTREAM` and `DS4_SRC_FORK` set and `-m build`.
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/ds4py/abi/check.py src/ds4py/cli.py tests
+git commit -m "feat(abi): add ds4py check"
+```
