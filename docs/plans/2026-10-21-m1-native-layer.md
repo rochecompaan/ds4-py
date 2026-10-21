@@ -643,6 +643,8 @@ git commit -m "feat(abi): add ds4py build with Makefile.lib, probes and manifest
 
 A process can load only one library, so the tests that load a real library run the CLI in a subprocess: `run_check(lib, extra_env={}) -> CompletedProcess` calls `[sys.executable, "-m", "ds4py", "check", "--lib", str(lib)]`.
 
+The report tests need no library. `report_with(*, headers_known=True, absent=frozenset(), extensions={}) -> CheckReport` builds one by hand: a `Manifest` with backend `cpu`, source path `/src/ds4`, commit `UPSTREAM.commit`, the known header hashes (with `ds4.h` replaced by the fork's `b1e0ad190897de401780d02d246e610882bca676a531bd22d2e06b3769c52d9b` when `headers_known` is false), a passing `BindingRecord` for every name in `CORE_BINDINGS` and in `absent`, `headers_known` to match, and no layouts; a `Validation` with the core bindings available, `absent`, and, when `headers_known` is false, the warning `validate` writes for the fork's `ds4.h`; and the given `extensions`.
+
 ```python
 def test_report_lines_for_unknown_headers_and_optional_bindings():
     text = format_report(report_with(headers_known=False, absent={"ds4_engine_sampling_defaults"},
@@ -1460,3 +1462,458 @@ Expected: PASS, with `build` and `live` tests skipped.
 git add src/ds4py tests/engine/test_session.py
 git commit -m "feat(engine): add ds4py.open, Engine and Session"
 ```
+
+### Task 13: `ds4py raw`
+
+**Files:**
+- Create: `src/ds4py/raw.py`
+- Modify: `src/ds4py/cli.py`
+- Test: `tests/test_raw.py`
+
+**Interfaces:**
+- Consumes: `ds4py.open`, `Engine`, `Session`, `SamplingPolicy`, `Token`, `Stopped`, `Interrupted`, `EngineError`, `FakeNative`, `reply`.
+- Produces: `Trace(path: Path, *, now: Callable[[], datetime] = datetime.now)`, a context manager with `line(message: str) -> None`, `text(label: str, data: bytes) -> None` and `token(index: int, token: int, text: bytes) -> None`; `read_trace_tokens(path: Path) -> tuple[list[int], list[int]]`, the prompt and generated token ids of the last raw run in a trace written by either `ds4py raw` or `ds4-agent --raw`; `run_raw(engine: Engine, prompt: str, *, max_tokens: int, sampling: SamplingPolicy, out: BinaryIO, err: TextIO, trace: Trace | None = None) -> int`; `command(args: argparse.Namespace) -> int`; module seam `open_engine` (`ds4py.open`).
+- CLI: `ds4py raw (PROMPT | -p TEXT | --prompt-file PATH) [-m PATH] [-c N] [-n N] [--temp X] [--top-p X] [--min-p X] [--seed N] [--backend NAME | --cpu | --metal | --cuda] [-t N] [--trace FILE] [--lib PATH]`. Defaults: model `ds4flash.gguf`, `-c 100000`, `-n 50000`, backend from the manifest, threads 0.
+
+Exit codes: 0 when generation stops at a stop token, `-n` or the context reserve; 1 on an error (`cli.main` prints `ds4py: <message>`); 2 when the prompt does not fit; 130 after Ctrl+C. `ds4-agent --raw` writes the same stdout: token bytes only, with no trailing newline (`worker_run_raw_prompt`, `ds4_agent.c:10830`).
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+import ds4py.raw as raw_mod
+
+def raw(prompt="hi", *, ctx=64, max_tokens=50, script=reply(b"ok"), trace=None, cancel=None):
+    out, err = io.BytesIO(), io.StringIO()
+    with ds4py.open("f.gguf", ctx=ctx, cancel=cancel, native=FakeNative(script=script)) as e:
+        code = run_raw(e, prompt, max_tokens=max_tokens, sampling=e.sampling_defaults,
+                       out=out, err=err, trace=trace)
+    return code, out.getvalue(), err.getvalue()
+
+def test_writes_the_token_bytes_and_nothing_else():
+    assert raw(script=reply(b"hello")) == (0, b"hello", "")
+    assert raw(script=reply(b"hello"), max_tokens=3) == (0, b"hel", "")
+
+def test_a_prompt_that_does_not_fit_exits_2():
+    assert raw("x" * 64, ctx=64) == (2, b"", "ds4py: prompt of 64 tokens does not fit a context of 64\n")
+
+def test_an_empty_prompt_is_an_error():
+    with pytest.raises(EngineError, match="raw prompt tokenized to no tokens"):
+        raw("")
+
+def test_ctrl_c_flushes_the_text_and_exits_130():
+    main, cancel = threading.get_ident(), threading.Event()
+    def script(prompt, generated):
+        if len(generated) == 2:                              # Ctrl+C while the third token is sampled
+            signal.pthread_kill(main, signal.SIGINT)
+            assert cancel.wait(5)
+        return ord("abc"[len(generated)]) + 1
+    before = signal.getsignal(signal.SIGINT)
+    assert raw(script=script, cancel=cancel) == (130, b"abc", "")
+    assert signal.getsignal(signal.SIGINT) is before
+
+def test_trace_uses_the_ds4_agent_format(tmp_path):
+    path = tmp_path / "trace.log"
+    for _ in range(2):                                       # the file is appended to; the reader takes the last run
+        with Trace(path, now=lambda: datetime(2026, 10, 21, 9, 5, 7, 42_000)) as t:
+            raw("a\n", script=reply(b'"\x7f\xc3'), trace=t)
+    assert path.read_bytes().splitlines()[:7] == [
+        b'2026-10-21 09:05:07.042 raw-prompt="a\\n"',
+        b"2026-10-21 09:05:07.042 tokens label=raw_prompt_tokens start=0 len=2",
+        b'2026-10-21 09:05:07.042 token index=0 id=98 bytes=1 text="a" hex=61',
+        b'2026-10-21 09:05:07.042 token index=1 id=11 bytes=1 text="\\n" hex=0a',
+        b'2026-10-21 09:05:07.042 token index=1 id=35 bytes=1 text="\\"" hex=22',
+        b'2026-10-21 09:05:07.042 token index=2 id=128 bytes=1 text="\\x7f" hex=7f',
+        b'2026-10-21 09:05:07.042 token index=3 id=196 bytes=1 text="\xc3" hex=c3',
+    ]
+    assert read_trace_tokens(path) == ([98, 11], [35, 128, 196])
+
+@pytest.fixture
+def opened(monkeypatch):
+    seen = {}
+    def open_engine(model, **kw):
+        seen.update(model=model, **kw)
+        return ds4py.open(model, ctx=kw["ctx"], native=FakeNative(script=reply(b"ok")))
+    monkeypatch.setattr(raw_mod, "open_engine", open_engine)
+    return seen
+
+def test_cli_passes_the_flags_through(opened, monkeypatch):
+    ran = []
+    monkeypatch.setattr(raw_mod, "run_raw", lambda engine, prompt, **kw: ran.append((prompt, kw)) or 0)
+    assert cli.main(["raw", "hi", "-m", "m.gguf", "-c", "64", "-n", "5", "--temp", "0",
+                     "--top-p", "0.9", "--seed", "1", "--cpu", "-t", "2"]) == 0
+    assert opened == {"model": "m.gguf", "ctx": 64, "backend": "cpu", "seed": 1, "threads": 2, "lib": None}
+    (prompt, kw), = ran
+    assert (prompt, kw["max_tokens"], kw["trace"]) == ("hi", 5, None)
+    assert kw["sampling"] == SamplingPolicy(temperature=0.0, top_p=0.9, seed=1)
+
+def test_cli_defaults_and_prompt_sources(opened, capsysbinary, tmp_path):
+    (tmp_path / "p.txt").write_text("hi")
+    assert cli.main(["raw", "--prompt-file", str(tmp_path / "p.txt")]) == 0
+    assert capsysbinary.readouterr().out == b"ok"
+    assert opened == {"model": "ds4flash.gguf", "ctx": 100_000, "backend": None, "seed": None, "threads": 0, "lib": None}
+    with pytest.raises(SystemExit): cli.main(["raw", "hi", "-p", "hi"])     # exactly one prompt source
+    with pytest.raises(SystemExit): cli.main(["raw"])
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/test_raw.py -v`
+Expected: FAIL with `ModuleNotFoundError` for `ds4py.raw`.
+
+- [ ] **Step 3: Implement `raw.py` and the `raw` subcommand**
+
+`run_raw` follows `worker_run_raw_prompt`:
+1. `tokens = engine.tokenize(prompt)`, as `ds4_tokenize_text` with no chat template. No tokens raises `EngineError("raw prompt tokenized to no tokens")`.
+2. With a trace, write the text line `raw-prompt="<escaped prompt>"`, the line `tokens label=raw_prompt_tokens start=0 len=<n>`, then one token line per prompt token with indexes from 0. `ds4-agent` writes the same three parts (`ds4_agent.c:10847`).
+3. Create the session and `append_tokens(tokens, "user")`. When `session.plan().fits` is false, write `ds4py: prompt of <n> tokens does not fit a context of <ctx>` and a newline to `err`, and return 2 without syncing.
+4. On the main thread only, install a SIGINT handler that calls `session.cancel()` and sets SIGINT back to `SIG_DFL`, so a second Ctrl+C ends the process at once. Restore the previous handler in `finally`.
+5. Run `session.run_round(max_tokens=max_tokens, sampling=sampling)`. For each `Token`, write its bytes to `out`, flush, and trace it with indexes from 1. `Interrupted` and `Stopped("interrupted")` return 130; any other `Stopped` returns 0.
+
+`Trace` opens the file in append-binary mode, as `ds4-agent` does, and flushes each line. A line is `now()` as `%Y-%m-%d %H:%M:%S.mmm`, a space, and the message. A text line's message is `<label>="<escaped>"` (`agent_trace_text`). A token line's message is `token index=<i> id=<id> bytes=<n> text="<escaped>" hex=<lowercase hex>`. Both are escaped as in `agent_trace_escaped` (`ds4_agent.c:1733`): `\\`, `\n`, `\r`, `\t` and `\"`; other bytes below 32 and byte 127 as `\xNN`; every other byte as it is.
+
+`read_trace_tokens` finds the last `tokens label=raw_prompt_tokens start=0 len=<n>` line. The next `n` token lines are the prompt and every later token line is generated output. It reads `id=` from each with `rb" token index=\d+ id=(-?\d+) "` and raises `ValueError` when the file holds no raw run.
+
+`command(args)`:
+1. Read the prompt from `PROMPT`, `-p` or `--prompt-file` (UTF-8). The three form a required mutually exclusive group.
+2. `engine = open_engine(args.model, ctx=args.ctx, backend=args.backend, seed=args.seed, threads=args.threads, lib=args.lib)`. `--cpu`, `--metal` and `--cuda` set `backend`.
+3. `sampling = SamplingPolicy.for_engine(engine.info, temperature=args.temp, top_p=args.top_p, min_p=args.min_p, seed=args.seed)`.
+4. Inside `with engine` and the trace, return `run_raw(engine, prompt, max_tokens=args.tokens, sampling=sampling, out=sys.stdout.buffer, err=sys.stderr, trace=trace)`.
+
+`cli.py` only adds the parser and calls `raw.command`. Look up `open_engine` and `run_raw` as module globals at call time, so the tests can replace them.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `uv run pytest tests/test_raw.py -v`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/ds4py/raw.py src/ds4py/cli.py tests/test_raw.py
+git commit -m "feat(cli): add ds4py raw with ds4-agent's trace format"
+```
+
+### Task 14: `ds4py check --live` and the live parity tests
+
+**Files:**
+- Modify: `src/ds4py/abi/check.py`, `src/ds4py/cli.py`, `tests/conftest.py`, `tests/abi/test_check.py`
+- Create: `tests/live/test_live_check_cli.py`, `tests/live/test_raw_parity.py`
+- Test: `tests/abi/test_live_checks.py`
+
+**Interfaces:**
+- Consumes: `EngineWorker`, `SyncJob`, `CheckpointJob`, `GenerateJob`, `SamplingPolicy`, `Rng`, `Synced`, `Token`, `Stopped`, `EngineConfig`, `LibNative`, `load_library`, `manifest_path`, `Manifest`, `check_library`, `format_report`, `read_trace_tokens`, `FakeNative`, `FakeClock`, `FakeSession`.
+- Produces: `LIVE_TEXT: str`; `LIVE_CHECKPOINT = "live-check"`; `run_live_checks(worker: EngineWorker, *, clock: Callable[[], float] = time.monotonic, prefix: int = 2048, tail: int = 64, generate: int = 256) -> dict[str, dict]`; `check_live(lib: str | Path | None, model: Path, *, ctx: int = 4096) -> CheckReport`; a `live_lib` fixture in `tests/conftest.py`.
+- CLI: `ds4py check [--lib PATH] [--live --model PATH [--ctx N]]`. `--live` without `--model` is a usage error (exit 2).
+
+The spec's sync-plan check asks that "the prefill count in `Synced` equals `plan().to_prefill`". ds4 cannot report that count the same way on every backend: the CPU path reports one progress event per extended token and a single `(len, len)` event for a rebuild, and Metal reports the start position first (Task 7). So `Synced` carries the plan, and the live check measures reuse by time instead: an extend or a restore of `tail` tokens must take at most half as long as a rebuild of all `prefix` tokens. With the defaults that is 64 tokens against 2048, so a backend that reuses its KV passes by a wide margin, and one that silently rebuilds fails.
+
+The result is recorded in the manifest as `live_checks`:
+
+```python
+{"sync_plans": {"ok": bool, "message": str,
+                "tokens": {"extend": int, "restore": int, "rebuild": int},
+                "seconds": {"extend": float, "restore": float, "rebuild": float}},
+ "restore": {"ok": bool, "message": str, "tokens": int}}
+```
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/abi/test_live_checks.py` runs the checks on `FakeNative`:
+
+```python
+def live(script=lambda prompt, generated: 98, **fake):    # 98 is "a"; the run never stops early
+    clock = FakeClock()
+    w = EngineWorker(FakeNative(script=script, clock=clock, chunk=4, chunk_seconds=0.01, **fake),
+                     EngineConfig(Path("f.gguf"), ctx=512), clock=clock)
+    try:
+        return run_live_checks(w, clock=clock, prefix=128, tail=16, generate=32)
+    finally:
+        w.close()
+
+def test_the_checks_pass_on_an_engine_that_reuses_its_kv():
+    r = live()
+    assert r["sync_plans"]["ok"] and r["restore"] == {
+        "ok": True, "message": "32 greedy tokens after a restore match a rebuild", "tokens": 32}
+    assert r["sync_plans"]["tokens"] == {"extend": 16, "restore": 16, "rebuild": 128}
+    assert r["sync_plans"]["seconds"] == pytest.approx({"extend": 0.04, "restore": 0.04, "rebuild": 0.32})
+    assert r["sync_plans"]["message"] == ("extend of 16 tokens took 0.040 s, restore of 16 took 0.040 s, "
+                                          "rebuild of 128 took 0.320 s")
+
+def test_a_restore_that_changes_the_output_fails_the_restore_check():
+    starts = []
+    def drifting(prompt, generated):                    # each run answers with a different token
+        if not generated:
+            starts.append(None)
+        return 2 + len(starts)
+    r = live(script=drifting)
+    assert r["sync_plans"]["ok"] and not r["restore"]["ok"]
+    assert r["restore"]["message"] == "the runs differ at token 0: 3 after a restore, 4 after a rebuild"
+
+def test_an_engine_that_always_rebuilds_fails_the_sync_check(monkeypatch):
+    sync = FakeSession.sync
+    def rebuild_always(self, tokens, **kw):
+        self.invalidate()
+        return sync(self, tokens, **kw)
+    monkeypatch.setattr(FakeSession, "sync", rebuild_always)
+    r = live()
+    assert not r["sync_plans"]["ok"]
+    assert r["sync_plans"]["message"] == ("extend of 16 tokens took 0.320 s, more than half of the "
+                                          "0.320 s rebuild; the engine did not reuse its KV")
+
+def test_the_context_must_hold_the_check():
+    clock = FakeClock()
+    w = EngineWorker(FakeNative(clock=clock), EngineConfig(Path("f.gguf"), ctx=64), clock=clock)
+    try:
+        with pytest.raises(EngineError, match="needs a context of at least 161"):
+            run_live_checks(w, clock=clock, prefix=128, tail=16, generate=32)
+    finally:
+        w.close()
+```
+
+Extend `report_with` in `tests/abi/test_check.py` with a `live_checks` argument and add:
+
+```python
+def test_report_shows_the_live_checks():
+    text = format_report(report_with(live_checks={
+        "sync_plans": {"ok": True, "message": "extend of 64 tokens took 0.120 s"},
+        "restore": {"ok": False, "message": "the runs differ at token 3: 7 after a restore, 9 after a rebuild"}}))
+    assert "sync:     ok (extend of 64 tokens took 0.120 s)" in text
+    assert "restore:  disabled (the runs differ at token 3: 7 after a restore, 9 after a rebuild)" in text
+    assert "sync:" not in format_report(report_with())
+
+def test_live_needs_a_model(capsys):
+    with pytest.raises(SystemExit) as e:
+        cli.main(["check", "--live"])
+    assert e.value.code == 2 and "--live needs --model" in capsys.readouterr().err
+```
+
+`live_lib` in `tests/conftest.py` is a session fixture that skips unless `DS4_TEST_MODEL` is set and returns `resolve_lib_path(None)`, skipping when that file does not exist.
+
+`tests/live/test_live_check_cli.py` runs the check on a copy of the library, so the user's manifest is not changed:
+
+```python
+@pytest.mark.live
+def test_check_live_records_its_results(live_lib, tmp_path):
+    lib = tmp_path / live_lib.name
+    shutil.copy(live_lib, lib)
+    shutil.copy(manifest_path(live_lib), manifest_path(lib))
+    r = subprocess.run([sys.executable, "-m", "ds4py", "check", "--live", "--lib", str(lib),
+                        "--model", os.environ["DS4_TEST_MODEL"]], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "sync:     ok" in r.stdout and "restore:  not verified" not in r.stdout
+    checks = Manifest.read(manifest_path(lib)).live_checks
+    assert checks["sync_plans"]["ok"] and isinstance(checks["restore"]["ok"], bool)
+```
+
+`tests/live/test_raw_parity.py` is M1's raw parity criterion. `DS4_AGENT` must point to a `ds4-agent` built from the same ds4 tree as the library:
+
+```python
+PROMPT = "The three primary colors are"
+
+@pytest.mark.live
+def test_raw_matches_ds4_agent(live_lib, tmp_path):
+    agent = os.environ.get("DS4_AGENT") or pytest.skip("DS4_AGENT is not set")
+    backend = Manifest.read(manifest_path(live_lib)).backend
+    common = ["-m", os.environ["DS4_TEST_MODEL"], "-c", "4096", "-n", "64", "--temp", "0", "--seed", "1"]
+    c = subprocess.run([agent, "--non-interactive", "--raw", "-p", PROMPT, *common, f"--{backend}",
+                        "--trace", str(tmp_path / "c.log")], capture_output=True)
+    p = subprocess.run([sys.executable, "-m", "ds4py", "raw", PROMPT, *common, "--backend", backend,
+                        "--lib", str(live_lib), "--trace", str(tmp_path / "py.log")], capture_output=True)
+    assert c.returncode == 0 and p.returncode == 0, (c.stderr, p.stderr)
+    assert read_trace_tokens(tmp_path / "py.log") == read_trace_tokens(tmp_path / "c.log")
+    assert p.stdout == c.stdout
+```
+
+`ds4-agent` accepts `--raw` only with `--non-interactive` and `-p` (`ds4_agent.c:993`).
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/abi/test_live_checks.py tests/abi/test_check.py -v`
+Expected: FAIL with `ImportError` for `run_live_checks`.
+
+- [ ] **Step 3: Implement the live checks**
+
+`LIVE_TEXT` is the opening sentence of *A Tale of Two Cities*, which is in the public domain and varied enough that a drifting state changes the greedy output:
+
+```python
+LIVE_TEXT = (
+    "It was the best of times, it was the worst of times, it was the age of wisdom, it was the age of "
+    "foolishness, it was the epoch of belief, it was the epoch of incredulity, it was the season of Light, "
+    "it was the season of Darkness, it was the spring of hope, it was the winter of despair, we had "
+    "everything before us, we had nothing before us, we were all going direct to Heaven, we were all going "
+    "direct the other way -- in short, the period was so far like the present period, that some of its "
+    "noisiest authorities insisted on its being received, for good or for evil, in the superlative degree "
+    "of comparison only. "
+)
+```
+
+`run_live_checks`:
+1. When `prefix + generate + 1` exceeds the session's context, raise `EngineError(f"ds4py check --live needs a context of at least {prefix + generate + 1}")`.
+2. Tokenize `LIVE_TEXT` repeated until it gives at least `prefix` tokens, and keep the first `prefix`. `base` is the first `prefix - tail` of them.
+3. Sync `base`, then save `LIVE_CHECKPOINT`.
+4. **Extend:** sync all `prefix` tokens.
+5. **Restore:** invalidate the live state with `worker.call(lambda e, s: s.invalidate())`, sync again, then generate `generate` tokens with `GenerateJob(SamplingPolicy(temperature=0.0), Rng(1), generate)`. Call this run `a`.
+6. **Rebuild:** drop `LIVE_CHECKPOINT`, invalidate, sync again, then generate run `b` the same way.
+
+Time each sync in steps 4–6 with `clock()` from `submit` to its `Synced` event, and keep the `Synced.plan`. A run is the list of `Token.id`s plus the `Stopped.reason`.
+
+`sync_plans` fails on the first of these:
+- A plan other than `extend` with `to_prefill == tail`, `restore` with `to_prefill == tail` and `checkpoint == LIVE_CHECKPOINT`, or `rebuild` with `to_prefill == prefix`, in steps 4, 5 and 6. The message is `the <step> sync planned <kind> of <n> tokens, expected <step> of <m>`.
+- An extend or restore that took more than half of the rebuild's time. The message is `<step> of <tail> tokens took <s> s, more than half of the <r> s rebuild; the engine did not reuse its KV`.
+
+On success the message is `extend of <tail> tokens took <s> s, restore of <tail> took <s> s, rebuild of <prefix> took <s> s`. Times are printed with three decimals.
+
+`restore` passes when `a` equals `b`, with the message `<len(a) tokens> greedy tokens after a restore match a rebuild`, and `tokens` is that count. Otherwise the message names the first index `i` where the runs differ: `the runs differ at token <i>: <x> after a restore, <y> after a rebuild`, where `x` and `y` are token ids or `end (<reason>)`.
+
+`check_live`:
+1. `library = load_library(lib)`, `native = LibNative(library)`, and `native.restore_enabled = True`, so a restore that failed before is checked again.
+2. Start `EngineWorker(native, EngineConfig(Path(model), ctx=ctx, backend=native.backend))`, run `run_live_checks`, and close the worker in `finally`.
+3. Set `library.manifest.live_checks` to the result and write it to `manifest_path(library.path)`. The library hash does not change, so the library still loads.
+4. Return `check_library(library.path)`. The loader returns the `Library` it already holds, so the report shows the manifest that step 3 updated in memory.
+
+`format_report` adds the `sync:` line before `restore:` when `live_checks` has `sync_plans`, and fills in `restore:` from `live_checks["restore"]`:
+
+```text
+sync:     ok (<message>)                     # or: failed (<message>)
+restore:  ok (<message>)                     # or: disabled (<message>); "not verified (...)" when never checked
+```
+
+`cli.py`: `check --live` calls `check_live` and prints the report. It exits 1 when the report has an error or `sync_plans` failed, and 0 otherwise. A failed restore check still exits 0: ds4py works without restore, and `LibNative` turns it off.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `uv run pytest -v`
+Expected: PASS, with `build` and `live` tests skipped.
+
+On a machine with a model, also run: `DS4_TEST_MODEL=<model> DS4_AGENT=<tree>/ds4-agent uv run pytest -m live -v`.
+Expected: PASS. These are M1's two live criteria; they do not block M2.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/ds4py tests
+git commit -m "feat(abi): add ds4py check --live with sync-plan and restore checks"
+```
+
+### Task 15: CI
+
+**Files:**
+- Create: `.github/workflows/ci.yml`
+
+**Interfaces:**
+- Consumes: `pins.UPSTREAM`, `pins.FORK`, the `build` and `live` pytest markers, `DS4_SRC_UPSTREAM`, `DS4_SRC_FORK`, `tests/fixtures/ext_site`.
+- Produces: two jobs. `unit` runs every test that needs neither a ds4 tree nor a model, and checks that the wheel carries `Makefile.lib`. `build` runs once per pin: it builds the CPU library, runs the `build` tests and runs `ds4py build` and `ds4py check` as a user would.
+
+This task adds no tests: the workflow is configuration, and the tests it runs already exist. It is verified with `actionlint` and by running its commands locally.
+
+- [ ] **Step 1: Write the workflow**
+
+```yaml
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash          # adds -o pipefail
+
+jobs:
+  unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.11" }
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: macos-latest, python: "3.11" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv run pytest -m "not build and not live" -v
+      - name: The wheel carries Makefile.lib
+        run: |
+          uv build --wheel
+          unzip -l dist/*.whl | grep -q 'ds4py/abi/Makefile.lib'
+
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { pin: upstream, src_var: DS4_SRC_UPSTREAM }
+          - { pin: fork, src_var: DS4_SRC_FORK }
+    runs-on: ubuntu-latest
+    env:
+      PIN: ${{ matrix.pin }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.11"
+      - name: Read the pin
+        id: pin
+        run: |
+          uv run python - "$PIN" >> "$GITHUB_OUTPUT" <<'EOF'
+          import sys
+          from ds4py.abi import pins
+          pin = {"upstream": pins.UPSTREAM, "fork": pins.FORK}[sys.argv[1]]
+          print("repo=" + pin.repo.removeprefix("https://github.com/").removesuffix(".git"))
+          print("commit=" + pin.commit)
+          EOF
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.pin.outputs.repo }}
+          ref: ${{ steps.pin.outputs.commit }}
+          path: ds4-src
+          persist-credentials: false
+      - name: Build tests
+        run: env "${{ matrix.src_var }}=$GITHUB_WORKSPACE/ds4-src" uv run pytest -m build -v
+      - name: ds4py build and ds4py check
+        run: |
+          if [ "$PIN" = fork ]; then export PYTHONPATH="$GITHUB_WORKSPACE/tests/fixtures/ext_site"; fi
+          uv run ds4py build --src ds4-src --backend cpu --out out
+          uv run ds4py check --lib out/libds4.so
+```
+
+Each `build` job sets only its own `DS4_SRC_*` variable, so the build tests for the other pin skip. The fork job puts the test extension on `PYTHONPATH`, as `built_fork` does, so `ds4py check` lists its bindings. The last step builds the library a second time, into `out/` instead of a pytest temporary directory. That doubles the compile time, but it runs the installed `ds4py` console script the way a user would, and its report stays in the job log.
+
+- [ ] **Step 2: Lint the workflow**
+
+Run: `nix run nixpkgs#actionlint -- .github/workflows/ci.yml`
+Expected: no output, exit 0.
+
+- [ ] **Step 3: Run the jobs' commands locally**
+
+Run:
+
+```bash
+uv run pytest -m "not build and not live" -v
+uv build --wheel && unzip -l dist/*.whl | grep 'ds4py/abi/Makefile.lib'
+uv run python - fork <<'EOF'
+import sys
+from ds4py.abi import pins
+pin = {"upstream": pins.UPSTREAM, "fork": pins.FORK}[sys.argv[1]]
+print("repo=" + pin.repo.removeprefix("https://github.com/").removesuffix(".git"))
+print("commit=" + pin.commit)
+EOF
+```
+
+Expected: the tests pass with the `build` and `live` tests deselected; `grep` prints the `Makefile.lib` line; the last command prints `repo=pauleveritt/ds4` and `commit=cfb2faf5c03199790db7c22166c4c71b549f1e66`.
+
+- [ ] **Step 4: Commit and watch the first run**
+
+```bash
+git add .github/workflows/ci.yml
+git commit -m "ci: run unit tests and CPU builds of both ds4 pins"
+```
+
+After the branch is pushed, `gh run watch` must show every job green. In the `build (fork)` log, `ds4py check` reports `warning: unknown header ds4.h b1e0ad190897` and exits 0. These are M1's first done-when criteria.
