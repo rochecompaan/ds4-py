@@ -671,7 +671,7 @@ In memory, the binding keys a message by its identity and a content hash (sectio
 
 ## 16. Interface
 
-The TUI is ds4-py's own, written fresh with `prompt_toolkit`. [`clai`](https://pydantic.dev/docs/ai/integrations/cli/), the harness's terminal chat, is used for one day in M3 as a smoke test of the harness stack and then set aside. It has a fixed command set, no footer, no notification hook and no plugin API, so it cannot show the prefill bar or host `/save`, `/think` or an extension's commands.
+The TUI is ds4-py's own, written fresh with `prompt_toolkit`. [`clai`](https://pydantic.dev/docs/ai/integrations/cli/), the harness's terminal chat, is used in M3 as a smoke test of the harness stack and then set aside. It has a fixed command set, no footer, no notification hook and no plugin API, so it cannot show the prefill bar or host `/save`, `/think` or an extension's commands.
 
 Most of the work is not UI. `agent.run_stream_events()` supplies the token, tool-call and tool-result events, and the facade supplies prefill progress and engine events. The TUI (`tui.py`, about 600 lines) is an input loop, a renderer for those two streams, a footer, and two registries that exist from the first commit:
 
@@ -859,9 +859,9 @@ The first real strategy is the `RollingWindow` port in M4, and it is the accepta
 
 ## 23. Milestones
 
-Every milestone is developed against `FakeNative`. Criteria marked *live* run on the 96 GB machine once it exists; they do not block the next milestone from starting. M1 to M4 come to about 10 to 11 weeks.
+Every milestone is developed against `FakeNative`. Criteria marked *live* run on the 96 GB machine once it exists; they do not block the next milestone from starting.
 
-### M1: native layer and raw loop (2 to 2½ weeks)
+### M1: native layer and raw loop
 
 Scope: `Makefile.lib` and `ds4py build`; the binding list and the type map; the ABI probes; the loader with required and optional bindings; `ds4py check`; the extension API; `EngineWorker` with sync, sample, eval, rewind, progress and cancel; checkpoints and sync plans; `PlainStep`; `ds4py raw`; `FakeNative`.
 
@@ -875,7 +875,7 @@ Done when:
 - *Live:* `ds4py raw "<prompt>" --temp 0 --seed 1` produces the same tokens as `ds4-agent --raw`.
 - *Live:* the sync-plan and restore checks in section 20 pass on the bake-off machine, or `restore` is disabled there.
 
-### M2: chat, tool syntax, decode steps and the hook (2½ weeks)
+### M2: chat, tool syntax, decode steps and the hook
 
 Scope: `Transcript`; `PromptBuilder`; `ds4py.prompts` and the C prompt printer; the three parsers; `run_round` with the tool-call stop; the decode-step contract and `FakeMultiTokenStep`; the logits hook; `--prefix-file`; `ds4py.store` reading and writing the file format; the `read` and `bash` tools; a test CLI of about 200 lines that runs `read` and `bash` directly, before the harness exists.
 
@@ -888,9 +888,9 @@ Done when:
 - `read` and `bash` match their golden output.
 - *Live:* replay parity on recorded `ds4-agent` sessions with the bake-off model.
 
-### M3: harness, the C agent's tools, TUI and bake-off (3 to 3½ weeks)
+### M3: harness, the C agent's tools, TUI and bake-off
 
-Scope: `DS4Model` and the binding; `DS4AgentTools` with every tool, including the web port; `DS4Approvals`; `DS4SystemNotes` for the date note and hints; `DS4RunRecord`; `StepPersistence`; `/save` with its snapshot and save record; the session event bus and `session.state`; the one-day `clai` smoke test; the TUI with its registries; non-interactive mode; the harness-tools option; the bake-off script.
+Scope: `DS4Model` and the binding; `DS4AgentTools` with every tool, including the web port; `DS4Approvals`; `DS4SystemNotes` for the date note and hints; `DS4RunRecord`; `StepPersistence`; `/save` with its snapshot and save record; the session event bus and `session.state`; the `clai` smoke test; the TUI with its registries; non-interactive mode; the harness-tools option; the bake-off script.
 
 Done when:
 
@@ -900,7 +900,7 @@ Done when:
 - On `FakeNative`: a `bash` job started in one prompt is reported by `bash_status` in the next and stops on `/new`; a reserve stop inside a response with no context owner raises `ContextExhausted` and does not return partial text.
 - *Live:* all six bake-off gates pass.
 
-### M4: context and persistence (2 weeks)
+### M4: context and persistence
 
 Scope: `DS4Compaction`, including the reserve stop inside an open stream; the 50,000-token reminder; `sysprompt.kv`; `/list`, `/switch`, `/strip` and `/del`, with history recovery from save records; the `RollingWindow` port; the full conformance test.
 
@@ -968,7 +968,7 @@ These are my decisions, not the user's. Each can be changed.
 - `libds4` includes `ds4_kvstore.o`, and the store uses its constants and text renderer.
 - The parity test and bake-off gates 1, 3 and 6, as listed in section 26.
 - The module map grows from 3,400 to about 6,400 lines.
-- The milestones have acceptance criteria and new estimates; the first draft's M1 to M4 were 6 to 8 weeks.
+- The milestones have acceptance criteria and no time estimates.
 - The package splits into `ds4py` and `ds4py[agent]`.
 - Behaviours the first draft did not list: the date note, hints, the reminder format, `--prefix-file`, the full command-line flag list, and the Chrome consent rules.
 
