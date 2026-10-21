@@ -753,6 +753,7 @@ class EngineHandle(Protocol):
     def close(self) -> None: ...
 
 class Native(Protocol):
+    backend: str                              # the backend the library was built for
     restore_enabled: bool
     def open_engine(self, config: EngineConfig) -> EngineHandle: ...
     def bind(self, name: str) -> Callable[..., Any]: ...
@@ -892,10 +893,11 @@ For the Metal backend, `open_engine` changes the working directory to `manifest.
 - The callbacks never raise into C. They store the first exception, make cancel return `True`, and `sync` re-raises it after the C call returns.
 - `sync` returns `DONE` for 0 and `INTERRUPTED` for `DS4_SESSION_SYNC_INTERRUPTED` (2). Any other code raises `EngineError` with the text from the 512-byte error buffer. `eval`, `save_snapshot` and `load_snapshot` raise the same way.
 - Token lists cross into C as a `Tokens` struct over a `(c_int * n)` array that lives for the call. `tokenize` copies `v[:len]` out and then calls `ds4_tokens_free`. `token_text` copies the returned bytes and frees them with `Library.free`. `tokens()` copies the borrowed `ds4_session_tokens` array.
-- Every method asserts it runs on the thread that created the session.
+- `NativeEngine.is_stop` wraps `ds4_token_is_stop`, which the `ds4-agent --raw` loop uses. The think-mode variant gets a wrapper with chat rendering in M2.
+- Every `NativeEngine` and `NativeSession` method asserts it runs on the thread that created the object.
 - `close()` frees the session once; `__del__` calls `close()`. `NativeSnapshot.close()` calls `ds4_session_snapshot_free` once; `nbytes` is the struct's `len`.
 
-`LibNative.restore_enabled` is `False` only when `manifest.live_checks["restore"]["ok"]` is `False`. `LibNative.bind(name)` returns `Library.fn(name)`.
+`LibNative.backend` is `manifest.backend`. `LibNative.restore_enabled` is `False` only when `manifest.live_checks["restore"]["ok"]` is `False`. `LibNative.bind(name)` returns `Library.fn(name)`.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -977,8 +979,10 @@ Expected: FAIL with `ModuleNotFoundError` for `ds4py._native.fake`.
 
 - Tokenizer: byte `b` is token `b + 1`; token 0 is `FAKE_EOS` with text `b"</s>"`; `vocab_size` 257. `rendered=True` tokenizes the same way. `is_stop` is true only for `FAKE_EOS`. The default `EngineInfo` has name `"fake"`, family `"deepseek4"` and `mtp_draft_tokens` 1.
 - `sync` follows ds4's rules. Empty input, or input with `len >= ctx`, raises `EngineError`. State is kept only when the checkpoint is valid and the new tokens start with all of it; otherwise prefill starts at 0. Progress follows ds4's Metal path: `("prefill_chunk", start, total)` first, then one event after each `chunk` tokens, with absolute positions. The fake emits no `prefill_display` events. Before each chunk, the fake checks `cancel` and returns `INTERRUPTED`, keeping the prefix done so far as a valid checkpoint. Each chunk advances `clock` by `chunk_seconds`. The sync also records `("sync", n_prefilled)` in `calls`.
-- `sample` calls `script(prompt, generated)`, where `prompt` is the token list at the end of the last sync, and steps `rng.value` with splitmix64. `argmax` calls the script without touching `rng`. `eval` appends, records `("eval", token)`, and raises `EngineError` when the context is full. `rewind` truncates, marks the checkpoint invalid and records `("rewind", pos)`; it is a no-op when `pos >= len`. This is ds4's rule for DeepSeek outside a speculative step (`ds4_session_rewind`): compressor state cannot be rolled back, so the next sync rebuilds. `sample` and `argmax` return -1 while the checkpoint is invalid, as ds4 does.
+- `sample` calls `script(prompt, generated)`, where `prompt` is the token list at the end of the last sync and `generated` is the tokens evaluated since then, and steps `rng.value` with splitmix64. `argmax` calls the script without touching `rng`. `eval` appends, records `("eval", token)`, and raises `EngineError` when the context is full. `rewind` truncates, marks the checkpoint invalid and records `("rewind", pos)`; it is a no-op when `pos >= len`. This is ds4's rule for DeepSeek outside a speculative step (`ds4_session_rewind`): compressor state cannot be rolled back, so the next sync rebuilds. `sample` and `argmax` return -1 while the checkpoint is invalid, as ds4 does.
 - `payload_bytes` is `1024 * pos`. `save_snapshot` returns a `FakeSnapshot` holding a copy of the tokens and the prompt length, with that `nbytes`. `load_snapshot` restores them and marks the checkpoint valid.
+- `raw` is `id(self)` on `FakeEngine` and `FakeSession`. `parse_think_level` and `think_mode_for_context` follow ds4 (`ds4.c:61007`, `ds4.c:61044`): the text `"0"` to `"100"` gives `1000 + n` and anything else `None`; `MAX` becomes `HIGH` when `ctx < 393216`.
+- `FakeNative.backend` is `"cpu"`. `FakeEngine` and `FakeSession` methods assert they run on the thread that created the object, as the native classes do, so worker tests catch engine calls from the wrong thread.
 - `bind` raises `MissingBinding` with `ds4py does not declare <name>` for names not in `all_bindings()`, and `<name> is absent from this library` for names in `absent`. Otherwise it returns `bindings[name]`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -1041,6 +1045,8 @@ def test_rebuild():
 def test_fits_leaves_the_reserve():
     assert plan(P, ctx=21).fits and not plan(P, ctx=20).fits
 
+INFO = FakeNative().open_engine(EngineConfig(Path("f"))).info()
+
 def test_glm_defaults_unless_set():
     glm = replace(INFO, family="glm", is_glm_dsa=True)
     assert SamplingPolicy.for_engine(glm) == SamplingPolicy(top_p=0.95, min_p=0.0)
@@ -1078,4 +1084,379 @@ Expected: PASS.
 ```bash
 git add src/ds4py/engine tests/engine
 git commit -m "feat(engine): add transcript, sync plans and sampling policy"
+```
+
+### Task 10: Events and the engine worker
+
+**Files:**
+- Create: `src/ds4py/engine/events.py`, `src/ds4py/engine/worker.py`
+- Test: `tests/engine/test_worker.py`
+
+**Interfaces:**
+- Consumes: `Native`, `EngineHandle`, `SessionHandle`, `EngineConfig`, `EngineInfo`, `SyncStatus`, `Plan`, `plan_sync`, `FakeNative`, `FakeClock`, `EngineError`, `CheckpointError`.
+- Produces:
+  - `events.py`, all frozen dataclasses: `Prefill(done: int, total: int, cached_prefix: int, tps: float)`; `Synced(pos: int, plan: Plan)`; `Interrupted(pos: int)`; `Checkpointed(key: str, tokens: int, bytes: int)`, where `tokens` is the prefix length; `Dropped(key: str)`; `Token(id: int, text_bytes: bytes)`; `Stopped(reason: str)`; `STOP_REASONS = ("stop_token", "tool_call_complete", "max_tokens", "context_reserve", "interrupted", "parser_error", "context_exhausted")`; `Event`, the union of these types.
+  - `worker.py`: `SYSTEM = "system"`; `SyncJob(tokens: tuple[int, ...])`; `CheckpointJob(key: str, drop: bool = False)`; `Handles(engine: int, session: int)`; `EngineWorker(native: Native, config: EngineConfig, *, cancel: threading.Event | None = None, clock: Callable[[], float] = time.monotonic, max_checkpoints: int = 4, throttle: float = 0.1)` with `.info: EngineInfo`, `.cancel_event: threading.Event`, `submit(job) -> Iterator[Event]`, `call(fn: Callable[[EngineHandle, SessionHandle], T]) -> Future[T]`, `plan(tokens: Sequence[int]) -> Plan` and `close() -> None`.
+
+`call` is the spec's `WorkerCallJob`: a `Future` takes the place of the `Done` and `Failed` events. `SyncJob` takes no images until M5.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+P = list(range(1, 41))
+
+def worker(*, ctx=64, clock=None, cancel=None, max_checkpoints=4, **fake):
+    clock = clock or FakeClock()
+    return EngineWorker(FakeNative(clock=clock, **fake), EngineConfig(Path("f.gguf"), ctx=ctx),
+                        clock=clock, cancel=cancel, max_checkpoints=max_checkpoints)
+
+def run(w, job):
+    return list(w.submit(job))
+
+def sync_calls(w):
+    return w.call(lambda e, s: [n for name, n in s.calls if name == "sync"]).result()
+
+def test_each_sync_reports_the_plan_it_carried_out():
+    w = worker()
+    run(w, SyncJob(tuple(P[:8])))
+    assert run(w, CheckpointJob("turn")) == [Checkpointed("turn", 8, 8 * 1024)]
+    plans = []
+    for tokens, kind in [(P[:20], "extend"), (P[:8] + [99, 98], "restore"), ([50, 51], "rebuild")]:
+        predicted = w.plan(tokens)
+        *_, synced = run(w, SyncJob(tuple(tokens)))
+        assert predicted.kind == kind and synced == Synced(len(tokens), predicted)
+        plans.append(predicted)
+    assert sync_calls(w)[1:] == [p.to_prefill for p in plans] == [12, 2, 2]
+
+def test_prefill_events_come_at_most_every_100ms():
+    clock = FakeClock()
+    w = worker(clock=clock, chunk=4, chunk_seconds=0.03)
+    events = run(w, SyncJob(tuple(P)))
+    prefills = [e for e in events if isinstance(e, Prefill)]
+    assert [(e.done, e.total, e.cached_prefix) for e in prefills] == [(0, 40, 0), (16, 40, 0), (32, 40, 0)]
+    assert prefills[1].tps == pytest.approx(16 / 0.12)
+    assert events[-1] == Synced(40, Plan("rebuild", 0, 40, True, None))
+
+def test_prefill_counts_only_the_new_tokens():
+    w = worker(chunk=4)
+    run(w, SyncJob(tuple(P[:6])))
+    assert run(w, SyncJob(tuple(P)))[0] == Prefill(0, 34, 6, 0.0)
+
+def test_cancel_interrupts_sync_and_clears_the_flag():
+    cancel = threading.Event()
+    w = worker(cancel=cancel)
+    run(w, SyncJob(tuple(P[:6])))
+    cancel.set()                                                    # Ctrl+C
+    assert run(w, SyncJob(tuple(P)))[-1] == Interrupted(6)
+    assert w.cancel_event is cancel and not cancel.is_set()
+    assert w.plan(P) == Plan("extend", 6, 34, True, None)          # the prefix done so far is kept
+
+def test_checkpoint_limits():
+    w = worker(max_checkpoints=2)
+    with pytest.raises(CheckpointError, match="no valid state"): run(w, CheckpointJob("a"))
+    run(w, SyncJob(tuple(P[:4])))
+    for key in (SYSTEM, "a", "b", "a"):                             # system is not counted; "a" is replaced
+        run(w, CheckpointJob(key))
+    with pytest.raises(CheckpointError, match="max_checkpoints"): run(w, CheckpointJob("c"))
+    assert run(w, CheckpointJob("a", drop=True)) == [Dropped("a")]
+    run(w, CheckpointJob("c"))
+    with pytest.raises(CheckpointError, match="unknown checkpoint"): run(w, CheckpointJob("zz", drop=True))
+
+def test_sync_refuses_a_prompt_that_does_not_fit():
+    w = worker(ctx=8)
+    with pytest.raises(EngineError, match="8 tokens does not fit a context of 8"):
+        run(w, SyncJob(tuple(P[:8])))
+    assert sync_calls(w) == []
+
+def test_engine_calls_run_on_one_worker_thread():
+    w = worker()
+    ids = {w.call(lambda e, s: threading.get_ident()).result() for _ in range(3)}
+    assert len(ids) == 1 and threading.get_ident() not in ids
+    assert isinstance(w.call(lambda e, s: 1 / 0).exception(), ZeroDivisionError)
+    assert w.call(lambda e, s: s.pos()).result() == 0               # the worker survives a failed call
+    assert w.info.name == "fake"
+
+def test_open_errors_reach_the_caller():
+    class Broken(FakeNative):
+        def open_engine(self, config): raise ModelFileError("no model")
+    with pytest.raises(ModelFileError): EngineWorker(Broken(), EngineConfig(Path("f")))
+
+def test_close():
+    w = worker(); w.close(); w.close()
+    with pytest.raises(EngineError, match="closed"): w.submit(SyncJob((1,)))
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/engine/test_worker.py -v`
+Expected: FAIL with `ModuleNotFoundError` for `ds4py.engine.events`.
+
+- [ ] **Step 3: Implement `events.py` and `worker.py`**
+
+The thread:
+- It opens the engine with `native.open_engine(config)`, creates the session with `config.ctx` and reads `info()`. `__init__` waits for this and re-raises any error, such as `ModelFileError`. The thread is a daemon.
+- It takes work items from one `queue.SimpleQueue`, in order. `submit(job)` enqueues the job at once with its own event queue and returns a generator over that queue. The worker puts each event, then an end marker, or the exception, which the generator re-raises in the caller's thread. `call(fn)` enqueues `fn(engine, session)` with a `Future`.
+- `plan(tokens)` is a `call` of `plan_sync(tokens, live=s.tokens(), live_valid=s.checkpoint_valid(), checkpoints=<key → tokens of each held checkpoint>, ctx=s.ctx(), restore_enabled=native.restore_enabled)`. Like every `call`, it waits for the jobs queued before it.
+- `close()` enqueues a stop item and joins. The thread closes the held snapshots, the session and the engine, in that order. A second `close()` does nothing. `submit` and `call` after `close` raise `EngineError("engine worker is closed")`.
+
+`SyncJob`:
+1. Plan again on the worker. When the plan does not fit, raise `EngineError(f"prompt of {n} tokens does not fit a context of {ctx}")` without syncing.
+2. For `restore`, load the plan's checkpoint with `load_snapshot`.
+3. Call `sync` with `cancel=cancel_event.is_set` and a progress function. The progress function counts done tokens as `agent_worker_sync_tokens` does (`ds4_agent.c`): `prefill_work` gives `current`; `prefill_chunk` and `prefill_display` give `current - plan.reused`; other events are ignored; the count is clamped to `0..plan.to_prefill`. It emits `Prefill(done, plan.to_prefill, plan.reused, tps)` for the first event, then only when `clock() - last_emit >= throttle`. `tps` is `done / (clock() - start)`, or `0.0` when no time has passed.
+4. `DONE` gives `Synced(s.pos(), plan)`. `INTERRUPTED` clears `cancel_event` first and then gives `Interrupted(s.pos())`.
+
+`CheckpointJob`:
+- Saving needs a valid checkpoint with `pos() > 0`; otherwise raise `CheckpointError("no valid state to checkpoint")`. A new key other than `SYSTEM` is refused with `CheckpointError(f"max_checkpoints ({n}) reached; drop one first")` when `n` others are held. Saving an existing key closes its old snapshot first. The worker keeps `(tuple(s.tokens()), snapshot)` per key and emits `Checkpointed(key, len(tokens), snapshot.nbytes)`.
+- `drop=True` closes the snapshot and emits `Dropped(key)`. An unknown key raises `CheckpointError(f"unknown checkpoint {key!r}")`.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `uv run pytest tests/engine -v`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/ds4py/engine tests/engine/test_worker.py
+git commit -m "feat(engine): add the engine worker with sync, checkpoints and calls"
+```
+
+### Task 11: The decode loop and `PlainStep`
+
+**Files:**
+- Create: `src/ds4py/engine/decode.py`
+- Modify: `src/ds4py/engine/worker.py`
+- Test: `tests/engine/test_decode.py`
+
+**Interfaces:**
+- Consumes: `SessionHandle`, `EngineHandle`, `SamplingPolicy`, `Rng`, `Token`, `Stopped`, `Event`, `EngineWorker`, `EngineError`.
+- Produces: `Verdict(Enum)` with `CONTINUE`, `STOP_BEFORE`, `STOP_AFTER`; `GenerateJob(sampling: SamplingPolicy, rng: Rng, max_tokens: int, reserve: int = 1)` (frozen; `worker.py` re-exports it); `DecodeContext` with `rng: ctypes.c_uint64`, `reason: str | None`, `before_sample() -> None`, `sampling() -> SamplingPolicy`, `cancelled() -> bool` and `accept(token: int) -> Verdict`; the `DecodeStep` protocol (`hooks_every_sample: bool`, `run(session: SessionHandle, ctx: DecodeContext) -> None`); `PlainStep`; `generate(engine: EngineHandle, session: SessionHandle, job: GenerateJob, *, cancelled: Callable[[], bool], emit: Callable[[Event], None], step: DecodeStep | None = None) -> str`.
+
+`GenerateJob` has no `stop_policy` yet: the tool-call stop arrives with the parsers in M2, and so do the logits hooks behind `before_sample` and the greedy switch behind `sampling()`.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+def worker(script, *, ctx=64, cancel=None):
+    return EngineWorker(FakeNative(script=script), EngineConfig(Path("f"), ctx=ctx), cancel=cancel)
+
+def gen(w, prompt, max_tokens=50):
+    list(w.submit(SyncJob(tuple(prompt))))
+    return list(w.submit(GenerateJob(SamplingPolicy(), Rng(1), max_tokens)))
+
+def tok(c):
+    return Token(ord(c) + 1, c.encode())
+
+def test_stop_token_is_neither_kept_nor_evaluated():
+    w = worker(reply(b"hi"))
+    assert gen(w, [5, 6]) == [tok("h"), tok("i"), Stopped("stop_token")]
+    calls, pos = w.call(lambda e, s: (s.calls, s.pos())).result()
+    assert ("eval", FAKE_EOS) not in calls and pos == 4
+
+def test_max_tokens_keeps_the_last_token():
+    w = worker(reply(b"hello"))
+    assert gen(w, [5, 6], max_tokens=2) == [tok("h"), tok("e"), Stopped("max_tokens")]
+    assert w.call(lambda e, s: s.pos()).result() == 4
+    assert gen(w, [5, 6], max_tokens=0) == [Stopped("max_tokens")]
+
+def test_context_reserve_matches_the_ds4_agent_clamp():
+    w = worker(reply(b"abcdef"), ctx=8)                    # room 3, less a reserve of 1
+    assert gen(w, [1, 2, 3, 4, 5]) == [tok("a"), tok("b"), Stopped("context_reserve")]
+
+def test_ctrl_c_keeps_the_partial_tokens():
+    cancel = threading.Event()
+    def script(prompt, generated):
+        if len(generated) == 2: cancel.set()               # Ctrl+C while the third token is sampled
+        return ord("a") + 1
+    w = worker(script, cancel=cancel)
+    assert gen(w, [5, 6]) == [tok("a")] * 3 + [Stopped("interrupted")]
+    assert not cancel.is_set() and w.call(lambda e, s: s.pos()).result() == 5
+
+def test_sampling_needs_a_valid_state():
+    w = worker(reply(b"x"))
+    list(w.submit(SyncJob((5, 6, 7))))
+    w.call(lambda e, s: s.rewind(1)).result()               # invalidates the checkpoint, as in ds4
+    with pytest.raises(EngineError, match="sync first"):
+        list(w.submit(GenerateJob(SamplingPolicy(), Rng(1), 5)))
+
+def test_plain_step_follows_the_contract():
+    seen = []
+    class Session:                                          # just what PlainStep and generate use
+        def ctx(self): return 100
+        def pos(self): return 10
+        def sample(self, temperature, top_k, top_p, min_p, rng):
+            seen.append(("sample", temperature, top_k, top_p, min_p, rng.value))
+            return 7 if len(seen) < 3 else 0
+        def eval(self, token): seen.append(("eval", token))
+    class Engine:
+        def is_stop(self, token): return token == 0
+        def token_text(self, token): return b"x"
+    policy = SamplingPolicy(temperature=0.5, top_p=0.9, min_p=0.0, top_k=3)
+    out = []
+    reason = generate(Engine(), Session(), GenerateJob(policy, Rng(9), 10), cancelled=lambda: False, emit=out.append)
+    assert reason == "stop_token" and out == [Token(7, b"x")] and PlainStep.hooks_every_sample
+    assert seen == [("sample", 0.5, 3, 0.9, 0.0, 9), ("eval", 7), ("sample", 0.5, 3, 0.9, 0.0, 9)]
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/engine/test_decode.py -v`
+Expected: FAIL with `ModuleNotFoundError` for `ds4py.engine.decode`.
+
+- [ ] **Step 3: Implement `decode.py` and the `GenerateJob` branch of the worker**
+
+`generate`:
+- `room = session.ctx() - session.pos()` and `limit = min(job.max_tokens, max(room - job.reserve, 0))`. The reason at the limit is `max_tokens` when `job.max_tokens <= room - job.reserve`, else `context_reserve`. With `reserve=1` this is the `ds4-agent --raw` clamp, `min(n_predict, room - 1)`. When `limit` is 0, return that reason without sampling.
+- `DecodeContext.accept(token)`: a token with `engine.is_stop(token)` sets `reason = "stop_token"` and returns `STOP_BEFORE`. Any other token is counted and emitted as `Token(token, engine.token_text(token))`; at the limit it sets the limit reason and returns `STOP_AFTER`, and otherwise it returns `CONTINUE`.
+- `before_sample()` does nothing in M1. `sampling()` returns `job.sampling`. `cancelled()` calls `cancelled`.
+- `step` defaults to `PlainStep()`. After it returns, `generate` returns `ctx.reason`, or `"interrupted"` when the step stopped because of Ctrl+C.
+
+`PlainStep.run` is the raw loop of `ds4_agent.c`:
+
+```python
+while not ctx.cancelled():
+    ctx.before_sample()
+    p = ctx.sampling()
+    token = session.sample(p.temperature, p.top_k, p.top_p, p.min_p, ctx.rng)
+    # token < 0: raise EngineError("cannot sample: the session state is not valid; sync first")
+    verdict = ctx.accept(token)
+    if verdict is Verdict.STOP_BEFORE: return
+    session.eval(token)
+    if verdict is Verdict.STOP_AFTER: return
+```
+
+The worker runs `GenerateJob` with `generate(engine, session, job, cancelled=cancel_event.is_set, emit=...)`. For `"interrupted"` it clears `cancel_event` first. Then it emits `Stopped(reason)`.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `uv run pytest tests/engine -v`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/ds4py/engine tests/engine/test_decode.py
+git commit -m "feat(engine): add the decode loop and PlainStep"
+```
+
+### Task 12: `Engine`, `Session` and `ds4py.open`
+
+**Files:**
+- Create: `src/ds4py/engine/session.py`
+- Modify: `src/ds4py/__init__.py`
+- Test: `tests/engine/test_session.py`
+
+**Interfaces:**
+- Consumes: Tasks 7–11, `LibNative`, `load_library`.
+- Produces:
+  - `open(model: str | Path = "ds4flash.gguf", *, ctx: int = 100_000, backend: str | None = None, think: int = ThinkMode.HIGH, seed: int | None = None, threads: int = 0, lib: str | Path | None = None, native: Native | None = None, cancel: threading.Event | None = None) -> Engine`.
+  - `Engine` with `.native`, `.info`, `.config`, `.think`, `.sampling_defaults` (settable), `tokenize(text, *, rendered=False) -> list[int]`, `token_text(token) -> bytes`, `session() -> Session`, `close()`, and context-manager support.
+  - `Session` with `.transcript`, `.ctx_used`, `append_tokens(tokens, kind, meta=None) -> Segment`, `run_round(*, max_tokens: int = 50_000, sampling: SamplingPolicy | None = None) -> Iterator[Event]`, `plan(tokens=None) -> Plan`, `checkpoint(key) -> Checkpointed`, `drop_checkpoint(key) -> None`, `on_worker(fn: Callable[[Handles], T]) -> Future[T]` and `cancel() -> None`.
+  - `ds4py` exports `open`, `ThinkMode`, `Engine`, `Session` and the errors.
+
+M1 leaves out the spec's `append_user`, `append_tool_results` and `append_system_note`; they need `PromptBuilder` (M2). `ReserveReached` with `resume()` and `fail()` is also M2. Until then `run_round` passes `Stopped("context_reserve")` through, which is what `ds4-agent --raw` does when the context fills.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+def fake_engine(*, ctx=64, cancel=None, **fake):
+    return ds4py.open("f.gguf", ctx=ctx, cancel=cancel, native=FakeNative(**fake))
+
+def test_open_checks_backend_and_think_mode():
+    with fake_engine() as e:
+        assert e.info.name == "fake" and e.config.backend == "cpu" and e.think == ThinkMode.HIGH
+    with pytest.raises(EngineError, match="built for cpu"):
+        ds4py.open("f.gguf", backend="metal", native=FakeNative())
+    with ds4py.open("f.gguf", ctx=64, think=ThinkMode.MAX, native=FakeNative()) as e:
+        assert e.think == ThinkMode.HIGH                    # MAX needs 393216 tokens of context
+
+def test_sampling_defaults_follow_the_engine():
+    glm = replace(FakeNative().open_engine(EngineConfig(Path("f"))).info(), family="glm", is_glm_dsa=True)
+    with ds4py.open("f.gguf", seed=5, native=FakeNative(info=glm)) as e:
+        assert e.sampling_defaults == SamplingPolicy(top_p=0.95, min_p=0.0, seed=5)
+
+def test_a_round_syncs_generates_and_extends_the_transcript():
+    with fake_engine(script=reply(b"ok")) as e:
+        s = e.session()
+        s.append_tokens(e.tokenize("hi"), "user")
+        events = list(s.run_round(max_tokens=10))
+        assert [type(ev).__name__ for ev in events if not isinstance(ev, Prefill)] == ["Synced", "Token", "Token", "Stopped"]
+        assert s.transcript.tokens == tuple(e.tokenize("hiok"))
+        assert [seg.kind for seg in s.transcript.segments] == ["user", "assistant"]
+        assert s.ctx_used == 4 and s.plan() == Plan("extend", 4, 0, True, None)
+        with pytest.raises(EngineError, match="one session"): e.session()
+
+def test_ctrl_c_during_sync_keeps_the_transcript():
+    with fake_engine() as e:
+        s = e.session()
+        s.append_tokens(e.tokenize("hello"), "user")
+        s.cancel()
+        assert list(s.run_round())[-1] == Interrupted(0)
+        assert s.transcript.tokens == tuple(e.tokenize("hello"))
+        assert isinstance(list(s.run_round())[-1], Stopped)          # the flag was cleared
+
+def test_closing_a_round_early_cancels_and_drains():
+    cancel = threading.Event()
+    with fake_engine(script=reply(b"abcdefgh"), cancel=cancel) as e:
+        s = e.session()
+        s.append_tokens([5, 6], "user")
+        rnd = s.run_round()
+        next(ev for ev in rnd if isinstance(ev, Token))
+        rnd.close()
+        assert s.ctx_used == len(s.transcript)              # every evaluated token is in the transcript
+        assert s.plan().kind == "extend" and not cancel.is_set()
+
+def test_checkpoints_through_the_session():
+    with fake_engine() as e:
+        s = e.session()
+        s.append_tokens(list(range(1, 9)), "system")
+        list(s.run_round(max_tokens=0))
+        assert s.checkpoint(SYSTEM) == Checkpointed(SYSTEM, 8, 8 * 1024)
+        s.drop_checkpoint(SYSTEM)
+        with pytest.raises(CheckpointError): s.drop_checkpoint(SYSTEM)
+
+def test_extension_binding_runs_on_the_worker(ext_site):
+    native = FakeNative(bindings={"ds4_engine_layer_count": lambda engine_ptr: 43})
+    with ds4py.open("f.gguf", ctx=64, native=native) as e:
+        layer_count = e.native.bind("ds4_engine_layer_count")
+        count, session_ptr, thread = e.session().on_worker(
+            lambda h: (layer_count(h.engine), h.session, threading.get_ident())).result()
+        assert count == 43 and isinstance(session_ptr, int) and thread != threading.get_ident()
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/engine/test_session.py -v`
+Expected: FAIL with `ModuleNotFoundError` for `ds4py.engine.session`.
+
+- [ ] **Step 3: Implement `session.py` and the exports**
+
+`open`:
+1. `native = native or LibNative(load_library(lib))`.
+2. A `backend` other than `native.backend` raises `EngineError` with the message `this libds4 was built for <built>, not <asked>; run ds4py build --backend <asked>`.
+3. `think = native.think_mode_for_context(think, ctx)`.
+4. Start `EngineWorker(native, EngineConfig(Path(model), ctx, native.backend, threads), cancel=cancel)`.
+5. `sampling_defaults = SamplingPolicy.for_engine(worker.info, seed=seed)`.
+
+`session.py` defines `open`, so it must not use the builtin `open`.
+
+`Engine.tokenize` and `Engine.token_text` go through `worker.call(...).result()`, because only the worker thread calls the engine. A second `session()` raises `EngineError("one session per engine")`. `close()` closes the worker.
+
+`Session` makes one `Rng(engine.sampling_defaults.seed)` when it is created and uses it for every round. `run_round` is a generator:
+1. Submit `SyncJob(transcript.tokens)` and yield its events. After `Interrupted`, return; the transcript is unchanged.
+2. Submit `GenerateJob(sampling or engine.sampling_defaults, rng, max_tokens)` and yield its events. The first `Token` appends an `assistant` segment and later ones extend it.
+3. If the caller closes the generator while a job is running, set the cancel flag, drain the job's remaining events, append any `Token`s from them, and clear the flag if the job ended without reporting an interrupt.
+
+`ctx_used` is `worker.call(lambda e, s: s.pos()).result()`. `plan(tokens=None)` plans the transcript's tokens by default. `checkpoint` and `drop_checkpoint` run a `CheckpointJob` and return its event. `on_worker(fn)` is `worker.call(lambda e, s: fn(Handles(e.raw, s.raw)))`. `cancel()` sets `worker.cancel_event` and is safe from any thread. `transcript` returns the session's `Transcript`; callers change it only through `append_tokens` and `run_round`.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `uv run pytest -v`
+Expected: PASS, with `build` and `live` tests skipped.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/ds4py tests/engine/test_session.py
+git commit -m "feat(engine): add ds4py.open, Engine and Session"
 ```
