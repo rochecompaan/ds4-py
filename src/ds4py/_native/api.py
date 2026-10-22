@@ -157,6 +157,8 @@ class NativeEngine(_Handle):
         self._options, self._lock = options, lock
         self._model_path = options.model_path
         self._sessions = weakref.WeakSet()
+        # Retain cleanup ownership even if a wrapper is collected off-thread.
+        self._session_allocations = set()
         self._info = self._read_info()
 
     def info(self):
@@ -206,6 +208,7 @@ class NativeEngine(_Handle):
             raise EngineError("ds4_session_create failed")
         session = NativeSession(self, raw.value)
         self._sessions.add(session)
+        self._session_allocations.add(raw.value)
         return session
 
     def close(self):
@@ -213,6 +216,9 @@ class NativeEngine(_Handle):
         if self.raw:
             for session in list(self._sessions):
                 session.close()
+            for raw in self._session_allocations:
+                self._lib.fn("ds4_session_free")(raw)
+            self._session_allocations.clear()
             self._lib.fn("ds4_engine_close")(self.raw)
             self.raw = 0
             self._lock.close()
@@ -322,9 +328,14 @@ class NativeSession(_Handle):
         return self._call("ds4_session_payload_bytes")
 
     def save_snapshot(self):
+        self._assert_thread()
         data = structs.SessionSnapshot()
-        self._error_call("ds4_session_save_snapshot", C.byref(data))
-        return NativeSnapshot(self._lib, data)
+        try:
+            self._error_call("ds4_session_save_snapshot", C.byref(data))
+            return NativeSnapshot(self._lib, data)
+        except BaseException:
+            self._lib.fn("ds4_session_snapshot_free")(C.byref(data))
+            raise
 
     def load_snapshot(self, snap):
         self._assert_thread()
@@ -336,8 +347,12 @@ class NativeSession(_Handle):
         self._assert_thread()
         if self.raw:
             self._lib.fn("ds4_session_free")(self.raw)
+            self._engine._session_allocations.discard(self.raw)
             self.raw = 0
             self._engine._sessions.discard(self)
 
     def __del__(self):
-        self.close()
+        # Cyclic GC may run on any thread. Leave off-thread allocations to the
+        # engine's owner-thread close; never call C or assert from that finalizer.
+        if self.raw and threading.get_ident() == self._thread:
+            self.close()

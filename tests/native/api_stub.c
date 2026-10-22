@@ -3,22 +3,30 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <pthread.h>
 
 struct ds4_session {
     ds4_tokens tokens;
     ds4_session_progress_fn progress, display;
     ds4_session_cancel_fn cancel;
+    pthread_t owner;
 };
-static int frees, clears, snapshots;
+static int frees, clears, snapshots, wrong_thread_frees, fail_snapshot;
+int stub_wrong_thread_frees(void) { return wrong_thread_frees; }
+void stub_fail_snapshot(int fail) { fail_snapshot = fail; }
 int stub_frees(void) { return frees; }
 int stub_clears(void) { return clears; }
 int stub_snapshots(void) { return snapshots; }
 int ds4_session_create(ds4_session **out, ds4_engine *e, int ctx) {
     if (e != (ds4_engine *)(uintptr_t)0x1234 || ctx != 64) return 1;
     *out = calloc(1, sizeof(**out));
+    (*out)->owner = pthread_self();
     return 0;
 }
-void ds4_session_free(ds4_session *s) { free(s->tokens.v); free(s); frees++; }
+void ds4_session_free(ds4_session *s) {
+    if (!pthread_equal(s->owner, pthread_self())) wrong_thread_frees++;
+    free(s->tokens.v); free(s); frees++;
+}
 void ds4_engine_close(ds4_engine *e) { (void)e; }
 void ds4_session_set_progress(ds4_session *s, ds4_session_progress_fn fn, void *ud) {
     (void)ud; s->progress = fn; if (!fn) clears++;
@@ -44,12 +52,17 @@ int ds4_session_eval(ds4_session *s, int token, char *err, size_t n) {
     (void)s; (void)token; snprintf(err, n, "eval rejected"); return 1;
 }
 int ds4_session_save_snapshot(ds4_session *s, ds4_session_snapshot *snap, char *err, size_t n) {
-    (void)s; (void)err; (void)n; snap->ptr = malloc(4); snap->len = snap->cap = 4; return 0;
+    (void)s; snap->ptr = malloc(4); snap->cap = 4;
+    if (fail_snapshot) { snprintf(err, n, "snapshot write rejected"); return 1; }
+    snap->len = 4; return 0;
 }
 int ds4_session_load_snapshot(ds4_session *s, const ds4_session_snapshot *snap, char *err, size_t n) {
     (void)s; (void)snap; (void)err; (void)n; return 0;
 }
-void ds4_session_snapshot_free(ds4_session_snapshot *snap) { free(snap->ptr); snapshots++; }
+void ds4_session_snapshot_free(ds4_session_snapshot *snap) {
+    if (snap->ptr) snapshots++;
+    free(snap->ptr); memset(snap, 0, sizeof(*snap));
+}
 int ds4_session_sample(ds4_session *s, float t, int k, float p, float m, uint64_t *rng) {
     (void)s; if (t != 0.5f || k != 7 || p != 0.75f || m != 0.25f) return -1;
     *rng += 8; return 42;

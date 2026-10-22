@@ -186,9 +186,10 @@ def test_callbacks_errors_and_thread_confinement(stub_engine):
         session.eval(8)
     assert c.stub_clears() == 12
     with ThreadPoolExecutor(1) as pool:
-        for method in (session.tokens, session.close, engine.eos, engine.close):
+        for method in (session.tokens, session.close, session.save_snapshot, engine.eos, engine.close):
             with pytest.raises(AssertionError, match="another thread"):
                 pool.submit(method).result()
+    assert c.stub_snapshots() == 0
     engine.close()
     assert c.stub_frees() == 1
 
@@ -245,3 +246,56 @@ def test_info_captured_once_on_open(stub_engine):
     assert first is second
     assert (first.name, first.model_id, first.family, first.vocab_size) == ("stub-model", 17, "glm", 256)
     assert c.stub_info_reads() == 1
+
+
+@pytest.mark.parametrize("already_closed", [False, True])
+def test_off_owner_gc_preserves_session_cleanup(stub_engine, monkeypatch, already_closed):
+    import gc
+    import sys
+    import threading
+    import weakref
+
+    engine, c = stub_engine
+    unraisable = []
+    monkeypatch.setattr(sys, "unraisablehook", unraisable.append)
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        session = engine.create_session(64)
+        if already_closed:
+            session.close()
+        # Guarantee collection on the other thread even if callback cycles change.
+        session._test_cycle = session
+        ref = weakref.ref(session)
+        del session
+        collector = threading.Thread(target=gc.collect)
+        collector.start()
+        collector.join()
+        assert ref() is None
+        assert c.stub_frees() == int(already_closed)
+        assert c.stub_wrong_thread_frees() == 0
+        engine.close()
+        engine.close()
+        assert c.stub_frees() == 1
+        assert c.stub_wrong_thread_frees() == 0
+        assert unraisable == []
+    finally:
+        if was_enabled:
+            gc.enable()
+
+
+def test_failed_snapshot_save_frees_partial_allocation(stub_engine):
+    engine, c = stub_engine
+    session = engine.create_session(64)
+    c.stub_fail_snapshot(1)
+    with pytest.raises(EngineError, match="^snapshot write rejected$"):
+        session.save_snapshot()
+    assert c.stub_snapshots() == 1
+    c.stub_fail_snapshot(0)
+    snap = session.save_snapshot()
+    assert snap.nbytes == 4
+    assert c.stub_snapshots() == 1  # successful save transfers ownership
+    session.load_snapshot(snap)
+    snap.close()
+    snap.close()
+    assert c.stub_snapshots() == 2
