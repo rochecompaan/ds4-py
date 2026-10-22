@@ -37,6 +37,7 @@
 - A raw prompt that does not fit the context: `ds4py raw` prints one line naming the prompt length and context size and exits 2, with no traceback (Task 13).
 - Ctrl+C during `ds4py raw`: generation stops, the text so far is flushed, and the process exits 130 (Task 13).
 - An eval that fails during generation: the worker commits a token only after its eval succeeds, so the token reaches neither the transcript nor stdout (Task 11).
+- Replacing a checkpoint when the new save fails (for example, out of memory): the worker saves the new snapshot before it closes the old one, so the old checkpoint still restores (Task 10).
 - `ds4py build --src` pointing at a directory that is not a ds4 tree, or with no C compiler or `make`: one error line naming what is missing, before `make` runs (Task 5).
 - A build that fails or is stopped while it installs: one symlink switch publishes the library and its manifest together, so the previous pair stays installed and loadable (Task 5).
 
@@ -868,6 +869,7 @@ def check_snapshot_restore_matches_rebuild(engine, prompt):
     assert snap.nbytes > 0 and s.payload_bytes() > 0
     s.sync(prompt[:2] + prompt[:2])
     s.load_snapshot(snap); snap.close()
+    with pytest.raises(EngineError, match="closed"): s.load_snapshot(snap)   # and the session is unchanged
     assert s.tokens() == list(prompt[:4]) and s.checkpoint_valid()
     s.sync(prompt)
     assert s.argmax() == rebuilt_argmax(s, prompt)
@@ -1005,7 +1007,7 @@ Details:
 - Token lists cross into C as a `Tokens` struct over a `(c_int * n)` array that lives for the call. `tokenize` copies `v[:len]` out and then calls `ds4_tokens_free`. `token_text` copies the returned bytes and frees them with `Library.free`. `tokens()` copies the borrowed `ds4_session_tokens` array.
 - `NativeEngine.is_stop` wraps `ds4_token_is_stop`, which the `ds4-agent --raw` loop uses. The think-mode variant gets a wrapper with chat rendering in M2.
 - Every `NativeEngine` and `NativeSession` method asserts it runs on the thread that created the object.
-- `close()` frees the session once; `__del__` calls `close()`. `NativeEngine.close()` calls `ds4_engine_close` once and then closes its `InstanceLock`, so the real lock is released only after ds4 has released the engine file. `NativeSnapshot.close()` calls `ds4_session_snapshot_free` once; `nbytes` is the struct's `len`.
+- `close()` frees the session once; `__del__` calls `close()`. `NativeEngine.close()` calls `ds4_engine_close` once and then closes its `InstanceLock`, so the real lock is released only after ds4 has released the engine file. `NativeSnapshot.close()` calls `ds4_session_snapshot_free` once and marks the snapshot closed; `load_snapshot` of a closed snapshot raises `EngineError("snapshot is closed")` instead of handing freed memory to ds4. `nbytes` is the struct's `len`.
 
 `LibNative.backend` is `manifest.backend`. `LibNative.restore_enabled` is `False` only when `manifest.live_checks["restore"]["ok"]` is `False`. `LibNative.bind(name)` returns `Library.fn(name)`.
 
@@ -1032,7 +1034,7 @@ git commit -m "feat(native): wrap the ds4 engine and session API with ctypes"
 
 **Interfaces:**
 - Consumes: the Task 7 protocols, `all_bindings()`, `MissingBinding`, `EngineError`.
-- Produces: `FAKE_EOS = 0`; `Script = Callable[[Sequence[int], Sequence[int]], int]` (prompt tokens, generated tokens → next token); `reply(text: bytes) -> Script` (emits the bytes, then `FAKE_EOS`); `FakeClock` (`__call__() -> float`, `advance(seconds)`); `FakeNative(*, script: Script = reply(b"ok"), chunk: int = 4, clock: FakeClock | None = None, chunk_seconds: float = 0.0, bindings: Mapping[str, Callable] = {}, absent: Iterable[str] = (), restore_enabled: bool = True, info: EngineInfo | None = None)`; `FakeEngine`, `FakeSession` (with `calls: list[tuple]`), `FakeSnapshot`.
+- Produces: `FAKE_EOS = 0`; `Script = Callable[[Sequence[int], Sequence[int]], int]` (prompt tokens, generated tokens → next token); `reply(text: bytes) -> Script` (emits the bytes, then `FAKE_EOS`); `FakeClock` (`__call__() -> float`, `advance(seconds)`); `FakeNative(*, script: Script = reply(b"ok"), chunk: int = 4, clock: FakeClock | None = None, chunk_seconds: float = 0.0, bindings: Mapping[str, Callable] = {}, absent: Iterable[str] = (), restore_enabled: bool = True, info: EngineInfo | None = None)`; `FakeEngine`, `FakeSession` (with `calls: list[tuple]`), `FakeSnapshot` (with `closed: bool`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1090,7 +1092,7 @@ Expected: FAIL with `ModuleNotFoundError` for `ds4py._native.fake`.
 - Tokenizer: byte `b` is token `b + 1`; token 0 is `FAKE_EOS` with text `b"</s>"`; `vocab_size` 257. `rendered=True` tokenizes the same way. `is_stop` is true only for `FAKE_EOS`. The default `EngineInfo` has name `"fake"`, family `"deepseek4"` and `mtp_draft_tokens` 1.
 - `sync` follows ds4's rules. Empty input, or input with `len >= ctx`, raises `EngineError`. State is kept only when the checkpoint is valid and the new tokens start with all of it; otherwise prefill starts at 0. Progress follows ds4's Metal path: `("prefill_chunk", start, total)` first, then one event after each `chunk` tokens, with absolute positions. The fake emits no `prefill_display` events. Before each chunk, the fake checks `cancel` and returns `INTERRUPTED`, keeping the prefix done so far as a valid checkpoint. Each chunk advances `clock` by `chunk_seconds`. The sync also records `("sync", n_prefilled)` in `calls`.
 - `sample` calls `script(prompt, generated)`, where `prompt` is the token list at the end of the last sync and `generated` is the tokens evaluated since then, and steps `rng.value` with splitmix64. `argmax` calls the script without touching `rng`. `eval` appends, records `("eval", token)`, and raises `EngineError` when the context is full. `rewind` truncates, marks the checkpoint invalid and records `("rewind", pos)`; it is a no-op when `pos >= len`. This is ds4's rule for DeepSeek outside a speculative step (`ds4_session_rewind`): compressor state cannot be rolled back, so the next sync rebuilds. `sample` and `argmax` return -1 while the checkpoint is invalid, as ds4 does.
-- `payload_bytes` is `1024 * pos`. `save_snapshot` returns a `FakeSnapshot` holding a copy of the tokens and the prompt length, with that `nbytes`. `load_snapshot` restores them and marks the checkpoint valid.
+- `payload_bytes` is `1024 * pos`. `save_snapshot` returns a `FakeSnapshot` holding a copy of the tokens and the prompt length, with that `nbytes`. `load_snapshot` restores them and marks the checkpoint valid. `FakeSnapshot.close()` sets `closed`; loading a closed snapshot raises `EngineError("snapshot is closed")`, as the native class does.
 - `raw` is `id(self)` on `FakeEngine` and `FakeSession`. `parse_think_level` and `think_mode_for_context` follow ds4 (`ds4.c:61007`, `ds4.c:61044`): the text `"0"` to `"100"` gives `1000 + n` and anything else `None`; `MAX` becomes `HIGH` when `ctx < 393216`.
 - `FakeNative.backend` is `"cpu"`. `FakeEngine` and `FakeSession` methods assert they run on the thread that created the object, as the native classes do, so worker tests catch engine calls from the wrong thread.
 - `bind` raises `MissingBinding` with `ds4py does not declare <name>` for names not in `all_bindings()`, and `<name> is absent from this library` for names in `absent`. Otherwise it returns `bindings[name]`.
@@ -1274,6 +1276,25 @@ def test_checkpoint_limits():
     run(w, CheckpointJob("c"))
     with pytest.raises(CheckpointError, match="unknown checkpoint"): run(w, CheckpointJob("zz", drop=True))
 
+def test_a_checkpoint_is_kept_until_its_replacement_is_saved():
+    w = worker()
+    saved = []
+    def wrap_save(e, s):                                            # the third save runs out of memory
+        real = s.save_snapshot
+        def save():
+            if len(saved) == 2: raise EngineError("out of memory")
+            saved.append(real())
+            return saved[-1]
+        s.save_snapshot = save
+    w.call(wrap_save).result()
+    for n in (8, 12):
+        run(w, SyncJob(tuple(P[:n]))); run(w, CheckpointJob("a"))
+    assert [snap.closed for snap in saved] == [True, False]         # the replaced snapshot is closed
+    run(w, SyncJob(tuple(P[:16])))
+    with pytest.raises(EngineError, match="out of memory"): run(w, CheckpointJob("a"))
+    *_, synced = run(w, SyncJob(tuple(P[:12] + [99])))
+    assert synced.plan == Plan("restore", 12, 1, True, "a")         # closing first would fail this restore
+
 def test_sync_refuses_a_prompt_that_does_not_fit():
     w = worker(ctx=8)
     with pytest.raises(EngineError, match="8 tokens does not fit a context of 8"):
@@ -1318,7 +1339,7 @@ The thread:
 4. `DONE` gives `Synced(s.pos(), plan)`. `INTERRUPTED` clears `cancel_event` first and then gives `Interrupted(s.pos())`.
 
 `CheckpointJob`:
-- Saving needs a valid checkpoint with `pos() > 0`; otherwise raise `CheckpointError("no valid state to checkpoint")`. A new key other than `SYSTEM` is refused with `CheckpointError(f"max_checkpoints ({n}) reached; drop one first")` when `n` others are held. Saving an existing key closes its old snapshot first. The worker keeps `(tuple(s.tokens()), snapshot)` per key and emits `Checkpointed(key, len(tokens), snapshot.nbytes)`.
+- Saving needs a valid checkpoint with `pos() > 0`; otherwise raise `CheckpointError("no valid state to checkpoint")`. A new key other than `SYSTEM` is refused with `CheckpointError(f"max_checkpoints ({n}) reached; drop one first")` when `n` others are held. The worker keeps `(tuple(s.tokens()), snapshot)` per key and emits `Checkpointed(key, len(tokens), snapshot.nbytes)`. Saving an existing key keeps the old entry until the new snapshot exists: save, then swap the entry, then close the old snapshot. If the save raises, the old entry is untouched and still restores. Replacing a key therefore holds two snapshots for a moment. A caller short of memory drops the key first with `CheckpointJob(key, drop=True)`; replacement never drops a snapshot on its own.
 - `drop=True` closes the snapshot and emits `Dropped(key)`. An unknown key raises `CheckpointError(f"unknown checkpoint {key!r}")`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
