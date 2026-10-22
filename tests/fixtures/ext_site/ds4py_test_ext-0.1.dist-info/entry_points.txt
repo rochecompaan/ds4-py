@@ -1,0 +1,2 @@
+[ds4py.bindings]
+test_ext = ds4py_test_ext:BINDINGS
