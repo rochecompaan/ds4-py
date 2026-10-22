@@ -38,6 +38,7 @@
 - Ctrl+C during `ds4py raw`: generation stops, the text so far is flushed, and the process exits 130 (Task 13).
 - An eval that fails during generation: the worker commits a token only after its eval succeeds, so the token reaches neither the transcript nor stdout (Task 11).
 - Replacing a checkpoint when the new save fails (for example, out of memory): the worker saves the new snapshot before it closes the old one, so the old checkpoint still restores (Task 10).
+- A slow snapshot load or a busy machine during `ds4py check --live`: the sync check compares token counts with the plan and only reports the times, so correct reuse never fails on speed (Task 14).
 - `ds4py build --src` pointing at a directory that is not a ds4 tree, or with no C compiler or `make`: one error line naming what is missing, before `make` runs (Task 5).
 - A build that fails or is stopped while it installs: one symlink switch publishes the library and its manifest together, so the previous pair stays installed and loadable (Task 5).
 
@@ -1209,10 +1210,10 @@ git commit -m "feat(engine): add transcript, sync plans and sampling policy"
 **Interfaces:**
 - Consumes: `Native`, `EngineHandle`, `SessionHandle`, `EngineConfig`, `EngineInfo`, `SyncStatus`, `Plan`, `plan_sync`, `FakeNative`, `FakeClock`, `EngineError`, `CheckpointError`.
 - Produces:
-  - `events.py`, all frozen dataclasses: `Prefill(done: int, total: int, cached_prefix: int, tps: float)`; `Synced(pos: int, plan: Plan)`; `Interrupted(pos: int)`; `Checkpointed(key: str, tokens: int, bytes: int)`, where `tokens` is the prefix length; `Dropped(key: str)`; `Token(id: int, text_bytes: bytes)`; `Stopped(reason: str)`; `STOP_REASONS = ("stop_token", "tool_call_complete", "max_tokens", "context_reserve", "interrupted", "parser_error", "context_exhausted")`; `Event`, the union of these types.
+  - `events.py`, all frozen dataclasses: `Prefill(done: int, total: int, cached_prefix: int, tps: float)`; `Synced(pos: int, plan: Plan, prefilled: int)`; `Interrupted(pos: int)`; `Checkpointed(key: str, tokens: int, bytes: int)`, where `tokens` is the prefix length; `Dropped(key: str)`; `Token(id: int, text_bytes: bytes)`; `Stopped(reason: str)`; `STOP_REASONS = ("stop_token", "tool_call_complete", "max_tokens", "context_reserve", "interrupted", "parser_error", "context_exhausted")`; `Event`, the union of these types.
   - `worker.py`: `SYSTEM = "system"`; `SyncJob(tokens: tuple[int, ...])`; `CheckpointJob(key: str, drop: bool = False)`; `Handles(engine: int, session: int)`; `EngineWorker(native: Native, config: EngineConfig, *, cancel: threading.Event | None = None, clock: Callable[[], float] = time.monotonic, max_checkpoints: int = 4, throttle: float = 0.1)` with `.info: EngineInfo`, `.cancel_event: threading.Event`, `submit(job) -> Iterator[Event]`, `call(fn: Callable[[EngineHandle, SessionHandle], T]) -> Future[T]`, `plan(tokens: Sequence[int]) -> Plan` and `close() -> None`.
 
-`call` is the spec's `WorkerCallJob`: a `Future` takes the place of the `Done` and `Failed` events. `SyncJob` takes no images until M5.
+`call` is the spec's `WorkerCallJob`: a `Future` takes the place of the `Done` and `Failed` events. `SyncJob` takes no images until M5. The spec's `Synced(pos, plan)` gains `prefilled`, the prefill count that the spec's sync-plan check compares with `to_prefill` (Task 14).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1238,7 +1239,7 @@ def test_each_sync_reports_the_plan_it_carried_out():
     for tokens, kind in [(P[:20], "extend"), (P[:8] + [99, 98], "restore"), ([50, 51], "rebuild")]:
         predicted = w.plan(tokens)
         *_, synced = run(w, SyncJob(tuple(tokens)))
-        assert predicted.kind == kind and synced == Synced(len(tokens), predicted)
+        assert predicted.kind == kind and synced == Synced(len(tokens), predicted, predicted.to_prefill)
         plans.append(predicted)
     assert sync_calls(w)[1:] == [p.to_prefill for p in plans] == [12, 2, 2]
 
@@ -1249,7 +1250,7 @@ def test_prefill_events_come_at_most_every_100ms():
     prefills = [e for e in events if isinstance(e, Prefill)]
     assert [(e.done, e.total, e.cached_prefix) for e in prefills] == [(0, 40, 0), (16, 40, 0), (32, 40, 0)]
     assert prefills[1].tps == pytest.approx(16 / 0.12)
-    assert events[-1] == Synced(40, Plan("rebuild", 0, 40, True, None))
+    assert events[-1] == Synced(40, Plan("rebuild", 0, 40, True, None), 40)
 
 def test_prefill_counts_only_the_new_tokens():
     w = worker(chunk=4)
@@ -1334,9 +1335,9 @@ The thread:
 
 `SyncJob`:
 1. Plan again on the worker. When the plan does not fit, raise `EngineError(f"prompt of {n} tokens does not fit a context of {ctx}")` without syncing.
-2. For `restore`, load the plan's checkpoint with `load_snapshot`.
-3. Call `sync` with `cancel=cancel_event.is_set` and a progress function. The progress function counts done tokens as `agent_worker_sync_tokens` does (`ds4_agent.c`): `prefill_work` gives `current`; `prefill_chunk` and `prefill_display` give `current - plan.reused`; other events are ignored; the count is clamped to `0..plan.to_prefill`. It emits `Prefill(done, plan.to_prefill, plan.reused, tps)` for the first event, then only when `clock() - last_emit >= throttle`. `tps` is `done / (clock() - start)`, or `0.0` when no time has passed.
-4. `DONE` gives `Synced(s.pos(), plan)`. `INTERRUPTED` clears `cancel_event` first and then gives `Interrupted(s.pos())`.
+2. For `restore`, load the plan's checkpoint with `load_snapshot`. Then read the prefix the session will reuse, as `agent_worker_sync_tokens` computes `cached` (`ds4_agent.c:5289`): `cached = common if common == s.pos() else 0`, where `common = s.common_prefix(tokens)`. ds4 evaluates only the tokens after a reused prefix (`ds4.h:436`), so `prefilled = len(tokens) - cached`. ds4 has no counter of evaluated tokens; this is the count its sync contract promises.
+3. Call `sync` with `cancel=cancel_event.is_set` and a progress function. The progress function counts done tokens as `agent_worker_sync_tokens` does (`ds4_agent.c`): `prefill_work` gives `current`; `prefill_chunk` and `prefill_display` give `current - cached`; other events are ignored; the count is clamped to `0..prefilled`. It emits `Prefill(done, prefilled, cached, tps)` for the first event, then only when `clock() - last_emit >= throttle`. `tps` is `done / (clock() - start)`, or `0.0` when no time has passed.
+4. `DONE` gives `Synced(s.pos(), plan, prefilled)`. `INTERRUPTED` clears `cancel_event` first and then gives `Interrupted(s.pos())`.
 
 `CheckpointJob`:
 - Saving needs a valid checkpoint with `pos() > 0`; otherwise raise `CheckpointError("no valid state to checkpoint")`. A new key other than `SYSTEM` is refused with `CheckpointError(f"max_checkpoints ({n}) reached; drop one first")` when `n` others are held. The worker keeps `(tuple(s.tokens()), snapshot)` per key and emits `Checkpointed(key, len(tokens), snapshot.nbytes)`. Saving an existing key keeps the old entry until the new snapshot exists: save, then swap the entry, then close the old snapshot. If the save raises, the old entry is untouched and still restores. Replacing a key therefore holds two snapshots for a moment. A caller short of memory drops the key first with `CheckpointJob(key, drop=True)`; replacement never drops a snapshot on its own.
@@ -1762,13 +1763,13 @@ git commit -m "feat(cli): add ds4py raw with ds4-agent's trace format"
 - Produces: `LIVE_TEXT: str`; `LIVE_CHECKPOINT = "live-check"`; `run_live_checks(worker: EngineWorker, *, clock: Callable[[], float] = time.monotonic, prefix: int = 2048, tail: int = 64, generate: int = 256) -> dict[str, dict]`; `check_live(lib: str | Path | None, model: Path, *, ctx: int = 4096) -> CheckReport`; a `live_lib` fixture in `tests/conftest.py`.
 - CLI: `ds4py check [--lib PATH] [--live --model PATH [--ctx N]]`. `--live` without `--model` is a usage error (exit 2).
 
-The spec's sync-plan check asks that "the prefill count in `Synced` equals `plan().to_prefill`". ds4 cannot report that count the same way on every backend: the CPU path reports one progress event per extended token and a single `(len, len)` event for a rebuild, and Metal reports the start position first (Task 7). So `Synced` carries the plan, and the live check measures reuse by time instead: an extend or a restore of `tail` tokens must take at most half as long as a rebuild of all `prefix` tokens. With the defaults that is 64 tokens against 2048, so a backend that reuses its KV passes by a wide margin, and one that silently rebuilds fails.
+The spec's sync-plan check asks that "the prefill count in `Synced` equals `plan().to_prefill`". ds4 has no counter of evaluated tokens, and its progress events differ by backend: the CPU path reports one event per extended token and a single `(len, len)` event for a rebuild, and Metal reports the start position first (Task 7). What ds4 does report is the prefix a session will reuse, and `Synced.prefilled` is built from it on the worker, after any snapshot load and just before the native sync (Task 10). The live check compares that count with the plan. It catches a snapshot load that did not restore the state, and a session whose state is not what the plan assumed. Elapsed times depend on snapshot loading, batching and scheduling, so the check reports them but never fails on them. A backend that breaks ds4's sync contract and evaluates a reused prefix again gives the right output more slowly; the counts cannot show that, but the times in the report do.
 
 The result is recorded in the manifest as `live_checks`:
 
 ```python
 {"sync_plans": {"ok": bool, "message": str,
-                "tokens": {"extend": int, "restore": int, "rebuild": int},
+                "prefilled": {"extend": int, "restore": int, "rebuild": int},
                 "seconds": {"extend": float, "restore": float, "rebuild": float}},
  "restore": {"ok": bool, "message": str, "tokens": int}}
 ```
@@ -1778,8 +1779,8 @@ The result is recorded in the manifest as `live_checks`:
 `tests/abi/test_live_checks.py` runs the checks on `FakeNative`:
 
 ```python
-def live(script=lambda prompt, generated: 98, **fake):    # 98 is "a"; the run never stops early
-    clock = FakeClock()
+def live(script=lambda prompt, generated: 98, clock=None, **fake):    # 98 is "a"; the run never stops early
+    clock = clock or FakeClock()
     w = EngineWorker(FakeNative(script=script, clock=clock, chunk=4, chunk_seconds=0.01, **fake),
                      EngineConfig(Path("f.gguf"), ctx=512), clock=clock)
     try:
@@ -1791,7 +1792,7 @@ def test_the_checks_pass_on_an_engine_that_reuses_its_kv():
     r = live()
     assert r["sync_plans"]["ok"] and r["restore"] == {
         "ok": True, "message": "32 greedy tokens after a restore match a rebuild", "tokens": 32}
-    assert r["sync_plans"]["tokens"] == {"extend": 16, "restore": 16, "rebuild": 128}
+    assert r["sync_plans"]["prefilled"] == {"extend": 16, "restore": 16, "rebuild": 128}
     assert r["sync_plans"]["seconds"] == pytest.approx({"extend": 0.04, "restore": 0.04, "rebuild": 0.32})
     assert r["sync_plans"]["message"] == ("extend of 16 tokens took 0.040 s, restore of 16 took 0.040 s, "
                                           "rebuild of 128 took 0.320 s")
@@ -1806,16 +1807,22 @@ def test_a_restore_that_changes_the_output_fails_the_restore_check():
     assert r["sync_plans"]["ok"] and not r["restore"]["ok"]
     assert r["restore"]["message"] == "the runs differ at token 0: 3 after a restore, 4 after a rebuild"
 
-def test_an_engine_that_always_rebuilds_fails_the_sync_check(monkeypatch):
-    sync = FakeSession.sync
-    def rebuild_always(self, tokens, **kw):
-        self.invalidate()
-        return sync(self, tokens, **kw)
-    monkeypatch.setattr(FakeSession, "sync", rebuild_always)
+def test_a_snapshot_load_that_does_not_restore_fails_the_sync_check(monkeypatch):
+    monkeypatch.setattr(FakeSession, "load_snapshot", lambda self, snap: None)
     r = live()
     assert not r["sync_plans"]["ok"]
-    assert r["sync_plans"]["message"] == ("extend of 16 tokens took 0.320 s, more than half of the "
-                                          "0.320 s rebuild; the engine did not reuse its KV")
+    assert r["sync_plans"]["message"] == "the restore sync prefilled 128 tokens; its plan prefills 16"
+
+def test_a_slow_restore_is_reported_but_not_failed(monkeypatch):
+    clock = FakeClock()
+    load = FakeSession.load_snapshot
+    def slow_load(self, snap):                          # loading the snapshot takes a second
+        clock.advance(1.0)
+        load(self, snap)
+    monkeypatch.setattr(FakeSession, "load_snapshot", slow_load)
+    r = live(clock=clock)
+    assert r["sync_plans"]["ok"] and r["sync_plans"]["prefilled"]["restore"] == 16
+    assert r["sync_plans"]["seconds"]["restore"] == pytest.approx(1.04)
 
 def test_the_context_must_hold_the_check():
     clock = FakeClock()
@@ -1912,11 +1919,13 @@ LIVE_TEXT = (
 5. **Restore:** invalidate the live state with `worker.call(lambda e, s: s.invalidate())`, sync again, then generate `generate` tokens with `GenerateJob(SamplingPolicy(temperature=0.0), Rng(1), generate, Transcript())`. Call this run `a`.
 6. **Rebuild:** drop `LIVE_CHECKPOINT`, invalidate, sync again, then generate run `b` the same way.
 
-Time each sync in steps 4–6 with `clock()` from `submit` to its `Synced` event, and keep the `Synced.plan`. A run is the list of `Token.id`s plus the `Stopped.reason`.
+Time each sync in steps 4–6 with `clock()` from `submit` to its `Synced` event, and keep the `Synced` event. A run is the list of `Token.id`s plus the `Stopped.reason`.
 
 `sync_plans` fails on the first of these:
 - A plan other than `extend` with `to_prefill == tail`, `restore` with `to_prefill == tail` and `checkpoint == LIVE_CHECKPOINT`, or `rebuild` with `to_prefill == prefix`, in steps 4, 5 and 6. The message is `the <step> sync planned <kind> of <n> tokens, expected <step> of <m>`.
-- An extend or restore that took more than half of the rebuild's time. The message is `<step> of <tail> tokens took <s> s, more than half of the <r> s rebuild; the engine did not reuse its KV`.
+- A `Synced.prefilled` that differs from its plan's `to_prefill`. The message is `the <step> sync prefilled <n> tokens; its plan prefills <m>`.
+
+The times never fail the check. They go in `seconds` and in the success message.
 
 On success the message is `extend of <tail> tokens took <s> s, restore of <tail> took <s> s, rebuild of <prefix> took <s> s`. Times are printed with three decimals.
 
