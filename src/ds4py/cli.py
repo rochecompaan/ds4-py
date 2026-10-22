@@ -20,7 +20,33 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("-j", type=int)
     check = commands.add_parser("check", help="check a libds4 ABI without opening a model")
     check.add_argument("--lib", type=Path)
+    raw = commands.add_parser("raw", help="generate from an untemplated prompt")
+    prompts = raw.add_mutually_exclusive_group(required=True)
+    prompts.add_argument("prompt", nargs="?")
+    prompts.add_argument("-p", dest="prompt_text")
+    prompts.add_argument("--prompt-file", type=Path)
+    raw.add_argument("-m", dest="model", default="ds4flash.gguf")
+    raw.add_argument("-c", dest="ctx", type=int, default=100_000)
+    raw.add_argument("-n", dest="tokens", type=int, default=50_000)
+    raw.add_argument("--temp", type=float)
+    raw.add_argument("--top-p", type=float)
+    raw.add_argument("--min-p", type=float)
+    raw.add_argument("--seed", type=int)
+    backends = raw.add_mutually_exclusive_group()
+    backends.add_argument("--backend")
+    for backend in ("cpu", "metal", "cuda"):
+        backends.add_argument(f"--{backend}", dest="backend", action="store_const", const=backend)
+    raw.add_argument("-t", dest="threads", type=int, default=0)
+    raw.add_argument("--trace", type=Path)
+    raw.add_argument("--lib", type=Path)
     args = parser.parse_args(argv)
+    if args.command == "raw":
+        from ds4py.raw import command
+        try:
+            return command(args)
+        except (Ds4pyError, OSError, UnicodeError) as exc:
+            print(f"ds4py: {exc}", file=sys.stderr)
+            return 1
     if args.command == "check":
         report = check_library(args.lib)
         print(format_report(report))
