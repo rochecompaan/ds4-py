@@ -31,8 +31,9 @@
 
 ## Review Focus
 
-- A wrong model path (missing, a directory, or not a GGUF file): `ds4_engine_open` calls `exit()`, so Python must raise `ModelFileError` before calling it (Task 7).
-- Another ds4 process holds the instance lock (`DS4_LOCK_FILE`, default `/tmp/ds4.lock`): the engine would `exit(2)`, so Python must raise `EngineLockedError` naming the lock path (Task 7).
+- A bad model file (missing, too small, or a GGUF that ds4 cannot parse): ds4 calls `exit()` while parsing, so a child process opens the model with `inspect_only` first, and Python raises `ModelFileError` with ds4's own message (Task 7).
+- Another ds4 process holds the instance lock (`DS4_LOCK_FILE`, default `/tmp/ds4.lock`): the engine would `exit(2)`. Python takes that lock itself and holds it while the engine is open, so there is no gap between the check and the native open. A held lock raises `EngineLockedError` naming the lock path (Task 7).
+- A relative model path, such as the default `ds4flash.gguf`: `EngineConfig` makes it absolute on the caller's thread. ds4py never changes the working directory (Task 7).
 - A raw prompt that does not fit the context: `ds4py raw` prints one line naming the prompt length and context size and exits 2, with no traceback (Task 13).
 - Ctrl+C during `ds4py raw`: generation stops, the text so far is flushed, and the process exits 130 (Task 13).
 - `ds4py build --src` pointing at a directory that is not a ds4 tree, or with no C compiler or `make`: one error line naming what is missing, before `make` runs (Task 5).
@@ -49,7 +50,8 @@
 | `src/ds4py/_native/bindings.py` | `Binding`, `CORE_BINDINGS`, extension discovery |
 | `src/ds4py/_native/loader.py` | find, validate, load once and bind the library |
 | `src/ds4py/_native/protocol.py` | `ThinkMode`, `EngineInfo`, `SyncStatus`, the `Native*` protocols |
-| `src/ds4py/_native/api.py` | `NativeEngine`, `NativeSession`, `Snapshot` over the real library |
+| `src/ds4py/_native/api.py` | `NativeEngine`, `NativeSession`, `Snapshot` over the real library, the instance lock |
+| `src/ds4py/_native/modelcheck.py` | child process that opens a model with `inspect_only` |
 | `src/ds4py/_native/fake.py` | `FakeNative`: the same protocols in pure Python |
 | `src/ds4py/abi/pins.py` | pins and known header hashes |
 | `src/ds4py/abi/probe.py` | signature probes, layout program, header hashes |
@@ -707,15 +709,16 @@ git commit -m "feat(abi): add ds4py check"
 ### Task 7: Native protocols and the ctypes API
 
 **Files:**
-- Create: `src/ds4py/_native/protocol.py`, `src/ds4py/_native/api.py`, `tests/native/contract.py`
+- Create: `src/ds4py/_native/protocol.py`, `src/ds4py/_native/api.py`, `src/ds4py/_native/modelcheck.py`, `tests/native/contract.py`
 - Modify: `tests/conftest.py`
 - Test: `tests/native/test_api.py`
 
 **Interfaces:**
 - Consumes: `Library`, `load_library`, `structs.*`, `EngineError`, `ModelFileError`, `EngineLockedError`, `MissingBinding`.
 - Produces:
-  - `protocol.py`: `ThinkMode(IntEnum)` with `NONE=0, HIGH=1, MAX=2, LOW=3, MEDIUM=4`; `THINK_LEVEL_BASE = 1000`; `BACKENDS = {"metal": 0, "cuda": 1, "rocm": 1, "cpu": 2}`; `EngineConfig(model: Path, ctx: int = 100_000, backend: str = "cpu", threads: int = 0)` (frozen); `EngineInfo(name: str, model_id: int, family: str, is_deepseek41: bool, is_glm_dsa: bool, is_qwen4: bool, has_vision: bool, routed_quant_bits: int, mtp_draft_tokens: int, vocab_size: int)` (frozen); `family_of(*, deepseek41: bool, glm: bool, qwen: bool) -> str` (`"deepseek41"`, `"glm"`, `"qwen"`, else `"deepseek4"`); `SyncStatus(Enum)` with `DONE`, `INTERRUPTED`; `ProgressFn = Callable[[str, int, int], None]`; `CancelFn = Callable[[], bool]`; protocols `Snapshot`, `SessionHandle`, `EngineHandle`, `Native` with the methods below.
-  - `api.py`: `check_model_file(path: Path) -> None`; `lock_path() -> Path`; `check_instance_lock() -> None`; `engine_options(config: EngineConfig) -> structs.EngineOptions`; `LibNative(lib: Library)`, `NativeEngine`, `NativeSession`, `NativeSnapshot` implementing the protocols.
+  - `protocol.py`: `ThinkMode(IntEnum)` with `NONE=0, HIGH=1, MAX=2, LOW=3, MEDIUM=4`; `THINK_LEVEL_BASE = 1000`; `BACKENDS = {"metal": 0, "cuda": 1, "rocm": 1, "cpu": 2}`; `EngineConfig(model: Path, ctx: int = 100_000, backend: str = "cpu", threads: int = 0)` (frozen; `__post_init__` makes `model` absolute with `Path.absolute()`, so a relative path keeps the meaning it had on the caller's thread); `EngineInfo(name: str, model_id: int, family: str, is_deepseek41: bool, is_glm_dsa: bool, is_qwen4: bool, has_vision: bool, routed_quant_bits: int, mtp_draft_tokens: int, vocab_size: int)` (frozen); `family_of(*, deepseek41: bool, glm: bool, qwen: bool) -> str` (`"deepseek41"`, `"glm"`, `"qwen"`, else `"deepseek4"`); `SyncStatus(Enum)` with `DONE`, `INTERRUPTED`; `ProgressFn = Callable[[str, int, int], None]`; `CancelFn = Callable[[], bool]`; protocols `Snapshot`, `SessionHandle`, `EngineHandle`, `Native` with the methods below.
+  - `api.py`: `lock_path() -> Path`; `engine_lock_path() -> Path`; `InstanceLock` with `InstanceLock.acquire(path: Path) -> InstanceLock`, `.close()` and context-manager use; `metal_source_env(src: Path) -> dict[str, str]`; `engine_options(config: EngineConfig, *, inspect_only: bool = False) -> structs.EngineOptions`; `LibNative(lib: Library)`, `NativeEngine`, `NativeSession`, `NativeSnapshot` implementing the protocols.
+  - `modelcheck.py`: `NATIVE_REFUSED = 3`; `PYTHON_ERROR = 4`; `exit_error(status: int, stderr: str, model: Path, lock_file: Path) -> EngineError | None`; `inspect_model(lib: Path, config: EngineConfig, lock_file: Path) -> None`; `main(argv: list[str]) -> int`, run as `python -m ds4py._native.modelcheck`.
 
 The protocols, which `FakeNative` also implements in Task 8:
 
@@ -831,40 +834,76 @@ CONTRACT = [check_extend_matches_rebuild, check_common_prefix, check_eval_rewind
 Add a `fresh_loader` fixture to `tests/conftest.py` that sets `loader._loaded = None` before and after the test, so tests can load different libraries in one process.
 
 ```python
-def test_model_file_checks(tmp_path):
-    with pytest.raises(ModelFileError, match="not found"): check_model_file(tmp_path / "x.gguf")
-    with pytest.raises(ModelFileError, match="directory"): check_model_file(tmp_path)
-    (tmp_path / "s.gguf").write_bytes(b"GGUF")
-    with pytest.raises(ModelFileError, match="too small"): check_model_file(tmp_path / "s.gguf")
-    (tmp_path / "b.gguf").write_bytes(b"GGML" + bytes(60))
-    with pytest.raises(ModelFileError, match="not a GGUF file"): check_model_file(tmp_path / "b.gguf")
-    (tmp_path / "ok.gguf").write_bytes(b"GGUF" + bytes(60))
-    check_model_file(tmp_path / "ok.gguf")
-
-def test_held_lock_is_refused(tmp_path, monkeypatch):
+def test_instance_lock(tmp_path, monkeypatch):
+    monkeypatch.delenv("DS4_LOCK_FILE", raising=False)
+    assert lock_path() == Path("/tmp/ds4.lock")
     path = tmp_path / "ds4.lock"
     monkeypatch.setenv("DS4_LOCK_FILE", str(path))
+    assert (lock_path(), engine_lock_path()) == (path, tmp_path / "ds4.lock.engine")
     with open(path, "w") as held:
         held.write("4242"); held.flush()
         fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
         with pytest.raises(EngineLockedError, match=rf"{re.escape(str(path))}.*pid 4242"):
-            check_instance_lock()
-    check_instance_lock()          # free again: passes and leaves no lock behind
-    check_instance_lock()
+            InstanceLock.acquire(path)
+    with InstanceLock.acquire(path):
+        assert path.read_text() == f"{os.getpid()}\n"      # a C tool's refusal names this process
+        with pytest.raises(EngineLockedError):              # a second descriptor conflicts, as ds4's would
+            InstanceLock.acquire(path)
+    InstanceLock.acquire(path).close()                      # closing released it
 
-def test_engine_options():
+def test_exit_error():
+    m, lk = Path("/m.gguf"), Path("/tmp/ds4.lock.engine")
+    assert exit_error(0, "", m, lk) is None
+    e = exit_error(1, "ds4: loading\nds4: only GGUF v3 is supported\n", m, lk)
+    assert type(e) is ModelFileError and "/m.gguf" in str(e) and str(e).endswith("only GGUF v3 is supported")
+    e = exit_error(2, "ds4: another ds4 process is already running (pid 7); refusing to start\n", m, lk)
+    assert type(e) is EngineLockedError and str(lk) in str(e) and "pid 7" in str(e)
+    assert type(exit_error(NATIVE_REFUSED, "ds4: V4.1 vision requires Metal\n", m, lk)) is EngineError
+    tb = "Traceback (most recent call last):\n  ...\nImportError: no module named ds4py\n"
+    for status in (1, 2, NATIVE_REFUSED, PYTHON_ERROR, -9):      # no ds4 line: not a ds4 refusal
+        e = exit_error(status, tb, m, lk)
+        assert type(e) is EngineError and "ImportError" in str(e)
+
+def test_metal_source_env(tmp_path, monkeypatch):
+    (tmp_path / "metal").mkdir()
+    for stem in ("flash_attn", "moe"):
+        (tmp_path / "metal" / f"{stem}.metal").write_text("")
+    monkeypatch.chdir(tmp_path)
+    here = Path.cwd()                  # tmp_path may be a symlink, as on macOS
+    assert metal_source_env(Path(".")) == {
+        "DS4_METAL_FLASH_ATTN_SOURCE": str(here / "metal" / "flash_attn.metal"),
+        "DS4_METAL_MOE_SOURCE": str(here / "metal" / "moe.metal"),
+    }
+    with pytest.raises(EngineError, match="no Metal sources"):
+        metal_source_env(tmp_path / "metal")
+
+def test_engine_options(tmp_path, monkeypatch):
     o = engine_options(EngineConfig(Path("/m.gguf"), ctx=4096, backend="rocm", threads=3))
     assert (o.model_path, o.backend, o.context_size, o.placement_ctx_hint, o.n_threads) == (b"/m.gguf", 1, 4096, 4096, 3)
-    assert (o.mtp_draft_tokens, o.mtp_margin) == (1, 3.0)
+    assert (o.mtp_draft_tokens, o.mtp_margin, o.inspect_only) == (1, 3.0, False)
+    assert engine_options(EngineConfig(Path("/m.gguf")), inspect_only=True).inspect_only
+    monkeypatch.chdir(tmp_path)
+    assert EngineConfig(Path("m.gguf")).model == Path.cwd() / "m.gguf"   # absolute on the caller's thread
     with pytest.raises(ValueError, match="vulkan"): engine_options(EngineConfig(Path("/m"), backend="vulkan"))
 
 @pytest.mark.build
-def test_library_calls_without_a_model(built_upstream, fresh_loader, tmp_path):
+def test_open_failures_become_exceptions(built_upstream, fresh_loader, tmp_path, monkeypatch):
+    lock = tmp_path / "ds4.lock"
+    monkeypatch.setenv("DS4_LOCK_FILE", str(lock))
     native = LibNative(load_library(built_upstream[0]))
     assert native.parse_think_level("42") == 1042 and native.parse_think_level("high") is None
     assert native.think_mode_for_context(ThinkMode.MAX, 4096) == ThinkMode.HIGH
-    with pytest.raises(ModelFileError):          # ds4 would exit() here
-        native.open_engine(EngineConfig(tmp_path / "missing.gguf"))
+    (tmp_path / "v0.gguf").write_bytes(b"GGUF" + bytes(60))        # GGUF version 0
+    for model, text in [("missing.gguf", "cannot open model"), ("v0.gguf", "only GGUF v3")]:
+        with pytest.raises(ModelFileError, match=text):           # ds4 exit()s; only the child dies
+            native.open_engine(EngineConfig(tmp_path / model))
+    with InstanceLock.acquire(lock):                               # another holder of the real lock
+        with pytest.raises(EngineLockedError):
+            native.open_engine(EngineConfig(tmp_path / "v0.gguf"))
+    with InstanceLock.acquire(engine_lock_path()):                 # ds4's own lock: the child exits 2
+        with pytest.raises(EngineLockedError, match="already running"):
+            native.open_engine(EngineConfig(tmp_path / "v0.gguf"))
+    InstanceLock.acquire(lock).close()                             # the failed opens released it
 
 @pytest.mark.live
 @pytest.mark.parametrize("check", CONTRACT, ids=lambda f: f.__name__)
@@ -872,23 +911,35 @@ def test_contract_live(live_engine, check):
     check(live_engine, live_engine.tokenize("The quick brown fox jumps over the lazy dog. " * 2))
 ```
 
-`live_engine` is a module fixture that skips unless `DS4_TEST_MODEL` is set, loads the library from `DS4_LIB` or the default directory, and opens an engine on the manifest's backend with `ctx=4096`. `test_contract_live` skips `check_snapshot_restore_matches_rebuild` when `LibNative.restore_enabled` is `False`. Add one more live test: `engine.token_text` over `engine.tokenize("Hello world")` joins to `b"Hello world"`.
+`live_engine` is a module fixture that skips unless `DS4_TEST_MODEL` is set, loads the library from `DS4_LIB` or the default directory, and opens an engine on the manifest's backend with `ctx=4096`. `test_contract_live` skips `check_snapshot_restore_matches_rebuild` when `LibNative.restore_enabled` is `False`. Add two more live tests: `engine.token_text` over `engine.tokenize("Hello world")` joins to `b"Hello world"`; and while `live_engine` is open, `InstanceLock.acquire(lock_path())` raises `EngineLockedError` and `os.environ.get("DS4_LOCK_FILE")` is what it was before the open.
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/native/test_api.py -v`
 Expected: FAIL with `ImportError` for `ds4py._native.api`.
 
-- [ ] **Step 4: Implement `protocol.py` and `api.py`**
+- [ ] **Step 4: Implement `protocol.py`, `api.py` and `modelcheck.py`**
 
-Prechecks, both called by `open_engine` before `ds4_engine_open`:
+ds4 calls `exit()` when another process holds the instance lock (`ds4_acquire_instance_lock`, `ds4.c:61061`) and when it cannot parse a model (`model_open`, `ds4.c:2855`, through `ds4_die`). Python cannot catch either, and a Python copy of ds4's checks would always miss cases. `LibNative.open_engine` therefore runs these steps in order, under a module-level `threading.Lock` so that two opens in one process cannot overlap:
 
-- `check_model_file`: raise `ModelFileError` naming the path when the file does not exist, is a directory, has fewer than 32 bytes, or does not start with `b"GGUF"`. These are the cases where `model_open` (`ds4.c:2855`) calls `ds4_die`.
-- `check_instance_lock`: open `lock_path()` with `O_RDWR | O_CREAT`, mode `0600`, and try `fcntl.flock(fd, LOCK_EX | LOCK_NB)`. On `BlockingIOError`, read a pid from the file and raise `EngineLockedError("another ds4 process holds <path> (pid <n>); stop it or set DS4_LOCK_FILE")`, leaving out `(pid <n>)` when there is none. Otherwise unlock and close. ds4 takes the same `flock` in `ds4_acquire_instance_lock` (`ds4.c:61061`).
+1. `lock = InstanceLock.acquire(lock_path())`. Python takes the lock that every other ds4 process checks and keeps it until the engine closes, so no process can take it between the check and the native open.
+2. `inspect_model(library.path, config, engine_lock_path())`. A child process lets ds4 parse the model; if ds4 exits, only the child dies.
+3. For the Metal backend, add `metal_source_env(Path(manifest.source_path))` to `os.environ` with `setdefault`, and leave it set.
+4. Set `DS4_LOCK_FILE` to `engine_lock_path()`, call `ds4_engine_open`, and restore the previous value (or remove the variable) in `finally`. A non-zero return raises `EngineError`.
+5. If any step fails, close `lock` before re-raising. On success, `NativeEngine` owns `lock`.
 
-`engine_options` zero-fills the struct and sets `model_path`, `backend` (from `BACKENDS`; any other name raises `ValueError`), `n_threads`, `context_size`, `placement_ctx_hint = ctx`, `mtp_draft_tokens = 1` and `mtp_margin = 3.0`, as `ds4_agent.c` does. `NativeEngine` keeps the options struct and its encoded path alive for its lifetime.
+Details:
 
-For the Metal backend, `open_engine` changes the working directory to `manifest.source_path` around `ds4_engine_open`, because `ds4_metal.m` reads `metal/*.metal` relative to it. CI does not run this path; Task 14's live check on the bake-off machine does.
+- `lock_path()` is `DS4_LOCK_FILE`, or `/tmp/ds4.lock` when that is unset or empty, as in ds4. `engine_lock_path()` is `lock_path()` with `.engine` appended to the name. ds4 opens its lock file again and calls `flock` on the new descriptor, which conflicts with the lock Python holds even inside one process, so ds4's own lock must use a different file. Only the holder of the real lock ever opens the engine file, so a fixed name is safe.
+- `InstanceLock.acquire(path)` opens `path` with `O_RDWR | O_CREAT`, mode `0600` (Python descriptors are not inherited, like ds4's `FD_CLOEXEC`), and calls `fcntl.flock(fd, LOCK_EX | LOCK_NB)`. On `BlockingIOError` it reads a pid from the file, closes it and raises `EngineLockedError("another ds4 process holds <path> (pid <n>); stop it or set DS4_LOCK_FILE")`, leaving out `(pid <n>)` when there is none. On success it truncates the file and writes its own pid, as ds4 does, so a C tool's refusal names this process. `close()` closes the descriptor once, which releases the lock.
+- `inspect_model` runs `[sys.executable, "-P", "-m", "ds4py._native.modelcheck", <lib>, <model>, <backend>]` with the current environment plus `DS4_LOCK_FILE=<lock_file>`, captures its output, and raises `exit_error(returncode, stderr, model, lock_file)` when that is not `None`. `modelcheck.main` loads the library, calls `ds4_engine_open` with `engine_options(config, inspect_only=True)` and closes the engine. With `inspect_only`, ds4 parses the whole model without prefetching weights and returns before it starts the GPU (`ds4.c:72293`). `main` returns 0 when the open succeeds and `NATIVE_REFUSED` when `ds4_engine_open` returns non-zero. It catches any Python exception, prints the traceback and returns `PYTHON_ERROR`, so only ds4's own `exit()` calls produce statuses 1 and 2. It reads its three arguments by position, with no argument parser that could exit with 2.
+- `exit_error` treats a failure as a ds4 refusal only when stderr has a line starting with `ds4: `, and the exception carries the last such line. Status 2 comes only from ds4's lock code (`ds4.c:61068` to `61098`) and raises `EngineLockedError` naming `lock_file`. Status 1 comes from `ds4_die` and from ds4's metadata and tensor checks, and raises `ModelFileError` naming the model path. `NATIVE_REFUSED` raises `EngineError`, as a failed native open does in step 4. Any other status, or a failure with no `ds4: ` line, raises `EngineError` with the status and the last 20 lines of stderr. That covers a signal, and a failed import, which Python reports with status 1. ds4 also exits with 1 for `out of memory` in `xmalloc`; that case raises `ModelFileError` as well, and the message shows ds4's own words.
+- `metal_source_env(src)` maps each `<src>/metal/<stem>.metal` to `DS4_METAL_<STEM in upper case>_SOURCE`, built on `src.absolute()`, so every value is an absolute path. This matches all 26 entries in the source table of `ds4_metal.m` at the upstream pin (`ds4_metal.m:4763`), and ds4 tries an override before its relative path. When `<src>/metal` holds no `.metal` files, it raises `EngineError("no Metal sources in <src>/metal")`. The variables stay set because ds4 may start the GPU later, for example for vision (`ds4.c:73608`). A value the user has already set wins.
+- ds4py never changes the working directory, so relative paths on other threads keep their meaning. CI does not run the Metal path; Task 14's live check on the bake-off machine does.
+- Step 4 changes `DS4_LOCK_FILE` for the whole process while `ds4_engine_open` runs, because ds4 reads the lock path only from the environment, and only there (`ds4.c:61062`). If another thread starts a ds4 process in that window, the child can take the engine file first, and then the native open exits. ds4py starts no processes while it opens an engine, and the `open_engine` docstring tells callers not to either.
+- ds4 exits after the model has parsed, such as inside GPU setup, are not caught. They stop the process, as they do in the C tools.
+
+`engine_options` zero-fills the struct and sets `model_path`, `backend` (from `BACKENDS`; any other name raises `ValueError`), `n_threads`, `context_size`, `placement_ctx_hint = ctx`, `mtp_draft_tokens = 1` and `mtp_margin = 3.0` as `ds4_agent.c` does, and `inspect_only` from its argument. `NativeEngine` keeps the options struct and its encoded path alive for its lifetime.
 
 `NativeSession`:
 - Creates one `PROGRESS_FN` and one `CANCEL_FN` object in `__init__` and keeps them on the instance. `sync` points them at the call's `progress` and `cancel`, installs them with `ds4_session_set_progress`, `ds4_session_set_display_progress` and `ds4_session_set_cancel`, and clears all three with `PROGRESS_FN()` / `CANCEL_FN()` in `finally`.
@@ -897,7 +948,7 @@ For the Metal backend, `open_engine` changes the working directory to `manifest.
 - Token lists cross into C as a `Tokens` struct over a `(c_int * n)` array that lives for the call. `tokenize` copies `v[:len]` out and then calls `ds4_tokens_free`. `token_text` copies the returned bytes and frees them with `Library.free`. `tokens()` copies the borrowed `ds4_session_tokens` array.
 - `NativeEngine.is_stop` wraps `ds4_token_is_stop`, which the `ds4-agent --raw` loop uses. The think-mode variant gets a wrapper with chat rendering in M2.
 - Every `NativeEngine` and `NativeSession` method asserts it runs on the thread that created the object.
-- `close()` frees the session once; `__del__` calls `close()`. `NativeSnapshot.close()` calls `ds4_session_snapshot_free` once; `nbytes` is the struct's `len`.
+- `close()` frees the session once; `__del__` calls `close()`. `NativeEngine.close()` calls `ds4_engine_close` once and then closes its `InstanceLock`, so the real lock is released only after ds4 has released the engine file. `NativeSnapshot.close()` calls `ds4_session_snapshot_free` once; `nbytes` is the struct's `len`.
 
 `LibNative.backend` is `manifest.backend`. `LibNative.restore_enabled` is `False` only when `manifest.live_checks["restore"]["ok"]` is `False`. `LibNative.bind(name)` returns `Library.fn(name)`.
 
