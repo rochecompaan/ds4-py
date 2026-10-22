@@ -103,3 +103,11 @@ def make_manifest(cc, probed, tmp_path_factory):
         )
 
     return make
+
+
+@pytest.fixture
+def fresh_loader():
+    from ds4py._native import loader
+    loader._loaded = None
+    yield
+    loader._loaded = None

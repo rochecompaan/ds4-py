@@ -1,0 +1,99 @@
+"""Python-owned values and opaque native handle contracts."""
+import ctypes
+from dataclasses import dataclass
+from enum import Enum, IntEnum, auto
+from pathlib import Path
+from typing import Any, Callable, Protocol, Sequence
+
+
+class ThinkMode(IntEnum):
+    NONE = 0
+    HIGH = 1
+    MAX = 2
+    LOW = 3
+    MEDIUM = 4
+
+
+THINK_LEVEL_BASE = 1000
+BACKENDS = {"metal": 0, "cuda": 1, "rocm": 1, "cpu": 2}
+
+
+@dataclass(frozen=True)
+class EngineConfig:
+    model: Path
+    ctx: int = 100_000
+    backend: str = "cpu"
+    threads: int = 0
+
+    def __post_init__(self):
+        object.__setattr__(self, "model", Path(self.model).absolute())
+
+
+@dataclass(frozen=True)
+class EngineInfo:
+    name: str
+    model_id: int
+    family: str
+    is_deepseek41: bool
+    is_glm_dsa: bool
+    is_qwen4: bool
+    has_vision: bool
+    routed_quant_bits: int
+    mtp_draft_tokens: int
+    vocab_size: int
+
+
+def family_of(*, deepseek41: bool, glm: bool, qwen: bool) -> str:
+    return "deepseek41" if deepseek41 else "glm" if glm else "qwen" if qwen else "deepseek4"
+
+
+class SyncStatus(Enum):
+    DONE = auto()
+    INTERRUPTED = auto()
+
+
+ProgressFn = Callable[[str, int, int], None]
+CancelFn = Callable[[], bool]
+
+
+class Snapshot(Protocol):
+    nbytes: int
+    def close(self) -> None: ...
+
+class SessionHandle(Protocol):
+    raw: int                                  # session pointer, for extensions
+    def sync(self, tokens: Sequence[int], *, progress: ProgressFn | None = None,
+             cancel: CancelFn | None = None) -> SyncStatus: ...
+    def sample(self, temperature: float, top_k: int, top_p: float, min_p: float,
+               rng: ctypes.c_uint64) -> int: ...
+    def argmax(self) -> int: ...
+    def eval(self, token: int) -> None: ...
+    def rewind(self, pos: int) -> None: ...
+    def pos(self) -> int: ...
+    def ctx(self) -> int: ...
+    def tokens(self) -> list[int]: ...
+    def common_prefix(self, tokens: Sequence[int]) -> int: ...
+    def checkpoint_valid(self) -> bool: ...
+    def invalidate(self) -> None: ...
+    def payload_bytes(self) -> int: ...
+    def save_snapshot(self) -> Snapshot: ...
+    def load_snapshot(self, snap: Snapshot) -> None: ...
+    def close(self) -> None: ...
+
+class EngineHandle(Protocol):
+    raw: int                                  # engine pointer, for extensions
+    def info(self) -> EngineInfo: ...
+    def tokenize(self, text: str, *, rendered: bool = False) -> list[int]: ...
+    def token_text(self, token: int) -> bytes: ...
+    def eos(self) -> int: ...
+    def is_stop(self, token: int) -> bool: ...
+    def create_session(self, ctx: int) -> SessionHandle: ...
+    def close(self) -> None: ...
+
+class Native(Protocol):
+    backend: str                              # the backend the library was built for
+    restore_enabled: bool
+    def open_engine(self, config: EngineConfig) -> EngineHandle: ...
+    def bind(self, name: str) -> Callable[..., Any]: ...
+    def parse_think_level(self, text: str) -> int | None: ...
+    def think_mode_for_context(self, mode: int, ctx: int) -> int: ...
