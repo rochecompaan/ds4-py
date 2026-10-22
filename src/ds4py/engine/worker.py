@@ -11,7 +11,8 @@ from ds4py._native.protocol import (
     EngineConfig, EngineHandle, EngineInfo, Native, SessionHandle, Snapshot, SyncStatus,
 )
 from ds4py.errors import CheckpointError, EngineError
-from .events import Checkpointed, Dropped, Event, Interrupted, Prefill, Synced
+from .decode import GenerateJob, generate
+from .events import Checkpointed, Dropped, Event, Interrupted, Prefill, Stopped, Synced
 from .plan import Plan, plan_sync
 
 SYSTEM = "system"
@@ -39,7 +40,7 @@ class Handles:
 
 @dataclass(frozen=True)
 class _Submission:
-    job: SyncJob | CheckpointJob
+    job: SyncJob | CheckpointJob | GenerateJob
     events: SimpleQueue
 
 
@@ -78,7 +79,7 @@ class EngineWorker:
                 raise EngineError("engine worker is closed")
             self._queue.put(item)
 
-    def submit(self, job: SyncJob | CheckpointJob) -> Iterator[Event]:
+    def submit(self, job: SyncJob | CheckpointJob | GenerateJob) -> Iterator[Event]:
         events = SimpleQueue()
         self._enqueue(_Submission(job, events))
         return self._events(events)
@@ -142,7 +143,7 @@ class EngineWorker:
                         item.future.set_result(result)
                 else:
                     try:
-                        self._execute(session, item.job, item.events.put)
+                        self._execute(engine, session, item.job, item.events.put)
                     except BaseException as error:
                         item.events.put(error)
                     finally:
@@ -155,11 +156,17 @@ class EngineWorker:
             ctx=session.ctx(), restore_enabled=self._native.restore_enabled,
         )
 
-    def _execute(self, session, job, emit):
+    def _execute(self, engine, session, job, emit):
         if isinstance(job, SyncJob):
             self._sync(session, job.tokens, emit)
         elif isinstance(job, CheckpointJob):
             self._checkpoint(session, job, emit)
+        elif isinstance(job, GenerateJob):
+            reason = generate(engine, session, job,
+                              cancelled=self.cancel_event.is_set, emit=emit)
+            if reason == "interrupted":
+                self.cancel_event.clear()
+            emit(Stopped(reason))
         else:
             raise EngineError(f"unsupported engine job: {type(job).__name__}")
 
