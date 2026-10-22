@@ -298,6 +298,10 @@ All `SessionHandle` methods are called from one thread: the engine worker the fa
 
 Every call that takes `char *err, size_t errlen` gets a 512-byte buffer and raises `EngineError(msg)` on a non-zero return, except the documented `2` from sync. `ds4_tokens` vectors are created, filled and freed inside one `_native` function. A vision embedding's ownership passes to the session on `sync_multimodal`, as the C API specifies, and the Python wrapper marks it consumed so it is not freed twice.
 
+M1 keeps the engine in-process and unmodified. The user accepted the following native limits on 2026-10-22. A child process runs `inspect_only` before the real open. Inspection failures become Python exceptions, but inspection skips tokenizer loading. Invalid tokenizer tables, missing required tokens, changes to the model between inspection and open, and later GPU failures can still terminate Python.
+
+Python holds the original instance lock for the engine's lifetime. Native open uses a second lock path through a temporary, process-wide `DS4_LOCK_FILE` change. A ds4 subprocess started by another thread can inherit that path and acquire it first. Native open then exits and terminates Python. Callers must keep the model unchanged and avoid ds4 subprocesses during open. These restrictions do not provide a guarantee against native process termination. The M1 plan and public open docstrings state these limits.
+
 ### `FakeNative`
 
 `FakeNative` implements the same functions over a toy tokenizer and scripted logits. It supports logits copy and set, rewind, progress and cancel callbacks, payload save and load to bytes, snapshots, and a fake multi-token decode step. Every non-live test runs on it.
