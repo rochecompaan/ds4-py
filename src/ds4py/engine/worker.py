@@ -116,7 +116,9 @@ class EngineWorker:
         try:
             self.info: EngineInfo = ready.result()
         except BaseException:
-            self._thread.join()
+            # Startup may still succeed after the caller is interrupted. Queue
+            # shutdown before joining so it cannot wait forever for another job.
+            self.close()
             raise
 
     def _enqueue(self, item):

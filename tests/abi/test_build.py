@@ -219,6 +219,40 @@ def test_failed_switch_keeps_old_pair_and_cleans_staging(make_manifest, tmp_path
     assert len(list((out / "installs").iterdir())) == 1
 
 
+@pytest.mark.parametrize("after_switch", [False, True])
+@pytest.mark.parametrize("relative_out", [False, True])
+def test_interrupted_switch_retains_every_published_pair(
+        make_manifest, tmp_path, upstream_headers, monkeypatch, after_switch, relative_out):
+    src = tmp_path / "src"
+    src.mkdir()
+    pair = make_manifest(src, upstream_headers)
+    monkeypatch.chdir(tmp_path)
+    out = Path("out") if relative_out else tmp_path / "out"
+    current = build.install(*pair, out)
+    held = current.resolve()  # A reader may already have resolved the old generation.
+    old_bytes = held.read_bytes()
+    original_replace = os.replace
+    interruption = KeyboardInterrupt("install interrupted")
+
+    def interrupt_switch(source, target):
+        if Path(target) == current:
+            if after_switch:
+                original_replace(source, target)
+            raise interruption
+        return original_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", interrupt_switch)
+    with pytest.raises(KeyboardInterrupt) as error:
+        build.install(*pair, out)
+    assert error.value is interruption
+    assert installed(out) == (b"dummy library", True)
+    assert held.read_bytes() == old_bytes
+    assert Manifest.read(manifest_path(held)).library_sha256 == file_sha256(held)
+    assert (current.resolve() != held) is after_switch
+    assert len(list((out / "installs").iterdir())) == (2 if after_switch else 1)
+    assert not (out / f".{LIB_NAME}.new").is_symlink()
+
+
 def test_make_failure_streams_output_and_reports_tail(tmp_path):
     (tmp_path / "Makefile.lib").write_text(
         "libds4:\n\t@i=0; while [ $$i -lt 45 ]; do echo line$$i; i=$$((i+1)); done; exit 1\n"

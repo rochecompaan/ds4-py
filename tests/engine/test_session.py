@@ -292,6 +292,18 @@ def test_cancel_after_sync_interrupts_generation_and_clears_flag():
         assert list(s.run_round(max_tokens=1))[-1] == Stopped("max_tokens")
 
 
+def test_negative_round_budget_does_not_generate():
+    with fake_engine(script=reply(b"ok")) as engine:
+        session = engine.session()
+        session.append_tokens([5, 6], "user")
+        events = list(session.run_round(max_tokens=-1))
+        assert not any(isinstance(event, Token) for event in events)
+        assert events[-1] == Stopped("max_tokens")
+        assert session.transcript.tokens == (5, 6) and session.ctx_used == 2
+        assert list(session.run_round(max_tokens=1))[-1] == Stopped("max_tokens")
+        assert session.transcript.tokens == (5, 6, 112)
+
+
 def test_context_reserve_passes_through():
     with open("f.gguf", ctx=4, native=FakeNative()) as e:
         s = e.session()

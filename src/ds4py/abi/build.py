@@ -113,7 +113,14 @@ def install(lib: Path, manifest: Manifest, out_dir: Path) -> Path:
     finally:
         if not switched:
             temporary.unlink(missing_ok=True)
-            shutil.rmtree(staged_dir)
+            # replace can publish before an interrupt prevents recording switched.
+            # Never delete a generation that is current or cannot be ruled out.
+            try:
+                published = (out_dir / LIB_NAME).resolve() == staged_dir.resolve() / LIB_NAME
+            except (OSError, RuntimeError):
+                published = True
+            if not published:
+                shutil.rmtree(staged_dir)
 
 
 def _build_manifest(src, lib, backend, cc, work, bindings, signatures, log):

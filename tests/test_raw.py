@@ -23,6 +23,12 @@ def test_writes_the_token_bytes_and_nothing_else():
     assert raw(script=reply(b"hello")) == (0, b"hello", "")
     assert raw(script=reply(b"hello"), max_tokens=3) == (0, b"hel", "")
 
+def test_cli_negative_budget_generates_no_output(opened, capsysbinary):
+    assert cli.main(["raw", "hi", "-n", "-1"]) == 0
+    captured = capsysbinary.readouterr()
+    assert captured.out == b"" and captured.err == b""
+
+
 def test_a_prompt_that_does_not_fit_exits_2():
     assert raw("x" * 64, ctx=64) == (2, b"", "ds4py: prompt of 64 tokens does not fit a context of 64\n")
 

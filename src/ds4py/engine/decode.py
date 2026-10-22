@@ -98,7 +98,7 @@ def generate(engine: EngineHandle, session: SessionHandle, job: GenerateJob, *,
     room = session.ctx() - session.pos()
     limit = min(job.max_tokens, max(room - job.reserve, 0))
     limit_reason = "max_tokens" if job.max_tokens <= room - job.reserve else "context_reserve"
-    if limit == 0:
+    if limit <= 0:
         return limit_reason
     ctx = DecodeContext(engine, job, limit=limit, limit_reason=limit_reason,
                         cancelled=cancelled, emit=emit)

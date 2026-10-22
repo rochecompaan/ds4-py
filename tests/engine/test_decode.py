@@ -93,6 +93,20 @@ def test_plain_step_follows_the_contract():
     assert s.seen == [("sample", 0.5, 3, 0.9, 0.0, 9), ("eval", 7), ("sample", 0.5, 3, 0.9, 0.0, 9)]
     assert t.tokens == (7,)
 
+@pytest.mark.parametrize("budget", [0, -1])
+def test_nonpositive_budget_never_samples_or_commits(budget):
+    session, transcript, events = StubSession([7]), Transcript(), []
+    transcript.append([1, 2], "user")
+    rng = Rng(9)
+    reason = generate(StubEngine(), session,
+                      GenerateJob(SamplingPolicy(), rng, budget, transcript),
+                      cancelled=lambda: False, emit=events.append)
+    assert reason == "max_tokens" and events == []
+    assert session.seen == [] and rng.state.value == 9
+    assert transcript.tokens == (1, 2)
+    assert [segment.kind for segment in transcript.segments] == ["user"]
+
+
 def test_a_token_is_committed_after_its_eval_and_before_its_event():
     s, t, out = StubSession([7, 8], fail_eval=8), Transcript(), []
     t.append([1, 2], "user")

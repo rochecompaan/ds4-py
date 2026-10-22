@@ -12,7 +12,7 @@ from .decode import GenerateJob
 from .events import Checkpointed, Event, Interrupted, Stopped, Synced
 from .plan import Plan
 from .sampling import Rng, SamplingPolicy
-from .transcript import Segment, Transcript
+from .transcript import Segment, Transcript, TranscriptView
 from .worker import CheckpointJob, EngineWorker, Handles, SyncJob
 
 T = TypeVar("T")
@@ -89,14 +89,15 @@ class Session:
     def __init__(self, engine: Engine):
         self._engine, self._worker = engine, engine._worker
         self._transcript = Transcript()
+        self._transcript_view = TranscriptView(self._transcript)
         self._rng = Rng(engine.sampling_defaults.seed)
         self._lock = threading.Lock()
         self._active_round = False
 
     @property
-    def transcript(self) -> Transcript:
-        """Token history; callers mutate it only via append_tokens between rounds."""
-        return self._transcript
+    def transcript(self) -> TranscriptView:
+        """Read-only history; append_tokens is the guarded caller mutation path."""
+        return self._transcript_view
 
     @property
     def ctx_used(self) -> int:

@@ -15,6 +15,24 @@ class Segment:
     meta: Mapping[str, object]
 
 
+class TranscriptView:
+    """Live, read-only observations of session-owned history."""
+
+    def __init__(self, transcript: "Transcript"):
+        self._transcript = transcript
+
+    @property
+    def tokens(self) -> tuple[int, ...]:
+        return self._transcript.tokens
+
+    @property
+    def segments(self) -> tuple[Segment, ...]:
+        return self._transcript.segments
+
+    def __len__(self) -> int:
+        return len(self._transcript)
+
+
 class Transcript:
     def __init__(self):
         self._lock = Lock()
