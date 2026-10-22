@@ -36,6 +36,7 @@
 - A relative model path, such as the default `ds4flash.gguf`: `EngineConfig` makes it absolute on the caller's thread. ds4py never changes the working directory (Task 7).
 - A raw prompt that does not fit the context: `ds4py raw` prints one line naming the prompt length and context size and exits 2, with no traceback (Task 13).
 - Ctrl+C during `ds4py raw`: generation stops, the text so far is flushed, and the process exits 130 (Task 13).
+- An eval that fails during generation: the worker commits a token only after its eval succeeds, so the token reaches neither the transcript nor stdout (Task 11).
 - `ds4py build --src` pointing at a directory that is not a ds4 tree, or with no C compiler or `make`: one error line naming what is missing, before `make` runs (Task 5).
 
 ## File Structure
@@ -1118,6 +1119,8 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'ds4py.engine'`.
 
 - [ ] **Step 3: Implement the three modules**
 
+`Transcript` keeps its token list and segment list behind one `threading.Lock`. Every method and property takes the lock, and the properties return copies, so a thread that reads the transcript while the worker extends it (Task 11) never sees a half-made change.
+
 `plan_sync` follows spec section 10:
 1. `extend` when `live_valid`, `live` is not empty, and `tokens` starts with all of `live`. `reused = len(live)`.
 2. Otherwise `restore` when `restore_enabled` and some checkpoint's tokens are a non-empty prefix of `tokens`. The longest one wins; ties go to the first in mapping order. `reused` is its length.
@@ -1282,8 +1285,8 @@ git commit -m "feat(engine): add the engine worker with sync, checkpoints and ca
 - Test: `tests/engine/test_decode.py`
 
 **Interfaces:**
-- Consumes: `SessionHandle`, `EngineHandle`, `SamplingPolicy`, `Rng`, `Token`, `Stopped`, `Event`, `EngineWorker`, `EngineError`.
-- Produces: `Verdict(Enum)` with `CONTINUE`, `STOP_BEFORE`, `STOP_AFTER`; `GenerateJob(sampling: SamplingPolicy, rng: Rng, max_tokens: int, reserve: int = 1)` (frozen; `worker.py` re-exports it); `DecodeContext` with `rng: ctypes.c_uint64`, `reason: str | None`, `before_sample() -> None`, `sampling() -> SamplingPolicy`, `cancelled() -> bool` and `accept(token: int) -> Verdict`; the `DecodeStep` protocol (`hooks_every_sample: bool`, `run(session: SessionHandle, ctx: DecodeContext) -> None`); `PlainStep`; `generate(engine: EngineHandle, session: SessionHandle, job: GenerateJob, *, cancelled: Callable[[], bool], emit: Callable[[Event], None], step: DecodeStep | None = None) -> str`.
+- Consumes: `SessionHandle`, `EngineHandle`, `SamplingPolicy`, `Rng`, `Transcript`, `Token`, `Stopped`, `Event`, `EngineWorker`, `EngineError`.
+- Produces: `Verdict(Enum)` with `CONTINUE`, `STOP_BEFORE`, `STOP_AFTER`; `GenerateJob(sampling: SamplingPolicy, rng: Rng, max_tokens: int, transcript: Transcript, reserve: int = 1)` (frozen; `worker.py` re-exports it); `DecodeContext` with `rng: ctypes.c_uint64`, `reason: str | None`, `before_sample() -> None`, `sampling() -> SamplingPolicy`, `cancelled() -> bool`, `accept(token: int) -> Verdict` and `commit(token: int) -> None`; the `DecodeStep` protocol (`hooks_every_sample: bool`, `run(session: SessionHandle, ctx: DecodeContext) -> None`); `PlainStep`; `generate(engine: EngineHandle, session: SessionHandle, job: GenerateJob, *, cancelled: Callable[[], bool], emit: Callable[[Event], None], step: DecodeStep | None = None) -> str`.
 
 `GenerateJob` has no `stop_policy` yet: the tool-call stop arrives with the parsers in M2, and so do the logits hooks behind `before_sample` and the greedy switch behind `sampling()`.
 
@@ -1293,16 +1296,18 @@ git commit -m "feat(engine): add the engine worker with sync, checkpoints and ca
 def worker(script, *, ctx=64, cancel=None):
     return EngineWorker(FakeNative(script=script), EngineConfig(Path("f"), ctx=ctx), cancel=cancel)
 
-def gen(w, prompt, max_tokens=50):
+def gen(w, prompt, max_tokens=50, transcript=None):
+    transcript = Transcript() if transcript is None else transcript
     list(w.submit(SyncJob(tuple(prompt))))
-    return list(w.submit(GenerateJob(SamplingPolicy(), Rng(1), max_tokens)))
+    return list(w.submit(GenerateJob(SamplingPolicy(), Rng(1), max_tokens, transcript)))
 
 def tok(c):
     return Token(ord(c) + 1, c.encode())
 
 def test_stop_token_is_neither_kept_nor_evaluated():
-    w = worker(reply(b"hi"))
-    assert gen(w, [5, 6]) == [tok("h"), tok("i"), Stopped("stop_token")]
+    w, t = worker(reply(b"hi")), Transcript()
+    assert gen(w, [5, 6], transcript=t) == [tok("h"), tok("i"), Stopped("stop_token")]
+    assert t.tokens == (tok("h").id, tok("i").id) and t.segments[0].kind == "assistant"
     calls, pos = w.call(lambda e, s: (s.calls, s.pos())).result()
     assert ("eval", FAKE_EOS) not in calls and pos == 4
 
@@ -1321,34 +1326,49 @@ def test_ctrl_c_keeps_the_partial_tokens():
     def script(prompt, generated):
         if len(generated) == 2: cancel.set()               # Ctrl+C while the third token is sampled
         return ord("a") + 1
-    w = worker(script, cancel=cancel)
-    assert gen(w, [5, 6]) == [tok("a")] * 3 + [Stopped("interrupted")]
-    assert not cancel.is_set() and w.call(lambda e, s: s.pos()).result() == 5
+    w, t = worker(script, cancel=cancel), Transcript()
+    assert gen(w, [5, 6], transcript=t) == [tok("a")] * 3 + [Stopped("interrupted")]
+    assert len(t) == 3 and not cancel.is_set() and w.call(lambda e, s: s.pos()).result() == 5
 
 def test_sampling_needs_a_valid_state():
     w = worker(reply(b"x"))
     list(w.submit(SyncJob((5, 6, 7))))
     w.call(lambda e, s: s.rewind(1)).result()               # invalidates the checkpoint, as in ds4
     with pytest.raises(EngineError, match="sync first"):
-        list(w.submit(GenerateJob(SamplingPolicy(), Rng(1), 5)))
+        list(w.submit(GenerateJob(SamplingPolicy(), Rng(1), 5, Transcript())))
+
+class StubEngine:
+    def is_stop(self, token): return token == 0
+    def token_text(self, token): return b"x"
+
+class StubSession:                                          # just what PlainStep and generate use
+    def __init__(self, tokens, fail_eval=None):
+        self.tokens, self.fail_eval, self.seen = list(tokens), fail_eval, []
+    def ctx(self): return 100
+    def pos(self): return 10
+    def sample(self, temperature, top_k, top_p, min_p, rng):
+        self.seen.append(("sample", temperature, top_k, top_p, min_p, rng.value))
+        return self.tokens.pop(0)
+    def eval(self, token):
+        if token == self.fail_eval: raise EngineError("eval failed")
+        self.seen.append(("eval", token))
 
 def test_plain_step_follows_the_contract():
-    seen = []
-    class Session:                                          # just what PlainStep and generate use
-        def ctx(self): return 100
-        def pos(self): return 10
-        def sample(self, temperature, top_k, top_p, min_p, rng):
-            seen.append(("sample", temperature, top_k, top_p, min_p, rng.value))
-            return 7 if len(seen) < 3 else 0
-        def eval(self, token): seen.append(("eval", token))
-    class Engine:
-        def is_stop(self, token): return token == 0
-        def token_text(self, token): return b"x"
+    s, t, out = StubSession([7, 0]), Transcript(), []
     policy = SamplingPolicy(temperature=0.5, top_p=0.9, min_p=0.0, top_k=3)
-    out = []
-    reason = generate(Engine(), Session(), GenerateJob(policy, Rng(9), 10), cancelled=lambda: False, emit=out.append)
+    reason = generate(StubEngine(), s, GenerateJob(policy, Rng(9), 10, t), cancelled=lambda: False, emit=out.append)
     assert reason == "stop_token" and out == [Token(7, b"x")] and PlainStep.hooks_every_sample
-    assert seen == [("sample", 0.5, 3, 0.9, 0.0, 9), ("eval", 7), ("sample", 0.5, 3, 0.9, 0.0, 9)]
+    assert s.seen == [("sample", 0.5, 3, 0.9, 0.0, 9), ("eval", 7), ("sample", 0.5, 3, 0.9, 0.0, 9)]
+    assert t.tokens == (7,)
+
+def test_a_token_is_committed_after_its_eval_and_before_its_event():
+    s, t, out = StubSession([7, 8], fail_eval=8), Transcript(), []
+    t.append([1, 2], "user")
+    job = GenerateJob(SamplingPolicy(), Rng(9), 10, t)
+    with pytest.raises(EngineError, match="eval failed"):
+        generate(StubEngine(), s, job, cancelled=lambda: False, emit=lambda ev: out.append((ev, t.tokens)))
+    assert out == [(Token(7, b"x"), (1, 2, 7))]             # 8 failed its eval: not kept, not published
+    assert [(seg.kind, seg.end) for seg in t.segments] == [("user", 2), ("assistant", 3)]
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -1360,7 +1380,8 @@ Expected: FAIL with `ModuleNotFoundError` for `ds4py.engine.decode`.
 
 `generate`:
 - `room = session.ctx() - session.pos()` and `limit = min(job.max_tokens, max(room - job.reserve, 0))`. The reason at the limit is `max_tokens` when `job.max_tokens <= room - job.reserve`, else `context_reserve`. With `reserve=1` this is the `ds4-agent --raw` clamp, `min(n_predict, room - 1)`. When `limit` is 0, return that reason without sampling.
-- `DecodeContext.accept(token)`: a token with `engine.is_stop(token)` sets `reason = "stop_token"` and returns `STOP_BEFORE`. Any other token is counted and emitted as `Token(token, engine.token_text(token))`; at the limit it sets the limit reason and returns `STOP_AFTER`, and otherwise it returns `CONTINUE`.
+- `DecodeContext.accept(token)` judges a token and changes nothing outside the context. A token with `engine.is_stop(token)` sets `reason = "stop_token"` and returns `STOP_BEFORE`. Any other token is counted; at the limit it sets the limit reason and returns `STOP_AFTER`, and otherwise it returns `CONTINUE`.
+- `DecodeContext.commit(token)` runs once the KV holds an accepted token. It reads `engine.token_text(token)`, adds the token to `job.transcript`, and then emits `Token(token, text)`. The job's first commit appends an `assistant` segment and later ones extend it. This is the order of the `ds4-agent` loop: eval, push onto the transcript, then stream the text (spec section 6, item 2). A token whose eval raises is never committed, so it reaches neither the transcript nor the caller.
 - `before_sample()` does nothing in M1. `sampling()` returns `job.sampling`. `cancelled()` calls `cancelled`.
 - `step` defaults to `PlainStep()`. After it returns, `generate` returns `ctx.reason`, or `"interrupted"` when the step stopped because of Ctrl+C.
 
@@ -1375,10 +1396,13 @@ while not ctx.cancelled():
     verdict = ctx.accept(token)
     if verdict is Verdict.STOP_BEFORE: return
     session.eval(token)
+    ctx.commit(token)
     if verdict is Verdict.STOP_AFTER: return
 ```
 
-The worker runs `GenerateJob` with `generate(engine, session, job, cancelled=cancel_event.is_set, emit=...)`. For `"interrupted"` it clears `cancel_event` first. Then it emits `Stopped(reason)`.
+The spec's decode-step contract (section 10) has the step call only `accept`. This plan adds one rule: once the KV holds an accepted token, the step calls `ctx.commit(token)`. A multi-token step commits its kept tokens in order, after it has rewound the rest. The loop still owns pushing tokens onto the transcript, as the spec says, but it pushes only tokens that the engine has evaluated.
+
+The worker runs `GenerateJob` with `generate(engine, session, job, cancelled=cancel_event.is_set, emit=...)`. While the job runs, the worker thread is the only writer of `job.transcript`. For `"interrupted"` the worker clears `cancel_event` first. Then it emits `Stopped(reason)`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -1448,16 +1472,19 @@ def test_ctrl_c_during_sync_keeps_the_transcript():
         assert s.transcript.tokens == tuple(e.tokenize("hello"))
         assert isinstance(list(s.run_round())[-1], Stopped)          # the flag was cleared
 
-def test_closing_a_round_early_cancels_and_drains():
+def test_closing_a_round_early_keeps_what_was_evaluated():
     cancel = threading.Event()
     with fake_engine(script=reply(b"abcdefgh"), cancel=cancel) as e:
         s = e.session()
         s.append_tokens([5, 6], "user")
         rnd = s.run_round()
-        next(ev for ev in rnd if isinstance(ev, Token))
+        first = next(ev for ev in rnd if isinstance(ev, Token))
+        assert s.transcript.tokens[2] == first.id           # committed before it was published
+        with pytest.raises(EngineError, match="a round is open"): s.append_tokens([7], "user")
         rnd.close()
         assert s.ctx_used == len(s.transcript)              # every evaluated token is in the transcript
         assert s.plan().kind == "extend" and not cancel.is_set()
+        s.append_tokens([7], "user")                        # the round is over
 
 def test_checkpoints_through_the_session():
     with fake_engine() as e:
@@ -1497,10 +1524,12 @@ Expected: FAIL with `ModuleNotFoundError` for `ds4py.engine.session`.
 
 `Session` makes one `Rng(engine.sampling_defaults.seed)` when it is created and uses it for every round. `run_round` is a generator:
 1. Submit `SyncJob(transcript.tokens)` and yield its events. After `Interrupted`, return; the transcript is unchanged.
-2. Submit `GenerateJob(sampling or engine.sampling_defaults, rng, max_tokens)` and yield its events. The first `Token` appends an `assistant` segment and later ones extend it.
-3. If the caller closes the generator while a job is running, set the cancel flag, drain the job's remaining events, append any `Token`s from them, and clear the flag if the job ended without reporting an interrupt.
+2. Submit `GenerateJob(sampling or engine.sampling_defaults, rng, max_tokens, transcript)` and yield its events. The worker adds each token to the transcript before it publishes the token's event (Task 11), so `run_round` never writes the transcript.
+3. If the caller closes the generator while a job is running, set the cancel flag, then read and drop the job's remaining events until the job ends. Nothing is rebuilt, because every evaluated token is already in the transcript. Clear the flag if the job ended without reporting an interrupt.
 
-`ctx_used` is `worker.call(lambda e, s: s.pos()).result()`. `plan(tokens=None)` plans the transcript's tokens by default. `checkpoint` and `drop_checkpoint` run a `CheckpointJob` and return its event. `on_worker(fn)` is `worker.call(lambda e, s: fn(Handles(e.raw, s.raw)))`. `cancel()` sets `worker.cancel_event` and is safe from any thread. `transcript` returns the session's `Transcript`; callers change it only through `append_tokens` and `run_round`.
+A round is open from its first step until it returns or is closed. While a round is open, `append_tokens` raises `EngineError("a round is open")`. So the transcript has one writer at a time: the caller between rounds, and the worker during a round.
+
+`ctx_used` is `worker.call(lambda e, s: s.pos()).result()`. `plan(tokens=None)` plans the transcript's tokens by default. `checkpoint` and `drop_checkpoint` run a `CheckpointJob` and return its event. `on_worker(fn)` is `worker.call(lambda e, s: fn(Handles(e.raw, s.raw)))`. `cancel()` sets `worker.cancel_event` and is safe from any thread. `transcript` returns the session's `Transcript`. Callers change it only through `append_tokens`; the worker extends it during a round.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -1652,7 +1681,7 @@ git commit -m "feat(cli): add ds4py raw with ds4-agent's trace format"
 - Test: `tests/abi/test_live_checks.py`
 
 **Interfaces:**
-- Consumes: `EngineWorker`, `SyncJob`, `CheckpointJob`, `GenerateJob`, `SamplingPolicy`, `Rng`, `Synced`, `Token`, `Stopped`, `EngineConfig`, `LibNative`, `load_library`, `manifest_path`, `Manifest`, `check_library`, `format_report`, `read_trace_tokens`, `FakeNative`, `FakeClock`, `FakeSession`.
+- Consumes: `EngineWorker`, `SyncJob`, `CheckpointJob`, `GenerateJob`, `SamplingPolicy`, `Rng`, `Transcript`, `Synced`, `Token`, `Stopped`, `EngineConfig`, `LibNative`, `load_library`, `manifest_path`, `Manifest`, `check_library`, `format_report`, `read_trace_tokens`, `FakeNative`, `FakeClock`, `FakeSession`.
 - Produces: `LIVE_TEXT: str`; `LIVE_CHECKPOINT = "live-check"`; `run_live_checks(worker: EngineWorker, *, clock: Callable[[], float] = time.monotonic, prefix: int = 2048, tail: int = 64, generate: int = 256) -> dict[str, dict]`; `check_live(lib: str | Path | None, model: Path, *, ctx: int = 4096) -> CheckReport`; a `live_lib` fixture in `tests/conftest.py`.
 - CLI: `ds4py check [--lib PATH] [--live --model PATH [--ctx N]]`. `--live` without `--model` is a usage error (exit 2).
 
@@ -1803,7 +1832,7 @@ LIVE_TEXT = (
 2. Tokenize `LIVE_TEXT` repeated until it gives at least `prefix` tokens, and keep the first `prefix`. `base` is the first `prefix - tail` of them.
 3. Sync `base`, then save `LIVE_CHECKPOINT`.
 4. **Extend:** sync all `prefix` tokens.
-5. **Restore:** invalidate the live state with `worker.call(lambda e, s: s.invalidate())`, sync again, then generate `generate` tokens with `GenerateJob(SamplingPolicy(temperature=0.0), Rng(1), generate)`. Call this run `a`.
+5. **Restore:** invalidate the live state with `worker.call(lambda e, s: s.invalidate())`, sync again, then generate `generate` tokens with `GenerateJob(SamplingPolicy(temperature=0.0), Rng(1), generate, Transcript())`. Call this run `a`.
 6. **Rebuild:** drop `LIVE_CHECKPOINT`, invalidate, sync again, then generate run `b` the same way.
 
 Time each sync in steps 4–6 with `clock()` from `submit` to its `Synced` event, and keep the `Synced.plan`. A run is the list of `Token.id`s plus the `Stopped.reason`.
