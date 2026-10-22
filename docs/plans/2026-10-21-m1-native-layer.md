@@ -427,10 +427,31 @@ def test_moved_field_is_refused(make_manifest, tmp_path):
     with pytest.raises(AbiMismatch, match=r"ds4_engine_options\.(n_threads|context_size)"):
         manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=CORE_BINDINGS, layouts=LAYOUTS)
 
-def test_failed_required_probe_is_refused(make_manifest, tmp_path): ...   # doctored `long token` header; message names ds4_session_eval
-def test_library_hash_mismatch_is_refused(make_manifest, tmp_path, upstream_headers): ...  # match "ds4py build"
-def test_type_map_version_mismatch_is_refused(make_manifest, tmp_path, upstream_headers): ...
-def test_unprobed_extension_binding_is_refused(make_manifest, tmp_path, upstream_headers, ext_site): ...  # match "ds4_engine_layer_count"
+def test_failed_required_probe_is_refused(make_manifest, tmp_path):
+    inc = doctored(tmp_path, "int ds4_session_eval(ds4_session *s, int token,",
+                             "int ds4_session_eval(ds4_session *s, long token,")
+    lib, m = make_manifest(tmp_path, inc)
+    assert not m.bindings["ds4_session_eval"].ok
+    with pytest.raises(AbiMismatch, match="ds4_session_eval"):
+        manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=CORE_BINDINGS, layouts=LAYOUTS)
+
+def test_library_hash_mismatch_is_refused(make_manifest, tmp_path, upstream_headers):
+    lib, m = make_manifest(tmp_path, upstream_headers)
+    lib.write_bytes(lib.read_bytes() + b"rebuilt")            # the library changed after its manifest was written
+    with pytest.raises(AbiMismatch, match="ds4py build"):
+        manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=CORE_BINDINGS, layouts=LAYOUTS)
+
+def test_type_map_version_mismatch_is_refused(make_manifest, tmp_path, upstream_headers):
+    lib, m = make_manifest(tmp_path, upstream_headers)
+    m = replace(m, type_map_version=TYPE_MAP_VERSION + 1)
+    with pytest.raises(AbiMismatch, match="ds4py build"):
+        manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=CORE_BINDINGS, layouts=LAYOUTS)
+
+def test_unprobed_extension_binding_is_refused(make_manifest, tmp_path, upstream_headers, ext_site):
+    lib, m = make_manifest(tmp_path, upstream_headers)        # probed before the extension was installed
+    with pytest.raises(AbiMismatch, match="ds4_engine_layer_count"):
+        manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=all_bindings(), layouts=LAYOUTS)
+
 def test_absent_optional_binding_is_listed(make_manifest, tmp_path, upstream_headers, ext_site):
     lib, m = make_manifest(tmp_path, upstream_headers, bindings=all_bindings())
     v = manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=all_bindings(), layouts=LAYOUTS)
@@ -466,8 +487,14 @@ def test_missing_manifest_is_refused_before_dlopen(tmp_path, monkeypatch):
     with pytest.raises(AbiMismatch, match="libds4.abi.json"):
         load_library(tmp_path / LIB_NAME)
 
-def test_one_library_per_process(make_manifest, tmp_path, upstream_headers, monkeypatch):
-    # two valid manifests at two paths; _dlopen patched to a stub whose attributes accept argtypes/restype
+def test_one_library_per_process(make_manifest, tmp_path, upstream_headers, stub_dlopen):
+    paths = []
+    for name in ("a", "b"):                                   # two valid pairs in two directories
+        (tmp_path / name).mkdir()
+        lib, m = make_manifest(tmp_path / name, upstream_headers)
+        m.write(manifest_path(lib))
+        paths.append(lib)
+    lib_a, lib_b = paths
     assert load_library(lib_a) is load_library(lib_a)
     with pytest.raises(LibraryAlreadyLoaded, match=re.escape(str(lib_a.resolve()))):  # the loader reports real paths
         load_library(lib_b)
@@ -483,11 +510,24 @@ def test_symlink_pairs_with_the_manifest_beside_the_real_file(make_manifest, tmp
     real = real.resolve()                                     # tmp_path may itself sit under a symlink
     assert load_library(link).path == real and opened == [real]
 
-def test_absent_optional_binding_raises_missing_binding(...):  # ext_site; lib.fn("ds4_engine_sampling_defaults") -> MissingBinding
-def test_undeclared_name_raises_missing_binding(...):         # lib.fn("ds4_session_tp_spec_cycle") -> MissingBinding
+def test_absent_optional_binding_raises_missing_binding(make_manifest, tmp_path, upstream_headers, ext_site, stub_dlopen):
+    lib, m = make_manifest(tmp_path, upstream_headers, bindings=all_bindings())
+    m.write(manifest_path(lib))
+    loaded = load_library(lib)
+    assert loaded.has("ds4_engine_layer_count") and not loaded.has("ds4_engine_sampling_defaults")
+    with pytest.raises(MissingBinding, match="ds4_engine_sampling_defaults is absent from this library"):
+        loaded.fn("ds4_engine_sampling_defaults")
+
+def test_undeclared_name_raises_missing_binding(make_manifest, tmp_path, upstream_headers, stub_dlopen):
+    lib, m = make_manifest(tmp_path, upstream_headers)
+    m.write(manifest_path(lib))
+    loaded = load_library(lib)
+    assert not loaded.has("ds4_session_tp_spec_cycle")      # in ds4.h, but no binding declares it
+    with pytest.raises(MissingBinding, match="ds4py does not declare ds4_session_tp_spec_cycle"):
+        loaded.fn("ds4_session_tp_spec_cycle")
 ```
 
-An autouse fixture in `tests/native/test_loader.py` resets `loader._loaded` to `None`.
+An autouse fixture in `tests/native/test_loader.py` resets `loader._loaded` to `None`. A `stub_dlopen` fixture patches `loader._dlopen` to return a `mock.MagicMock()`, which accepts any `argtypes` and `restype`.
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
@@ -505,7 +545,7 @@ but ds4py declares
   int ds4_session_eval(ds4_session *, int, char *, size_t)
 ```
 
-`load_library` resolves the path, then follows its symlinks once with `Path.resolve(strict=True)`; a missing file raises `LibraryNotFound`. Every later step uses that real path: it reads the manifest beside it, validates it with `all_bindings()` and the `STRUCTS` layouts, and only then calls `_dlopen(real)`, which is `ctypes.CDLL(str(real), mode=os.RTLD_LOCAL)`. `ds4py build` publishes a library by switching a symlink (Task 5), so following it once means the loader never pairs one build's library with another build's manifest. `Library.path` is the real path, and the one-library rule compares real paths: after a rebuild, a process that has already loaded a library refuses the new one until it restarts. It sets `argtypes` and `restype` from `ctypes_signature` on every available binding. A symbol missing from the library raises `AbiMismatch`. `_loaded` holds the one `Library` for the process.
+`load_library` resolves the path, then follows its symlinks once with `Path.resolve(strict=True)`; a missing file raises `LibraryNotFound`. Every later step uses that real path: it reads the manifest beside it, validates it with `all_bindings()` and the `STRUCTS` layouts, and only then calls `_dlopen(real)`, which is `ctypes.CDLL(str(real), mode=os.RTLD_LOCAL)`. `ds4py build` publishes a library by switching a symlink (Task 5), so following it once means the loader never pairs one build's library with another build's manifest. `Library.path` is the real path, and the one-library rule compares real paths: after a rebuild, a process that has already loaded a library refuses the new one until it restarts. It sets `argtypes` and `restype` from `ctypes_signature` on every available binding, and `fn` returns those functions. `fn` raises `MissingBinding("<name> is absent from this library")` for an optional binding whose probe failed, and `MissingBinding("ds4py does not declare <name>")` for a name that no binding declares; `has` returns `False` for both. `FakeNative.bind` (Task 8) uses the same messages. A symbol missing from the library raises `AbiMismatch`. `_loaded` holds the one `Library` for the process.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -541,9 +581,27 @@ def test_no_compiler(tmp_path, fake_tree, monkeypatch):
     with pytest.raises(BuildError, match="no C compiler"):
         build_library(fake_tree, backend="cpu", out_dir=tmp_path / "out")
 
-def test_no_make(tmp_path, fake_tree, monkeypatch): ...      # shutil.which("make") -> None; match "make"
-def test_rocm_is_refused(tmp_path, fake_tree): ...           # match "rocm"
-def test_metal_needs_macos(tmp_path, fake_tree): ...         # skip on darwin; match "macOS"
+def only_tools(tmp_path, monkeypatch, *names):           # PATH holds stubs of these tools and nothing else
+    bin_dir = tmp_path / "bin"; bin_dir.mkdir()
+    for name in names:
+        (bin_dir / name).write_text("#!/bin/sh\nexit 0\n"); (bin_dir / name).chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir)); monkeypatch.delenv("CC", raising=False)
+
+def test_no_make(tmp_path, fake_tree, monkeypatch):
+    only_tools(tmp_path, monkeypatch, "cc")
+    with pytest.raises(BuildError, match="make not found on PATH"):
+        build_library(fake_tree, backend="cpu", out_dir=tmp_path / "out")
+
+def test_rocm_is_refused(tmp_path, fake_tree, monkeypatch):
+    only_tools(tmp_path, monkeypatch, "cc", "make")
+    with pytest.raises(BuildError, match="backend rocm is not supported by ds4py build yet"):
+        build_library(fake_tree, backend="rocm", out_dir=tmp_path / "out")
+
+@pytest.mark.skipif(sys.platform == "darwin", reason="metal builds on macOS")
+def test_metal_needs_macos(tmp_path, fake_tree, monkeypatch):
+    only_tools(tmp_path, monkeypatch, "cc", "make")
+    with pytest.raises(BuildError, match="backend metal needs macOS"):
+        build_library(fake_tree, backend="metal", out_dir=tmp_path / "out")
 
 def test_changed_argument_type_fails_before_make(cc, tmp_path, monkeypatch):
     tree = doctored(tmp_path, "int ds4_session_eval(ds4_session *s, int token,",
@@ -588,7 +646,17 @@ def test_install_switches_the_library_and_manifest_together(make_manifest, tmp_p
     assert installed(out) == (b"four", True)
     assert len(list((out / "installs").iterdir())) == 2             # "four" and the "one" it replaced
 
-def test_mirror_skips_git_and_objects(tmp_path): ...  # build._mirror(src, dst): .git/ and *.o, *.a, *.so, *.dylib not linked; others are symlinks
+def test_mirror_skips_git_and_objects(tmp_path):
+    src, farm = tmp_path / "src", tmp_path / "farm"
+    for rel in (".git/HEAD", "ds4.c", "metal/ds4.metal", "ds4.o", "metal/ds4.o", "libds4.a", "libds4.so", "libds4.dylib"):
+        (src / rel).parent.mkdir(parents=True, exist_ok=True)
+        (src / rel).write_text(rel)
+    build._mirror(src, farm)
+    build._mirror(src, farm)                                  # a rebuild mirrors into the same farm
+    files = {str(Path(d, f).relative_to(farm)) for d, _, fs in os.walk(farm) for f in fs}
+    assert files == {"ds4.c", "metal/ds4.metal"} and not (farm / ".git").exists()
+    assert all((farm / f).is_symlink() and (farm / f).resolve() == (src / f).resolve() for f in files)
+    assert not (farm / "metal").is_symlink()                 # objects built in metal/ stay in the farm
 
 @pytest.mark.build
 def test_cpu_build_of_upstream(built_upstream):
@@ -656,7 +724,7 @@ Make sure `uv build` puts `Makefile.lib` in the wheel (`unzip -l dist/*.whl | gr
 
 1. Preflight. Each failure raises `BuildError` with one line: `<src> is not a ds4 source tree: missing <file>` (checks `Makefile`, `ds4.h`, `ds4_kvstore.h`, `ds4.c`); `no C compiler: set CC or put cc on PATH`; `make not found on PATH`; `backend rocm is not supported by ds4py build yet`; `backend metal needs macOS`.
 2. Probe signatures for `all_bindings()` against `src`. If any required binding fails, raise `BuildError` listing each failed name with its compiler output.
-3. Create `out_dir` with its parents, then take an exclusive `flock` on `<out_dir>/.build.lock` without waiting, and hold it until `build_library` returns. If another build holds it, raise `BuildError(f"another ds4py build is using {out_dir}")`: every build into `out_dir` shares the mirror and the installs. Then mirror the tree with symlinks into `<out_dir>/build/<backend>-<first 12 hex of sha256(resolved src path)>`, skipping `.git` and `*.o`, `*.a`, `*.so`, `*.dylib`. Objects stay between builds, so rebuilds are incremental. Copy `Makefile.lib` in from package data.
+3. Create `out_dir` with its parents, then take an exclusive `flock` on `<out_dir>/.build.lock` without waiting, and hold it until `build_library` returns. If another build holds it, raise `BuildError(f"another ds4py build is using {out_dir}")`: every build into `out_dir` shares the mirror and the installs. Then `_mirror(src, farm)` mirrors the tree into `farm = <out_dir>/build/<backend>-<first 12 hex of sha256(resolved src path)>`: it makes real directories, links each file with a symlink, and can run again over an existing farm. It skips `.git` and `*.o`, `*.a`, `*.so`, `*.dylib`. Objects stay between builds, so rebuilds are incremental. Copy `Makefile.lib` in from package data.
 4. `_run_make(farm, backend, cc, jobs, log)` runs `make -f Makefile.lib libds4 LIBDS4_BACKEND=<backend> CC=<cc> -j<jobs or os.cpu_count()>`, streaming output to `log`. On failure, raise `BuildError` with the last 40 lines of output.
 5. Probe layouts and build the `Manifest` for the library that `make` produced. `source_commit` is `git -C <src> rev-parse HEAD`, or `None` when that fails. Log a warning when the headers are unknown.
 6. Return `install(<mirror>/<LIB_NAME>, manifest, out_dir)`.
@@ -716,7 +784,11 @@ def test_report_lines_for_unknown_headers_and_optional_bindings():
     assert "ds4_engine_layer_count  present  (test_ext)" in text
     assert "restore:  not verified" in text
 
-def test_refused_library_exits_1(tmp_path): ...  # lib file without manifest; stdout or stderr contains "libds4.abi.json"; returncode 1
+def test_refused_library_exits_1(tmp_path):
+    lib = tmp_path / LIB_NAME
+    lib.write_bytes(b"not a library")                         # no libds4.abi.json beside it
+    r = run_check(lib)
+    assert r.returncode == 1 and "error:    " in r.stdout and "libds4.abi.json" in r.stdout
 
 @pytest.mark.build
 def test_check_upstream_build(built_upstream):
