@@ -299,3 +299,48 @@ def test_failed_snapshot_save_frees_partial_allocation(stub_engine):
     snap.close()
     snap.close()
     assert c.stub_snapshots() == 2
+
+
+def test_weakref_engine_close_before_session_finalizer_frees_once(stub_engine, monkeypatch):
+    import gc
+    import sys
+    import weakref
+
+    engine, c = stub_engine
+    calls, unraisable = [], []
+    native_free = engine._lib.fn("ds4_session_free")
+    native_close = engine._lib.fn("ds4_engine_close")
+    freed = set()
+
+    def guarded_free(raw):
+        calls.append(("session_free", raw))
+        # Still perform the real C free, but intercept any duplicate attempt so
+        # a regression reports an assertion instead of crashing pytest.
+        if raw not in freed:
+            freed.add(raw)
+            native_free(raw)
+
+    def recorded_close(raw):
+        calls.append(("engine_close", raw))
+        native_close(raw)
+
+    monkeypatch.setitem(engine._lib._functions, "ds4_session_free", guarded_free)
+    monkeypatch.setitem(engine._lib._functions, "ds4_engine_close", recorded_close)
+    monkeypatch.setattr(sys, "unraisablehook", unraisable.append)
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        session = engine.create_session(64)
+        raw, engine_raw = session.raw, engine.raw
+        ref = weakref.ref(session, lambda _: engine.close())
+        del session
+        gc.collect()
+        assert ref() is None
+        assert calls == [("session_free", raw), ("engine_close", engine_raw)]
+        assert c.stub_frees() == 1 and c.stub_wrong_thread_frees() == 0
+        assert unraisable == []
+        engine.close()
+        assert calls == [("session_free", raw), ("engine_close", engine_raw)]
+    finally:
+        if was_enabled:
+            gc.enable()

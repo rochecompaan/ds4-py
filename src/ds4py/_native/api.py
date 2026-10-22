@@ -206,9 +206,9 @@ class NativeEngine(_Handle):
         raw = C.c_void_p()
         if self._lib.fn("ds4_session_create")(C.byref(raw), self.raw, ctx):
             raise EngineError("ds4_session_create failed")
+        self._session_allocations.add(raw.value)
         session = NativeSession(self, raw.value)
         self._sessions.add(session)
-        self._session_allocations.add(raw.value)
         return session
 
     def close(self):
@@ -216,9 +216,9 @@ class NativeEngine(_Handle):
         if self.raw:
             for session in list(self._sessions):
                 session.close()
-            for raw in self._session_allocations:
+            while self._session_allocations:
+                raw = self._session_allocations.pop()
                 self._lib.fn("ds4_session_free")(raw)
-            self._session_allocations.clear()
             self._lib.fn("ds4_engine_close")(self.raw)
             self.raw = 0
             self._lock.close()
@@ -346,10 +346,13 @@ class NativeSession(_Handle):
     def close(self):
         self._assert_thread()
         if self.raw:
-            self._lib.fn("ds4_session_free")(self.raw)
-            self._engine._session_allocations.discard(self.raw)
-            self.raw = 0
+            raw, self.raw = self.raw, 0
             self._engine._sessions.discard(self)
+            # A weakref callback may have closed the engine before __del__.
+            # The registry, not a stale wrapper pointer, owns the right to free.
+            if raw in self._engine._session_allocations:
+                self._engine._session_allocations.remove(raw)
+                self._lib.fn("ds4_session_free")(raw)
 
     def __del__(self):
         # Cyclic GC may run on any thread. Leave off-thread allocations to the
