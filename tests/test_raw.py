@@ -126,3 +126,27 @@ def test_context_reserve_stops_successfully():
     assert 0 < len(text) < 500
     assert text == b"a" * len(text)
     assert err == ""
+
+
+def test_cli_prompt_file_preserves_crlf_and_lone_cr(opened, capsysbinary, tmp_path):
+    prompt_file = tmp_path / "prompt.txt"
+    prompt_file.write_bytes(b"a\r\nb\rc\n")
+    trace_file = tmp_path / "trace.log"
+    assert cli.main(["raw", "--prompt-file", str(prompt_file),
+                     "--trace", str(trace_file)]) == 0
+    assert capsysbinary.readouterr().out == b"ok"
+    assert read_trace_tokens(trace_file) == ([98, 14, 11, 99, 14, 100, 11], [112, 108])
+
+
+@pytest.mark.parametrize("payload", [
+    b" tokens label=raw_prompt_tokens start=0 len=1",
+    b"2026-10-21 09:05:07.042 tokens label=raw_prompt_tokens start=0 len=1",
+])
+def test_trace_reader_does_not_treat_token_payload_as_run_marker(tmp_path, payload):
+    path = tmp_path / "trace.log"
+    with Trace(path, now=lambda: datetime(2026, 10, 21, 9, 5, 7, 42_000)) as trace:
+        trace.line("tokens label=raw_prompt_tokens start=0 len=1")
+        trace.token(0, 98, b"a")
+        trace.token(1, 42, payload)
+        trace.token(2, 43, b"x")
+    assert read_trace_tokens(path) == ([98], [42, 43])

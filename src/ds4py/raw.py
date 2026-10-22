@@ -52,7 +52,10 @@ def read_trace_tokens(path: Path) -> tuple[list[int], list[int]]:
     tokens: list[int] | None = None
     prompt_length = 0
     for line in path.read_bytes().splitlines():
-        start = re.search(rb" tokens label=raw_prompt_tokens start=0 len=(\d+)", line)
+        start = re.fullmatch(
+            rb"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} "
+            rb"tokens label=raw_prompt_tokens start=0 len=(\d+)", line,
+        )
         if start:
             prompt_length = int(start[1])
             tokens = []
@@ -112,7 +115,7 @@ def run_raw(engine: Engine, prompt: str, *, max_tokens: int,
 def command(args: argparse.Namespace) -> int:
     prompt = args.prompt if args.prompt is not None else args.prompt_text
     if args.prompt_file is not None:
-        prompt = args.prompt_file.read_text(encoding="utf-8")
+        prompt = args.prompt_file.read_bytes().decode("utf-8")
     with open_engine(args.model, ctx=args.ctx, backend=args.backend, seed=args.seed,
                      threads=args.threads, lib=args.lib) as engine:
         sampling = SamplingPolicy.for_engine(engine.info, temperature=args.temp,
