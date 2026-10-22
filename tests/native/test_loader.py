@@ -119,3 +119,16 @@ def test_functions_are_typed_and_free_uses_library_handle(make_manifest, tmp_pat
     assert stub_dlopen.free.argtypes == [ctypes.c_void_p]
     assert stub_dlopen.free.restype is None
     stub_dlopen.free.assert_called_once_with(ptr)
+
+
+@pytest.mark.parametrize("ok", ["false", "true", 1, {"ok": False}, [False]])
+def test_serialized_non_boolean_probe_result_is_refused_before_dlopen(
+    make_manifest, tmp_path, upstream_headers, monkeypatch, ok,
+):
+    lib, m = make_manifest(tmp_path, upstream_headers)
+    m.bindings["ds4_session_eval"].ok = ok
+    m.write(manifest_path(lib))
+    monkeypatch.setattr(loader, "_dlopen", lambda p: pytest.fail("dlopen called"))
+    with pytest.raises(AbiMismatch, match="ds4_session_eval.*boolean.*ds4py build"):
+        load_library(lib)
+    assert loader._loaded is None

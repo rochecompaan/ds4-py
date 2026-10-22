@@ -99,6 +99,10 @@ def validate(
                 f"{binding.name}: the library was probed with\n  {record.prototype}"
                 f"\nbut ds4py declares\n  {binding.normalized}" + _REBUILD
             )
+        if type(record.ok) is not bool:
+            raise AbiMismatch(
+                f"{binding.name}: probe result must be a boolean." + _REBUILD
+            )
         if not record.ok and binding.required:
             raise AbiMismatch(
                 f"{binding.name}: required signature probe failed: {record.message}" + _REBUILD

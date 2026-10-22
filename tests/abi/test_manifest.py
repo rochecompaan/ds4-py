@@ -113,3 +113,32 @@ def test_failed_atomic_write_preserves_old_manifest(make_manifest, tmp_path, ups
         m.write(path)
     assert path.read_bytes() == previous
     assert set(tmp_path.iterdir()) == {lib, path}
+
+
+@pytest.mark.parametrize("ok", ["false", "true", 1, 0, {"ok": False}, [False], None, ""])
+@pytest.mark.parametrize("required", [True, False])
+def test_non_boolean_probe_result_is_refused(make_manifest, tmp_path, upstream_headers, ok, required):
+    lib, m = make_manifest(tmp_path, upstream_headers)
+    binding = replace(CORE_BINDINGS[0], required=required)
+    m.bindings[binding.name].ok = ok
+    with pytest.raises(AbiMismatch, match=rf"{binding.name}.*boolean.*ds4py build"):
+        manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=[binding], layouts=LAYOUTS)
+
+
+@pytest.mark.parametrize("ok, required", [(True, True), (False, True), (True, False), (False, False)])
+def test_boolean_probe_results_preserve_required_and_optional_semantics(
+    make_manifest, tmp_path, upstream_headers, ok, required,
+):
+    lib, m = make_manifest(tmp_path, upstream_headers)
+    binding = replace(CORE_BINDINGS[0], required=required)
+    m.bindings[binding.name].ok = ok
+    path = tmp_path / "m.json"
+    m.write(path)
+    m = manifest.Manifest.read(path)
+    if required and not ok:
+        with pytest.raises(AbiMismatch, match=rf"{binding.name}.*required signature probe failed"):
+            manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=[binding], layouts=LAYOUTS)
+    else:
+        v = manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=[binding], layouts=LAYOUTS)
+        assert v.available == ({binding.name} if ok else set())
+        assert v.absent == (set() if ok else {binding.name})
