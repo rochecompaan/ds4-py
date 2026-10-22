@@ -191,6 +191,8 @@ class FakeSession(_Handle):
 
     def eval(self, token):
         self._check()
+        if not self._valid:
+            raise EngineError("session checkpoint is invalid")
         if len(self._tokens) >= self._ctx:
             raise EngineError("context is full")
         self._tokens.append(token)
@@ -240,6 +242,8 @@ class FakeSession(_Handle):
 
     def save_snapshot(self):
         self._check()
+        if not self._valid:
+            raise EngineError("session checkpoint is invalid")
         return FakeSnapshot(self._tokens, self._prompt_length)
 
     def load_snapshot(self, snap):

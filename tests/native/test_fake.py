@@ -124,6 +124,43 @@ def test_eval_context_full_and_token_copy():
     assert s.calls[-1] == ("eval", 3)
 
 
+@pytest.mark.parametrize("state", ["fresh", "invalidated", "rewound"])
+@pytest.mark.parametrize("operation", ["eval", "save_snapshot"])
+def test_invalid_checkpoint_operations_leave_state_unchanged(state, operation):
+    s = engine().create_session(64)
+    if state != "fresh":
+        s.sync([1, 2, 3])
+        if state == "invalidated":
+            s.invalidate()
+        else:
+            s.rewind(2)
+    tokens, calls = s.tokens(), list(s.calls)
+    assert not s.checkpoint_valid()
+    with pytest.raises(EngineError):
+        if operation == "eval":
+            s.eval(4)
+        else:
+            s.save_snapshot()
+    assert s.tokens() == tokens and s.calls == calls
+    assert not s.checkpoint_valid()
+
+
+def test_snapshot_cannot_resurrect_rewound_checkpoint():
+    s = engine().create_session(64)
+    s.sync([1, 2, 3])
+    s.rewind(2)
+    try:
+        snap = s.save_snapshot()
+    except EngineError:
+        pass
+    else:
+        s.load_snapshot(snap)
+        snap.close()
+    s.sync([1, 2, 4])
+    assert s.calls[-1] == ("sync", 3)
+    assert s.tokens() == [1, 2, 4] and s.checkpoint_valid()
+
+
 def test_bind(ext_site):
     native = FakeNative(bindings={"ds4_engine_layer_count": lambda e: 43},
                         absent={"ds4_engine_sampling_defaults"})
