@@ -4,11 +4,30 @@ from unittest import mock
 
 import pytest
 
+from ds4py.abi import build, manifest
 from ds4py.abi.manifest import manifest_path
 from ds4py._native import loader
 from ds4py._native.loader import LIB_NAME, load_library, resolve_lib_path
 from ds4py._native.bindings import all_bindings
 from ds4py.errors import AbiMismatch, LibraryNotFound, LibraryAlreadyLoaded, MissingBinding
+
+
+@pytest.mark.parametrize("reader_state", ["resolved", "loaded"])
+def test_multiple_installs_keep_a_readers_generation(reader_state, make_manifest, tmp_path, upstream_headers, stub_dlopen):
+    pairs = []
+    for name in ("one", "two", "three"):
+        src = tmp_path / name
+        src.mkdir()
+        pairs.append(make_manifest(src, upstream_headers))
+    out = tmp_path / "out"
+    current = build.install(*pairs[0], out)
+    held = load_library(current).path if reader_state == "loaded" else current.resolve(strict=True)
+    expected = held.read_bytes()
+    build.install(*pairs[1], out)
+    build.install(*pairs[2], out)
+    assert held.read_bytes() == expected
+    assert manifest.Manifest.read(manifest_path(held)).library_sha256 == manifest.file_sha256(held)
+    assert load_library(held).path == held
 
 
 @pytest.fixture(autouse=True)

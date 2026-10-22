@@ -7,6 +7,37 @@ from importlib.metadata import MetadataPathFinder
 import pytest
 
 
+@pytest.fixture(scope="session")
+def built_upstream(tmp_path_factory):
+    from ds4py.abi.build import build_library
+    from ds4py.abi.manifest import Manifest, manifest_path
+
+    src = os.environ.get("DS4_SRC_UPSTREAM")
+    if not src:
+        pytest.skip("DS4_SRC_UPSTREAM is not set")
+    lib = build_library(Path(src), backend="cpu", out_dir=tmp_path_factory.mktemp("upstream-build"))
+    return lib, Manifest.read(manifest_path(lib))
+
+
+@pytest.fixture(scope="session")
+def built_fork(tmp_path_factory):
+    from ds4py.abi.build import build_library
+    from ds4py.abi.manifest import Manifest, manifest_path
+
+    src = os.environ.get("DS4_SRC_FORK")
+    if not src:
+        pytest.skip("DS4_SRC_FORK is not set")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.syspath_prepend(str((Path(__file__).parent / "fixtures" / "ext_site").resolve()))
+        importlib.invalidate_caches()
+        MetadataPathFinder().invalidate_caches()
+        try:
+            lib = build_library(Path(src), backend="cpu", out_dir=tmp_path_factory.mktemp("fork-build"))
+            return lib, Manifest.read(manifest_path(lib))
+        finally:
+            MetadataPathFinder().invalidate_caches()
+
+
 @pytest.fixture
 def cc():
     compiler = os.environ.get("CC") or shutil.which("cc")
