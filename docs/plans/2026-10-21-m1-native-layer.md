@@ -47,6 +47,7 @@ Task 7 must state these limits in the public `open` and `LibNative.open_engine` 
 - A raw prompt that does not fit the context: `ds4py raw` prints one line naming the prompt length and context size and exits 2, with no traceback (Task 13).
 - Ctrl+C during `ds4py raw`: generation stops, the text so far is flushed, and the process exits 130 (Task 13).
 - An eval that fails during generation: the worker commits a token only after its eval succeeds, so the token reaches neither the transcript nor stdout (Task 11).
+- A second `run_round` while the first is open: reject it before capturing the transcript or submitting a job. The first round keeps ownership until its cleanup ends (Task 12).
 - Replacing a checkpoint when the new save fails (for example, out of memory): the worker saves the new snapshot before it closes the old one, so the old checkpoint still restores (Task 10).
 - A slow snapshot load or a busy machine during `ds4py check --live`: the sync check compares token counts with the plan and only reports the times, so correct reuse never fails on speed (Task 14).
 - `ds4py build --src` pointing at a directory that is not a ds4 tree, or with no C compiler or `make`: one error line naming what is missing, before `make` runs (Task 5).
@@ -1644,6 +1645,49 @@ def test_a_round_syncs_generates_and_extends_the_transcript():
         assert s.ctx_used == 4 and s.plan() == Plan("extend", 4, 0, True, None)
         with pytest.raises(EngineError, match="one session"): e.session()
 
+@pytest.mark.parametrize("pause_at", [Synced, Token])
+def test_overlapping_round_is_refused_without_releasing_the_first(pause_at, monkeypatch):
+    with fake_engine(script=reply(b"ok")) as e:
+        s = e.session()
+        s.append_tokens([5, 6], "user")
+        first, unused = s.run_round(), s.run_round()       # creating a generator does not claim ownership
+        second = None
+        try:
+            next(ev for ev in first if isinstance(ev, pause_at))
+            unused.close()                                # an unstarted generator owns nothing
+            second = s.run_round()
+            with monkeypatch.context() as mp:
+                mp.setattr(EngineWorker, "submit", lambda *a, **k: pytest.fail("overlapping round submitted a job"))
+                with pytest.raises(EngineError, match="a round is open"): next(second)
+                with pytest.raises(EngineError, match="a round is open"): s.append_tokens([7], "user")
+                with pytest.raises(EngineError, match="a round is open"): next(s.run_round())
+            assert isinstance(list(first)[-1], Stopped)
+            assert s.ctx_used == len(s.transcript)          # the rejected round never rewound native state
+            s.append_tokens([7], "user")
+            assert isinstance(list(s.run_round(max_tokens=0))[-1], Stopped)
+        finally:
+            first.close(); unused.close()
+            if second is not None: second.close()
+
+@pytest.mark.parametrize("method", ["sync", "eval"])
+def test_worker_error_releases_the_round(method, monkeypatch):
+    original = getattr(FakeSession, method)
+    failed = False
+    def fail_once(self, *args, **kwargs):
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise EngineError("native job failed")
+        return original(self, *args, **kwargs)
+    monkeypatch.setattr(FakeSession, method, fail_once)
+    with fake_engine() as e:
+        s = e.session()
+        s.append_tokens([5, 6], "user")
+        with pytest.raises(EngineError, match="native job failed"): list(s.run_round())
+        s.append_tokens([7], "user")                        # exceptions must release ownership too
+        assert isinstance(list(s.run_round())[-1], Stopped)
+        assert s.ctx_used == len(s.transcript)
+
 def test_ctrl_c_during_sync_keeps_the_transcript():
     with fake_engine() as e:
         s = e.session()
@@ -1666,6 +1710,7 @@ def test_closing_a_round_early_keeps_what_was_evaluated():
         assert s.ctx_used == len(s.transcript)              # every evaluated token is in the transcript
         assert s.plan().kind == "extend" and not cancel.is_set()
         s.append_tokens([7], "user")                        # the round is over
+        assert isinstance(list(s.run_round(max_tokens=0))[-1], Stopped)
 
 def test_checkpoints_through_the_session():
     with fake_engine() as e:
@@ -1703,12 +1748,16 @@ Expected: FAIL with `ModuleNotFoundError` for `ds4py.engine.session`.
 
 `Engine.tokenize` and `Engine.token_text` go through `worker.call(...).result()`, because only the worker thread calls the engine. A second `session()` raises `EngineError("one session per engine")`. `close()` closes the worker.
 
-`Session` makes one `Rng(engine.sampling_defaults.seed)` when it is created and uses it for every round. `run_round` is a generator:
-1. Submit `SyncJob(transcript.tokens)` and yield its events. After `Interrupted`, return; the transcript is unchanged.
-2. Submit `GenerateJob(sampling or engine.sampling_defaults, rng, max_tokens, transcript)` and yield its events. The worker adds each token to the transcript before it publishes the token's event (Task 11), so `run_round` never writes the transcript.
-3. If the caller closes the generator while a job is running, set the cancel flag, then read and drop the job's remaining events until the job ends. Nothing is rebuilt, because every evaluated token is already in the transcript. Clear the flag if the job ended without reporting an interrupt.
+`Session` makes one `Rng(engine.sampling_defaults.seed)` when it is created and uses it for every round. It also owns a `threading.Lock` and an active-round flag. The lock protects the flag and caller appends, not native work or generator yields.
 
-A round is open from its first step until it returns or is closed. While a round is open, `append_tokens` raises `EngineError("a round is open")`. So the transcript has one writer at a time: the caller between rounds, and the worker during a round.
+`run_round` is a generator:
+1. On its first iteration, take the lock and inspect the flag. If another round is active, raise `EngineError("a round is open")` without changing the flag, cancel state or job queue. Otherwise set the flag and release the lock. Merely creating or closing an unstarted generator does not claim ownership.
+2. After the claim, enter a `try/finally` that releases ownership on every exit, including a failure during token capture. Capture `transcript.tokens`, then submit `SyncJob` with those tokens and yield its events. After `Interrupted`, return. The transcript is unchanged.
+3. Submit `GenerateJob(sampling or engine.sampling_defaults, rng, max_tokens, transcript)` and yield its events. The worker adds each token to the transcript before it publishes the token's event (Task 11), so `run_round` never writes the transcript.
+4. On close or error, cancel any unfinished job and read and drop its remaining events until it ends. Do not return ownership while the worker can still commit tokens. Nothing is rebuilt, because every evaluated token is already in the transcript. Clear `worker.cancel_event` if the job ended without reporting an interrupt. Track whether a job was submitted so that submission failures also release ownership without waiting on a nonexistent job.
+5. In the outer `finally`, after job cleanup, clear the active-round flag under the lock. Cleanup errors must not skip this release. Only the generator that claimed ownership releases it. A rejected generator must not cancel or release the first round.
+
+A round stays open from its first iteration until completion, interruption, close or error cleanup ends. `append_tokens` takes the same lock, refuses an active round with `EngineError("a round is open")`, and appends before releasing the lock. This prevents caller appends between the ownership check and token capture. The caller owns transcript changes between rounds, and the worker owns them during a round.
 
 `ctx_used` is `worker.call(lambda e, s: s.pos()).result()`. `plan(tokens=None)` plans the transcript's tokens by default. `checkpoint` and `drop_checkpoint` run a `CheckpointJob` and return its event. `on_worker(fn)` is `worker.call(lambda e, s: fn(Handles(e.raw, s.raw)))`. `cancel()` sets `worker.cancel_event` and is safe from any thread. `transcript` returns the session's `Transcript`. Callers change it only through `append_tokens`; the worker extends it during a round.
 

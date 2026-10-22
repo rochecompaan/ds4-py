@@ -443,6 +443,8 @@ session.cancel()                             # thread-safe
 engine.native.bind(name)                     # extension API
 ```
 
+A session allows one active round. Ownership starts on the first iteration of `run_round`, before it captures transcript tokens or submits work. A second active round raises `EngineError("a round is open")` and leaves the first round untouched. Caller appends are also refused while a round is active. Ownership ends only after completion or cleanup of interruption, close or error. An unstarted generator owns nothing.
+
 ## 11. The harness adapter
 
 The harness sees one `Model` subclass and a list of capabilities. The hard part is that Pydantic AI treats the message list as the truth while the engine treats the token transcript as the truth. `DS4Model` holds the binding between them.
