@@ -51,6 +51,7 @@ Task 7 must state these limits in the public `open` and `LibNative.open_engine` 
 - A slow snapshot load or a busy machine during `ds4py check --live`: the sync check compares token counts with the plan and only reports the times, so correct reuse never fails on speed (Task 14).
 - `ds4py build --src` pointing at a directory that is not a ds4 tree, or with no C compiler or `make`: one error line naming what is missing, before `make` runs (Task 5).
 - A build that fails or is stopped while it installs: one symlink switch publishes the library and its manifest together, so the previous pair stays installed and loadable (Task 5).
+- A reader paused after path resolution, or a loaded library reopened by child inspection after multiple rebuilds: published generations stay on disk until explicit offline cleanup (Tasks 4–5).
 
 ## File Structure
 
@@ -555,7 +556,7 @@ but ds4py declares
   int ds4_session_eval(ds4_session *, int, char *, size_t)
 ```
 
-`load_library` resolves the path, then follows its symlinks once with `Path.resolve(strict=True)`; a missing file raises `LibraryNotFound`. Every later step uses that real path: it reads the manifest beside it, validates it with `all_bindings()` and the `STRUCTS` layouts, and only then calls `_dlopen(real)`, which is `ctypes.CDLL(str(real), mode=os.RTLD_LOCAL)`. `ds4py build` publishes a library by switching a symlink (Task 5), so following it once means the loader never pairs one build's library with another build's manifest. `Library.path` is the real path, and the one-library rule compares real paths: after a rebuild, a process that has already loaded a library refuses the new one until it restarts. It sets `argtypes` and `restype` from `ctypes_signature` on every available binding, and `fn` returns those functions. `fn` raises `MissingBinding("<name> is absent from this library")` for an optional binding whose probe failed, and `MissingBinding("ds4py does not declare <name>")` for a name that no binding declares; `has` returns `False` for both. `FakeNative.bind` (Task 8) uses the same messages. A symbol missing from the library raises `AbiMismatch`. `_loaded` holds the one `Library` for the process.
+`load_library` resolves the path, then follows its symlinks once with `Path.resolve(strict=True)`; a missing file raises `LibraryNotFound`. Every later step uses that real path: it reads the manifest beside it, validates it with `all_bindings()` and the `STRUCTS` layouts, and only then calls `_dlopen(real)`, which is `ctypes.CDLL(str(real), mode=os.RTLD_LOCAL)`. `ds4py build` publishes a library by switching a symlink (Task 5), so following it once means the loader never pairs one build's library with another build's manifest. `Library.path` is the real path, and the one-library rule compares real paths: after a rebuild, a process that has already loaded a library refuses the new one until it restarts. Published generations stay on disk (Task 5), so paused readers can finish and child inspection can reopen an already-loaded library's path after any number of rebuilds. It sets `argtypes` and `restype` from `ctypes_signature` on every available binding, and `fn` returns those functions. `fn` raises `MissingBinding("<name> is absent from this library")` for an optional binding whose probe failed, and `MissingBinding("ds4py does not declare <name>")` for a name that no binding declares; `has` returns `False` for both. `FakeNative.bind` (Task 8) uses the same messages. A symbol missing from the library raises `AbiMismatch`. `_loaded` holds the one `Library` for the process.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -573,7 +574,7 @@ git commit -m "feat(abi): validate libds4.abi.json and load the library once per
 
 **Files:**
 - Create: `src/ds4py/abi/Makefile.lib`, `src/ds4py/abi/build.py`, `src/ds4py/cli.py`, `src/ds4py/__main__.py`
-- Test: `tests/abi/test_build.py`
+- Test: `tests/abi/test_build.py`, `tests/native/test_loader.py`
 
 **Interfaces:**
 - Consumes: `probe.*`, `Manifest`, `BindingRecord`, `validate`, `manifest_path`, `file_sha256`, `all_bindings()`, `STRUCTS`, `struct_layout`, `AbiMismatch`, `LIB_NAME`, `default_lib_dir()`, `pins.UPSTREAM`.
@@ -682,11 +683,31 @@ def test_cpu_build_of_fork_with_extension(built_fork):   # built with ext_site o
     assert not m.headers_known and m.bindings["ds4_engine_sampling_defaults"].ok
 ```
 
+Also add this regression test to `tests/native/test_loader.py`, which already resets the loader and supplies `stub_dlopen`. Import `ds4py.abi.build` as `build` there.
+
+```python
+@pytest.mark.parametrize("reader_state", ["resolved", "loaded"])
+def test_multiple_installs_keep_a_readers_generation(reader_state, make_manifest, tmp_path, upstream_headers, stub_dlopen):
+    pairs = []
+    for name in ("one", "two", "three"):
+        src = tmp_path / name; src.mkdir()
+        pairs.append(make_manifest(src, upstream_headers))
+    out = tmp_path / "out"
+    current = build.install(*pairs[0], out)
+    held = load_library(current).path if reader_state == "loaded" else current.resolve(strict=True)
+    expected = held.read_bytes()                              # pause this reader before its next open
+    build.install(*pairs[1], out)
+    build.install(*pairs[2], out)                              # two switches must not delete the held pair
+    assert held.read_bytes() == expected                      # child inspection also reopens Library.path
+    assert manifest.Manifest.read(manifest_path(held)).library_sha256 == manifest.file_sha256(held)
+    assert load_library(held).path == held                    # a paused reader can finish loading
+```
+
 `fake_tree` copies the upstream fixture headers and writes empty `Makefile` and `ds4.c`. `built_upstream` and `built_fork` are session fixtures in `tests/conftest.py` that skip unless `DS4_SRC_UPSTREAM` or `DS4_SRC_FORK` is set, then call `build_library(..., backend="cpu", out_dir=tmp_path_factory.mktemp(...))` and return `(lib_path, Manifest)`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `uv run pytest tests/abi/test_build.py -v`
+Run: `uv run pytest tests/abi/test_build.py tests/native/test_loader.py -v`
 Expected: FAIL with `ImportError` for `ds4py.abi.build`.
 
 - [ ] **Step 3: Write `Makefile.lib`**
@@ -739,12 +760,12 @@ Make sure `uv build` puts `Makefile.lib` in the wheel (`unzip -l dist/*.whl | gr
 5. Probe layouts and build the `Manifest` for the library that `make` produced. `source_commit` is `git -C <src> rev-parse HEAD`, or `None` when that fails. Log a warning when the headers are unknown.
 6. Return `install(<mirror>/<LIB_NAME>, manifest, out_dir)`.
 
-`install` publishes the library and its manifest as one pair. It takes no lock: its caller holds `<out_dir>/.build.lock`, as `build_library` does, so no other build can remove the new directory before the switch.
+`install` publishes the library and its manifest as one pair. It takes no lock: its caller holds `<out_dir>/.build.lock`, as `build_library` does, so builds cannot overlap their staging or symlink switches.
 
 1. Create `<out_dir>/installs` and its parents if needed, then make a new directory in it with `tempfile.mkdtemp`. Copy the library into it as `LIB_NAME` and write the manifest beside it.
 2. Check the staged pair as the loader would: `validate(Manifest.read(<staged manifest>), lib_sha256=file_sha256(<staged library>), bindings=all_bindings(), layouts=<STRUCTS layouts>)`. An `AbiMismatch` becomes a `BuildError` with the same message, so a build never publishes a library that ds4py would refuse to load.
 3. Remove any stale `<out_dir>/.<LIB_NAME>.new` left by a killed build, create a symlink there with the relative target `installs/<dir>/<LIB_NAME>`, and `os.replace` it onto `<out_dir>/<LIB_NAME>`. The build lock makes the fixed temporary name safe. This rename is the only switch: before it, readers see the old pair, and after it, the new one. The loader follows the symlink once and reads the manifest beside the real file (Task 4). So where the spec puts `libds4.abi.json` "next to the library", this plan means next to the real file in `installs/<dir>`, not next to the symlink.
-4. Remove every other directory in `installs`, except the one the replaced symlink pointed to. Step 3 reads that target with `os.readlink` just before the switch; there is none when `<out_dir>/<LIB_NAME>` did not exist. A process that followed the old symlink just before the switch can still load that library, and a library that a process has already loaded stays mapped after its file is removed. Removal errors are ignored, because the switch has already happened.
+4. Keep every published directory in `installs`. Never prune old generations automatically: readers do not hold the build lock, and child inspection reopens `Library.path` later. Keeping only a fixed number of generations cannot protect a paused or long-lived reader. This costs one library and manifest per successful install. Explicit cleanup is an offline operation: stop all readers, engine processes and builds before removing unused generations. Keep the generation that the current symlink names. M1 adds no cleanup command.
 
 If a step before the switch fails, `install` removes the new directory and the temporary symlink, then re-raises, so the previous pair stays installed and loadable. After the switch, nothing changes an installed pair except `live_checks` in its manifest (Task 14), and `Manifest.write` replaces that file atomically.
 
@@ -752,7 +773,7 @@ If a step before the switch fails, `install` removes the new directory and the t
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `uv run pytest tests/abi/test_build.py -v`
+Run: `uv run pytest tests/abi/test_build.py tests/native/test_loader.py -v`
 Expected: PASS, with the `build` tests skipped.
 
 Then run the real builds against local checkouts of both pins:
