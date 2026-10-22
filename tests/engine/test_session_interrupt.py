@@ -140,3 +140,117 @@ def test_caller_sigint_drains_before_releasing_round(phase, signals):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == f"SIGINT drain OK {phase} {signals}"
+
+
+@pytest.mark.parametrize("phase", ["sync", "generation"])
+def test_interrupt_after_end_dequeue_releases_round(phase):
+    probe = textwrap.dedent(r'''
+        import sys
+        import ds4py
+        from ds4py._native.fake import FakeNative, reply
+        from ds4py.engine import worker
+        from ds4py.engine.events import Stopped
+
+        phase = sys.argv[1]
+        original_submit = worker.EngineWorker.submit
+        target = None
+        injected = False
+
+        def submit(self, job):
+            global target
+            events = original_submit(self, job)
+            wanted = worker.SyncJob if phase == "sync" else worker.GenerateJob
+            if isinstance(job, wanted) and target is None:
+                target = events
+                # Fence the job and end-marker publication before consuming it.
+                self.call(lambda e, s: None).result()
+            return events
+
+        worker.EngineWorker.submit = submit
+
+        def interrupt_after_dequeue(frame, event, arg):
+            global injected
+            if (event == "line" and frame.f_code is worker._JobEvents.__next__.__code__
+                    and frame.f_locals.get("self") is target
+                    and frame.f_locals.get("event") is worker._END and not injected):
+                injected = True
+                assert target.finished.is_set() and target.queue.empty()
+                assert not target._exhausted
+                raise KeyboardInterrupt("after end dequeue")
+            return interrupt_after_dequeue
+
+        with ds4py.open("f.gguf", ctx=64, native=FakeNative(script=reply(b"ok"))) as e:
+            session = e.session()
+            session.append_tokens([5, 6], "user")
+            sys.settrace(interrupt_after_dequeue)
+            try:
+                try:
+                    list(session.run_round())
+                except KeyboardInterrupt as error:
+                    assert str(error) == "after end dequeue"
+                else:
+                    raise AssertionError("caller interrupt was swallowed")
+            finally:
+                sys.settrace(None)
+            assert injected
+            expected = (5, 6) if phase == "sync" else (5, 6, 112, 108)
+            assert session.transcript.tokens == expected
+            assert session.ctx_used == len(expected)
+            assert not e._worker.cancel_event.is_set()
+            session.append_tokens([7], "user")
+            assert list(session.run_round(max_tokens=0))[-1] == Stopped("max_tokens")
+        print("lost END recovered", phase)
+    ''')
+    result = subprocess.run(
+        [sys.executable, "-c", probe, phase], capture_output=True, text=True, timeout=5,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == f"lost END recovered {phase}"
+
+
+def test_lost_end_with_completion_after_receive_wait_still_terminates():
+    probe = textwrap.dedent(r'''
+        import threading
+        from queue import SimpleQueue
+        from ds4py.engine.worker import _END, _JobEvents
+
+        entered_wait = threading.Event()
+
+        class InterruptingQueue(SimpleQueue):
+            def get(self, *args, **kwargs):
+                if self.empty():
+                    entered_wait.set()
+                value = super().get(*args, **kwargs)
+                if value is _END:
+                    raise KeyboardInterrupt("after dequeue, before completion")
+                return value
+
+        channel = _JobEvents()
+        channel.queue = InterruptingQueue()
+        channel.queue.put(_END)
+        try:
+            next(channel)
+        except KeyboardInterrupt:
+            pass
+        else:
+            raise AssertionError("interruption was not injected")
+        assert channel.queue.empty() and not channel.finished.is_set()
+
+        def finish():
+            assert entered_wait.wait(3), "receiver never attempted another read"
+            channel.finished.set()
+
+        finisher = threading.Thread(target=finish)
+        finisher.start()
+        try:
+            assert list(channel) == []
+        finally:
+            finisher.join(3)
+        assert not finisher.is_alive()
+        print("late completion recovered")
+    ''')
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, timeout=5,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "late completion recovered"

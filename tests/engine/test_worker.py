@@ -121,6 +121,35 @@ def test_open_errors_reach_the_caller():
         def open_engine(self, config): raise ModelFileError("no model")
     with pytest.raises(ModelFileError): EngineWorker(Broken(), EngineConfig(Path("f")))
 
+def test_completion_racing_empty_receive_preserves_queued_events_and_errors():
+    from queue import Empty, SimpleQueue
+    from ds4py.engine.worker import _END, _JobEvents
+
+    events = _JobEvents()
+    failure = EngineError("queued native error")
+    synced = Synced(2, Plan("extend", 2, 0, True, None), 0)
+
+    class CompletingQueue(SimpleQueue):
+        def get(self, *args, **kwargs):
+            try:
+                return super().get_nowait()
+            except Empty:
+                # The producer publishes after a receive times out, but before
+                # the consumer observes completion. Those items still matter.
+                self.put(synced)
+                self.put(failure)
+                self.put(_END)
+                events.finished.set()
+                raise
+
+    events.queue = CompletingQueue()
+    assert next(events) == synced
+    with pytest.raises(EngineError, match="queued native error"):
+        next(events)
+    with pytest.raises(StopIteration):
+        next(events)
+
+
 def test_close():
     w = worker(); w.close(); w.close()
     with pytest.raises(EngineError, match="closed"): w.submit(SyncJob((1,)))

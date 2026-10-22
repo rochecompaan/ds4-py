@@ -4,7 +4,7 @@ import time
 from concurrent.futures import Future
 from contextlib import ExitStack
 from dataclasses import dataclass
-from queue import SimpleQueue
+from queue import Empty, SimpleQueue
 from typing import Callable, Iterator, Sequence, TypeVar
 
 from ds4py._native.protocol import (
@@ -49,7 +49,23 @@ class _JobEvents(Iterator[Event]):
     def __next__(self) -> Event:
         if self._exhausted:
             raise StopIteration
-        event = self.queue.get()
+        while True:
+            try:
+                event = self.queue.get(timeout=0.1)
+                break
+            except Empty:
+                # A caller interrupt can consume _END before recording EOF.
+                # Recheck durable completion after every bounded receive, not
+                # just once before a wait that could outlive the lost marker.
+                if self.finished.is_set():
+                    # Completion may have raced the timeout. All publications
+                    # now precede finished, so drain any newly queued events.
+                    try:
+                        event = self.queue.get_nowait()
+                    except Empty:
+                        self._exhausted = True
+                        raise StopIteration
+                    break
         if event is _END:
             self._exhausted = True
             raise StopIteration
