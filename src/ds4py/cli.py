@@ -6,7 +6,7 @@ import sys
 
 from ds4py._native.loader import default_lib_dir
 from ds4py.abi.build import build_library, default_backend
-from ds4py.abi.check import check_library, format_report
+from ds4py.abi.check import check_library, check_live, format_report
 from ds4py.errors import Ds4pyError
 
 
@@ -20,6 +20,9 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("-j", type=int)
     check = commands.add_parser("check", help="check a libds4 ABI without opening a model")
     check.add_argument("--lib", type=Path)
+    check.add_argument("--live", action="store_true")
+    check.add_argument("--model", type=Path)
+    check.add_argument("--ctx", type=int, default=4096)
     raw = commands.add_parser("raw", help="generate from an untemplated prompt")
     prompts = raw.add_mutually_exclusive_group(required=True)
     prompts.add_argument("prompt", nargs="?")
@@ -48,9 +51,18 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ds4py: {exc}", file=sys.stderr)
             return 1
     if args.command == "check":
-        report = check_library(args.lib)
+        if args.live and args.model is None:
+            parser.error("--live needs --model")
+        try:
+            report = (check_live(args.lib, args.model, ctx=args.ctx) if args.live
+                      else check_library(args.lib))
+        except (Ds4pyError, OSError) as exc:
+            print(f"ds4py: {exc}", file=sys.stderr)
+            return 1
         print(format_report(report))
-        return 1 if report.error is not None else 0
+        sync_failed = (report.manifest is not None and
+                       report.manifest.live_checks.get("sync_plans", {}).get("ok") is False)
+        return 1 if report.error is not None or sync_failed else 0
     try:
         installed = build_library(args.src, backend=args.backend, out_dir=args.out, jobs=args.j)
         print(installed)

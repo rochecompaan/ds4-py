@@ -111,3 +111,15 @@ def fresh_loader():
     loader._loaded = None
     yield
     loader._loaded = None
+
+
+@pytest.fixture(scope="session")
+def live_lib():
+    from ds4py._native.loader import resolve_lib_path
+
+    if not os.environ.get("DS4_TEST_MODEL"):
+        pytest.skip("DS4_TEST_MODEL is not set")
+    lib = resolve_lib_path(None)
+    if not lib.is_file():
+        pytest.skip(f"library not found: {lib}")
+    return lib
