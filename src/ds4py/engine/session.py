@@ -43,10 +43,14 @@ def open(model: str | Path = "ds4flash.gguf", *, ctx: int = 100_000,
             f"this libds4 was built for {native.backend}, not {backend}; "
             f"run ds4py build --backend {backend}"
         )
-    think = native.think_mode_for_context(think, ctx)
     config = EngineConfig(Path(model), ctx, native.backend, threads)
     worker = EngineWorker(native, config, cancel=cancel)
-    return Engine(native, worker, config, think, SamplingPolicy.for_engine(worker.info, seed=seed))
+    try:
+        think = worker.call(lambda e, s: native.think_mode_for_context(think, ctx)).result()
+        return Engine(native, worker, config, think, SamplingPolicy.for_engine(worker.info, seed=seed))
+    except BaseException:
+        worker.close()
+        raise
 
 
 class Engine:
@@ -123,6 +127,9 @@ class Session:
                 if not terminal:
                     self.cancel()
                 try:
+                    # The barrier survives interruption of __next__, including
+                    # another Ctrl+C during cleanup. Never release a live job.
+                    events.wait()
                     for event in events:
                         if isinstance(event, Interrupted) or (
                             isinstance(event, Stopped) and event.reason == "interrupted"

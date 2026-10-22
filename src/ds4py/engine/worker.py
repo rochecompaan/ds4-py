@@ -38,10 +38,41 @@ class Handles:
     session: int
 
 
+class _JobEvents(Iterator[Event]):
+    """A resumable event channel with an independent native-completion barrier."""
+
+    def __init__(self):
+        self.queue = SimpleQueue()
+        self.finished = threading.Event()
+        self._exhausted = False
+
+    def __next__(self) -> Event:
+        if self._exhausted:
+            raise StopIteration
+        event = self.queue.get()
+        if event is _END:
+            self._exhausted = True
+            raise StopIteration
+        if isinstance(event, BaseException):
+            raise event
+        return event
+
+    def wait(self) -> None:
+        # Repeated Ctrl+C must not detach a round from still-running native work.
+        interrupted = None
+        while not self.finished.is_set():
+            try:
+                self.finished.wait()
+            except KeyboardInterrupt as error:
+                interrupted = error
+        if interrupted is not None:
+            raise interrupted
+
+
 @dataclass(frozen=True)
 class _Submission:
     job: SyncJob | CheckpointJob | GenerateJob
-    events: SimpleQueue
+    events: _JobEvents
 
 
 @dataclass(frozen=True)
@@ -79,20 +110,10 @@ class EngineWorker:
                 raise EngineError("engine worker is closed")
             self._queue.put(item)
 
-    def submit(self, job: SyncJob | CheckpointJob | GenerateJob) -> Iterator[Event]:
-        events = SimpleQueue()
+    def submit(self, job: SyncJob | CheckpointJob | GenerateJob) -> _JobEvents:
+        events = _JobEvents()
         self._enqueue(_Submission(job, events))
-        return self._events(events)
-
-    @staticmethod
-    def _events(events) -> Iterator[Event]:
-        while True:
-            event = events.get()
-            if event is _END:
-                return
-            if isinstance(event, BaseException):
-                raise event
-            yield event
+        return events
 
     def call(self, fn: Callable[[EngineHandle, SessionHandle], T]) -> Future[T]:
         future = Future()
@@ -143,11 +164,12 @@ class EngineWorker:
                         item.future.set_result(result)
                 else:
                     try:
-                        self._execute(engine, session, item.job, item.events.put)
+                        self._execute(engine, session, item.job, item.events.queue.put)
                     except BaseException as error:
-                        item.events.put(error)
+                        item.events.queue.put(error)
                     finally:
-                        item.events.put(_END)
+                        item.events.queue.put(_END)
+                        item.events.finished.set()
 
     def _plan(self, session, tokens) -> Plan:
         return plan_sync(

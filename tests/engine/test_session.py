@@ -30,6 +30,43 @@ def test_open_checks_backend_and_think_mode():
         assert e.think == ThinkMode.HIGH
 
 
+@pytest.mark.parametrize("fail", [False, True])
+def test_think_helper_runs_on_owner_and_failure_closes_worker(fail):
+    handles, calls = [], []
+
+    class TrackingNative(FakeNative):
+        def open_engine(self, config):
+            engine = super().open_engine(config)
+            handles.append(engine)
+            create = engine.create_session
+
+            def create_session(ctx):
+                session = create(ctx)
+                handles.append(session)
+                return session
+
+            engine.create_session = create_session
+            return engine
+
+        def think_mode_for_context(self, mode, ctx):
+            calls.append(threading.current_thread())
+            if fail:
+                raise EngineError("think helper failed")
+            return super().think_mode_for_context(mode, ctx)
+
+    native = TrackingNative()
+    if fail:
+        with pytest.raises(EngineError, match="think helper failed"):
+            ds4py.open("f.gguf", ctx=64, think=ThinkMode.MAX, native=native)
+    else:
+        with ds4py.open("f.gguf", ctx=64, think=ThinkMode.MAX, native=native) as e:
+            assert e.think == ThinkMode.HIGH
+            assert e.session().on_worker(lambda h: threading.current_thread()).result() is calls[0]
+    assert len(handles) == 2 and all(handle.raw == 0 for handle in handles)
+    assert len(calls) == 1 and calls[0] is not threading.current_thread()
+    assert not calls[0].is_alive()
+
+
 def test_sampling_defaults_follow_the_engine():
     native = FakeNative()
     handle = native.open_engine(EngineConfig(Path("f")))
