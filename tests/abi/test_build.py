@@ -140,6 +140,49 @@ def test_mirror_skips_git_and_objects(tmp_path):
     assert not (farm / "metal").is_symlink()
 
 
+@pytest.mark.parametrize("entry", ["entry", "nested/entry"])
+def test_mirror_file_to_directory_preserves_source(tmp_path, entry):
+    src, farm = tmp_path / "src", tmp_path / "farm"
+    source_entry = src / entry
+    source_entry.parent.mkdir(parents=True)
+    source_entry.write_text("original file")
+    build._mirror(src, farm)
+
+    source_entry.unlink()
+    source_entry.mkdir()
+    child = source_entry / "child.c"
+    child.write_text("source contents")
+    build._mirror(src, farm)
+    build._mirror(src, farm)
+
+    assert not child.is_symlink()
+    assert child.read_text() == "source contents"
+    mirrored = farm / entry
+    assert mirrored.is_dir() and not mirrored.is_symlink()
+    assert (mirrored / "child.c").is_symlink()
+    assert (mirrored / "child.c").resolve() == child.resolve()
+
+
+def test_mirror_directory_to_file_preserves_source(tmp_path):
+    src, farm = tmp_path / "src", tmp_path / "farm"
+    source_entry = src / "entry"
+    source_entry.mkdir(parents=True)
+    child = source_entry / "child.c"
+    child.write_text("source contents")
+    build._mirror(src, farm)
+    child.unlink()
+    source_entry.rmdir()
+    source_entry.write_text("replacement file")
+
+    build._mirror(src, farm)
+    build._mirror(src, farm)
+
+    assert not source_entry.is_symlink()
+    assert source_entry.read_text() == "replacement file"
+    assert (farm / "entry").is_symlink()
+    assert (farm / "entry").resolve() == source_entry.resolve()
+
+
 def test_mirror_does_not_recurse_into_itself(tmp_path):
     src = tmp_path / "src"
     src.mkdir()

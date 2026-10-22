@@ -52,12 +52,19 @@ def _mirror(src: Path, farm: Path) -> None:
         dirs[:] = [name for name in dirs
                    if name != ".git" and Path(directory) / name != farm]
         target = farm / Path(directory).relative_to(src)
+        # A previously mirrored file may now be a source directory. Never
+        # traverse its stale symlink, which points back into the source tree.
+        if target.is_symlink():
+            target.unlink()
         target.mkdir(parents=True, exist_ok=True)
         for name in names:
             if name == ".git" or Path(name).suffix in (".o", ".a", ".so", ".dylib"):
                 continue
             link = target / name
-            link.unlink(missing_ok=True)
+            if not link.is_symlink() and link.is_dir():
+                shutil.rmtree(link)
+            else:
+                link.unlink(missing_ok=True)
             link.symlink_to(Path(directory) / name)
 
 
