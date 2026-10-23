@@ -42,7 +42,35 @@ def stub_dlopen(monkeypatch):
     return handle
 
 
+@pytest.mark.parametrize("root, expected", [
+    (None, ".ds4py/lib"), ("", ".ds4py/lib"), ("~/custom", "custom/lib"),
+])
+def test_default_root_is_expanded_at_call_time(root, expected, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("DS4_LIB", raising=False)
+    if root is None:
+        monkeypatch.delenv("DS4PY_HOME", raising=False)
+    else:
+        monkeypatch.setenv("DS4PY_HOME", root)
+    assert loader.default_lib_dir() == tmp_path / expected
+    assert not (tmp_path / expected).exists()
+    monkeypatch.setenv("DS4PY_HOME", str(tmp_path / "another"))
+    assert loader.default_lib_dir() == tmp_path / "another/lib"
+
+
+def test_custom_root_loses_to_explicit_library_paths(tmp_path, monkeypatch):
+    root = tmp_path / "custom"
+    monkeypatch.setenv("DS4PY_HOME", str(root))
+    monkeypatch.delenv("DS4_LIB", raising=False)
+    assert resolve_lib_path(None) == root / "lib" / LIB_NAME
+    monkeypatch.setenv("DS4_LIB", str(tmp_path / "env.so"))
+    assert resolve_lib_path(None) == tmp_path / "env.so"
+    assert resolve_lib_path(tmp_path / "explicit.so") == tmp_path / "explicit.so"
+    assert not root.exists()
+
+
 def test_resolution_order(tmp_path, monkeypatch):
+    monkeypatch.delenv("DS4PY_HOME", raising=False)
     monkeypatch.setenv("DS4_LIB", str(tmp_path / "env" / LIB_NAME))
     assert resolve_lib_path(tmp_path / "x.so") == tmp_path / "x.so"
     assert resolve_lib_path(None) == tmp_path / "env" / LIB_NAME
@@ -114,6 +142,45 @@ def test_invalid_manifest_never_reaches_dlopen(make_manifest, tmp_path, upstream
     monkeypatch.setattr(loader, "_dlopen", lambda p: pytest.fail("dlopen called"))
     with pytest.raises(AbiMismatch, match="ds4py build"):
         load_library(lib)
+
+
+def test_old_cpu_manifest_still_loads(make_manifest, tmp_path, upstream_headers, stub_dlopen):
+    import json
+    lib, m = make_manifest(tmp_path, upstream_headers)
+    path = manifest_path(lib)
+    m.write(path)
+    data = json.loads(path.read_text())
+    data.pop("metal_sources", None)
+    path.write_text(json.dumps(data))
+    assert load_library(lib).has("ds4_engine_open")
+
+
+@pytest.mark.parametrize("damage", ["missing", "changed", "empty", "path", "hash"])
+def test_bad_metal_bundle_is_refused_before_dlopen(
+    make_manifest, tmp_path, upstream_headers, monkeypatch, damage,
+):
+    import hashlib
+    lib, m = make_manifest(tmp_path, upstream_headers)
+    m.backend = "metal"
+    m.metal_sources = {"metal/dense.metal": hashlib.sha256(b"shader").hexdigest()}
+    (tmp_path / "metal").mkdir()
+    shader = tmp_path / "metal/dense.metal"
+    shader.write_bytes(b"shader")
+    if damage == "missing":
+        shader.unlink()
+    elif damage == "changed":
+        shader.write_bytes(b"wrong")
+    elif damage == "empty":
+        m.metal_sources = {}
+    elif damage == "path":
+        m.metal_sources = {"../dense.metal": hashlib.sha256(b"shader").hexdigest()}
+    elif damage == "hash":
+        m.metal_sources = {"metal/dense.metal": "bad"}
+    m.write(manifest_path(lib))
+    monkeypatch.setattr(loader, "_dlopen", lambda p: pytest.fail("dlopen called"))
+    with pytest.raises(AbiMismatch, match="ds4py build"):
+        load_library(lib)
+    assert loader._loaded is None
 
 
 def test_missing_symbol_refuses_without_caching(make_manifest, tmp_path, upstream_headers, monkeypatch):

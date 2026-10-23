@@ -49,6 +49,7 @@ class Manifest:
     bindings: dict[str, BindingRecord]
     layouts: dict[str, StructLayout]
     live_checks: dict[str, dict] = field(default_factory=dict)
+    metal_sources: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def read(cls, path: Path) -> "Manifest":
@@ -85,6 +86,8 @@ def validate(
     m: Manifest, *, lib_sha256: str, bindings: Sequence[Binding],
     layouts: dict[str, StructLayout],
 ) -> Validation:
+    if m.backend == "metal" and (not isinstance(m.metal_sources, dict) or not m.metal_sources):
+        raise AbiMismatch("Metal shader records are missing or invalid." + _REBUILD)
     if m.type_map_version != TYPE_MAP_VERSION:
         raise AbiMismatch("type-map version differs from the installed version." + _REBUILD)
     if m.library_sha256 != lib_sha256:

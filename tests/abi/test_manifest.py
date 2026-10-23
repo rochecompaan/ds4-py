@@ -19,8 +19,9 @@ def test_matching_manifest_is_accepted(make_manifest, tmp_path, upstream_headers
 
 def test_unknown_headers_only_warn(make_manifest, tmp_path, fork_headers):
     lib, m = make_manifest(tmp_path, fork_headers)
+    m.headers["ds4.h"] = "0" * 64
     v = manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=CORE_BINDINGS, layouts=LAYOUTS)
-    assert any("b1e0ad190897" in w for w in v.warnings)
+    assert "unknown header ds4.h: 000000000000" in v.warnings
 
 def test_changed_prototype_is_refused(make_manifest, tmp_path, upstream_headers):
     lib, m = make_manifest(tmp_path, upstream_headers)
@@ -67,6 +68,15 @@ def test_absent_optional_binding_is_listed(make_manifest, tmp_path, upstream_hea
     lib, m = make_manifest(tmp_path, upstream_headers, bindings=all_bindings())
     v = manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=all_bindings(), layouts=LAYOUTS)
     assert v.absent == {"ds4_engine_sampling_defaults"} and "ds4_engine_layer_count" in v.available
+
+@pytest.mark.parametrize("records", [{}, None, []])
+def test_metal_manifest_requires_shader_records(make_manifest, tmp_path, upstream_headers, records):
+    lib, m = make_manifest(tmp_path, upstream_headers)
+    m.backend = "metal"
+    m.metal_sources = records
+    with pytest.raises(AbiMismatch, match="Metal.*ds4py build"):
+        manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=CORE_BINDINGS, layouts=LAYOUTS)
+
 
 def test_manifest_round_trips(make_manifest, tmp_path, upstream_headers):
     lib, m = make_manifest(tmp_path, upstream_headers)

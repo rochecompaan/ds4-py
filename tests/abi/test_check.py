@@ -105,7 +105,7 @@ def test_check_upstream_build(built_upstream):
 def test_check_fork_build_lists_extension(built_fork):
     result = run_check(built_fork[0], {"PYTHONPATH": EXT_SITE})
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "warning: unknown header ds4.h b1e0ad190897" in result.stdout
+    assert "headers:  known" in result.stdout
     assert "ds4_engine_sampling_defaults  present  (test_ext)" in result.stdout
     assert "ds4_engine_layer_count  present  (test_ext)" in result.stdout
 

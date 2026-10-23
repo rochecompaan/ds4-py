@@ -24,10 +24,11 @@ def close_workers():
 
 P = list(range(1, 41))
 
-def worker(*, ctx=64, clock=None, cancel=None, max_checkpoints=4, **fake):
+def worker(*, ctx=64, clock=None, cancel=None, checkpoint_budget_bytes=None, **fake):
     clock = clock or FakeClock()
+    limits = {} if checkpoint_budget_bytes is None else {"checkpoint_budget_bytes": checkpoint_budget_bytes}
     w = EngineWorker(FakeNative(clock=clock, **fake), EngineConfig(Path("f.gguf"), ctx=ctx),
-                     clock=clock, cancel=cancel, max_checkpoints=max_checkpoints)
+                     clock=clock, cancel=cancel, **limits)
     _workers.append(w)
     return w
 
@@ -72,19 +73,153 @@ def test_cancel_interrupts_sync_and_clears_the_flag():
     assert w.cancel_event is cancel and not cancel.is_set()
     assert w.plan(P) == Plan("extend", 6, 34, True, None)          # the prefix done so far is kept
 
-def test_checkpoint_limits():
-    w = worker(max_checkpoints=2)
-    with pytest.raises(CheckpointError, match="no valid state"): run(w, CheckpointJob("a"))
+# Checkpoint payload admission and ownership.
+def track_snapshots(w):
+    saved, closed = [], []
+    def install(e, s):
+        original_save = s.save_snapshot
+        def save():
+            snapshot = original_save()
+            original_close = snapshot.close
+            def close():
+                closed.append((snapshot, threading.get_ident()))
+                original_close()
+            snapshot.close = close
+            saved.append(snapshot)
+            return snapshot
+        s.save_snapshot = save
+    w.call(install).result()
+    return saved, closed
+
+
+def test_checkpoint_budget_counts_system_and_admits_exact_fit():
+    w = worker(checkpoint_budget_bytes=8 * 1024)
+    saved, closed = track_snapshots(w)
+    owner = w.call(lambda e, s: threading.get_ident()).result()
+    with pytest.raises(CheckpointError, match="no valid state"):
+        run(w, CheckpointJob("a"))
     run(w, SyncJob(tuple(P[:4])))
-    for key in (SYSTEM, "a", "b", "a"):                             # system is not counted; "a" is replaced
-        run(w, CheckpointJob(key))
-    with pytest.raises(CheckpointError, match="max_checkpoints"): run(w, CheckpointJob("c"))
+    for key in (SYSTEM, "a", "a"):  # replacing a full-budget snapshot must work
+        assert run(w, CheckpointJob(key)) == [Checkpointed(key, 4, 4096)]
+    assert [s.closed for s in saved] == [False, True, False]
+    with pytest.raises(CheckpointError, match="checkpoint_budget_bytes"):
+        run(w, CheckpointJob("b"))
+    assert len(saved) == 3  # refused before allocating, without evicting a key
     assert run(w, CheckpointJob("a", drop=True)) == [Dropped("a")]
-    run(w, CheckpointJob("c"))
-    with pytest.raises(CheckpointError, match="unknown checkpoint"): run(w, CheckpointJob("zz", drop=True))
+    run(w, CheckpointJob("b"))
+    run(w, CheckpointJob(SYSTEM, drop=True))
+    w.close()
+    assert all(s.closed for s in saved)
+    assert len(closed) == 4 and all(thread == owner for _, thread in closed)
+
+
+def test_checkpoint_drop_rejects_an_unknown_key():
+    with pytest.raises(CheckpointError, match="unknown checkpoint"):
+        run(worker(), CheckpointJob("zz", drop=True))
+
+
+def test_small_snapshots_are_not_limited_by_count():
+    w = worker()
+    run(w, SyncJob((1,)))
+    for key in (SYSTEM, "a", "b", "c", "d", "e"):
+        run(w, CheckpointJob(key))
+    for key in (SYSTEM, "a", "b", "c", "d", "e"):
+        assert run(w, CheckpointJob(key, drop=True)) == [Dropped(key)]
+
+
+def test_over_budget_replacement_keeps_old_snapshot_and_other_keys():
+    w = worker(checkpoint_budget_bytes=6 * 1024)
+    saved, _ = track_snapshots(w)
+    run(w, SyncJob(tuple(P[:2])))
+    run(w, CheckpointJob(SYSTEM))
+    run(w, SyncJob(tuple(P[:4])))
+    run(w, CheckpointJob("a"))
+    run(w, SyncJob(tuple(P[:5])))
+    with pytest.raises(CheckpointError, match="checkpoint_budget_bytes"):
+        run(w, CheckpointJob("a"))
+    assert len(saved) == 2 and not any(s.closed for s in saved)
+    *_, synced = run(w, SyncJob(tuple(P[:4] + [99])))
+    assert synced.plan == Plan("restore", 4, 1, True, "a")
+    run(w, CheckpointJob(SYSTEM, drop=True))
+    run(w, CheckpointJob("a"))  # enough room now; the old a is freed only on success
+    assert [s.closed for s in saved] == [True, True, False]
+
+
+@pytest.mark.parametrize("replacement", [False, True])
+def test_oversized_returned_snapshot_is_freed_without_losing_retained_state(replacement):
+    w = worker(checkpoint_budget_bytes=6 * 1024)
+    saved, closed = track_snapshots(w)
+    owner = w.call(lambda e, s: threading.get_ident()).result()
+    run(w, SyncJob(tuple(P[:2])))
+    run(w, CheckpointJob(SYSTEM))
+    if replacement:
+        run(w, SyncJob(tuple(P[:3])))
+        run(w, CheckpointJob("a"))
+    run(w, SyncJob(tuple(P[:4])))
+    def underestimate(e, s):
+        original_save = s.save_snapshot
+        def save():
+            snap = original_save()
+            snap.nbytes = 4097  # payload_bytes preflight was 4096
+            return snap
+        s.save_snapshot = save
+    w.call(underestimate).result()
+    with pytest.raises(CheckpointError, match="checkpoint_budget_bytes"):
+        run(w, CheckpointJob("a"))
+    assert saved[-1].closed and not any(s.closed for s in saved[:-1])
+    assert closed == [(saved[-1], owner)]
+    prefix = 3 if replacement else 2
+    *_, synced = run(w, SyncJob(tuple(P[:prefix] + [99])))
+    assert synced.plan == Plan("restore", prefix, 1, True, "a" if replacement else SYSTEM)
+    w.close()
+    assert all(s.closed for s in saved) and len(closed) == len(saved)
+
+
+def test_zero_budget_disables_even_zero_byte_checkpoints():
+    w = worker(checkpoint_budget_bytes=0)
+    with pytest.raises(CheckpointError, match="checkpoint_budget_bytes"):
+        run(w, CheckpointJob(SYSTEM))
+    run(w, SyncJob((1,)))
+    def empty_payload(e, s):
+        s.payload_bytes = lambda: 0
+        s.save_snapshot = lambda: pytest.fail("zero budget allocated a snapshot")
+    w.call(empty_payload).result()
+    with pytest.raises(CheckpointError, match="checkpoint_budget_bytes"):
+        run(w, CheckpointJob(SYSTEM))
+
+
+@pytest.mark.parametrize("budget, error", [
+    (-1, ValueError), (1.5, TypeError), ("1024", TypeError),
+    (True, TypeError), (False, TypeError), (None, TypeError),
+])
+def test_bad_checkpoint_budget_is_refused_before_native_open(budget, error):
+    class NeverOpened(FakeNative):
+        def open_engine(self, config):
+            pytest.fail("invalid budget opened a native engine")
+    with pytest.raises(error, match="checkpoint_budget_bytes must be a non-negative integer"):
+        EngineWorker(NeverOpened(), EngineConfig(Path("f")), checkpoint_budget_bytes=budget)
+
+
+def test_default_budget_admits_one_gib_and_rejects_one_more_byte():
+    w = worker()  # use the production default, not a test helper's copy of it
+    run(w, SyncJob((1,)))
+    def large_payload(e, s):
+        original_save = s.save_snapshot
+        def save():
+            snap = original_save()
+            snap.nbytes = 1 << 30  # report a large payload without allocating a GiB
+            return snap
+        s.payload_bytes = lambda: 1 << 30
+        s.save_snapshot = save
+    w.call(large_payload).result()
+    assert run(w, CheckpointJob(SYSTEM)) == [Checkpointed(SYSTEM, 1, 1 << 30)]
+    run(w, CheckpointJob(SYSTEM, drop=True))
+    w.call(lambda e, s: setattr(s, "payload_bytes", lambda: (1 << 30) + 1)).result()
+    with pytest.raises(CheckpointError, match="checkpoint_budget_bytes"):
+        run(w, CheckpointJob("too_large"))
 
 def test_a_checkpoint_is_kept_until_its_replacement_is_saved():
-    w = worker()
+    w = worker(checkpoint_budget_bytes=16 * 1024)
     saved = []
     def wrap_save(e, s):                                            # the third save runs out of memory
         real = s.save_snapshot

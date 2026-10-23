@@ -1,11 +1,13 @@
 """Thread-confined ctypes lifecycle and ownership adapters for ds4."""
 import ctypes as C
+from contextlib import contextmanager
 import fcntl
 import os
 from pathlib import Path
 import threading
 import weakref
 
+from ds4py.abi.shaders import metal_source_env
 from ds4py.errors import EngineError, EngineLockedError
 from . import structs
 from .loader import Library
@@ -58,12 +60,20 @@ class InstanceLock:
         self.close()
 
 
-def metal_source_env(src: Path) -> dict[str, str]:
-    directory = src.absolute() / "metal"
-    sources = {f"DS4_METAL_{p.stem.upper()}_SOURCE": str(p) for p in directory.glob("*.metal")}
-    if not sources:
-        raise EngineError(f"no Metal sources in {directory}")
-    return sources
+@contextmanager
+def _open_environment(second: Path, sources: dict[str, str]):
+    changes = {key: value for key, value in sources.items() if key not in os.environ}
+    changes["DS4_LOCK_FILE"] = str(second)
+    previous = {key: os.environ.get(key) for key in changes}
+    try:
+        os.environ.update(changes)
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def engine_options(config: EngineConfig, *, inspect_only: bool = False) -> structs.EngineOptions:
@@ -99,7 +109,9 @@ class LibNative:
         it skips tokenizer loading. Invalid tokenizer tables, missing required
         tokens, model changes between inspection and open, and GPU setup errors
         can terminate Python. Keep the model unchanged for the engine lifetime.
-        Open temporarily changes the process-wide DS4_LOCK_FILE. Do not start
+        Open temporarily changes process-wide lock and Metal source variables.
+        The open lock serializes ds4py opens, not other threads or subprocesses.
+        Do not start
         ds4 subprocesses during open: another thread's child can inherit that
         path, take the second lock first, and make native open exit(2). These
         restrictions reduce risk but do not guarantee against process termination.
@@ -108,21 +120,14 @@ class LibNative:
             lock = InstanceLock.acquire(lock_path())
             try:
                 second = engine_lock_path()
+                sources = metal_source_env(
+                    self.lib.path.resolve().parent, self.lib.manifest.metal_sources, os.environ,
+                ) if self.backend == "metal" else {}
                 inspect_model(self.lib.path, config, second)
-                if self.backend == "metal":
-                    for key, value in metal_source_env(Path(self.lib.manifest.source_path)).items():
-                        os.environ.setdefault(key, value)
                 options = engine_options(config)
                 raw = C.c_void_p()
-                previous = os.environ.get("DS4_LOCK_FILE")
-                try:
-                    os.environ["DS4_LOCK_FILE"] = str(second)
+                with _open_environment(second, sources):
                     status = self.bind("ds4_engine_open")(C.byref(raw), C.byref(options))
-                finally:
-                    if previous is None:
-                        os.environ.pop("DS4_LOCK_FILE", None)
-                    else:
-                        os.environ["DS4_LOCK_FILE"] = previous
                 if status:
                     raise EngineError(f"ds4_engine_open failed ({status})")
                 try:

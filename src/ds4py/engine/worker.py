@@ -101,11 +101,16 @@ class EngineWorker:
     def __init__(self, native: Native, config: EngineConfig, *,
                  cancel: threading.Event | None = None,
                  clock: Callable[[], float] = time.monotonic,
-                 max_checkpoints: int = 4, throttle: float = 0.1):
+                 checkpoint_budget_bytes: int = 1 << 30, throttle: float = 0.1):
+        message = "checkpoint_budget_bytes must be a non-negative integer"
+        if isinstance(checkpoint_budget_bytes, bool) or not isinstance(checkpoint_budget_bytes, int):
+            raise TypeError(message)
+        if checkpoint_budget_bytes < 0:
+            raise ValueError(message)
         self._native = native
         self.cancel_event = cancel if cancel is not None else threading.Event()
         self._clock, self._throttle = clock, throttle
-        self._max_checkpoints = max_checkpoints
+        self._checkpoint_budget_bytes = checkpoint_budget_bytes
         self._checkpoints: dict[str, tuple[tuple[int, ...], Snapshot]] = {}
         self._queue = SimpleQueue()
         self._lock = threading.Lock()
@@ -255,13 +260,21 @@ class EngineWorker:
             snapshot.close()
             emit(Dropped(job.key))
             return
+        budget = self._checkpoint_budget_bytes
+        if budget == 0:
+            raise CheckpointError("checkpoint creation is disabled (checkpoint_budget_bytes=0)")
         if not session.checkpoint_valid() or session.pos() <= 0:
             raise CheckpointError("no valid state to checkpoint")
-        count = sum(key != SYSTEM for key in self._checkpoints)
-        if job.key != SYSTEM and job.key not in self._checkpoints and count >= self._max_checkpoints:
-            raise CheckpointError(f"max_checkpoints ({self._max_checkpoints}) reached; drop one first")
+        retained = sum(snapshot.nbytes for key, (_, snapshot) in self._checkpoints.items()
+                       if key != job.key)
+        error = f"checkpoint_budget_bytes ({budget}) exceeded; drop a checkpoint first"
+        if retained + session.payload_bytes() > budget:
+            raise CheckpointError(error)
         tokens = tuple(session.tokens())
         snapshot = session.save_snapshot()
+        if retained + snapshot.nbytes > budget:
+            snapshot.close()
+            raise CheckpointError(error)
         old = self._checkpoints.get(job.key)
         self._checkpoints[job.key] = (tokens, snapshot)
         if old is not None:

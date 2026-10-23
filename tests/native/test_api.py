@@ -1,10 +1,11 @@
 import fcntl
+import hashlib
 import os
 import re
 from pathlib import Path
 import pytest
-from ds4py.errors import EngineError, EngineLockedError, ModelFileError
-from ds4py._native.api import InstanceLock, LibNative, lock_path, engine_lock_path, metal_source_env, engine_options
+from ds4py.errors import AbiMismatch, EngineError, EngineLockedError, ModelFileError
+from ds4py._native.api import InstanceLock, LibNative, lock_path, engine_lock_path, engine_options
 from ds4py._native.protocol import EngineConfig, ThinkMode
 from ds4py._native.modelcheck import exit_error, NATIVE_REFUSED, PYTHON_ERROR
 from ds4py._native.loader import load_library
@@ -39,19 +40,6 @@ def test_exit_error():
     for status in (1, 2, NATIVE_REFUSED, PYTHON_ERROR, -9):      # no ds4 line: not a ds4 refusal
         e = exit_error(status, tb, m, lk)
         assert type(e) is EngineError and "ImportError" in str(e)
-
-def test_metal_source_env(tmp_path, monkeypatch):
-    (tmp_path / "metal").mkdir()
-    for stem in ("flash_attn", "moe"):
-        (tmp_path / "metal" / f"{stem}.metal").write_text("")
-    monkeypatch.chdir(tmp_path)
-    here = Path.cwd()                  # tmp_path may be a symlink, as on macOS
-    assert metal_source_env(Path(".")) == {
-        "DS4_METAL_FLASH_ATTN_SOURCE": str(here / "metal" / "flash_attn.metal"),
-        "DS4_METAL_MOE_SOURCE": str(here / "metal" / "moe.metal"),
-    }
-    with pytest.raises(EngineError, match="no Metal sources"):
-        metal_source_env(tmp_path / "metal")
 
 def test_engine_options(tmp_path, monkeypatch):
     o = engine_options(EngineConfig(Path("/m.gguf"), ctx=4096, backend="rocm", threads=3))
@@ -211,32 +199,119 @@ def test_open_environment_and_failure_cleanup(stub_engine, tmp_path, monkeypatch
     engine, c = stub_engine
     lib = engine._lib
     (tmp_path / "metal").mkdir()
-    (tmp_path / "metal" / "moe.metal").write_text("")
-    lib.manifest = SimpleNamespace(backend=backend, live_checks={"restore": {"ok": False}}, source_path=str(tmp_path))
+    (tmp_path / "metal" / "moe.metal").write_bytes(b"moe")
+    (tmp_path / "metal" / "flash_attn.metal").write_bytes(b"flash")
+    lib.manifest = SimpleNamespace(
+        backend=backend, live_checks={"restore": {"ok": False}},
+        source_path=str(tmp_path / "deleted-checkout"),
+        metal_sources={"metal/moe.metal": hashlib.sha256(b"moe").hexdigest(),
+                       "metal/flash_attn.metal": hashlib.sha256(b"flash").hexdigest()},
+    )
+    seen = []
+    original_open = lib.fn("ds4_engine_open")
+    def observe(*args):
+        seen.append({k: os.environ.get(k) for k in ("DS4_METAL_MOE_SOURCE", "DS4_METAL_FLASH_ATTN_SOURCE")})
+        return original_open(*args)
+    monkeypatch.setitem(lib._functions, "ds4_engine_open", observe)
     native = LibNative(lib)
     assert not native.restore_enabled
     monkeypatch.setattr(api, "inspect_model", lambda *args: None)  # actual child refusal is covered by CPU build test
     lock = tmp_path / "open.lock"
     monkeypatch.setenv("DS4_LOCK_FILE", str(lock))
-    monkeypatch.setenv("DS4_METAL_MOE_SOURCE", "user-override")
+    override = tmp_path / "user-override.metal"
+    override.write_bytes(b"moe")
+    monkeypatch.setenv("DS4_METAL_MOE_SOURCE", str(override))
+    monkeypatch.delenv("DS4_METAL_FLASH_ATTN_SOURCE", raising=False)
+    environment = dict(os.environ)
     before = Path.cwd()
     opened = native.open_engine(EngineConfig(Path("model"), backend=backend))
     c.stub_opened_lock.restype = ctypes.c_char_p
     assert c.stub_opened_lock() == os.fsencode(tmp_path / "open.lock.engine")
     assert Path.cwd() == before
-    assert os.environ["DS4_METAL_MOE_SOURCE"] == "user-override"
-    assert os.environ["DS4_LOCK_FILE"] == str(lock)
+    assert seen[-1] == {
+        "DS4_METAL_MOE_SOURCE": str(override),
+        "DS4_METAL_FLASH_ATTN_SOURCE": str(tmp_path.resolve() / "metal/flash_attn.metal") if backend == "metal" else None,
+    }
+    assert dict(os.environ) == environment
     with pytest.raises(EngineLockedError):
         InstanceLock.acquire(lock)
     opened.close()
     with pytest.raises(EngineError, match="ds4_engine_open failed"):
         native.open_engine(EngineConfig(Path("model"), ctx=13, backend=backend))
-    assert os.environ["DS4_LOCK_FILE"] == str(lock)
+    assert dict(os.environ) == environment
     InstanceLock.acquire(lock).close()
     monkeypatch.delenv("DS4_LOCK_FILE")
     monkeypatch.setattr(api, "lock_path", lambda: lock)
     native.open_engine(EngineConfig(Path("model"), backend=backend)).close()
     assert "DS4_LOCK_FILE" not in os.environ
+
+
+@pytest.fixture
+def metal_native(stub_engine, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import ds4py._native.api as api
+    engine, _ = stub_engine
+    lib = engine._lib
+    (tmp_path / "metal").mkdir()
+    shader = tmp_path / "metal/dense.metal"
+    shader.write_bytes(b"first bundle")
+    lib.manifest = SimpleNamespace(
+        backend="metal", live_checks={}, source_path="/deleted/checkout",
+        metal_sources={"metal/dense.metal": hashlib.sha256(b"first bundle").hexdigest()},
+    )
+    monkeypatch.setattr(api, "inspect_model", lambda *args: None)
+    monkeypatch.setenv("DS4_LOCK_FILE", str(tmp_path / "native.lock"))
+    monkeypatch.delenv("DS4_METAL_DENSE_SOURCE", raising=False)
+    return LibNative(lib), shader
+
+
+def test_metal_environment_restored_on_python_exception(metal_native, tmp_path, monkeypatch):
+    native, _ = metal_native
+    before = dict(os.environ)
+    def fail(*args):
+        assert os.environ["DS4_METAL_DENSE_SOURCE"] == str(tmp_path.resolve() / "metal/dense.metal")
+        raise RuntimeError("open raised")
+    monkeypatch.setitem(native.lib._functions, "ds4_engine_open", fail)
+    with pytest.raises(RuntimeError, match="open raised"):
+        native.open_engine(EngineConfig(tmp_path / "model", backend="metal"))
+    assert dict(os.environ) == before
+    InstanceLock.acquire(tmp_path / "native.lock").close()
+
+
+def test_later_metal_open_uses_another_bundle(metal_native, tmp_path, monkeypatch):
+    native, shader = metal_native
+    original_open = native.lib.fn("ds4_engine_open")
+    seen = []
+    def observe(*args):
+        seen.append(os.environ["DS4_METAL_DENSE_SOURCE"])
+        return original_open(*args)
+    monkeypatch.setitem(native.lib._functions, "ds4_engine_open", observe)
+    native.open_engine(EngineConfig(tmp_path / "model", backend="metal")).close()
+    second = tmp_path / "second"
+    (second / "metal").mkdir(parents=True)
+    (second / "metal/dense.metal").write_bytes(b"second bundle")
+    native.lib.path = second / "stub.so"
+    native.lib.manifest.metal_sources = {"metal/dense.metal": hashlib.sha256(b"second bundle").hexdigest()}
+    native.open_engine(EngineConfig(tmp_path / "model", backend="metal")).close()
+    assert seen == [str(shader.resolve()), str(second.resolve() / "metal/dense.metal")]
+    assert "DS4_METAL_DENSE_SOURCE" not in os.environ
+
+
+@pytest.mark.parametrize("change", ["bundle", "override"])
+def test_open_rechecks_shader_files_after_library_load(metal_native, tmp_path, monkeypatch, change):
+    native, shader = metal_native
+    target = shader
+    if change == "override":
+        target = tmp_path / "override.metal"
+        target.write_bytes(shader.read_bytes())
+        monkeypatch.setenv("DS4_METAL_DENSE_SOURCE", str(target))
+    target.write_bytes(b"wrong after library load")
+    before = dict(os.environ)
+    monkeypatch.setitem(native.lib._functions, "ds4_engine_open", lambda *a: pytest.fail("native open called"))
+    with pytest.raises(AbiMismatch, match="ds4py build"):
+        native.open_engine(EngineConfig(tmp_path / "model", backend="metal"))
+    assert dict(os.environ) == before
+    InstanceLock.acquire(tmp_path / "native.lock").close()
 
 
 def test_info_captured_once_on_open(stub_engine):

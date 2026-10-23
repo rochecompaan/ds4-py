@@ -19,6 +19,7 @@ from ds4py._native.typemap import TYPE_MAP_VERSION
 from ds4py.errors import AbiMismatch, BuildError
 from . import probe
 from .manifest import BindingRecord, Manifest, file_sha256, manifest_path, validate
+from .shaders import copy_metal_sources, metal_source_env
 
 
 def default_backend() -> str:
@@ -82,8 +83,10 @@ def _run_make(farm: Path, backend: str, cc: str, jobs: int | None, log: TextIO) 
             raise BuildError("make failed:\n" + "".join(tail))
 
 
-def install(lib: Path, manifest: Manifest, out_dir: Path) -> Path:
-    """Publish one pair; caller holds .build.lock. Never prune reader generations.
+def install(
+    lib: Path, manifest: Manifest, out_dir: Path, *, metal_root: Path | None = None,
+) -> Path:
+    """Publish one bundle; caller holds .build.lock. Never prune reader generations.
 
     Offline cleanup requires stopping all readers, engine processes and builds;
     retain the directory named by the current library symlink.
@@ -98,6 +101,13 @@ def install(lib: Path, manifest: Manifest, out_dir: Path) -> Path:
         shutil.copy2(lib, staged)
         manifest.write(manifest_path(staged))
         try:
+            if manifest.backend == "metal":
+                if metal_root is None:
+                    raise BuildError("Metal sources are missing. Run `ds4py build` to rebuild.")
+                hashes = copy_metal_sources(metal_root, staged_dir)
+                if hashes != manifest.metal_sources:
+                    raise BuildError("Metal sources differ from the manifest. Run `ds4py build` to rebuild.")
+                metal_source_env(staged_dir, manifest.metal_sources)
             validate(
                 Manifest.read(manifest_path(staged)), lib_sha256=file_sha256(staged),
                 bindings=all_bindings(),
@@ -123,7 +133,7 @@ def install(lib: Path, manifest: Manifest, out_dir: Path) -> Path:
                 shutil.rmtree(staged_dir)
 
 
-def _build_manifest(src, lib, backend, cc, work, bindings, signatures, log):
+def _build_manifest(src, lib, backend, cc, work, bindings, signatures, log, metal_sources):
     layouts = probe.probe_layouts(src, cc, work / "layouts")
     hashes = probe.header_hashes(src)
     known = probe.headers_known(hashes)
@@ -144,7 +154,7 @@ def _build_manifest(src, lib, backend, cc, work, bindings, signatures, log):
         bindings={b.name: BindingRecord(b.normalized, b.required, b.source,
                                        signatures[b.name].ok, signatures[b.name].message)
                   for b in bindings},
-        layouts=layouts,
+        layouts=layouts, metal_sources=metal_sources,
     )
 
 
@@ -173,10 +183,12 @@ def build_library(
             _mirror(src, farm)
             (farm / "Makefile.lib").unlink(missing_ok=True)
             (farm / "Makefile.lib").write_bytes(files(__package__).joinpath("Makefile.lib").read_bytes())
+            metal_root = work / "sources" if backend == "metal" else None
+            metal_sources = copy_metal_sources(src, metal_root) if metal_root is not None else {}
             _run_make(farm, backend, compiler, jobs, log)
             try:
                 manifest = _build_manifest(src, farm / LIB_NAME, backend, compiler,
-                                           work, bindings, signatures, log)
+                                           work, bindings, signatures, log, metal_sources)
             except subprocess.CalledProcessError as exc:
                 raise BuildError(f"layout probe failed: {exc.stderr}") from exc
-            return install(farm / LIB_NAME, manifest, out_dir)
+            return install(farm / LIB_NAME, manifest, out_dir, metal_root=metal_root)

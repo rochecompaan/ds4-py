@@ -7,6 +7,7 @@ import sys
 import threading
 
 from ds4py.abi.manifest import Manifest, file_sha256, manifest_path, validate
+from ds4py.abi.shaders import metal_source_env
 from ds4py.errors import AbiMismatch, LibraryAlreadyLoaded, LibraryNotFound, MissingBinding
 from .bindings import all_bindings
 from .structs import STRUCTS, struct_layout
@@ -19,7 +20,8 @@ _load_lock = threading.Lock()
 
 
 def default_lib_dir() -> Path:
-    return Path.home() / ".ds4py" / "lib"
+    root = os.environ.get("DS4PY_HOME")
+    return (Path(root).expanduser() if root else Path.home() / ".ds4py") / "lib"
 
 
 def resolve_lib_path(lib: str | Path | None) -> Path:
@@ -97,6 +99,8 @@ def load_library(lib: str | Path | None = None) -> Library:
             manifest, lib_sha256=file_sha256(real), bindings=bindings,
             layouts={name: struct_layout(cls) for name, cls in STRUCTS.items()},
         )
+        if manifest.backend == "metal":
+            metal_source_env(real.parent, manifest.metal_sources, os.environ)
         try:
             handle = _dlopen(real)
         except OSError as exc:

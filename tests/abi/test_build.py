@@ -127,6 +127,73 @@ def test_install_switches_the_library_and_manifest_together(make_manifest, tmp_p
     assert len(list((out / "installs").iterdir())) == 2
 
 
+@pytest.mark.parametrize("failure", ["missing_root", "changed_shader", "copy", "switch"])
+def test_shader_publication_failure_keeps_old_generation(
+    make_manifest, tmp_path, upstream_headers, monkeypatch, failure,
+):
+    import hashlib
+    source = tmp_path / "source"
+    (source / "metal").mkdir(parents=True)
+    (source / "metal/dense.metal").write_bytes(b"original shader")
+    lib, m = make_manifest(source, upstream_headers)
+    m.backend = "metal"
+    m.metal_sources = {"metal/dense.metal": hashlib.sha256(b"original shader").hexdigest()}
+    out = tmp_path / "out"
+    current = build.install(lib, m, out, metal_root=source)
+    old = current.resolve()
+    if failure == "changed_shader":
+        (source / "metal/dense.metal").write_bytes(b"wrong shader")
+    if failure == "copy":
+        original_copy = shutil.copy2
+        def fail_copy(src, dst, *args, **kwargs):
+            if Path(src).suffix == ".metal":
+                raise OSError("shader copy failed")
+            return original_copy(src, dst, *args, **kwargs)
+        monkeypatch.setattr(shutil, "copy2", fail_copy)
+    if failure == "switch":
+        original_replace = os.replace
+        def fail_replace(src, dst):
+            if Path(dst) == current:
+                raise OSError("switch failed")
+            return original_replace(src, dst)
+        monkeypatch.setattr(os, "replace", fail_replace)
+    with pytest.raises((BuildError, OSError)):
+        build.install(lib, m, out, metal_root=None if failure == "missing_root" else source)
+    assert current.resolve() == old
+    assert (old.parent / "metal/dense.metal").read_bytes() == b"original shader"
+    assert len(list((out / "installs").iterdir())) == 1
+    assert not (out / f".{LIB_NAME}.new").is_symlink()
+
+
+def test_metal_build_captures_assets_before_make_and_loads_after_relocation(
+    cc, fake_tree, tmp_path, monkeypatch,
+):
+    import hashlib
+    from unittest.mock import MagicMock
+    from ds4py._native import loader
+
+    (fake_tree / "metal").mkdir()
+    (fake_tree / "metal/dense.metal").write_bytes(b"captured shader")
+    monkeypatch.setattr(build, "_preflight", lambda *a: cc)
+    def native_make(farm, *args):
+        (farm / LIB_NAME).write_bytes(b"native library")
+        (fake_tree / "metal/dense.metal").write_bytes(b"changed during build")
+    monkeypatch.setattr(build, "_run_make", native_make)
+    lib = build_library(fake_tree, backend="metal", out_dir=tmp_path / "out", cc=cc)
+    m = Manifest.read(manifest_path(lib))
+    assert m.metal_sources == {"metal/dense.metal": hashlib.sha256(b"captured shader").hexdigest()}
+    shutil.rmtree(fake_tree)
+    moved = tmp_path / "moved"
+    lib.parent.rename(moved)
+    monkeypatch.setattr(loader, "_loaded", None)
+    opened = []
+    monkeypatch.setattr(loader, "_dlopen", lambda p: opened.append(p) or MagicMock())
+    loaded = loader.load_library(moved / LIB_NAME)
+    assert opened == [loaded.path]
+    assert loaded.path.is_relative_to(moved)
+    assert (loaded.path.parent / "metal/dense.metal").read_bytes() == b"captured shader"
+
+
 def test_mirror_skips_git_and_objects(tmp_path):
     src, farm = tmp_path / "src", tmp_path / "farm"
     for rel in (".git/HEAD", "ds4.c", "metal/ds4.metal", "ds4.o", "metal/ds4.o", "libds4.a", "libds4.so", "libds4.dylib"):
@@ -293,4 +360,4 @@ def test_cpu_build_of_upstream(built_upstream, capsys):
 @pytest.mark.build
 def test_cpu_build_of_fork_with_extension(built_fork):
     lib, m = built_fork
-    assert not m.headers_known and m.bindings["ds4_engine_sampling_defaults"].ok
+    assert m.headers_known and m.bindings["ds4_engine_sampling_defaults"].ok
