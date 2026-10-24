@@ -1,0 +1,28 @@
+[project]
+name = "ds4py"
+version = "0.1.0"
+description = "Checked native bindings and engine facade for ds4"
+authors = [
+    { name = "Roché Compaan", email = "roche@upfrontsoftware.co.za" }
+]
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+ds4py = "ds4py.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.22,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "build: builds libds4 from DS4_SRC_UPSTREAM / DS4_SRC_FORK",
+  "live: needs a model in DS4_TEST_MODEL",
+]

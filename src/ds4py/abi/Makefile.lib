@@ -1,0 +1,32 @@
+# Links a ds4 tree's own objects into libds4. ds4py build runs it in a
+# mirror of the tree: make -f Makefile.lib libds4 LIBDS4_BACKEND=cpu|metal|cuda
+include Makefile
+
+LIBDS4_BACKEND ?= cpu
+CFLAGS += -fPIC
+OBJCFLAGS += -fPIC
+NVCCFLAGS += -Xcompiler -fPIC
+
+ifeq ($(UNAME_S),Darwin)
+LIBDS4 := libds4.dylib
+LIBDS4_SHARED := -dynamiclib
+else
+LIBDS4 := libds4.so
+LIBDS4_SHARED := -shared
+endif
+
+ifeq ($(LIBDS4_BACKEND),cpu)
+$(LIBDS4): $(CPU_CORE_OBJS) ds4_kvstore.o
+	$(CC) $(CFLAGS) $(LIBDS4_SHARED) -o $@ $^ $(LDLIBS)
+else ifeq ($(LIBDS4_BACKEND),metal)
+$(LIBDS4): $(CORE_OBJS) ds4_kvstore.o
+	$(CC) $(CFLAGS) $(LIBDS4_SHARED) -o $@ $^ $(METAL_LDLIBS)
+else ifeq ($(LIBDS4_BACKEND),cuda)
+$(LIBDS4): $(CORE_OBJS) ds4_kvstore.o
+	$(DS4_LINK) $(LIBDS4_SHARED) -o $@ $^ $(DS4_LINK_LIBS)
+else
+$(error LIBDS4_BACKEND must be cpu, metal or cuda)
+endif
+
+.PHONY: libds4
+libds4: $(LIBDS4)
