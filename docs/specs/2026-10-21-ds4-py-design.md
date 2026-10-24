@@ -4,6 +4,7 @@
 | --- | --- |
 | Date | 2026-10-21 |
 | Status | Draft for review |
+| Revised | 2026-10-23: ds4-py no longer shares session files with `ds4-agent` ([ADR 0001](../adr/0001-no-session-compatibility-with-ds4-agent.md)). Section 27 lists what changed |
 | Replaces | [`archive/2026-10-21-ds4-py-first-draft.md`](archive/2026-10-21-ds4-py-first-draft.md), the first draft, kept for its framework comparison |
 | Upstream ds4 | antirez/ds4 `5379c1c` (2026-10-19). Line numbers below refer to this commit |
 | Harness | `pydantic-ai-harness==0.59.0`, which pins `pydantic-ai-slim==2.59.0`. Both were released 2026-10-21 |
@@ -21,20 +22,22 @@ The aim is to own as little agent machinery as possible. The harness supplies th
 
 ### Goals
 
-1. Reproduce `ds4-agent`'s behaviour in Python. This covers the token loop, the four tool-call syntaxes, its tools and system prompt, compaction, system notes and reminders, session files and the interactive commands.
+1. Reproduce `ds4-agent`'s token loop in Python. This covers sampling and stops, the four tool-call syntaxes, the chat templates, compaction, system notes and reminders, and the interactive commands. The tools, the tools prompt and the session file format are ds4-py's own ([ADR 0001](../adr/0001-no-session-compatibility-with-ds4-agent.md)).
 2. Support every model and model family that ds4 supports at the pin: DeepSeek V4 (DSML), DeepSeek V4.1 (DSML with V4.1 tags), GLM and Qwen.
-3. Use the harness for everything it already does. Write only the ds4-specific parts.
-4. Keep session files compatible with `ds4-agent` in both directions.
-5. Be extensible enough for the downstream agent (section 18). That means a hook in the token loop, libraries built from any ds4 tree including forks, and a way to add native bindings and decode steps without forking ds4-py.
-6. Make context management a plug-in point.
-7. Let people use the engine without the harness. The engine core installs on its own.
+3. Use the harness for everything it already does, including the coding tools. Write only the ds4-specific parts.
+4. Be extensible enough for the downstream agent (section 18). That means a hook in the token loop, libraries built from any ds4 tree including forks, and a way to add native bindings and decode steps without forking ds4-py.
+5. Make context management a plug-in point.
+6. Let people use the engine without the harness. The engine core installs on its own.
 
 ### Non-goals for this port
 
 - Engine work that runs between turns, such as compaction while the user reads.
 - Any change to ds4's inference code. ds4-py adds a library build next to it.
 - DFlash itself. DFlash lives in the downstream fork; ds4-py provides the seam it needs.
-- Subagents. `ds4-agent` has none, and a delegation tool would change the tool list that KV compatibility depends on (decisions 3 and 5). The engine also makes them costly (section 24).
+- Sharing session files with `ds4-agent`, in either direction. ds4-py saves in its own format under `~/.ds4py/` and reads none of `ds4-agent`'s session files (decision 5).
+- Matching the C agent's tools, tools prompt or tool output byte for byte. ds4-py uses the harness's tools (decision 3).
+- Web tools in M1 to M4. None of the bake-off tasks needs them. When they come, they are the harness's `WebSearch` and `WebFetch`, not a port of `ds4_web.c`.
+- Subagents. `ds4-agent` has none, and the engine makes them costly (section 24).
 - Saving sessions that contain images. The C agent refuses this too.
 - Any HTTP server or socket between the agent and the engine.
 
@@ -61,9 +64,9 @@ Each of these counts as a failure even if the code works:
 
 1. **The token transcript is the engine's truth, the message list is the harness's truth, and `DS4Model` binds them.** Sampled tokens are appended by id and never re-rendered from text, so `<think>` content and native tool markup replay byte for byte and the live KV is reused. When the harness rewrites history, only the part after the first change is re-rendered. What a rewrite costs in prefill is set by the engine's reuse rule (section 10).
 2. **Context management is a plug-in point with exact costs.** A strategy is a capability. It rewrites either the request view (paging) or the stored history (compaction, bookmarks). The engine reuses its KV only when the new tokens extend the whole live checkpoint. Any other change either restores a saved checkpoint that is a prefix of the new tokens and prefills the rest, or rebuilds from token 0. `session.plan()` reports which of these three cases applies, and its exact cost, before a move. The default strategy is the C agent's compaction recipe.
-3. **The C agent's tools and system prompt are the default.** `DS4AgentTools` provides the C agent's tools with their names, schemas and output bytes. `DS4Model` renders the C agent's prompt text word for word. The harness's own coding tools are a swap-in option. This follows from decision 5: a session file opened in `ds4-agent` only works if the model's tools exist there (section 12).
+3. **The harness's coding tools are the default.** `LocalWorkspace`, `FileSystem` and `Shell` supply the tools, and `DS4Model` generates the tools prompt from their definitions in the model's native syntax. ds4-py does not port the C agent's tools or copy its prompt text. Replay parity does not need them, because each replayed round starts from the tokens C saw (section 20). The bake-off checks that the harness's tools work on these models (sections 12 and 21).
 4. **Native tool format, rendered and parsed in ds4-py.** The tools prompt is rendered for the model's family. A streaming parser over sampled text produces `ToolCallPart`s, switches sampling to greedy inside tool syntax, and stops generation when a block closes.
-5. **KV files stay compatible with `ds4-agent`.** Same location (`~/.ds4/kvcache/<sha40>.kv`), same 48-byte `KVC` header, rendered text, payload and title trailer. Sessions move between the two agents.
+5. **ds4-py saves sessions in its own format.** KV files and their records live under `~/.ds4py/`, not in `ds4-agent`'s `~/.ds4/kvcache/`, and the two agents cannot open each other's sessions. Replay parity reads `ds4-agent --trace` output, not its KV files ([ADR 0001](../adr/0001-no-session-compatibility-with-ds4-agent.md), section 17).
 6. **One engine worker thread** makes every call into the engine. Progress and cancel callbacks re-enter Python with the GIL and only post to a queue or read an `Event`.
 7. **The native layer is ready for forks and guarded against ABI drift.** One list of C prototypes drives the ctypes types, a compile-time signature check and a struct layout check. Libraries build from any ds4 tree and load from any path. Each binding is required or optional, and extensions can add their own.
 8. **Generation is a loop over pluggable decode steps, with a hook before every sample.** ds4-py ships a plain step and, later, a speculative step. The downstream agent can add DFlash as a third step without changing the loop.
@@ -76,14 +79,14 @@ Each of these counts as a failure even if the code works:
 | --- | --- | --- |
 | Engine lifecycle | `ds4_engine_open(&e, &opts)`, `ds4_engine_close`, `ds4_engine_model_name`, `ds4_engine_model_id`, `ds4_engine_is_deepseek41`, `ds4_engine_is_glm_dsa`, `ds4_engine_is_qwen4`, `ds4_engine_has_vision`, `ds4_engine_routed_quant_bits`, `ds4_engine_mtp_draft_tokens`, `ds4_engine_vocab_size` | `ds4_engine_options` is a plain struct (`ds4.h:179`). The family flags choose the tool syntax (`ds4_agent.c:413`) |
 | Prompt rendering | `ds4_chat_begin`, `ds4_chat_append_message(e, toks, role, content)`, `ds4_chat_append_think_prefix`, `ds4_chat_append_assistant_prefix`, `ds4_chat_append_multimodal_message` | The engine owns the chat templates. Roles: `system`, `user`, `assistant`, `tool` |
-| Tokenizer | `ds4_tokenize_text`, `ds4_tokenize_rendered_chat`, `ds4_token_text`, `ds4_token_eos`, `ds4_token_is_stop`, `ds4_token_is_stop_for_think_mode`, `ds4_tokens_push / copy / free / starts_with` | `tokenize_rendered_chat` turns control-token spellings (`<｜User｜>`, `｜DSML｜`, `<think>`) into special tokens. Use it only for trusted text (the tools prompt, saved transcripts), never for user input |
+| Tokenizer | `ds4_tokenize_text`, `ds4_tokenize_rendered_chat`, `ds4_token_text`, `ds4_token_eos`, `ds4_token_is_stop`, `ds4_token_is_stop_for_think_mode`, `ds4_tokens_push / copy / free / starts_with` | `tokenize_rendered_chat` turns control-token spellings (`<｜User｜>`, `｜DSML｜`, `<think>`) into special tokens. ds4-py uses it only for its own fixed markup (in the tools prompt and the reminder), never for user input or tool definitions (section 12) |
 | Session | `ds4_session_create(&s, e, ctx)`, `ds4_session_free`, `ds4_session_sync`, `ds4_session_sync_multimodal`, `ds4_session_eval`, `ds4_session_eval_speculative`, `ds4_session_sample(s, temp, top_k, top_p, min_p, &rng)`, `ds4_session_argmax`, `ds4_session_rewind(s, pos)`, `ds4_session_pos / ctx / tokens / common_prefix`, `ds4_session_invalidate` | `sync` returns `DS4_SESSION_SYNC_INTERRUPTED` (2) on cancel. `sample` picks one token from the current logits; `eval` feeds it and refreshes the logits |
 | Logits | `ds4_session_copy_logits(s, out, cap)`, `ds4_session_set_logits(s, logits, n)` (`ds4.h:532–533`), `ds4_session_top_logprobs`, `ds4_session_token_logprob` | Used by the token-loop hook (section 10) |
 | Callbacks | `ds4_session_set_progress(s, fn, ud)`, `ds4_session_set_display_progress`, `ds4_session_set_cancel(s, fn, ud)` | `progress_fn(ud, event, current, total)`. Events the agent sees: `prefill_chunk`, `prefill_display`, `prefill_work`. `cancel_fn(ud) -> bool` is polled during sync |
 | Think and steering | `ds4_think_mode_for_context`, `ds4_think_mode_parse_level`, `DS4_THINK_LEVEL_BASE + N` (1000), `ds4_session_set_directional_steering_ffn`, `ds4_session_set_power` | Changing the think level rebuilds the prefix, so it costs a full prefill. Steering does not |
 | Checkpoints | `ds4_session_save_snapshot`, `ds4_session_load_snapshot`, `ds4_session_snapshot_free` (`ds4.h:659–661`) | An in-memory copy of the whole session state. Loading one restores its token prefix with no prefill (section 10). The C agent does not use them |
 | KV payload | `ds4_session_payload_bytes`, `ds4_session_stage_payload`, `ds4_session_write_staged_payload`, `ds4_session_save_payload`, `ds4_session_load_payload(s, fp, bytes, err, n)` (`ds4.h:651–658`) | The engine owns the serialized state. The file header and policy belong to the caller |
-| KV store format | `ds4_kvstore.h`: `DS4_KVSTORE_FIXED_HEADER` (48), reason codes (`5` agent-system, `6` agent-session), `ext_flags` bits (bit 3 = session title), `ds4_kvstore_render_tokens_text` | A separate object, `ds4_kvstore.o`, that both `ds4-agent` and `ds4-server` link. `libds4` includes it |
+| KV store format | `ds4_kvstore.h`: `DS4_KVSTORE_FIXED_HEADER` (48), reason codes (`5` agent-system, `6` agent-session), `ext_flags` bits (bit 3 = session title), `ds4_kvstore_render_tokens_text` | A separate object, `ds4_kvstore.o`, that both `ds4-agent` and `ds4-server` link. `libds4` includes it, as M1 builds it, but ds4-py does not use it: its own file format needs none of these (section 17) |
 | Vision | `ds4_engine_vision_encode_file`, `ds4_vision_embedding_free`, `ds4_vision_span` | Milestone 5 |
 
 The rest of the header is serving and distributed plumbing (`ds4_sessions_eval_batch*`, tensor-parallel and RDMA calls, `ds4_engine_generate_argmax`) that the agent does not use.
@@ -91,11 +94,11 @@ The rest of the header is serving and distributed plumbing (`ds4_sessions_eval_b
 Two things are missing on the C side, and neither needs a change to inference code:
 
 - **There is no library target.** The Makefile links `CORE_OBJS` straight into each binary (`Makefile:29` for Metal, `:56` for CUDA, `CPU_CORE_OBJS` at `:30` for the CPU build). ds4-py adds a `libds4` build (section 19).
-- **The agent logic lives in the binary.** `ds4_agent.c` (13,635 lines) holds the tool-call parsers, tools, compaction and persistence. ds4-py reimplements them in Python. `ds4_web.c` (1,454 lines, the browser tools) and `ds4_prompt_prefix.c` (249 lines, the `--prefix-file` parser) are ported too.
+- **The agent logic lives in the binary.** `ds4_agent.c` (13,635 lines) holds the tool-call parsers, tools, compaction and persistence. ds4-py reimplements the parsers, compaction and persistence in Python, and takes its tools from the harness. `ds4_prompt_prefix.c` (249 lines, the `--prefix-file` parser) is ported too. `ds4_web.c` (1,454 lines, the browser tools) is not.
 
 ## 6. What ds4-agent does, and what ds4-py must reproduce
 
-The C agent keeps **one `ds4_tokens transcript` as its only conversation state**. There is no message list. Text is derived by joining `ds4_token_text` over the transcript. Each behaviour below becomes a Python responsibility.
+The C agent keeps **one `ds4_tokens transcript` as its only conversation state**. There is no message list. Text is derived by joining `ds4_token_text` over the transcript. Each behaviour below becomes a Python responsibility, except where an item says ds4-py does it differently. Those items are the tools (6), the file format (11) and the tools prompt text (13 and 14).
 
 1. **User turn.** The agent appends system notes (item 12), then the `user` message, then `ds4_chat_append_assistant_prefix(think_mode)`. It passes the whole transcript to `ds4_session_sync`, which compares it with the live prefix and prefills only the new suffix.
 2. **Generation.** Sample one token. Check `ds4_token_is_stop_for_think_mode` **before** eval, because stop tokens are never pushed or evaluated. Then eval, push the sampled id onto the transcript, and stream `ds4_token_text` to the renderer. With speculative decoding, tokens evaluated past a stop or a completed tool call are undone with `ds4_session_rewind(block_start + i)`, so the KV and the transcript stay aligned.
@@ -108,20 +111,20 @@ The C agent keeps **one `ds4_tokens transcript` as its only conversation state**
 
    While the parser is inside tool syntax, the sampler switches to greedy. Generation stops the moment the closing tag completes; no stop token is needed.
 5. **Tool results.** All calls in one block run in order. The results are joined, each starting `Tool result N (name):\n` (`ds4_agent.c:9521`), and appended as **one** `tool` message through `ds4_chat_append_multimodal_message`. The role is `user` when images are attached. Then a new assistant prefix is appended and the loop syncs again.
-6. **Tools.** `read`, `more`, `write`, `edit`, `list`, `search`, `bash`, `bash_status`, `bash_stop`, `google_search` and `visit_page`, plus `view_image` when the model has vision. Each tool's output is capped at 128 KiB. `bash` runs through `posix_spawn` in its own process group with a monitor thread and returns head or tail excerpts plus the path of the full output file. The web tools drive a real Chrome through the DevTools protocol (section 12).
+6. **Tools.** `read`, `more`, `write`, `edit`, `list`, `search`, `bash`, `bash_status`, `bash_stop`, `google_search` and `visit_page`, plus `view_image` when the model has vision. Each tool's output is capped at 128 KiB. `bash` runs through `posix_spawn` in its own process group with a monitor thread and returns head or tail excerpts plus the path of the full output file. The web tools drive a real Chrome through the DevTools protocol. ds4-py does not port these tools. It uses the harness's tools instead (section 12).
 7. **Compaction is written by the model.** At 85% of the context, or when the reserve is hit, the agent syncs `transcript[:bottom] + user(compaction prompt) + assistant_prefix(no-think)`. It generates a summary greedily with `ds4_session_argmax`. Then it rebuilds the transcript as system tokens + `user(summary)` + a verbatim tail of `min(ctx/10, 50000)` tokens, cut at a user-token boundary.
 8. **Prefill progress** comes from the progress callback, relative to the cached prefix (`done = current - cached_prefix`). Tokens per second are computed in the same callback.
 9. **Cancel.** Ctrl+C sets a flag that the cancel callback returns. An interrupted sync leaves the transcript intact and appends EOS. Interrupted generation keeps the partial tokens. Nothing is truncated.
 10. **Threading.** One worker thread makes every `ds4_session_*` call. The UI thread never touches the session.
-11. **Persistence.** `~/.ds4/kvcache/<sha40>.kv` holds a 48-byte header, the rendered transcript text, the KV payload and an optional title trailer. Restore loads the payload directly, with no prefill, and takes the token history **from the session**, not from re-tokenizing the text. A stripped file has no payload; its text is re-tokenized with `ds4_tokenize_rendered_chat` and prefilled.
+11. **Persistence.** `~/.ds4/kvcache/<sha40>.kv` holds a 48-byte header, the rendered transcript text, the KV payload and an optional title trailer. Restore loads the payload directly, with no prefill, and takes the token history **from the session**, not from re-tokenizing the text. A stripped file has no payload; its text is re-tokenized with `ds4_tokenize_rendered_chat` and prefilled. ds4-py keeps the rule that a restore takes its tokens from the session, but uses its own file format and directory (section 17).
 12. **System notes** (`ds4_agent.c:1478–1625`):
     - A one-time date note before the first user message: `Current local date and time at session start: <time>. Use this only when date or time matters.`
     - Programming hints, off by default and switched with `/hints on|off`. The full instructions are sent once per live context; after that, a short note is sent only when the setting changes. Compaction resets this state.
-13. **System prompt.** For DSML, V4.1 first gets an empty `system` message; then the tools prompt goes through the rendered tokenizer, so its `｜DSML｜` markers become the special token. For GLM and Qwen, the tools prompt is a plain `system` message. Text from `--system` follows as a separate plain `system` message prefixed with `\n\n`. It never goes through the rendered tokenizer.
+13. **System prompt.** For DSML, V4.1 first gets an empty `system` message; then the tools prompt goes through the rendered tokenizer, so its `｜DSML｜` markers become the special token. For GLM and Qwen, the tools prompt is a plain `system` message. Text from `--system` follows as a separate plain `system` message prefixed with `\n\n`. It never goes through the rendered tokenizer. ds4-py generates its own tools prompt text (section 12) and renders it by these rules.
 14. **System prompt reminder.** After the transcript has grown 50,000 tokens since the system prompt was last seen, the agent appends `[System prompt reminder follows.]`, the tools prompt and `[End system prompt reminder.]`, using the same tokenizer rule as item 13, and then the `--system` text again.
 15. **Rounds.** A user turn may contain any number of assistant and tool rounds. There is deliberately no limit on tool calls. Before each assistant continuation, the agent checks for compaction, appends the reminder if due, appends the hints note if due, and then appends the assistant prefix (`ds4_agent.c:10340`).
 16. **`--prefix-file`.** A file of `USER:` and `ASSISTANT:` turns is appended after the system prompt. Assistant turns get an EOS, except on GLM.
-17. **Command line.** ds4-py accepts the agent-side flags: `--prompt`, `--prompt-file`, `--system`, `--prefix-file`, `--non-interactive`, `--raw`, `--temp`, `--top-p`, `--min-p`, `--seed`, `--think`, `--think-level`, `--think-max`, `--nothink`, `--edit-upto`, `--trace`, `--tokens` and `--ctx`. The engine flags pass through to the engine options: `--model`, the backend flags, `--mtp*`, `--dspark*`, `--ssd-streaming*`, `--gpu-*`, `--threads`, `--prefill-chunk`, `--power`, `--dir-steering-*`, `--vision`, `--warm-weights`, `--quality` and `--chdir`.
+17. **Command line.** ds4-py accepts the agent-side flags: `--prompt`, `--prompt-file`, `--system`, `--prefix-file`, `--non-interactive`, `--raw`, `--temp`, `--top-p`, `--min-p`, `--seed`, `--think`, `--think-level`, `--think-max`, `--nothink`, `--trace`, `--tokens` and `--ctx`. It drops `--edit-upto`, which selects a variant of the C agent's `edit` tool. The engine flags pass through to the engine options: `--model`, the backend flags, `--mtp*`, `--dspark*`, `--ssd-streaming*`, `--gpu-*`, `--threads`, `--prefill-chunk`, `--power`, `--dir-steering-*`, `--vision`, `--warm-weights`, `--quality` and `--chdir`.
 
 ## 7. Framework choice
 
@@ -129,7 +132,7 @@ Build on **Pydantic AI with the Harness package**. Its model layer is an abstrac
 
 LocalHarness was the other serious candidate, and it is not the base. Its inner loop would accept an in-process model, but its `start` command, token counting, window probes, `/model` and reconnect logic all need an OpenAI-compatible server URL. Its plugin API has no model-provider slot. A local HTTP shim is exactly what this design rules out. Two of its ideas are worth copying into capabilities later: the rule that untrusted-ingest tools and dangerous host tools may not be active together, and its JSONL event log.
 
-If the harness's 0.x API churn becomes a cost, Pydantic AI core alone is the fallback. `Model`, capabilities, `FunctionToolset`, MCP, instrumentation and persistence are all in core. Since ds4-py ports the C agent's tools anyway, the harness supplies less here than the first draft assumed.
+If the harness's 0.x API churn becomes a cost, Pydantic AI core alone is the fallback. `Model`, capabilities, `FunctionToolset`, MCP, instrumentation and persistence are all in core. The coding tools are in the harness package, so that fallback would also mean writing or porting a tool set.
 
 The first draft's full comparison (LocalHarness, mini-swe-agent, smolagents, Pi, OpenCode, llama-cpp-python) still stands and is not repeated here.
 
@@ -141,7 +144,7 @@ The harness calls the model adapter as it would call any provider. The adapter t
 
 - **Main thread:** the asyncio loop that runs `Agent.run_stream_events()`, the TUI and the event log.
 - **Engine worker thread:** created by `ds4py.open()`. It is the only thread that calls into `libds4`. `DS4Model.request_stream()` waits on it through futures and an `asyncio.Queue` fed by `loop.call_soon_threadsafe`.
-- **Tool subprocesses:** `bash` jobs and Chrome. `bash` never blocks the engine thread.
+- **Tool subprocesses:** the commands that the `Shell` tools start. A command never blocks the engine thread.
 
 There is no inference server, no socket and no second process holding model weights.
 
@@ -152,12 +155,12 @@ There is no inference server, no socket and no second process holding model weig
 | Conversation flow, turn loop, retries | Python | `pydantic_ai.Agent` run loop |
 | Token loop (sample, stop, eval, push, rewind) | Python | `ds4py.engine.worker` and its decode steps |
 | Prompt rendering to tokens | C templates, driven by Python | `PromptBuilder` calling `ds4_chat_append_*` |
-| Tools prompt text | Python, copied word for word from C | `ds4py.prompts` |
+| Tools prompt text | Python, generated from the tool definitions | `ds4py.engine.prompt` |
 | Tool-call parsing | Python | `ds4py.engine.toolsyntax` |
-| Tool execution | Python, ported from C | `ds4py.tools`, exposed as the `DS4AgentTools` capability |
+| Tool execution | The harness | `FileSystem` and `Shell` on a `LocalWorkspace` (section 12) |
 | Policy and approvals | Python | `DS4Approvals` capability |
 | Context management | Python | `DS4Compaction` (default) or another strategy |
-| Session-lifetime state of capabilities (paging cuts, bookmark tables, `bash` jobs) | Python | `session.state()` in `ds4py.engine.session` (section 13) |
+| Session-lifetime state of capabilities (paging cuts, bookmark tables, the background commands to stop when the session ends) | Python | `session.state()` in `ds4py.engine.session` (section 13) |
 | System notes and reminders | Python | `DS4SystemNotes` capability |
 | Canonical history, save records, resume | Python | `StepPersistence` snapshots and `ds4py.store` save records (section 15) |
 | Run records and tracing (telemetry) | Python | `DS4RunRecord`, `Instrumentation` |
@@ -167,7 +170,7 @@ There is no inference server, no socket and no second process holding model weig
 
 ### Packages
 
-- **`ds4py`** (the core) has no dependencies outside the standard library. It holds the native layer, the ABI tools, the engine facade, the tool-call parsers, the vendored prompts, the tool implementations, the KV store and a `ds4py raw` command. People who only want the engine install this.
+- **`ds4py`** (the core) has no dependencies outside the standard library. It holds the native layer, the ABI tools, the engine facade, the tool-call parsers, the tools-prompt generator, the KV store and a `ds4py raw` command. People who only want the engine install this.
 - **`ds4py[agent]`** adds `pydantic-ai-harness`. It holds `DS4Model`, the capabilities and the TUI.
 
 ### Module map
@@ -178,17 +181,15 @@ There is no inference server, no socket and no second process holding model weig
 | `abi.py` — probe generator, layout and signature checks, `ds4py build` and `ds4py check` | 300 |
 | `engine/transcript.py` | 150 |
 | `engine/worker.py` — jobs, the decode loop, decode steps, the logits hook | 450 |
-| `engine/prompt.py` | 200 |
+| `engine/prompt.py` — `PromptBuilder` and the tools-prompt generator | 200 |
 | `engine/toolsyntax/{dsml,glm,qwen}.py` | 500 |
 | `engine/session.py` — the public facade | 300 |
-| `prompts/` — vendored C prompt text and the builders that assemble it | 150, plus the text |
-| `tools/` — `read`, `more`, `write`, `edit`, `list`, `search`, `bash` jobs, web, `view_image`, result framing | 1,800 |
 | `store.py` | 250 |
 | `model.py` — `DS4Model` and the binding | 400 |
 | `capabilities/` | 500 |
 | `cli.py`, `tui.py` | 700 |
 
-That is about 6,400 lines, up from the first draft's 3,400, because ds4-py now ports the C agent's tools (about 1,800 lines) and adds the ABI guard and the extension API. It still replaces 15,338 lines of C (`ds4_agent.c`, `ds4_web.c` and `ds4_prompt_prefix.c`).
+That is about 4,450 lines, up from the first draft's 3,400 because of the ABI guard and the extension API. This spec's 2026-10-21 version also ported the C agent's tools and prompt text, which added about 1,950 lines; ADR 0001 removed them. ds4-py does the work of 13,884 lines of C (`ds4_agent.c` and `ds4_prompt_prefix.c`). `ds4_web.c` has no counterpart yet.
 
 ## 9. The native layer: `ds4py._native`
 
@@ -229,7 +230,6 @@ What the list wraps:
 | `payload_bytes`, `stage_payload`, `write_staged(p, file)`, `load_payload(s, file, n)` | `ds4_session_payload_bytes`, `ds4_session_stage_payload`, `ds4_session_write_staged_payload`, `ds4_session_payload_file_free`, `ds4_session_load_payload` | The C API wants a `FILE *`. The module opens one with libc `fdopen(os.dup(file.fileno()))`, so Python keeps ownership of its own file object |
 | `save_snapshot(s) -> Snapshot`, `load_snapshot(s, snap)` | `ds4_session_save_snapshot`, `ds4_session_load_snapshot`, `ds4_session_snapshot_free` | `Snapshot` wraps a `ds4_session_snapshot`, a struct `_native` defines and the layout check covers. The bytes stay in C-allocated memory until `Snapshot.close()` calls `ds4_session_snapshot_free`. Python sees only the size |
 | `set_steering`, `set_power`, `think_mode_for_context`, `parse_think_level` | `ds4_session_set_directional_steering_ffn`, `ds4_session_set_power`, `ds4_think_mode_*` | Think modes are an `IntEnum` mirroring `ds4_think_mode`, with `level(n) = 1000 + n` |
-| `render_tokens_text` | `ds4_kvstore_render_tokens_text` | Used by the store to write the transcript text exactly as C does |
 | `vision_encode(h, path)` | `ds4_engine_vision_encode_file`, `ds4_vision_embedding_free` | Milestone 5. The embedding's `float *` is never exposed |
 
 Every function in this table exists in both upstream and the downstream fork, so every binding is required today.
@@ -336,7 +336,7 @@ The engine keeps its KV for a sync only when the new tokens start with the whole
 
 ds4-py adds checkpoints, which the C agent does not use. A checkpoint is an in-memory snapshot of the whole session state (`ds4_session_save_snapshot`) at a known token prefix. Loading it (`ds4_session_load_snapshot`) restores that prefix with no prefill, and the sync after it is an extension. A checkpoint costs host memory equal to `ds4_session_payload_bytes()` at that point, which grows with the prefix length.
 
-- The facade holds one checkpoint by default, `system`. It is saved when the system prefix is first synced or loaded from `sysprompt.kv` (section 17).
+- The facade holds one checkpoint by default, `system`. It is saved when the system prefix is first synced or loaded from the system-prefix cache (section 17).
 - A strategy can hold more through `session.checkpoint(key)`, up to `max_checkpoints` (default 4) besides `system`. A request beyond the limit is refused; the facade never evicts a checkpoint on its own.
 - Distributed sessions cannot snapshot (`ds4.c:64881`), so they have no checkpoints.
 
@@ -391,10 +391,10 @@ This is the hook the downstream agent asked for, for example to stop overthinkin
 `PromptBuilder` builds the token prefix for a round from the transcript and the engine's family, using only `_native.render` and `_native.tokenize`. It knows:
 
 - the role names the templates accept: `system`, `user`, `assistant` and `tool`;
-- when to use the rendered tokenizer (the DSML tools prompt, the reminder, a restored transcript) and when never to (user text, tool results, `--system` text);
+- when to use the rendered tokenizer (the fixed markup of the DSML tools prompt and of the reminder) and when never to (user text, tool results, `--system` text, and the tool names, descriptions and schemas inside the tools prompt);
 - each family's rules: DeepSeek and Qwen get an EOS at the end of every assistant turn and GLM does not; V4.1 uses its own DSML tag spellings and gets an empty `system` message before the tools prompt; Qwen takes its reasoning effort as a `system` message rather than a think prefix.
 
-The tools prompt comes from `ds4py.prompts` when the C agent's tools are active (section 12). Otherwise it is generated from the harness's tool definitions.
+The tools prompt is generated from the tool definitions that `DS4Model` passes in as plain name, description and JSON-schema records, so the engine core does not depend on the harness (section 12).
 
 ### `ToolSyntax`
 
@@ -478,13 +478,13 @@ The TUI shows the compaction through the session event bus (`before_compact`, `c
    - `SystemPromptPart` and `InstructionPart` become `system` messages, never through the rendered tokenizer.
    - `UserPromptPart` becomes `user`, through the multimodal call when it has images.
    - All `ToolReturnPart`s of one request become **one** `tool` message, each body starting `Tool result N (name):\n`.
-   - `RetryPromptPart` goes into the same `tool` message as the C agent's error text. An unknown tool reads `Tool error: unknown tool: <name>` (`ds4_agent.c:9508`). Validation failures use the C agent's text for the same case.
+   - `RetryPromptPart` goes into the same `tool` message and starts `Tool error: `, as the C agent's errors do. An unknown tool reads `Tool error: unknown tool: <name>`, as in C (`ds4_agent.c:9508`). A validation failure carries the harness's message after that prefix.
    - Parts that a capability marks as ds4 notes (`metadata['ds4.note']` is `date`, `hints` or `reminder`) are rendered the way C renders them (section 6, items 12–14).
-4. The first time a request has tool definitions (`params.function_tools`), the tools prompt is rendered once at the front of the transcript. If the tools carry the `DS4AgentTools` marker, the prompt is the C text from `ds4py.prompts`. Otherwise it is generated from the definitions. The harness's instructions go after it as a separate plain `system` message, in the slot where C puts `--system` text. A later change in the tool set re-renders from that point, which costs a full prefill. So capabilities that add or hide tools during a run (`ToolSearch`, deferred loading) are left out.
+4. The first time a request has tool definitions (`params.function_tools`), the tools prompt is generated from them (section 12) and rendered once at the front of the transcript. The harness's instructions go after it as a separate plain `system` message, in the slot where C puts `--system` text. A later change in the tool set re-renders from that point, which costs a full prefill. So capabilities that add or hide tools during a run (`ToolSearch`, deferred loading) are left out.
 5. If the message list differs from the binding, because a capability rewrote the messages, the binding keeps the common prefix and re-renders the rest. That saves rendering work and keeps sampled tokens exact, but it does not limit the prefill. The engine cannot keep KV past a change, so the sync restores the longest held checkpoint before the change and prefills from there, or rebuilds from token 0 (section 10).
 6. Finally the assistant prefix for the current think mode is appended, and `run_round` syncs the whole transcript.
 
-With the default capability list and no `--system` text, the harness's instructions are empty, so the system prefix is byte-identical to `ds4-agent`'s and `sysprompt.kv` is shared between the two agents.
+The system prefix differs from `ds4-agent`'s: the tools prompt is generated, and `RepoContext` and `AskUser` add their own instructions. Nothing depends on the two matching (decision 5).
 
 ### Default capability list
 
@@ -492,7 +492,13 @@ With the default capability list and no `--system` text, the harness's instructi
 agent = Agent(
     DS4Model(session),
     capabilities=[
-        DS4AgentTools(project_dir, edit_upto=False),  # the C agent's tools and prompt; view_image when the model has vision
+        LocalWorkspace(project_dir, read_only=read_only),  # where the tools run; read_only refuses writes and commands
+        FileSystem(),                                 # read_file, edit_file, search_files and the other file tools (section 12)
+        Shell(),                                      # run_command, start_command, check_command, stop_command
+        DS4ShellJobs(),                               # stops start_command jobs when the session ends (section 12)
+        RepoContext(),                                # CLAUDE.md and AGENTS.md as instructions
+        ToolOutputLimits(),                           # spills large results and truncates; never calls the model
+        AskUser(answerer=tui_menu),                   # interactive mode only; nobody can answer in non-interactive mode
         DS4SystemNotes(),                             # date note, hints, 50,000-token reminder
         DS4Approvals(),                               # section 14
         DS4Compaction(soft=0.85),                     # a context strategy; swap for RollingWindow(...) or Bookmarks(...)
@@ -503,55 +509,55 @@ agent = Agent(
 )
 ```
 
-Each item in this list either matches something the C agent does or adds nothing to the prompt. The following are left out of the default:
+The following are left out of the default:
 
-- `RepoContext`: the C agent does not read `AGENTS.md`, so adding it would change the system prefix.
-- `AskUser`: it is a tool the model can call, and the C agent has no such tool.
-- `ToolOutputLimits`: the C tools enforce their own 128 KiB cap with the C agent's truncation note.
-- The guardrail classes (`InputGuardrail`, `OutputGuardrail`, `ToolGuardrail`): the C agent has none. They stay available to extensions.
+- `WebSearch` and `WebFetch`: none of the bake-off tasks needs them (section 2). They are the first tools to add after M4.
+- The guardrail classes (`InputGuardrail`, `OutputGuardrail`, `ToolGuardrail`): nothing in M1 to M4 needs them. They stay available to extensions.
 - `SubAgents`: subagents are a non-goal (sections 2 and 24).
 - `RepairToolArguments`: arguments arrive as strings from the native parser, not as JSON.
-- `ToolCallJudge` and `ApprovalReviewer`: a second model call on the live session would destroy the cached prefix. Policy here is rules, not a judge model.
+- `ToolSearch` and deferred tool loading: a change in the tool set costs a full prefill (item 4 above).
+- `ToolCallJudge`, `ApprovalReviewer` and `ToolOutputLimits`' `Summarize` band: a second model call on the live session would destroy the cached prefix. Policy here is rules, not a judge model.
 
-### The harness-tools option
+### Other tool sets
 
-`ds4py --tools harness` replaces `DS4AgentTools` with the harness's coding tools: `LocalWorkspace`, `FileSystem`, `Shell`, `RepoContext`, `WebSearch`, `WebFetch` and `ToolOutputLimits`. `DS4Model` then generates the tools prompt from their definitions. This option is the extensibility check for tool sets. With it, the parity checks and KV compatibility with `ds4-agent` do not apply, because `ds4-agent` cannot run `read_file`. The pass-rate gate still does.
+An extension can add tools or replace the default ones. `DS4Model` generates the tools prompt from whatever tool definitions the run has, so a new tool set needs no change in ds4-py. If the bake-off shows that these models need one of the C agent's tools, such as `edit`, it comes back as an optional capability that follows the C tool's behaviour without matching its bytes (section 21).
 
-## 12. The C agent's tools as harness capabilities
+## 12. The coding tools
 
-The C agent's tools have three parts, and each needs a home.
+ds4-py writes no coding tools. The default list (section 11) takes them from the harness, and they run on a `LocalWorkspace` rooted at the project directory:
 
-### a. The prompt is hand-written text
+| Capability | Tools | Notes |
+| --- | --- | --- |
+| `FileSystem` | `read_file`, `write_file`, `edit_file`, `list_directory`, `search_files`, `find_files`, `create_directory`, `file_info` | `read_file` returns an image or a PDF as `BinaryContent` |
+| `Shell` | `run_command`, `start_command`, `check_command`, `stop_command` | `run_command` waits up to 30 seconds by default. `start_command` runs a command in the background, and `check_command` and `stop_command` reach it from later prompts |
+| `ToolOutputLimits` | `read_tool_result` | A large result is saved to a file, and the model gets a preview and a handle to read the rest |
+| `AskUser` | `ask_user_question` | Interactive mode only |
+| `RepoContext` | none | Adds `CLAUDE.md` and `AGENTS.md` to the instructions |
 
-For DSML, `agent_build_dsml_tools_prompt` (`ds4_agent.c:1291`) joins static strings: an introduction with usage advice, one of two edit variants (`edit_exact` or `edit_upto`), the JSON schemas, and a `# Rules` section. The `view_image` schema goes just before `\n# Rules\n` when the model has vision. V4.1 then re-tags the DSML examples (`agent_dsml41_tools_prompt`, `ds4_agent.c:4652`). GLM and Qwen share one schema list with their own wrappers (`ds4_agent.c:1310–1435`).
+ds4-py owns three things around these tools.
 
-A renderer working from tool definitions cannot reproduce that prose. So:
+### a. The tools prompt is generated
 
-- `ds4py.prompts` holds vendored copies of the C strings and builders with the same switches (syntax, edit variant, vision).
-- `DS4AgentTools.get_toolset()` returns a `FunctionToolset` with the tools whose names and schemas match the C ones. The harness then handles dispatch, approvals, events and records as for any tool.
-- Each of those tools carries a marker in `ToolDefinition.metadata`, set through `SetMetadataToolset`. When `DS4Model` sees marked tools, it uses the vendored prompt.
-- Extra tools, such as an extension's tools or MCP tools, have their schemas inserted where C inserts `view_image`.
-- Tests need no GPU. A small C program that includes `ds4_agent.c`, as `tests/ds4_agent_test.c` already does, prints every prompt variant. The builders take only the edit variant and vision, not an engine. The Python builders must match its output byte for byte, and the fixtures catch upstream prompt changes whenever the pin moves.
+`DS4Model` passes each tool's name, description and JSON schema to the generator in `ds4py.engine.prompt`. For each syntax family, the generator writes a short introduction, the family's call syntax with one example call, and one entry per tool. This is the layout of the C agent's prompt (`agent_build_dsml_tools_prompt`, `ds4_agent.c:1291`), but none of its text is copied.
 
-### b. The implementations produce the same bytes
+- For DSML and DSML41, the generator's own markup goes through the rendered tokenizer, as the C prompt does, so its `｜DSML｜` markers become the special token. Tool names, descriptions and schemas are tokenized as plain text, because extensions and MCP servers supply them, and a description must not be able to inject a special token.
+- For GLM and Qwen, the whole prompt is a plain `system` message, as in C.
+- Each family's example call must parse with that family's `ToolSyntax` parser to the call the generator meant. A tool description that contains DSML markup must produce no special token. Both are tests, and neither needs a GPU.
 
-The model reads the tools' output, so ds4-py's tools must produce the C agent's bytes. The M3 plan lists each tool's argument handling and output format from `ds4_agent.c` (file tools at 6599–7049, edit and search at 7049–8554, web at 8554–8700, `bash` jobs at 8700–9360, dispatch at 9360–9675). Known examples:
+If the models do worse with this prompt than with the C agent's, section 21 lists the fixes to try, in order.
 
-- `list` prints `"%c %10lld %s%s\n"` for each entry and stops at 300 entries.
-- Errors start with `Tool error: `.
-- Long output ends with `[Output truncated at the tool byte limit. Narrow the request.]`.
-- `bash` reports `bash job=N pid=P status=running elapsed_sec=E timeout_sec=T`, or `status=done … timed_out=0|1` followed by `exit_status=`. The first observation shows the output inline when it is short and complete; otherwise it shows `output_path=…` and a `<head -N path>` excerpt. Later observations show a `<tail -N path>` excerpt. A running job ends with the `bash_status` and `bash_stop` hint. `timeout_sec` defaults to 3600 and `refresh_sec` to 60.
-- `bash` jobs keep running, and keep their timeouts, between `bash_status` calls, and those calls can come in later prompts. So the job table is session state (section 13), not part of the capability instance, and the session stops the jobs when it ends.
+### b. Background commands belong to the session
 
-Argument checks must be no stricter than C's. C clamps values (for example, `refresh_sec` to 0–3600) where pydantic would raise a validation error. So the functions accept loose arguments and clamp the way C does.
+`start_command` keeps a command running after the run ends, until the command exits or `stop_command` stops it. Its files live in the project's `.pydantic-ai-harness/shell/` directory, so `check_command` in a later prompt finds it. The harness leaves stopping these commands to the host when it exits (`LocalWorkspaceBackend`), so ds4-py does it:
 
-The web tools are a port of `ds4_web.c`. They find Chrome through `DS4_CHROME` or the standard install paths, start it with its own profile directory and a DevTools port of 9333, and talk to it over a WebSocket with a 20-second timeout. Results are capped at 1 MiB. The first start asks `Start visible Chrome browser? (y/n)`. In non-interactive mode the tool fails with `visible Chrome browser startup requires interactive approval` (`ds4_agent.c:5171`). The port uses only the standard library, including a small WebSocket client.
-
-Golden tests come from the same C test program: it runs each tool that needs no worker state on fixture directories and prints the output. Tools that need worker state (`bash` jobs, web) are checked against recorded output from live `ds4-agent` runs. Comparisons normalize process ids, elapsed times and temporary paths.
+- `DS4ShellJobs`, a small capability in the default list, records the id that each `start_command` call returns in session state (section 13).
+- On `session_end`, it stops each recorded command that is still running. The harness's `Job` class is private, so the M3 plan decides whether to stop a job through the `stop_command` tool or by signalling the process group recorded in the job's `handle` file.
 
 ### c. Result framing lives in `DS4Model`
 
-All results of a round go into one `tool` message, each starting `Tool result N (name):\n`. The harness's own errors arrive as `RetryPromptPart`s and are rendered as the C text (section 11).
+All results of a round go into one `tool` message, each starting `Tool result N (name):\n`, as in C. The harness's own errors arrive as `RetryPromptPart`s and start `Tool error: ` (section 11). The run record counts calls retried for bad arguments (section 21, gate 2).
+
+A `read_file` result with an image goes into the `tool` message through the multimodal call, with the role `user`, as C does for `view_image` (M5). On a model without vision, `DS4Model` renders the image as `Tool error: this model cannot read images`.
 
 ## 13. Context strategies: the extension point
 
@@ -608,13 +614,13 @@ If the result still does not fit, it is replaced with `Tool error: tool result s
 
 ### Session state
 
-The harness calls `for_run` once per `Agent.run`, and by default it shares one capability instance across runs (`capabilities/abstract.py:447–461`). The TUI starts one run per prompt, so one ds4 session spans many runs. State that must last for the session cannot live in a per-run copy, and a shared instance has no hook for `/new` or `/switch`. The same docstring says not to acquire resources such as processes in `for_run`, and the harness skips `after_run` when a run produces no result, so neither can own `bash` jobs.
+The harness calls `for_run` once per `Agent.run`, and by default it shares one capability instance across runs (`capabilities/abstract.py:447–461`). The TUI starts one run per prompt, so one ds4 session spans many runs. State that must last for the session cannot live in a per-run copy, and a shared instance has no hook for `/new` or `/switch`. The same docstring says not to acquire resources such as processes in `for_run`, and the harness skips `after_run` when a run produces no result, so neither can own background commands.
 
 ds4-py keeps this state in the session:
 
 - `session.state(key, factory)` returns the state object for `key` in the live ds4 session, and creates it with `factory()` on first use.
-- A capability keeps no session state on `self`. Its `for_run` returns an instance that refers to `session.state(...)`. So the paging cut, the bookmark table, the reminder's growth counter and the `bash` job table last from one prompt to the next.
-- The session drives the state's lifecycle through the event bus (section 22). `/new`, `/switch` and exit all send `session_end`. On it, the session calls `close()` on every state object and drops them all, so `bash` jobs stop and nothing leaks into the next session. On `forked`, the state is kept, because a fork keeps the transcript and the message keys. On `compacted`, a strategy that does not own the trigger resets its own state.
+- A capability keeps no session state on `self`. Its `for_run` returns an instance that refers to `session.state(...)`. So the paging cut, the bookmark table, the reminder's growth counter and the list of background commands last from one prompt to the next.
+- The session drives the state's lifecycle through the event bus (section 22). `/new`, `/switch` and exit all send `session_end`. On it, the session calls `close()` on every state object and drops them all, so background commands stop and nothing leaks into the next session. On `forked`, the state is kept, because a fork keeps the transcript and the message keys. On `compacted`, a strategy that does not own the trigger resets its own state.
 
 ## 14. Policy: `DS4Approvals`
 
@@ -622,14 +628,13 @@ ds4-py keeps this state in the session:
 
 | Tool | Rule |
 | --- | --- |
-| `bash` | Ask, unless `--yolo` |
-| `write`, `edit` | Ask when the path is outside the project directory, unless `--yolo` |
-| `google_search`, `visit_page` | The C agent's one-time Chrome consent. Interactive mode asks; non-interactive mode refuses with the C text |
-| any write or `bash` with `--read-only` | Deny |
+| `run_command`, `start_command` | Ask, unless `--yolo` |
+| `write_file`, `edit_file`, `create_directory` | Ask when the path is outside the project directory, unless `--yolo` |
+| any write or command with `--read-only` | Refused by `LocalWorkspace(read_only=True)`, whose `ReadOnlyWorkspace` refuses file changes and commands |
 
-A denied call returns `Tool error:` text, so the model's next round reads as it would in C, and the tool result carries `outcome='denied'` for the records.
+`check_command`, `stop_command` and the read tools never ask. A denied call returns `Tool error:` text, and the tool result carries `outcome='denied'` for the records.
 
-`ds4-agent` itself asks only for the Chrome consent. The other prompts come from the first draft and are ds4-py additions. An approved call leaves the transcript as C would have it. A denied call adds text C would never produce, so runs with a denial are left out of parity checks.
+`ds4-agent` asks only before it starts Chrome for its web tools, which ds4-py does not have. These prompts come from the first draft and are ds4-py additions. Replay parity starts each round from C's tokens, so ds4-py's approvals cannot affect it.
 
 ## 15. History, save records and run records
 
@@ -638,10 +643,10 @@ ds4-py keeps three records. Only the first two are used to recover a session.
 | Record | Where | What it holds | Used to recover? |
 | --- | --- | --- | --- |
 | Message history | `StepPersistence(FileStepStore(<session dir>/steps))` | `ContinuableSnapshot`s: the full harness message list, with every part and `metadata['ds4.key']` | yes; it is the canonical history |
-| Save record | `~/.ds4py/saves/<sha40>.json`, one per KV file, rewritten with each save | the snapshot the KV file was saved from, and the token provenance of the transcript (below) | yes |
+| Save record | `<session dir>/save.json`, next to the KV file, rewritten with each save | the snapshot the KV file was saved from, and the token provenance of the transcript (below) | yes |
 | Run record | `<session dir>/events.jsonl`, written by `DS4RunRecord` | one line per `AgentStreamEvent`, plus engine events | no; telemetry only |
 
-The session directory is `~/.ds4py/sessions/<session id>/`. The session id is kept apart from the KV file name (section 22).
+The session directory is `~/.ds4py/sessions/<session id>/`. It also holds the session's KV file (section 17).
 
 ### Message history
 
@@ -658,6 +663,8 @@ Older runs keep their snapshots, so the history before a compaction stays readab
 ### Save record
 
 The save record ties a KV file to the history it was saved from. `ds4py.store` writes it with each `/save`, after the KV file (section 17). It holds:
+
+- What `/switch` and `/list` check and show: `model_id`, `quant_bits`, the context size, the title (the normalized first user prompt), `created_at`, `last_used` and `payload_bytes`.
 
 - `session_id`, and the `run_id` and `step_index` of the save's snapshot. `/save` writes the live message list as a `complete` snapshot in a run of its own, `<session id>.save-<n>`, under the session's `conversation_id`. So every KV file has an exact snapshot, even when the last run ended in an interrupt or an error.
 - `tokens` and `tokens_sha256`: the length and hash of the saved token list.
@@ -684,59 +691,45 @@ Non-interactive mode (`--non-interactive` with `--prompt` or `--prompt-file`) ru
 
 ## 17. Session persistence and KV checkpoints
 
-Sessions are saved in the C agent's file format, so `ds4-agent` and ds4-py can open each other's files. The header and trailer are written from Python with `struct`, using the constants and the text renderer from `ds4_kvstore.h`. Only the KV payload bytes are produced and read by the engine.
+ds4-py saves sessions in its own format under `~/.ds4py/` (decision 5). It does not read or write `ds4-agent`'s files. The engine produces and reads the KV payload bytes; everything else in the files is ds4-py's.
 
-### File layout: `~/.ds4/kvcache/<sha40>.kv`
+### Files
 
-| Offset | Field | Source |
-| --- | --- | --- |
-| 0–2 | magic `KVC` | Python |
-| 3 | version `1` | Python |
-| 4 | `quant_bits` (2, 4, 5, 6 or 8) | `engine_info.routed_quant_bits` |
-| 5 | `reason` (`5` agent-system, `6` agent-session) | `ds4_kvstore.h` |
-| 6 | `ext_flags` (bit 3 = session-title trailer present) | `ds4_kvstore.h` |
-| 7 | `model_id` | `engine_info.model_id` |
-| 8–11 | `u32 tokens` | `len(transcript)` |
-| 12–15 | `u32 hits` | 0 |
-| 16–19 | `u32 ctx_size` | the session's context size |
-| 20 | payload ABI `2` | Python |
-| 24–31 | `u64 created_at` | the first user turn |
-| 32–39 | `u64 last_used` | the save time |
-| 40–47 | `u64 payload_bytes` | `payload_bytes`, or 0 for a stripped file |
-| 48– | `u32 text_bytes` + the rendered transcript text | `render_tokens_text` |
-| … | KV payload | `write_staged(payload, f)` |
-| … | `u32 title_len` + title | Python |
+Each session has a directory, `~/.ds4py/sessions/<session id>/`:
 
-The file name is `sha1(title_bytes + created_at.to_bytes(8, 'little'))`, where the title is the normalized first user prompt. The M4 plan confirms this against the C code at `ds4_agent.c:4709`. Files are written to `path.tmp.XXXXXX` and renamed, as in C.
+| File | What it holds |
+| --- | --- |
+| `session.kv` | A short header that ds4-py defines (a magic string, a format version and `payload_bytes`), then the KV payload, written by `write_staged(payload, f)`. The M3 plan fixes the layout |
+| `save.json` | The save record (section 15) |
+| `steps/` | The message history (section 15) |
+| `events.jsonl` | The run record (section 15) |
 
-A session restored with `/switch` keeps its `created_at`, so saving it again overwrites its own file, as in C. A fork is different: the live session takes a new identity and continues from the same transcript, while the original stays in its saved file. `session.fork()` keeps the transcript and the live KV and changes only the identity, so a fork needs no prefill and no second KV cache. A fork keeps the title but takes the fork time as its `created_at`, so it gets its own file under the same naming formula. It also gets a new session id; existing message keys are kept. ds4-py has no `/fork` command in M1 to M4. Forks come from `session.fork()`, which extensions and the conformance test use.
+Files are written to a temporary name and renamed, as in C.
+
+A session restored with `/switch` keeps its session id, so saving it again overwrites its own files, as in C. A fork is different: the live session takes a new identity and continues from the same transcript, while the original stays in its own directory. `session.fork()` keeps the transcript and the live KV and changes only the identity, so a fork needs no prefill and no second KV cache. A fork gets a new session id, and with it a new directory. It keeps the title and the existing message keys, and takes the fork time as its `created_at`. ds4-py has no `/fork` command in M1 to M4. Forks come from `session.fork()`, which extensions and the conformance test use.
 
 ### Save
 
-`/save` is a `SaveJob` on the worker. Before staging, the worker syncs the transcript so the live KV equals it. This evaluates the trailing EOS, which the C agent also leaves unevaluated until the next sync. Then it calls `stage_payload`, writes the header and text, streams the staged payload into the file, and appends the title trailer. After the KV file is renamed into place, `/save` writes the session's snapshot through the step store, then the save record (section 15) through a rename. The record comes last, so it never names a snapshot that was not written. Sessions with images are refused with the C agent's message.
+`/save` is a `SaveJob` on the worker. Before staging, the worker syncs the transcript so the live KV equals it. This evaluates the trailing EOS, which the C agent also leaves unevaluated until the next sync. Then it calls `stage_payload`, writes the header and streams the staged payload into `session.kv`. After the KV file is renamed into place, `/save` writes the session's snapshot through the step store, then the save record (section 15) through a rename. The record comes last, so it never names a snapshot that was not written. Sessions with images are refused, as in C.
 
 ### Restore
 
-`/switch <sha-prefix>` reads the header and checks `model_id` and `quant_bits` against the open engine. If `payload_bytes > 0`, the worker calls `load_payload` and **takes the token list from the session**, not from re-tokenizing the text. So the restored transcript is identical to what was saved, and nothing is prefilled. If the file is stripped and has no ds4-py save record, the text is re-tokenized with the rendered tokenizer and synced, which prefills from scratch, as in C.
+`/switch <session id prefix>` reads `save.json` and checks `model_id` and `quant_bits` against the open engine. A mismatch is an error, not a warning, as in C. Then:
 
-The history and the binding come from the save record (section 15), not from `events.jsonl`:
-
-1. **A ds4-py save.** The record exists, and its `tokens` and `tokens_sha256` match the loaded tokens. ds4-py loads the snapshot the record names and rebuilds the binding from `segments`, matching each segment to a snapshot message by `ds4.key` and content hash. Nothing is rendered or prefilled. If the snapshot is missing, or a segment matches no message, `/switch` fails with an error that names the snapshot or the key.
-2. **A file saved again without its record.** The record exists, but the token hash does not match. Usually `ds4-agent` saved the file last; a crash between the two writes of a `/save` has the same result. ds4-py says so and treats the file as a C-agent file.
-3. **A C-agent file.** There is no record. The restored tokens are scanned for the role special tokens. Each segment becomes a message bound to its tokens, under a new session id.
-4. **A stripped ds4-py save.** The file has no payload, so the token hash cannot match. The history comes from the record's snapshot, and `DS4Model` renders it fresh. This costs the same full prefill as any stripped file.
+1. **The KV file matches the record.** The worker calls `load_payload` and **takes the token list from the session**. If its length and hash equal the record's `tokens` and `tokens_sha256`, ds4-py loads the snapshot the record names and rebuilds the binding from `segments`, matching each segment to a snapshot message by `ds4.key` and content hash. Nothing is rendered or prefilled. If the snapshot is missing, or a segment matches no message, `/switch` fails with an error that names the snapshot or the key.
+2. **There is no payload, or it does not match the record.** A stripped session has no payload. A crash between the two writes of a `/save` leaves a KV file newer than its record, and ds4-py says so. In both cases ds4-py loads the record's snapshot, and `DS4Model` renders it fresh. This costs a full prefill.
 
 Then the session sends `switched` with the save record (section 22). `RollingWindow` sets its cut at the first message bound in the transcript, so the first request after `/switch` extends the loaded KV.
 
-Two cases deliberately behave as in C: a tensor-parallel session ignores the payload and rebuilds from text, and a mismatched `model_id` is an error, not a warning.
+A tensor-parallel session ignores the payload and takes case 2, as C rebuilds from text there.
 
-### `sysprompt.kv`
+### The system-prefix cache
 
-The rendered system prefix (think prefix, tools prompt, extra system text) is saved once as `sysprompt.kv` with reason `agent-system`, keyed by its rendered bytes. At start-up it is loaded if the bytes match, so a new session begins with the system prompt already in the KV. The facade then saves its `system` checkpoint, which later rewrites restore (section 10). The C agent refuses a cached file whose text does not match (`ds4_agent.c:4937`).
+The rendered system prefix (think prefix, tools prompt and instructions) is saved once as `~/.ds4py/sysprompt/<sha256>.kv`, in the same format as `session.kv`. The key is a hash of the model id, the quantization, the context size and the prefix's token ids. At start-up the file with the matching key is loaded if it exists, so a new session begins with the system prompt already in the KV. The facade then saves its `system` checkpoint, which later rewrites restore (section 10). Each tool set and set of instructions has its own key, so a change in either, or a switch between interactive and non-interactive mode, does not overwrite another prefix's file. C keeps one file and refuses it when its text does not match (`ds4_agent.c:4937`).
 
 ### Strip, delete and list
 
-`/strip` rewrites the file with `payload_bytes = 0` and a new token count, and keeps the save record. `/del` deletes the file and its save record. It keeps the session's history in `~/.ds4py/sessions/`. `/list` reads only headers and trailers, sorts by `last_used`, and shows only files for the open engine's `model_id`.
+`/strip` deletes `session.kv` and keeps the save record and the history, so the next `/switch` takes case 2. `/del` deletes `session.kv` and `save.json` and keeps the history in `steps/`. `/list` reads only the save records. It lists the sessions that have one, newest `last_used` first, and shows only those for the open engine's `model_id`.
 
 ## 18. The downstream agent: what ds4-py provides
 
@@ -782,36 +775,40 @@ What the comparison of the two trees found:
 | ABI guard | CI builds the CPU `libds4` from the upstream pin and from the downstream fork's pin and runs `ds4py check` on both. A doctored header that changes one argument type of a required function must fail the build; one that moves a field of `ds4_engine_options` must make loading refuse; so must a manifest whose recorded prototype differs from an installed binding's; an unknown header hash must only warn | no |
 | `_native` | load the library and check it; open a small CPU session if `DS4_TEST_MODEL` is set | optional |
 | `Transcript`, `PromptBuilder`, `EngineWorker`, decode steps, logits hook | `FakeNative` | no |
-| Prompts | the C prompt printer's output for every variant (4 syntaxes × 2 edit variants × vision) must equal the Python builders' output byte for byte. Regenerated on every pin move | no |
-| `ToolSyntax` parsers | fixtures from the C prompts and from `ds4-agent --trace` captures, plus every fixture split at every byte boundary | no |
-| Tools | golden output from the C test program, and recorded output for `bash` and web, after normalizing process ids, times and temporary paths | no |
+| Tools prompt | for each syntax family, the generated example call parses with that family's parser to the call the generator meant, and a tool description that contains DSML markup produces no special token (section 12) | no |
+| `ToolSyntax` parsers | fixtures from `ds4-agent --trace` captures and from the generated example calls, plus every fixture split at every byte boundary | no |
 | `DS4Model` | feed `ModelRequest` lists; check the rendered operations and the `ModelResponse` parts | no |
 | Capabilities | `FunctionModel` stands in for `DS4Model` | no |
 | Extension points | the conformance test (section 22) | no |
 | Raw parity | `ds4py raw` and `ds4-agent --raw` on the same prompt, `--temp 0 --seed 1`, same model: identical tokens | yes |
 | Replay parity | below | yes |
 | Sync plans and checkpoints | on each backend, for an append, a checkpoint restore and a rebuild, the prefill count in `Synced` equals `plan().to_prefill`. Then the restore check: after a restore plus extension, 256 tokens at `--temp 0` must equal those after a rebuild of the same tokens. ds4-py disables `restore` on a backend that fails the check | yes |
-| Integration | the bake-off (section 21), the KV round trip, and a 150k-token session | yes |
+| Integration | the bake-off (section 21), the save and `/switch` round trip within ds4-py (gate 5), and a 150k-token session | yes |
 
-### Parity with `ds4-agent`: replay, not side by side
+### Parity with `ds4-agent`: replay from `--trace`, not side by side
 
-The first draft planned to run both agents on the same prompt and compare the transcripts token by token. That cannot work past the first tool call. `bash` results contain process ids, elapsed times and `mkstemp` paths, and every session starts with a date note, so the two transcripts differ even when both agents behave correctly.
+The first draft planned to run both agents on the same prompt and compare the transcripts token by token. That cannot work past the first tool call. Tool results contain process ids, elapsed times and temporary paths, and every session starts with a date note, so the two transcripts differ even when both agents behave correctly. ds4-py's tools now differ from C's as well (decision 3).
 
-Replay parity tests the same thing without that problem:
+Replay parity tests the token loop without that problem. It reads the log that `ds4-agent --trace` writes, which records by id every token C fed to the engine and every token it sampled:
 
-1. Run `ds4-agent` on a task and take its exact token transcript from its saved KV file. Loading the payload gives the exact token ids, not a re-tokenization.
-2. Split the transcript into rounds at the assistant prefixes.
-3. For each round, sync ds4-py on the C agent's prefix up to that round's assistant prefix and generate at `--temp 0`.
-4. Compare ds4-py's tokens with the C agent's tokens for that round. They must be identical.
-5. Compare the tool results separately with the C agent's, after normalizing process ids, times and temporary paths.
+- `initial_system_prompt`: the tokens of the system prefix (`ds4_agent.c:11152`);
+- for each round, a `prefill tool_round=…` line and the prompt tokens from the first position not already cached (`ds4_agent.c:10377–10380`);
+- each sampled token (`ds4_agent.c:10171`);
+- after compaction, the whole new transcript (`ds4_agent.c:10022`).
 
-This proves that the token loop, the EOS rule, the greedy switch inside tool syntax and the result framing are identical to C. That is what makes KV files portable between the two agents.
+The test:
 
-The M3 plan must find out how the script gets `ds4-agent` to save its session in non-interactive mode. If it cannot, the script drives `ds4-agent` interactively through a pseudo-terminal and sends `/save`.
+1. Run `ds4-agent --non-interactive --trace <file>` on a task, at `--temp 0 --seed 1`. `--trace` appends, so each run gets a fresh file.
+2. Rebuild each round's full prompt from the previous round's prompt, its sampled tokens and the newly prefilled tokens. After compaction, the logged transcript replaces it. If a round's first uncached position does not fit what the reader rebuilt, the reader fails loudly.
+3. For each round, sync ds4-py on that prompt and generate at `--temp 0`.
+4. Compare ds4-py's tokens with C's sampled tokens for that round. They must be identical. C does not log the stop token, because its loop breaks before it logs one (near `ds4_agent.c:10487`). Its `generation finished … generated=N` line marks where C stopped, and ds4-py must stop at the same place.
+5. While the model writes an `edit` call, C checks the `old` text against the file and stops early when it has no unique match (`ds4_agent.c:4170`). ds4-py has no such check, so in those rounds the comparison runs only up to where C stopped.
+
+Each round starts from C's tokens, including C's own tool calls and results, so the test does not depend on ds4-py's tools or prompt. It proves that the token loop, the EOS rule, the greedy switch inside tool syntax and the stop rules match C. M1 already reads this log format for raw parity (`read_trace_tokens` in `ds4py/raw.py`, and `tests/live/test_raw_parity.py`). It needs neither a saved session nor an interactive `ds4-agent`.
 
 ## 21. M3 exit test: the 12-task bake-off
 
-M3 is done when ds4-py matches `ds4-agent` on the same 12 tasks, with the same model (DeepSeek V4 Flash Q2, the `ds4f-q2` download, about 81 GB; section 25 explains why not V4.1), on the same machine, with `--temp 0 --seed 1`. A script drives both agents in non-interactive mode, unattended, and grades with hidden tests. ds4-py runs with `--yolo`, except for the approval run in gate 4.
+M3 is done when ds4-py passes the gates below on 12 tasks that both agents run, with the same model (DeepSeek V4 Flash Q2, the `ds4f-q2` download, about 81 GB; section 25 explains why not V4.1), on the same machine, with `--temp 0 --seed 1`. A script drives both agents in non-interactive mode, unattended, and grades with hidden tests. ds4-py runs with `--yolo`, except for the approval run in gate 4. `ds4-agent` runs with `--trace`, so the same 12 runs also give gate 6 its replay data.
 
 | Tasks | Source | Grading |
 | --- | --- | --- |
@@ -820,14 +817,37 @@ M3 is done when ds4-py matches `ds4-agent` on the same 12 tasks, with the same m
 
 Gates, all required:
 
-1. **Pass rate** at least `ds4-agent`'s on the same run, with one task of slack. Gate 6 proves the sampling paths match, so a larger gap is a bug.
-2. **No parser failures.** Zero `parser_error` stops and zero `Tool error: invalid …` results across the 12 runs. Every tool call the model made was executed or refused by policy.
-3. **Speed and KV reuse.** Wall time at most 1.5× `ds4-agent`'s per task. In every round, ds4-py prefills only the tokens appended since the last sync; the run record shows an `extend` plan for each round, except rounds after compaction or a strategy move. This replaces the first draft's "prefilled tokens per round equal within 1% of `ds4-agent`", which cannot hold once the two runs see different process ids and timings.
-4. **Interrupt and approval.** One run is interrupted with Ctrl+C during prefill and resumed from the next prompt. One run triggers an approval prompt for `bash` and continues after `y`.
-5. **Records and files.** Every run leaves a complete `events.jsonl`, the session's snapshots, and a saved KV file with its save record that `ds4-agent` can `/switch` into.
+1. **Pass rate** at least `ds4-agent`'s on the same run, with one task of slack. This is a minimum bar for the harness tools and the generated tools prompt (decision 3), not a search for bugs: gate 6 catches bugs in the token loop.
+2. **No parser failures.** Zero `parser_error` stops across the 12 runs. Every tool call the model wrote was parsed, then executed, refused by policy, or sent back to the model as a retry. Retries for bad arguments are the model's mistakes, not ds4-py's. The report counts them, and they do not fail the gate.
+3. **Speed and KV reuse.** Wall time at most 1.5× `ds4-agent`'s per task. In every round, ds4-py prefills only the tokens appended since the last sync; the run record shows an `extend` plan for each round, except rounds after compaction or a strategy move. This replaces the first draft's "prefilled tokens per round equal within 1% of `ds4-agent`", which cannot hold once the two runs see different process ids, timings and tools.
+4. **Interrupt and approval.** One run is interrupted with Ctrl+C during prefill and resumed from the next prompt. One run triggers an approval prompt for `run_command` and continues after `y`.
+5. **Records and files.** Every run leaves a complete `events.jsonl`, the session's snapshots, and a saved KV file with its save record. A new ds4-py process `/switch`es into each save without a prefill (case 1 of section 17). For a fixed follow-up prompt, the first 256 tokens it generates at `--temp 0` equal those from a stripped copy of the same save, which rebuilds the KV by prefill (case 2).
 6. **Replay parity.** For every round of `ds4-agent`'s 12 runs, ds4-py produces the same tokens from the same prefix (section 20).
 
 Not tested here, on purpose: long-context behaviour (M4 adds a 150k-token session and the compaction and `RollingWindow` cases), multi-file repository tasks (M5, a 10-task SWE-bench Verified slice), and GLM, Qwen and DeepSeek V4.1 (M5).
+
+### The gate 1 report
+
+The script writes one row per task, with both agents side by side: pass or fail, and the attempt that passed; ds4-py's rounds; ds4-py's tool errors and retries, with the first error's text. The totals line shows whether gate 1 passes. Only the pass counts decide the gate. The other columns show where to look when it fails. ds4-py's `events.jsonl` gives rounds, tool errors, generated tokens and wall time, and `ds4-agent`'s trace gives the same for C.
+
+### What 12 tasks can and cannot show
+
+Most tasks will pass or fail for both agents. Only the tasks where the two agents differ say anything, and there will be few of them. Suppose 4 tasks come out differently:
+
+- **The gate misses real gaps.** If ds4-py loses all 4, chance alone would give that result 1 time in 16, so 12 tasks cannot prove that even a gap that large is real.
+- **The gate fails good tools.** If the two tool sets are equally good and the 4 tasks differ only by chance, ds4-py still fails about 5 times in 16, because a net loss of two is enough.
+
+So a failure means "investigate", not "the tools are worse". A pass means "nothing is badly broken". A real comparison of the two tool sets would take all 34 of the benchmark's Python exercises, several seeds and a non-zero temperature, at several times the cost. M3 does not need it.
+
+### When gate 1 fails
+
+1. Read the traces of the tasks ds4-py lost, and sort each loss by cause: a misused tool, a failed edit, giving up early, or running out of context.
+2. Try fixes in this order:
+   - better tool descriptions;
+   - the C agent's usage advice and `# Rules` text, added as instructions;
+   - changes to how tool output looks, such as line numbers or truncation notes;
+   - one C tool ported as an optional capability. `edit` is the likely one. It follows the C tool's behaviour without matching its bytes (section 11, "Other tool sets").
+3. Tune on the 24 Python exercises that are not graded, never on the 10 in `bench/m3.yaml`. A pass after tuning on the graded tasks proves little.
 
 ## 22. Extension points reserved now
 
@@ -836,7 +856,7 @@ Full plugin support is not an M1 feature, but some things are cheap to build in 
 | Reserved now | Why it is structural |
 | --- | --- |
 | The stored history differs from the request view. `DS4Model` binds to `request_context.messages` only and never writes `ctx.messages`. `StepPersistence` snapshots store the full harness message list with all parts and metadata, not just tokens; `events.jsonl` is telemetry only | A strategy that pages or bookmarks needs the complete history, with thinking kept apart from public text |
-| Stable message keys in `message.metadata['ds4.key']`, set at creation. The session id is kept apart from the KV file name | Cut points, bookmarks and forks all key on messages, and two forks of one title must not share a file name |
+| Stable message keys in `message.metadata['ds4.key']`, set at creation. Each fork gets a new session id | Cut points, bookmarks and forks all key on messages, and two forks must not share a session directory or KV file |
 | A session event bus in `ds4py` (`session_start`, `session_end`, `turn_end`, `before_compact`, `compacted`, `model_changed`, `switched`, `forked`), separate from the harness's per-run `on_event`. It drives the lifecycle of `session.state` (section 13) | Lifecycle events the harness does not model; adding them later means finding every call site |
 | `session.plan()`, `session.ctx_used`, `session.system_tokens` and `session.active_tools` as public calls | Strategies need exact cost and usage, and the facade must be designed so these are cheap |
 | A command registry and a status-key registry in the TUI, open to capabilities; project settings with a trust flag | Without them, every extension needs a fork of the UI |
@@ -877,100 +897,128 @@ Done when:
 
 ### M2: chat, tool syntax, decode steps and the hook
 
-Scope: `Transcript`; `PromptBuilder`; `ds4py.prompts` and the C prompt printer; the three parsers; `run_round` with the tool-call stop; the decode-step contract and `FakeMultiTokenStep`; the logits hook; `--prefix-file`; `ds4py.store` reading and writing the file format; the `read` and `bash` tools; a test CLI of about 200 lines that runs `read` and `bash` directly, before the harness exists.
+Scope: `Transcript`; `PromptBuilder`; the tools prompt generator; the three parsers; `run_round` with the tool-call stop; the decode-step contract and `FakeMultiTokenStep`; the logits hook; `--prefix-file`; the replay reader, which rebuilds each round's prompt from a `--trace` log (section 20).
 
 Done when:
 
-- The Python prompt builders match the C printer for every variant.
+- For each syntax family, the generated example call parses to the call the generator meant, and DSML markup in a tool description produces no special token.
 - The parsers pass every fixture and every byte split, and markup inside `<think>` is reported as a parser error.
 - On `FakeNative`: a multi-token step that meets a stop token mid-block ends with the KV at the stop; a tool block that closes mid-block keeps the closing token and drops the rest; Ctrl+C mid-step leaves the KV equal to the kept tokens.
 - On `FakeNative`: a hook that biases a token changes the sample, and while a hook is installed the loop does not use a step that skips the hook.
-- `read` and `bash` match their golden output.
-- *Live:* replay parity on recorded `ds4-agent` sessions with the bake-off model.
+- *Live:* replay parity on `ds4-agent --trace` logs with the bake-off model.
 
-### M3: harness, the C agent's tools, TUI and bake-off
+### M3: harness, coding tools, TUI and bake-off
 
-Scope: `DS4Model` and the binding; `DS4AgentTools` with every tool, including the web port; `DS4Approvals`; `DS4SystemNotes` for the date note and hints; `DS4RunRecord`; `StepPersistence`; `/save` with its snapshot and save record; the session event bus and `session.state`; the `clai` smoke test; the TUI with its registries; non-interactive mode; the harness-tools option; the bake-off script.
+Scope: `DS4Model` and the binding; the default capability list with the harness's coding tools, and `DS4ShellJobs`; `DS4Approvals`; `DS4SystemNotes` for the date note and hints; `DS4RunRecord`; `StepPersistence`; `ds4py.store`; `/save` with its KV file, snapshot and save record; `/switch`, which gate 5 needs; the session event bus and `session.state`; the `clai` smoke test; the TUI with its registries; non-interactive mode; the bake-off script.
 
 Done when:
 
-- Every tool matches its golden output.
 - `DS4Model` passes its request-list tests, including retry and unknown-tool framing.
 - Conformance items 1, 6, 7 and 9 pass.
-- On `FakeNative`: a `bash` job started in one prompt is reported by `bash_status` in the next and stops on `/new`; a reserve stop inside a response with no context owner raises `ContextExhausted` and does not return partial text.
+- On `FakeNative`: `/switch` handles both cases in section 17, and a missing snapshot fails with an error that names it.
+- On `FakeNative`: a command started with `start_command` in one prompt is reported by `check_command` in the next and stops on `/new`; a reserve stop inside a response with no context owner raises `ContextExhausted` and does not return partial text.
 - *Live:* all six bake-off gates pass.
 
 ### M4: context and persistence
 
-Scope: `DS4Compaction`, including the reserve stop inside an open stream; the 50,000-token reminder; `sysprompt.kv`; `/list`, `/switch`, `/strip` and `/del`, with history recovery from save records; the `RollingWindow` port; the full conformance test.
+Scope: `DS4Compaction`, including the reserve stop inside an open stream; the 50,000-token reminder; the system-prefix cache; `/list`, `/strip` and `/del`; the `RollingWindow` port; the full conformance test.
 
 Done when:
 
 - On `FakeNative`: the compaction trigger, recipe and tail cut match C. A reserve stop inside a streamed response compacts and continues in the same `ModelResponse`, as C resumes an open assistant message. The reminder fires after 50,000 tokens of growth.
-- On `FakeNative`: `/switch` handles the four cases in section 17, and a missing snapshot fails with an error that names it.
+- On `FakeNative`: a second start-up with the same tool set and instructions loads the system prefix from its cache file with no prefill, and a changed tool set writes a new file.
 - The full conformance test passes.
-- *Live:* a 150k-token session compacts and continues; a session saved in ds4-py opens in `ds4-agent` and back again with no prefill; `RollingWindow` runs a long session within its budget.
+- *Live:* a 150k-token session compacts and continues; `RollingWindow` runs a long session within its budget.
 
 ### M5: polish (ongoing)
 
-`SpeculativeStep`, vision through `view_image`, GLM, Qwen and DeepSeek V4.1 replay parity and bake-off runs on hardware that can hold each model, `/think`, `/steer` and `/power`, ACP for editors, MCP servers, and a 10-task SWE-bench Verified slice.
+`SpeculativeStep`, vision through `read_file`, the harness's `WebSearch` and `WebFetch`, GLM, Qwen and DeepSeek V4.1 replay parity and bake-off runs on hardware that can hold each model, `/think`, `/steer` and `/power`, ACP for editors, MCP servers, and a 10-task SWE-bench Verified slice.
 
 ## 24. Risks
 
 - **`ds4.h` churn.** The probes turn a silent mismatch into a refused library, but every pin move still needs a review of the bindings. Keep the wrapped surface small.
-- **Porting the tools exactly.** This is the largest single piece of new work. The golden tests are the defence; the web tools are the hardest to test because they need Chrome.
+- **The harness tools on these models.** The harness's tools and their descriptions were not written for small quantized local models, and the tools prompt is ds4-py's own. Gate 1 checks only a minimum bar, and section 21 lists the fixes to try when it fails.
 - **Subagents later.** ds4 allows one ds4 process per machine (an exclusive lock on `/tmp/ds4.lock`), so a subagent cannot be a second process. One engine can hold several sessions, as `ds4-server --batched-session N` does, but each reserves its own KV cache when the engine opens, and forward passes run one at a time. A subagent that shares the main session either sees the parent's context or needs the parent's KV saved and loaded back around it.
 - **GIL and callbacks.** Progress callbacks re-acquire the GIL about 10 times a second during prefill, which is negligible. The real risk is a Python exception inside a callback, which ctypes swallows. The facade stores and re-raises it, and the callbacks stay trivial.
 - **Checkpoint memory.** Each checkpoint holds a full session snapshot in host memory, and its size grows with the prefix. The limit of four plus `system` bounds the total, `Checkpointed` reports each one's bytes, and the facade never evicts one on its own. A strategy that holds no extra checkpoints needs no extra memory, but each of its rewrites prefills the whole view after the system prefix.
 - **Compaction fidelity.** The C recipe cuts the tail at a `<｜User｜>` boundary and resumes an open assistant message after compaction. Both are reproduced. The resume case is the hardest to test; it gets a `FakeNative` scenario and one live run.
-- **Harness churn.** `pydantic-ai-harness` is 0.x and releases often. The adapter touches only `Model`, `StreamedResponse`, capability hooks and a few named capability classes. Each bump is a deliberate change with the full suite.
+- **Harness churn.** `pydantic-ai-harness` is 0.x and releases often. The adapter touches only `Model`, `StreamedResponse`, capability hooks and a few named capability classes. The coding tools also come from the harness, so a bump can change tool names, descriptions or output, and with them the tools prompt. Each bump is a deliberate change with the full suite, and a bump that changes the tools reruns the bake-off.
 - **Memory on the bake-off machine.** The README's "96 GB or more for DeepSeek" refers to Mac unified memory. Check that the bake-off model fits in the CUDA card's memory before booking the machine, and build `ds4-agent` and `libds4` from the same commit there.
 - **DFlash testing.** The downstream fork's DFlash runs only on Metal, so without a Mac it gets `FakeNative` tests only.
 - **Metal kernel path.** A Metal library needs the ds4 checkout at run time, and the installer records that path.
-- **Images.** The engine's text-keyed cache cannot save sessions with images. `view_image` works but marks the session unsaveable, as in C.
+- **Images.** The engine's text-keyed cache cannot save sessions with images. `read_file` can return an image (M5), and `/save` then refuses the session, as C does after `view_image`.
 
 ## 25. Open questions
 
 None. The two questions in the review draft were settled from the record:
 
 1. **The downstream fork's pin.** The downstream agent's own records settle which fork revision it pins. `ds4.h` is the same at both candidate revisions, so the ABI probes give the same result for either.
-2. **The bake-off model is DeepSeek V4 Flash Q2.** At `5379c1c`, `download_model.sh` lists `ds4f-q2` at about 81 GB and recommends it for 96 and 128 GB machines. V4.1 Flash Q2 (`ds41f-q2`) is about 341 GiB on disk with 152 GiB of main weights, and it runs only on Metal or a DGX Spark, with SSD streaming or across two machines. It cannot run on a 96 GB GPU. The commit message's "defaults to DS4.1 Flash" does not mean the script picks V4.1 by itself: the script needs a target name. The V4.1 tag spellings are covered by parser and prompt fixtures. Live V4.1 runs move to M5.
+2. **The bake-off model is DeepSeek V4 Flash Q2.** At `5379c1c`, `download_model.sh` lists `ds4f-q2` at about 81 GB and recommends it for 96 and 128 GB machines. V4.1 Flash Q2 (`ds41f-q2`) is about 341 GiB on disk with 152 GiB of main weights, and it runs only on Metal or a DGX Spark, with SSD streaming or across two machines. It cannot run on a 96 GB GPU. The commit message's "defaults to DS4.1 Flash" does not mean the script picks V4.1 by itself: the script needs a target name. The V4.1 tag spellings are covered by parser fixtures. Live V4.1 runs move to M5.
 
 ## 26. Calls I made
 
 These are my decisions, not the user's. Each can be changed.
 
-- The C agent's tools are the default and the harness's tools are an option (decision 3). This follows from KV compatibility, which the user requires.
 - The parity test replays rounds instead of comparing whole runs, and bake-off gate 3 measures KV reuse within ds4-py instead of comparing prefill counts with `ds4-agent` (sections 20 and 21). The first draft's version of both cannot pass.
 - A sixth bake-off gate, replay parity, takes over the reasoning gate 1 used to carry.
-- The approval prompts for `bash` and for writes outside the project stay as the first draft had them, although `ds4-agent` never asks.
-- `RepoContext`, `AskUser`, `ToolOutputLimits` and the guardrail classes are not in the default list, because each would change the prompt or the output relative to `ds4-agent`.
-- The engine core has no dependencies outside the standard library, including the web tools' WebSocket client.
+- The approval prompts for `run_command`, `start_command` and writes outside the project stay as the first draft had them, although `ds4-agent` never asks.
+- `--read-only` uses `LocalWorkspace(read_only=True)`, which refuses commands as well as file changes (section 14).
+- `AskUser` is in the default list only in interactive mode, because nobody can answer it in non-interactive mode (section 11).
+- The guardrail classes are not in the default list. `ToolOutputLimits` keeps its default bands, which never call the model (section 11).
+- `DS4ShellJobs` stops background commands when the session ends, because the harness leaves that to the host (section 12).
+- The tools prompt tokenizes tool names, descriptions and schemas as plain text, so an extension or MCP server cannot inject a special token (section 12).
+- The engine core has no dependencies outside the standard library.
 - The C prototype string is the single source for each binding's ctypes types and its signature check.
 - The probe compiles one file per binding, so a missing optional function does not hide the others' results.
 - Extension bindings are declared through a `ds4py.bindings` entry point, so the probe sees them at build time.
-- The KV file reading and writing moves to M2, because replay parity needs to read `ds4-agent`'s files, and `/save` moves to M3, because bake-off gate 5 needs it. The first draft had all persistence in M4.
-- The date note and hints move to M3, because they are part of every `ds4-agent` session. The reminder stays in M4.
+- `/save` and `/switch` move to M3, because bake-off gate 5 needs them. The first draft had all persistence in M4. `/list`, `/strip`, `/del` and the system-prefix cache stay in M4.
+- Gate 5 checks a save by comparing what a loaded save generates with what a stripped copy generates after it rebuilds by prefill (section 21).
+- The M2 test CLI is dropped. It ran the C agent's `read` and `bash` before the harness existed, and ds4-py no longer has those tools.
+- The date note and hints move to M3, because `ds4-agent` gives them to the model in every session and the bake-off compares the two. The reminder stays in M4.
 - When a tool result does not fit, the strategy that owns the context trigger makes room in its own way through `make_room`. Only `DS4Compaction` compacts (section 13).
-- A fork keeps its title and takes the fork time as its `created_at`, so it gets its own file under C's naming formula. Forks come from `session.fork()`; there is no `/fork` command in M1 to M4 (section 17).
+- Each session has one directory under `~/.ds4py/sessions/`, named by its session id. It holds the KV file with a short header of ds4-py's own, the save record, the history and the run record (section 17).
+- `/switch` loads the KV payload only when its token list matches the save record. Otherwise it renders the snapshot fresh and prefills it (section 17).
+- The system-prefix cache has one file per prefix, keyed by a hash of the model, the quantization, the context size and the prefix's tokens (section 17).
+- A fork gets a new session id, and with it its own directory. It keeps its title and takes the fork time as its `created_at`. Forks come from `session.fork()`; there is no `/fork` command in M1 to M4 (section 17).
 - ds4-py uses engine checkpoints, which the C agent does not. The facade holds the `system` checkpoint, and strategies may hold up to four more. `restore` is disabled on any backend that fails the live restore check (sections 10 and 20).
 - When generation reaches the reserve inside a response, the open stream asks the context owner to make room and continues. With no owner, the run fails with `ContextExhausted`, so partial text never becomes a final answer (section 11).
-- Each `/save` writes the live history as its own snapshot and a save record in `~/.ds4py/saves/`, so every KV file maps to an exact history. `events.jsonl` is telemetry only (section 15).
-- Capabilities keep session-lifetime state in `session.state`, not on `self`. The session event bus moves from M4 to M3, because `bash` jobs need it (sections 13 and 23).
+- Each `/save` writes the live history as its own snapshot and a save record in the session directory, so every KV file maps to an exact history. `events.jsonl` is telemetry only (section 15).
+- Capabilities keep session-lifetime state in `session.state`, not on `self`. The session event bus moves from M4 to M3, because `DS4ShellJobs` needs it (sections 13 and 23).
 
-## 27. Changes from the first draft
+## 27. Changes from earlier versions
 
-- The tools: the C agent's tools and prompt, as `DS4AgentTools` and `ds4py.prompts`, replace `FileSystem`, `Shell`, `WebSearch` and `WebFetch` in the default list. The web tools are a port of `ds4_web.c` (Chrome over DevTools), not a search API.
+### From the first draft
+
+- The tools: the default list keeps the first draft's harness tools without `WebSearch`, `WebFetch` and the guardrails. Each capability keeps its own default tools and limits, in place of the first draft's settings modelled on C (`Shell(tools=['shell'], default_timeout=270)` and a 128,000-character `Truncate`). The tools prompt is generated from the tool definitions, and `DS4ShellJobs` stops background commands when the session ends.
+- Session files: ds4-py saves sessions in its own format under `~/.ds4py/`, not in `ds4-agent`'s `~/.ds4/kvcache/`, and the two agents cannot open each other's sessions (ADR 0001).
 - Harness names, checked against the 0.59.0 wheel: `Guardrails(...)` becomes `InputGuardrail`, `OutputGuardrail` and `ToolGuardrail`. The `Compaction` strategies are `SlidingWindowCompaction`, `SummarizingCompaction` and `TieredCompaction`. `SystemReminders(every_tokens=…)` does not exist; `Reminder.trigger` is the predicate to use. `StepPersistence(FileStore(…))` becomes `StepPersistence(FileStepStore(…))`. `params.declared_function_tools` becomes `params.function_tools`.
 - The harness pin moves from 0.17.0 to 0.59.0.
 - The ABI claim: `argtypes` does not make a signature change fail at import. The signature and layout probes replace that claim.
 - The downstream agent's needs: building from any tree, loading from a path, required and optional bindings, the extension API, the decode-step contract and the logits hook are new.
-- `libds4` includes `ds4_kvstore.o`, and the store uses its constants and text renderer.
-- The parity test and bake-off gates 1, 3 and 6, as listed in section 26.
-- The module map grows from 3,400 to about 6,400 lines.
+- `libds4` includes `ds4_kvstore.o`, as `ds4-agent` and `ds4-server` do, although ds4-py does not call it (section 5).
+- The parity test, which now replays `ds4-agent --trace` logs, and bake-off gates 1, 2, 3, 5 and 6 (sections 20, 21 and 26).
+- The module map grows from 3,400 to about 4,450 lines.
 - The milestones have acceptance criteria and no time estimates.
 - The package splits into `ds4py` and `ds4py[agent]`.
-- Behaviours the first draft did not list: the date note, hints, the reminder format, `--prefix-file`, the full command-line flag list, and the Chrome consent rules.
+- Behaviours the first draft did not list: the date note, hints, the reminder format, `--prefix-file` and the full command-line flag list.
+
+### In the 2026-10-23 revision
+
+The 2026-10-21 version of this spec required session files that both agents could open. That requirement drove most of its design. [ADR 0001](../adr/0001-no-session-compatibility-with-ds4-agent.md) drops it, and with it:
+
+- Goal 4, session files compatible both ways, which is now a non-goal.
+- `DS4AgentTools`, `ds4py.prompts`, the vendored C prompt text and the port of `ds4_web.c`. The harness's coding tools are the default again, and the tools prompt is generated (sections 11 and 12).
+- `--edit-upto` and the Chrome consent rule in `DS4Approvals` (section 14).
+- The byte-for-byte checks: the prompt fixtures from the C prompt printer, the golden tool tests and the recorded `bash` and web output (section 20).
+- The C file format: the 48-byte header, the title trailer, the file names from C's sha1 formula, the shared `sysprompt.kv`, and the two `/switch` cases that read `ds4-agent`'s files (section 17).
+- KV file I/O in M2. Replay parity reads `ds4-agent --trace` logs instead of saved sessions, so it works with `--non-interactive` and needs no saved session (section 20).
+
+Other changes in this revision:
+
+- Gate 1 is a minimum bar for the harness tools. The spec says what 12 tasks cannot show, lists the fixes to try in order, and requires tuning on exercises that are not graded (section 21).
+- Gate 2 counts retries for bad arguments as the model's mistakes, not as failures (section 21).
+- Gate 5 is a round trip within ds4-py (section 21).
+- The module map shrinks from about 6,400 lines to about 4,450 (section 8).
 
 ## 28. Sources
 
