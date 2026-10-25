@@ -8,6 +8,7 @@ from ds4py._native.api import LibNative
 from ds4py._native.loader import load_library
 from ds4py._native.protocol import EngineConfig, Native, ThinkMode
 from ds4py.errors import EngineError
+from . import chat as chat_ops
 from .decode import GenerateJob
 from .events import Checkpointed, Event, Interrupted, Stopped, Synced
 from .plan import Plan
@@ -83,6 +84,9 @@ class Engine:
     def token_text(self, token: int) -> bytes:
         return self._worker.call(lambda e, s: e.token_text(token)).result()
 
+    def _eos(self) -> int:
+        return self._worker.call(lambda e, s: e.eos()).result()
+
     def session(self) -> "Session":
         with self._session_lock:
             if self._session is not None:
@@ -124,6 +128,36 @@ class Session:
             if self._active_round:
                 raise EngineError("a round is open")
             return self._transcript.append(tokens, kind, meta)
+
+    def start_chat(self, tools=(), instructions=None) -> None:
+        with self._lock:
+            if self._active_round:
+                raise EngineError("a round is open")
+            chat_ops.start_chat(self, tools, instructions)
+
+    def append_user(self, text: str, images=()) -> Segment:
+        with self._lock:
+            if self._active_round:
+                raise EngineError("a round is open")
+            return chat_ops.append_user(self, text, images)
+
+    def append_prefix(self, turns) -> None:
+        with self._lock:
+            if self._active_round:
+                raise EngineError("a round is open")
+            chat_ops.append_prefix(self, turns)
+
+    def append_tool_results(self, results) -> Segment:
+        with self._lock:
+            if self._active_round:
+                raise EngineError("a round is open")
+            return chat_ops.append_tool_results(self, results)
+
+    def append_system_note(self, text: str) -> Segment:
+        with self._lock:
+            if self._active_round:
+                raise EngineError("a round is open")
+            return chat_ops.append_system_note(self, text)
 
     def _job_events(self, job) -> Iterator[Event]:
         # submit may fail before there is an iterator to drain.

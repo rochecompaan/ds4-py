@@ -55,7 +55,8 @@ def glm_expected(schemas):
         "# Tools\n\n"
         f"<tools>{schemas}</tools>\n\n"
         "Call example:\n"
-        "<｜tool▁call▁begin｜>read<｜tool▁sep｜>path=\"...\" ...<｜tool▁call▁end｜>\n\n"
+        "<｜tool▁call▁begin｜>read<｜tool▁sep｜>path=\"...\" ...<｜tool▁call▁end｜>\n"
+        "<tool_call>read<arg_key>path</arg_key><arg_value>README.md</arg_value></tool_call>\n\n"
         "Escape literal </arg_value> as &lt;/arg_value>; write &lt;/arg_value> literally as "
         "&amp;lt;/arg_value>. Other entities stay unchanged.\n"
     )
