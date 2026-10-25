@@ -27,7 +27,7 @@ def test_tokenizer_round_trips_bytes():
     assert e.tokenize("héllo", rendered=True) == e.tokenize("héllo")
     assert e.eos() == FAKE_EOS and e.is_stop(FAKE_EOS) and not e.is_stop(e.tokenize("a")[0])
     assert e.token_text(FAKE_EOS) == b"</s>"
-    assert (e.info().name, e.info().family, e.info().mtp_draft_tokens, e.info().vocab_size) == ("fake", "deepseek4", 1, 257)
+    assert (e.info().name, e.info().family, e.info().mtp_draft_tokens, e.info().vocab_size) == ("fake", "deepseek4", 1, 279)
     custom = replace(e.info(), family="glm", is_glm_dsa=True)
     assert engine(info=custom).info() == custom
 

@@ -9,7 +9,7 @@ import weakref
 
 from ds4py.abi.shaders import metal_source_env
 from ds4py.errors import EngineError, EngineLockedError
-from . import structs
+from . import chat, structs
 from .loader import Library
 from .modelcheck import inspect_model
 from .protocol import BACKENDS, EngineConfig, EngineInfo, SyncStatus, family_of
@@ -189,6 +189,23 @@ class NativeEngine(_Handle):
             return list(tokens.v[:tokens.len])
         finally:
             self._lib.fn("ds4_tokens_free")(C.byref(tokens))
+
+    def chat_begin(self):
+        return chat.append_delta(self, (), "ds4_chat_begin")
+
+    def think_prefix(self, prefix, mode):
+        return chat.append_delta(self, prefix, "ds4_chat_append_think_prefix", mode)
+
+    def render_message(self, prefix, role, content):
+        return chat.append_delta(
+            self, prefix, "ds4_chat_append_message", role.encode(), content.encode(),
+        )
+
+    def assistant_prefix(self, prefix, mode):
+        return chat.append_delta(self, prefix, "ds4_chat_append_assistant_prefix", mode)
+
+    def qwen_reasoning_effort(self, mode):
+        return chat.qwen_reasoning_effort(self, mode)
 
     def token_text(self, token):
         length = C.c_size_t()

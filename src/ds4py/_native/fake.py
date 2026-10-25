@@ -3,6 +3,7 @@ import threading
 from typing import Callable, Iterable, Mapping, Sequence
 
 from ds4py.errors import EngineError, MissingBinding
+from . import fake_chat
 from .bindings import all_bindings
 from .protocol import EngineConfig, EngineInfo, SyncStatus, ThinkMode
 
@@ -44,7 +45,7 @@ class FakeNative:
         self._info = info if info is not None else EngineInfo(
             name="fake", model_id=0, family="deepseek4", is_deepseek41=False,
             is_glm_dsa=False, is_qwen4=False, has_vision=False,
-            routed_quant_bits=0, mtp_draft_tokens=1, vocab_size=257,
+            routed_quant_bits=0, mtp_draft_tokens=1, vocab_size=fake_chat.VOCAB_SIZE,
         )
 
     def open_engine(self, config: EngineConfig) -> "FakeEngine":
@@ -97,11 +98,36 @@ class FakeEngine(_Handle):
 
     def tokenize(self, text, *, rendered=False):
         self._check()
+        if rendered:
+            return fake_chat.tokenize_rendered(text)
         return [byte + 1 for byte in text.encode()]
 
     def token_text(self, token):
         self._check()
-        return b"</s>" if token == FAKE_EOS else bytes([token - 1])
+        if token == FAKE_EOS:
+            return b"</s>"
+        special = fake_chat.special_token_text(token)
+        return special if special is not None else bytes([token - 1])
+
+    def chat_begin(self):
+        self._check()
+        return fake_chat.chat_begin(self)
+
+    def think_prefix(self, prefix, mode):
+        self._check()
+        return fake_chat.think_prefix(self, prefix, mode)
+
+    def render_message(self, prefix, role, content):
+        self._check()
+        return fake_chat.render_message(self, prefix, role, content)
+
+    def assistant_prefix(self, prefix, mode):
+        self._check()
+        return fake_chat.assistant_prefix(self, prefix, mode)
+
+    def qwen_reasoning_effort(self, mode):
+        self._check()
+        return fake_chat.qwen_reasoning_effort(mode)
 
     def eos(self):
         self._check()

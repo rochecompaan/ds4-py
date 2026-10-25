@@ -65,6 +65,21 @@ class Engine:
     def tokenize(self, text: str, *, rendered: bool = False) -> list[int]:
         return self._worker.call(lambda e, s: e.tokenize(text, rendered=rendered)).result()
 
+    def _chat_begin(self) -> list[int]:
+        return self._worker.call(lambda e, s: e.chat_begin()).result()
+
+    def _think_prefix(self, prefix: Sequence[int], mode: int) -> list[int]:
+        return self._worker.call(lambda e, s: e.think_prefix(prefix, mode)).result()
+
+    def _render_message(self, prefix: Sequence[int], role: str, content: str) -> list[int]:
+        return self._worker.call(lambda e, s: e.render_message(prefix, role, content)).result()
+
+    def _assistant_prefix(self, prefix: Sequence[int], mode: int) -> list[int]:
+        return self._worker.call(lambda e, s: e.assistant_prefix(prefix, mode)).result()
+
+    def _qwen_reasoning_effort(self, mode: int) -> str | None:
+        return self._worker.call(lambda e, s: e.qwen_reasoning_effort(mode)).result()
+
     def token_text(self, token: int) -> bytes:
         return self._worker.call(lambda e, s: e.token_text(token)).result()
 
