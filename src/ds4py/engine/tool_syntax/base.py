@@ -107,12 +107,15 @@ class ToolParser:
         if self.state in ("DONE", "ERROR"):
             return self._snapshot()
         if self._active:
-            self._fail("incomplete tool-call stanza")
+            self._finish_active()
         elif len(self._pending) > 1 and any(
             form[0].startswith(self._pending) for form in self._forms
         ):
             self._fail("incomplete tool-call opening marker")
         return self._snapshot()
+
+    def _finish_active(self):
+        self._fail("incomplete tool-call stanza")
 
     def wants_greedy_sampling(self) -> bool:
         if self.state in ("DONE", "ERROR"):
