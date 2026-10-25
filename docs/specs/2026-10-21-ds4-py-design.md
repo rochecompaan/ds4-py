@@ -79,7 +79,7 @@ Each of these counts as a failure even if the code works:
 | --- | --- | --- |
 | Engine lifecycle | `ds4_engine_open(&e, &opts)`, `ds4_engine_close`, `ds4_engine_model_name`, `ds4_engine_model_id`, `ds4_engine_is_deepseek41`, `ds4_engine_is_glm_dsa`, `ds4_engine_is_qwen4`, `ds4_engine_has_vision`, `ds4_engine_routed_quant_bits`, `ds4_engine_mtp_draft_tokens`, `ds4_engine_vocab_size` | `ds4_engine_options` is a plain struct (`ds4.h:179`). The family flags choose the tool syntax (`ds4_agent.c:413`) |
 | Prompt rendering | `ds4_chat_begin`, `ds4_chat_append_message(e, toks, role, content)`, `ds4_chat_append_think_prefix`, `ds4_chat_append_assistant_prefix`, `ds4_chat_append_multimodal_message` | The engine owns the chat templates. Roles: `system`, `user`, `assistant`, `tool` |
-| Tokenizer | `ds4_tokenize_text`, `ds4_tokenize_rendered_chat`, `ds4_token_text`, `ds4_token_eos`, `ds4_token_is_stop`, `ds4_token_is_stop_for_think_mode`, `ds4_tokens_push / copy / free / starts_with` | `tokenize_rendered_chat` turns control-token spellings (`<｜User｜>`, `｜DSML｜`, `<think>`) into special tokens. ds4-py uses it only for its own fixed markup (in the tools prompt and the reminder), never for user input or tool definitions (section 12) |
+| Tokenizer | `ds4_tokenize_text`, `ds4_tokenize_rendered_chat`, `ds4_token_text`, `ds4_token_eos`, `ds4_token_is_stop`, `ds4_token_is_stop_for_think_mode`, `ds4_tokens_push / copy / free / starts_with` | `tokenize_rendered_chat` turns control-token spellings (`<｜User｜>`, `｜DSML｜`, `<think>`, `<tool_call>`) into special tokens. ds4-py uses it only for its own fixed markup (in the tools prompt and the reminder), never for user input or tool definitions (section 12) |
 | Session | `ds4_session_create(&s, e, ctx)`, `ds4_session_free`, `ds4_session_sync`, `ds4_session_sync_multimodal`, `ds4_session_eval`, `ds4_session_eval_speculative`, `ds4_session_sample(s, temp, top_k, top_p, min_p, &rng)`, `ds4_session_argmax`, `ds4_session_rewind(s, pos)`, `ds4_session_pos / ctx / tokens / common_prefix`, `ds4_session_invalidate` | `sync` returns `DS4_SESSION_SYNC_INTERRUPTED` (2) on cancel. `sample` picks one token from the current logits; `eval` feeds it and refreshes the logits |
 | Logits | `ds4_session_copy_logits(s, out, cap)`, `ds4_session_set_logits(s, logits, n)` (`ds4.h:532–533`), `ds4_session_top_logprobs`, `ds4_session_token_logprob` | Used by the token-loop hook (section 10) |
 | Callbacks | `ds4_session_set_progress(s, fn, ud)`, `ds4_session_set_display_progress`, `ds4_session_set_cancel(s, fn, ud)` | `progress_fn(ud, event, current, total)`. Events the agent sees: `prefill_chunk`, `prefill_display`, `prefill_work`. `cancel_fn(ud) -> bool` is polled during sync |
@@ -120,7 +120,7 @@ The C agent keeps **one `ds4_tokens transcript` as its only conversation state**
 12. **System notes** (`ds4_agent.c:1478–1625`):
     - A one-time date note before the first user message: `Current local date and time at session start: <time>. Use this only when date or time matters.`
     - Programming hints, off by default and switched with `/hints on|off`. The full instructions are sent once per live context; after that, a short note is sent only when the setting changes. Compaction resets this state.
-13. **System prompt.** For DSML, V4.1 first gets an empty `system` message; then the tools prompt goes through the rendered tokenizer, so its `｜DSML｜` markers become the special token. For GLM and Qwen, the tools prompt is a plain `system` message. Text from `--system` follows as a separate plain `system` message prefixed with `\n\n`. It never goes through the rendered tokenizer. ds4-py generates its own tools prompt text (section 12) and renders it by these rules.
+13. **System prompt.** For DSML, V4.1 first gets an empty `system` message; then the tools prompt goes through the rendered tokenizer, so its `｜DSML｜` markers become the special token. For GLM, the whole tools prompt goes through the rendered tokenizer, tool text included. For Qwen, the whole prompt is tokenized as plain text, although the Qwen vocab carries `<tool_call>` and `<tool_response>` as special tokens; the downstream fork renders them as special tokens instead. Text from `--system` follows as a separate plain `system` message prefixed with `\n\n`. It never goes through the rendered tokenizer. ds4-py generates its own tools prompt text (section 12). It renders its own markup as special tokens for every family, so it matches C for DSML and GLM and follows the fork for Qwen.
 14. **System prompt reminder.** After the transcript has grown 50,000 tokens since the system prompt was last seen, the agent appends `[System prompt reminder follows.]`, the tools prompt and `[End system prompt reminder.]`, using the same tokenizer rule as item 13, and then the `--system` text again.
 15. **Rounds.** A user turn may contain any number of assistant and tool rounds. There is deliberately no limit on tool calls. Before each assistant continuation, the agent checks for compaction, appends the reminder if due, appends the hints note if due, and then appends the assistant prefix (`ds4_agent.c:10340`).
 16. **`--prefix-file`.** A file of `USER:` and `ASSISTANT:` turns is appended after the system prompt. Assistant turns get an EOS, except on GLM.
@@ -391,7 +391,7 @@ This is the hook the downstream agent asked for, for example to stop overthinkin
 `PromptBuilder` builds the token prefix for a round from the transcript and the engine's family, using only `_native.render` and `_native.tokenize`. It knows:
 
 - the role names the templates accept: `system`, `user`, `assistant` and `tool`;
-- when to use the rendered tokenizer (the fixed markup of the DSML tools prompt and of the reminder) and when never to (user text, tool results, `--system` text, and the tool names, descriptions and schemas inside the tools prompt);
+- when to use the rendered tokenizer (the generator's and renderer's own markup in the tools prompt and the reminder, for every family) and when never to (user text, tool results, `--system` text, and the tool names, descriptions and schemas inside the tools prompt);
 - each family's rules: DeepSeek and Qwen get an EOS at the end of every assistant turn and GLM does not; V4.1 uses its own DSML tag spellings and gets an empty `system` message before the tools prompt; Qwen takes its reasoning effort as a `system` message rather than a think prefix.
 
 The tools prompt is generated from the tool definitions that `DS4Model` passes in as plain name, description and JSON-schema records, so the engine core does not depend on the harness (section 12).
@@ -541,7 +541,7 @@ ds4-py owns three things around these tools.
 `DS4Model` passes each tool's name, description and JSON schema to the generator in `ds4py.engine.prompt`. For each syntax family, the generator writes a short introduction, the family's call syntax with one example call, and one entry per tool. This is the layout of the C agent's prompt (`agent_build_dsml_tools_prompt`, `ds4_agent.c:1291`), but none of its text is copied.
 
 - For DSML and DSML41, the generator's own markup goes through the rendered tokenizer, as the C prompt does, so its `｜DSML｜` markers become the special token. Tool names, descriptions and schemas are tokenized as plain text, because extensions and MCP servers supply them, and a description must not be able to inject a special token.
-- For GLM and Qwen, the whole prompt is a plain `system` message, as in C.
+- For GLM and Qwen, the prompt is a `system` message rendered by the same split: the generator's markup goes through the rendered tokenizer, tool text stays plain. This matches C for GLM's markup and deviates from upstream for Qwen's, which C tokenizes as plain text; the downstream fork already renders Qwen's markup as special tokens in C, and the Qwen vocab carries `<tool_call>` and `<tool_response>` as special tokens, the form the model saw in training. Of the generator's markup only `<tool_call>` and `</tool_call>` have vocab entries; `<tools>`, `<function=…>` and `<parameter=…>` tokenize as plain text either way.
 - Each family's example call must parse with that family's `ToolSyntax` parser to the call the generator meant. A tool description that contains DSML markup must produce no special token. Both are tests, and neither needs a GPU.
 
 If the models do worse with this prompt than with the C agent's, section 21 lists the fixes to try, in order.
@@ -555,7 +555,7 @@ If the models do worse with this prompt than with the C agent's, section 21 list
 
 ### c. Result framing lives in `DS4Model`
 
-All results of a round go into one `tool` message, each starting `Tool result N (name):\n`, as in C. The harness's own errors arrive as `RetryPromptPart`s and start `Tool error: ` (section 11). The run record counts calls retried for bad arguments (section 21, gate 2).
+All results of a round go into one `tool` message, each starting `Tool result N (name):\n`, as in C. The harness's own errors arrive as `RetryPromptPart`s and start `Tool error: ` (section 11). The run record counts calls retried for bad arguments (section 21, gate 2). For GLM and Qwen, the `<tool_response>` markers around the message go through the rendered tokenizer, as the downstream fork renders them in C, so the model sees the special tokens it was trained on whichever library the session runs against. The result text stays plain, with C's escaping of the closing sentinel (`ds4_tool_text.h`).
 
 A `read_file` result with an image goes into the `tool` message through the multimodal call, with the role `user`, as C does for `view_image` (M5). On a model without vision, `DS4Model` renders the image as `Tool error: this model cannot read images`.
 
@@ -775,7 +775,7 @@ What the comparison of the two trees found:
 | ABI guard | CI builds the CPU `libds4` from the upstream pin and from the downstream fork's pin and runs `ds4py check` on both. A doctored header that changes one argument type of a required function must fail the build; one that moves a field of `ds4_engine_options` must make loading refuse; so must a manifest whose recorded prototype differs from an installed binding's; an unknown header hash must only warn | no |
 | `_native` | load the library and check it; open a small CPU session if `DS4_TEST_MODEL` is set | optional |
 | `Transcript`, `PromptBuilder`, `EngineWorker`, decode steps, logits hook | `FakeNative` | no |
-| Tools prompt | for each syntax family, the generated example call parses with that family's parser to the call the generator meant, and a tool description that contains DSML markup produces no special token (section 12) | no |
+| Tools prompt | for each syntax family, the generated example call parses with that family's parser to the call the generator meant, the example's markup becomes the family's special tokens where the vocab has them (`｜DSML｜`, `<tool_call>`), and a tool description that contains tool markup produces no special token (section 12) | no |
 | `ToolSyntax` parsers | fixtures from `ds4-agent --trace` captures and from the generated example calls, plus every fixture split at every byte boundary | no |
 | `DS4Model` | feed `ModelRequest` lists; check the rendered operations and the `ModelResponse` parts | no |
 | Capabilities | `FunctionModel` stands in for `DS4Model` | no |
@@ -967,6 +967,7 @@ These are my decisions, not the user's. Each can be changed.
 - The guardrail classes are not in the default list. `ToolOutputLimits` keeps its default bands, which never call the model (section 11).
 - `DS4ShellJobs` stops background commands when the session ends, because the harness leaves that to the host (section 12).
 - The tools prompt tokenizes tool names, descriptions and schemas as plain text, so an extension or MCP server cannot inject a special token (section 12).
+- GLM and Qwen tool markup, in the tools prompt and around tool results, goes through the rendered tokenizer, as DSML's does. Upstream tokenizes Qwen's markup as plain text, but the Qwen vocab carries `<tool_call>` and `<tool_response>` as special tokens, the form the model saw in training, and the downstream fork already renders them that way (sections 6 and 12).
 - The engine core has no dependencies outside the standard library.
 - The C prototype string is the single source for each binding's ctypes types and its signature check.
 - The probe compiles one file per binding, so a missing optional function does not hide the others' results.
@@ -1019,6 +1020,7 @@ Other changes in this revision:
 - Gate 2 counts retries for bad arguments as the model's mistakes, not as failures (section 21).
 - Gate 5 is a round trip within ds4-py (section 21).
 - The module map shrinks from about 6,400 lines to about 4,450 (section 8).
+- GLM and Qwen tool markup goes through the rendered tokenizer, as DSML's does (sections 6 and 12). This matches upstream for GLM and deviates from upstream for Qwen, which tokenizes the same markup as plain text; it follows the downstream fork, which renders it as special tokens in C.
 
 ## 28. Sources
 
