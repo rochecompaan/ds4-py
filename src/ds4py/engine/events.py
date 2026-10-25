@@ -5,6 +5,12 @@ from .plan import Plan
 
 
 @dataclass(frozen=True)
+class TextDelta:
+    text: str
+    thinking: bool
+
+
+@dataclass(frozen=True)
 class Prefill:
     done: int
     total: int
