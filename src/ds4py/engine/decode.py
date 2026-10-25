@@ -155,7 +155,11 @@ class DecodeContext:
         if self._committed:
             self._job.transcript.extend([token])
         else:
-            self._job.transcript.append([token], "assistant")
+            segments = self._job.transcript.segments
+            if self._job.resume and segments and segments[-1].kind == "assistant":
+                self._job.transcript.extend([token])
+            else:
+                self._job.transcript.append([token], "assistant")
             self._committed = True
         self._publish(Token(token, text))
         stream = self._job.stream

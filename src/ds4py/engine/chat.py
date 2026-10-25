@@ -61,18 +61,33 @@ def run_round(session, max_tokens, sampling, hooks=None, stop_sequences=()):
     if not resuming:
         append_assistant_prefix(session)
     try:
-        tokens = session._transcript.tokens
-        if (yield from session._job_events(SyncJob(tokens))):
-            return
         think = session._engine.think
         if stream is None:
             stream = RoundStream(session._engine.info, think)
-        yield from session._job_events(GenerateJob(
-            sampling or session._engine.sampling_defaults, session._rng,
-            max_tokens, session._transcript, think_mode=think, stream=stream,
-            hooks=hooks, logits_hooks=tuple(session._logits_hooks),
-            stop_sequences=list(stop_sequences), resume=resuming,
-        ))
+        remaining = max_tokens
+        reserve = 1
+        last_tokens = None
+        while True:
+            tokens = session._transcript.tokens
+            if tokens != last_tokens or len(tokens) < session._engine.config.ctx:
+                if (yield from session._job_events(SyncJob(tokens))):
+                    return
+            # An unchanged full session is already synced. Generate again so a
+            # zero reserve reports another pause instead of failing the sync.
+            sampled_before = len(stream.sampled_tokens)
+            action = yield from session._job_events(GenerateJob(
+                sampling or session._engine.sampling_defaults, session._rng,
+                remaining, session._transcript, reserve=reserve,
+                think_mode=think, stream=stream,
+                hooks=hooks, logits_hooks=tuple(session._logits_hooks),
+                stop_sequences=list(stop_sequences), resume=resuming,
+            ), pause_on_reserve=True)
+            last_tokens = session._transcript.tokens
+            if not isinstance(action, tuple) or action[0] != "resume":
+                return
+            remaining -= len(stream.sampled_tokens) - sampled_before
+            reserve = action[1]
+            resuming = True
     finally:
         if stream is not None and stream.stop_sequence is not None:
             session._paused_stream = stream

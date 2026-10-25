@@ -10,7 +10,7 @@ from ds4py._native.protocol import EngineConfig, Native, ThinkMode
 from ds4py.errors import EngineError
 from . import chat as chat_ops
 from .decode import GenerateJob
-from .events import Checkpointed, Event, Interrupted, Stopped, Synced
+from .events import Checkpointed, Event, Interrupted, ReserveReached, Stopped, Synced
 from .hooks import LogitHookSet
 from .plan import Plan
 from .sampling import Rng, SamplingPolicy
@@ -174,7 +174,24 @@ class Session:
                 raise EngineError("cannot add a logits hook during an active round")
             self._logits_hooks.append(hook)
 
-    def _job_events(self, job) -> Iterator[Event]:
+    def _reserve_decision(self, job) -> Iterator[Event]:
+        decision = {}
+        pause = ReserveReached(
+            job.reserve,
+            on_resume=lambda reserve: decision.update(
+                action="resume", reserve=reserve,
+            ),
+            on_fail=lambda: decision.update(action="fail"),
+        )
+        yield pause
+        if not decision:
+            raise EngineError("reserve pause requires a decision before advancing")
+        if decision["action"] == "fail":
+            yield Stopped("context_exhausted")
+            return False
+        return "resume", decision["reserve"]
+
+    def _job_events(self, job, *, pause_on_reserve=False) -> Iterator[Event]:
         # submit may fail before there is an iterator to drain.
         events = self._worker.submit(job)
         exhausted = interrupted = terminal = False
@@ -184,6 +201,9 @@ class Session:
                 interrupted = isinstance(event, Interrupted) or (
                     isinstance(event, Stopped) and event.reason == "interrupted"
                 )
+                if (pause_on_reserve and isinstance(event, Stopped)
+                        and event.reason == "context_reserve"):
+                    return (yield from self._reserve_decision(job))
                 yield event
             exhausted = True
         finally:
