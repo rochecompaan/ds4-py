@@ -8,7 +8,7 @@
 | Replaces | [`archive/2026-10-21-ds4-py-first-draft.md`](archive/2026-10-21-ds4-py-first-draft.md), the first draft, kept for its framework comparison |
 | Upstream ds4 | antirez/ds4 `5379c1c` (2026-10-19). Line numbers below refer to this commit |
 | Harness | `pydantic-ai-harness==0.59.0`, which pins `pydantic-ai-slim==2.59.0`. Both were released 2026-10-21 |
-| Downstream fork | The ds4 fork that the first downstream agent builds against, compared with upstream on 2026-10-21 (section 18) |
+| Downstream fork | pauleveritt/ds4 `3e61e09bbe4599ca71197d8ec21933a93e24f022`, approved 2026-10-23. Section 18 describes the earlier 2026-10-21 comparison |
 
 ## 1. Intent
 
@@ -53,7 +53,7 @@ Each of these counts as a failure even if the code works:
 
 ## 3. Constraints
 
-- Python 3.11 or later, the harness's minimum.
+- Python 3.14 or later. Use 3.14 as the development default.
 - Pin the harness to an exact version. It releases often (0.17.0 on 2026-08-05, 0.59.0 on 2026-10-21) and pins its core to an exact version. Upgrade on purpose, one bump at a time, with the full test suite.
 - Pin upstream ds4 by commit. `ds4.h` changes often.
 - One engine per machine. `ds4_engine_open` takes an exclusive lock on `/tmp/ds4.lock` (or `DS4_LOCK_FILE`) and exits if another process holds it.
@@ -250,7 +250,7 @@ Declaring `argtypes` does not protect against a changed library. ctypes cannot r
 
 2. **Layout check (at build and load time).** The probe also builds a small program that prints `sizeof` and every field's `offsetof` for each struct `_native` fills or reads, starting with `ds4_engine_options` and `ds4_tokens`. At load time, `_native` compares these numbers with the layout of its own `ctypes.Structure` definitions. Any difference refuses the library.
 
-3. **Header hash (informational).** The probe records the SHA-256 of `ds4.h` and `ds4_kvstore.h`. ds4-py lists the hashes of the pinned upstream commit. An unknown hash prints a warning, not a refusal; otherwise no fork could load. The signature and layout checks make the hash informational.
+3. **Header hash (informational).** The probe records the SHA-256 of `ds4.h` and `ds4_kvstore.h`. ds4-py lists the hashes of the pinned upstream and fork commits. An unknown hash prints a warning, not a refusal; otherwise no fork could load. The signature and layout checks make the hash informational.
 
 The probe writes its results to `libds4.abi.json` next to the library. For each binding, the file records the normalized prototype the probe compiled and the result. Normalizing collapses whitespace and drops parameter names, so `const ds4_tokens *prompt` and `const ds4_tokens*` compare equal. The file also records the library's own SHA-256 and the version of `_native`'s type map. At load time, `_native` refuses the library if:
 
@@ -272,6 +272,10 @@ Each binding has a `required` flag. Optional bindings are bound only if they pas
 ### Loading
 
 The library comes from `ds4py.open(..., lib=PATH)`, then the `DS4_LIB` environment variable, then the default location that `ds4py build` writes to. It is loaded once with `ctypes.CDLL(path, mode=RTLD_LOCAL)`. A second load with a different path in the same process is refused.
+
+For Metal, the build captures `metal/*.metal` before compilation and publishes copies beside the library in the same immutable install generation. The manifest's `metal_sources` records relative paths and SHA-256 hashes. `source_path` is provenance only: deleting the checkout or moving a complete install must not change shader resolution. Missing or changed bundled files, unsafe manifest paths, and old Metal manifests without asset records require rebuilding; old CPU manifests remain usable. Explicit shader-path overrides must match their recorded hashes.
+
+The loader validates Metal assets before loading the library. Native open checks them again, then sets missing shader variables only around the C open call, under `_open_lock`, and restores the environment in `finally`. Valid explicit overrides stay unchanged. This lock serializes ds4py opens, not other threads or child processes. The live C parity test uses the same resolver with a copied subprocess environment; it does not change the working directory or the parent environment.
 
 ### The extension API
 
@@ -297,6 +301,10 @@ All `SessionHandle` methods are called from one thread: the engine worker the fa
 ### Errors and memory
 
 Every call that takes `char *err, size_t errlen` gets a 512-byte buffer and raises `EngineError(msg)` on a non-zero return, except the documented `2` from sync. `ds4_tokens` vectors are created, filled and freed inside one `_native` function. A vision embedding's ownership passes to the session on `sync_multimodal`, as the C API specifies, and the Python wrapper marks it consumed so it is not freed twice.
+
+M1 keeps the engine in-process and unmodified. The user accepted the following native limits on 2026-10-22. A child process runs `inspect_only` before the real open. Inspection failures become Python exceptions, but inspection skips tokenizer loading. Invalid tokenizer tables, missing required tokens, changes to the model between inspection and open, and later GPU failures can still terminate Python.
+
+Python holds the original instance lock for the engine's lifetime. Native open uses a second lock path through a temporary, process-wide `DS4_LOCK_FILE` change. A ds4 subprocess started by another thread can inherit that path and acquire it first. Native open then exits and terminates Python. Callers must keep the model unchanged and avoid ds4 subprocesses during open. These restrictions do not provide a guarantee against native process termination. The M1 plan and public open docstrings state these limits.
 
 ### `FakeNative`
 
@@ -337,7 +345,7 @@ The engine keeps its KV for a sync only when the new tokens start with the whole
 ds4-py adds checkpoints, which the C agent does not use. A checkpoint is an in-memory snapshot of the whole session state (`ds4_session_save_snapshot`) at a known token prefix. Loading it (`ds4_session_load_snapshot`) restores that prefix with no prefill, and the sync after it is an extension. A checkpoint costs host memory equal to `ds4_session_payload_bytes()` at that point, which grows with the prefix length.
 
 - The facade holds one checkpoint by default, `system`. It is saved when the system prefix is first synced or loaded from the system-prefix cache (section 17).
-- A strategy can hold more through `session.checkpoint(key)`, up to `max_checkpoints` (default 4) besides `system`. A request beyond the limit is refused; the facade never evicts a checkpoint on its own.
+- A strategy can hold more through `session.checkpoint(key)`. The worker's `checkpoint_budget_bytes` defaults to `1 << 30` bytes (1 GiB) and covers all retained snapshot payloads, including `system`. It must be a non-negative integer, not a boolean. Zero disables checkpoint creation. Before saving, the worker checks the candidate's `session.payload_bytes()` estimate, then checks the returned snapshot's actual `nbytes`. A replacement excludes its old payload from the proposed retained total, but keeps the old snapshot alive until the replacement passes both checks. A refused new snapshot is freed. Over-budget requests never evict another key.
 - Distributed sessions cannot snapshot (`ds4.c:64881`), so they have no checkpoints.
 
 `session.plan(tokens)` renders nothing and syncs nothing. It returns `Plan(kind, reused, to_prefill, fits, checkpoint)`:
@@ -438,6 +446,8 @@ session.on_worker(fn)                        # extension API
 session.cancel()                             # thread-safe
 engine.native.bind(name)                     # extension API
 ```
+
+A session allows one active round. Ownership starts on the first iteration of `run_round`, before it captures transcript tokens or submits work. A second active round raises `EngineError("a round is open")` and leaves the first round untouched. Caller appends are also refused while a round is active. Ownership ends only after completion or cleanup of interruption, close or error. An unstarted generator owns nothing.
 
 ## 11. The harness adapter
 
@@ -577,7 +587,7 @@ The contract a strategy implements:
 | `session.state(key, factory)` | Session-owned state: the cut point, the bookmark table, token accounting. The harness calls `for_run` once per `Agent.run`, which is once per prompt, so a strategy keeps none of this on `self`. Its `for_run` returns an instance that refers to this state (see "Session state" below) |
 | `on_event` | Turn-end bookkeeping. Stamp stable keys into `message.metadata['ds4.key']` so cut points are keyed by message, not by list index |
 | `session.plan(view) -> Plan(kind, reused, to_prefill, fits, checkpoint)` | Renders a candidate view without syncing and says whether it extends the live KV, restores a held checkpoint or rebuilds, with the exact prefill cost (section 10) |
-| `session.checkpoint(key)`, `session.drop_checkpoint(key)` | Hold or free a snapshot of the live state at its current end. A strategy holds one where it knows later moves will start, such as a turn boundary that its next batch of stubs will not cross. Each costs host memory, and the facade limits how many are held |
+| `session.checkpoint(key)`, `session.drop_checkpoint(key)` | Hold or free a snapshot of the live state at its current end. A strategy holds one where it knows later moves will start, such as a turn boundary that its next batch of stubs will not cross. Each costs host memory, and the retained payloads share a byte budget, including `system` (section 10) |
 | `session.compact(...)` | Only `DS4Compaction` uses the engine-side summary job. Other strategies never call the model themselves |
 | `make_room(ctx, needed_tokens) -> list[ModelMessage] \| None` | Called on the strategy that owns the context trigger when a tool result does not fit, or when generation reaches the reserve inside a response (section 11). The strategy frees space in its own way and returns the new request view, or `None` if it cannot. A persistent strategy also rewrites `ctx.messages[:]` |
 
@@ -647,6 +657,8 @@ ds4-py keeps three records. Only the first two are used to recover a session.
 | Run record | `<session dir>/events.jsonl`, written by `DS4RunRecord` | one line per `AgentStreamEvent`, plus engine events | no; telemetry only |
 
 The session directory is `~/.ds4py/sessions/<session id>/`. It also holds the session's KV file (section 17).
+
+`DS4PY_HOME` sets the root for ds4py files. When set to a nonempty value, its layout is `lib/`, `sessions/`, `saves/`, and `kvcache/`. Expand a leading `~` and read the root at call time; path resolution does not create directories or move files. With no override, libraries, sessions and save records stay under `~/.ds4py`, while KV files keep the compatible `~/.ds4/kvcache` default. An explicit library argument takes precedence over `DS4_LIB`, which takes precedence over the root's `lib/`. This PR implements only library resolution; session, save-record and KV persistence will use the same layout when implemented.
 
 ### Message history
 
@@ -758,7 +770,7 @@ What the comparison of the two trees found:
 
 ## 19. Build and packaging
 
-- ds4-py is a `uv` project for Python 3.11 or later. The wheel has no compiled extension.
+- ds4-py is a `uv` project for Python 3.14 or later. The wheel has no compiled extension.
 - `ds4py build --src <ds4 tree> [--backend metal|cuda|rocm|cpu]` builds `libds4` and its ABI probe:
   - `Makefile.lib`, kept in this repo, includes the tree's own Makefile and links the tree's `$(CORE_OBJS)` (or `$(CPU_CORE_OBJS)` for the CPU build) plus `ds4_kvstore.o` into `libds4.so` or `libds4.dylib` with `-shared`.
   - Objects are compiled with `-fPIC` (on CUDA, `-Xcompiler -fPIC` for `nvcc`), and the link uses `$(DS4_LINK)` and the same `METAL_LDLIBS` or `CUDA_LDLIBS` as the binaries. Whether objects are built inside the tree or in a separate directory is the builder's call; PIC objects also link into the tree's own binaries.
@@ -887,7 +899,7 @@ Scope: `Makefile.lib` and `ds4py build`; the binding list and the type map; the 
 
 Done when:
 
-- CI builds a CPU `libds4` and `libds4.abi.json` from the upstream pin and from the downstream fork's pin, and `ds4py check` passes for both, reporting the fork's header hash as unknown.
+- CI builds a CPU `libds4` and `libds4.abi.json` from the upstream pin and from the downstream fork's pin, and `ds4py check` passes for both, recognizing both pinned header sets. Unknown header hashes still produce a warning.
 - The doctored-header tests in section 20 behave as described.
 - An extension binding declared through the entry point is probed, listed by `ds4py check` and callable through `on_worker` on `FakeNative`.
 - On `FakeNative`: prefill progress events arrive at most every 100 ms; Ctrl+C during sync returns `Interrupted` with the transcript intact; generation stops on a stop token without evaluating it.
@@ -940,7 +952,7 @@ Done when:
 - **The harness tools on these models.** The harness's tools and their descriptions were not written for small quantized local models, and the tools prompt is ds4-py's own. Gate 1 checks only a minimum bar, and section 21 lists the fixes to try when it fails.
 - **Subagents later.** ds4 allows one ds4 process per machine (an exclusive lock on `/tmp/ds4.lock`), so a subagent cannot be a second process. One engine can hold several sessions, as `ds4-server --batched-session N` does, but each reserves its own KV cache when the engine opens, and forward passes run one at a time. A subagent that shares the main session either sees the parent's context or needs the parent's KV saved and loaded back around it.
 - **GIL and callbacks.** Progress callbacks re-acquire the GIL about 10 times a second during prefill, which is negligible. The real risk is a Python exception inside a callback, which ctypes swallows. The facade stores and re-raises it, and the callbacks stay trivial.
-- **Checkpoint memory.** Each checkpoint holds a full session snapshot in host memory, and its size grows with the prefix. The limit of four plus `system` bounds the total, `Checkpointed` reports each one's bytes, and the facade never evicts one on its own. A strategy that holds no extra checkpoints needs no extra memory, but each of its rewrites prefills the whole view after the system prefix.
+- **Checkpoint memory.** Each checkpoint holds a full session snapshot in host memory, and its size grows with the prefix. `checkpoint_budget_bytes` limits retained snapshot payloads to 1 GiB by default, including `system`; `Checkpointed` reports each snapshot's bytes. It is not a total-RAM limit: model weights, live session KV, Python objects, allocator overhead, and temporary snapshot allocation peaks are outside it. In particular, a replacement keeps its old snapshot until the new one is accepted. The facade never evicts a checkpoint on its own. A strategy with no extra checkpoints still pays for `system`; each rewrite prefills the whole view after that prefix.
 - **Compaction fidelity.** The C recipe cuts the tail at a `<｜User｜>` boundary and resumes an open assistant message after compaction. Both are reproduced. The resume case is the hardest to test; it gets a `FakeNative` scenario and one live run.
 - **Harness churn.** `pydantic-ai-harness` is 0.x and releases often. The adapter touches only `Model`, `StreamedResponse`, capability hooks and a few named capability classes. The coding tools also come from the harness, so a bump can change tool names, descriptions or output, and with them the tools prompt. Each bump is a deliberate change with the full suite, and a bump that changes the tools reruns the bake-off.
 - **Memory on the bake-off machine.** The README's "96 GB or more for DeepSeek" refers to Mac unified memory. Check that the bake-off model fits in the CUDA card's memory before booking the machine, and build `ds4-agent` and `libds4` from the same commit there.
@@ -952,8 +964,8 @@ Done when:
 
 None. The two questions in the review draft were settled from the record:
 
-1. **The downstream fork's pin.** The downstream agent's own records settle which fork revision it pins. `ds4.h` is the same at both candidate revisions, so the ABI probes give the same result for either.
-2. **The bake-off model is DeepSeek V4 Flash Q2.** At `5379c1c`, `download_model.sh` lists `ds4f-q2` at about 81 GB and recommends it for 96 and 128 GB machines. V4.1 Flash Q2 (`ds41f-q2`) is about 341 GiB on disk with 152 GiB of main weights, and it runs only on Metal or a DGX Spark, with SSD streaming or across two machines. It cannot run on a 96 GB GPU. The commit message's "defaults to DS4.1 Flash" does not mean the script picks V4.1 by itself: the script needs a target name. The V4.1 tag spellings are covered by parser fixtures. Live V4.1 runs move to M5.
+1. **The downstream fork's pin (resolved 2026-10-23).** Use `3e61e09bbe4599ca71197d8ec21933a93e24f022`. Its refreshed header fixtures and fingerprints are checked against that exact revision.
+2. **The bake-off model is DeepSeek V4 Flash Q2.** At `5379c1c`, `download_model.sh` lists `ds4f-q2` at about 81 GB and recommends it for 96 and 128 GB machines. V4.1 Flash Q2 (`ds41f-q2`) is about 341 GiB on disk with 152 GiB of main weights, and it runs only on Metal or a DGX Spark, with SSD streaming or across two machines. It cannot run on a 96 GB GPU. The commit message's "defaults to DS4.1 Flash" does not mean the script picks V4.1 by itself: the script needs a target name. The V4.1 tag spellings are covered by parser fixtures and the tools-prompt tests (section 20). Live V4.1 runs move to M5.
 
 ## 26. Calls I made
 
@@ -981,7 +993,7 @@ These are my decisions, not the user's. Each can be changed.
 - `/switch` loads the KV payload only when its token list matches the save record. Otherwise it renders the snapshot fresh and prefills it (section 17).
 - The system-prefix cache has one file per prefix, keyed by a hash of the model, the quantization, the context size and the prefix's tokens (section 17).
 - A fork gets a new session id, and with it its own directory. It keeps its title and takes the fork time as its `created_at`. Forks come from `session.fork()`; there is no `/fork` command in M1 to M4 (section 17).
-- ds4-py uses engine checkpoints, which the C agent does not. The facade holds the `system` checkpoint, and strategies may hold up to four more. `restore` is disabled on any backend that fails the live restore check (sections 10 and 20).
+- ds4-py uses engine checkpoints, which the C agent does not. The facade and strategies share a retained-payload byte budget, including `system`, rather than a checkpoint-count limit. `restore` is disabled on any backend that fails the live restore check (sections 10 and 20).
 - When generation reaches the reserve inside a response, the open stream asks the context owner to make room and continues. With no owner, the run fails with `ContextExhausted`, so partial text never becomes a final answer (section 11).
 - Each `/save` writes the live history as its own snapshot and a save record in the session directory, so every KV file maps to an exact history. `events.jsonl` is telemetry only (section 15).
 - Capabilities keep session-lifetime state in `session.state`, not on `self`. The session event bus moves from M4 to M3, because `DS4ShellJobs` needs it (sections 13 and 23).

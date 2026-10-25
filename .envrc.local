@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+export OPENROUTER_API_KEY=$(op read "op://Private/OpenRouter API Key - kipchoge/credential")
