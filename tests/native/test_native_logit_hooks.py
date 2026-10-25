@@ -9,13 +9,15 @@ import pytest
 
 from ds4py._native.api import LibNative, NativeSession
 from ds4py._native.loader import load_library
-from ds4py._native.protocol import EngineConfig
+from ds4py._native.protocol import EngineConfig, ThinkMode
 from ds4py._native.structs import (
     ArgmaxContext, EffLogits, Logits, TokenScore,
 )
 from ds4py._native.typemap import ctypes_signature, parse_prototype
 from ds4py.engine.hooks import DisjointTokenRanges, LogitHookSet, TokenOverrides
+from ds4py.engine.pause import ControlSpan, PausedAfterEos, Resume
 from ds4py.engine.sampling import SamplingPolicy
+from ds4py.engine.stream import RoundStream
 
 
 def test_hook_struct_layouts_and_by_value_eff_signature():
@@ -153,7 +155,7 @@ HOOK_FUNCTIONS = (
 
 
 @pytest.mark.skipif(not M2.exists() or not MODEL, reason="M2 library and DS4_TEST_MODEL are required")
-def test_strict_m2_hook_seam_loads_and_runs_argmax():
+def test_strict_m2_hook_and_forced_eos_seam():
     library = load_library(M2)
     assert all(library.has(name) for name in HOOK_FUNCTIONS)
     native = LibNative(library)
@@ -166,5 +168,11 @@ def test_strict_m2_hook_seam_loads_and_runs_argmax():
         hooks.before_sample(session, SamplingPolicy(), thinking=False)
         assert session.argmax() >= 0
         session.clear_logit_hooks()
+        eos = engine.eos()
+        paused = PausedAfterEos(eos, engine.token_text(eos))
+        stream = RoundStream(engine.info(), ThinkMode.NONE, control=ControlSpan())
+        stream.mark_eos(paused.token, paused.text, paused=paused)
+        stream.resume(lambda event: None, Resume(force_end_thinking=True))
+        assert stream.sampled_tokens == [eos] and not stream.stop_was_eos
     finally:
         engine.close()

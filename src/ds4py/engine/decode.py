@@ -7,6 +7,7 @@ from ds4py._native.protocol import EngineHandle, SessionHandle
 from ds4py.errors import EngineError
 from .events import Event, Token
 from .hooks import LogitHookSet
+from .pause import ControlSpan, Resume
 from .sampling import Rng, SamplingPolicy
 from .stream import RoundStream
 from .transcript import Transcript
@@ -29,6 +30,20 @@ class GenerateJob:
     stream: RoundStream | None = None
     hooks: LogitHookSet | None = None
     stop_sequences: list[bytes] = field(default_factory=list)
+    control: ControlSpan | None = None
+    resume: bool = False
+
+    def __post_init__(self):
+        stream_control = self.stream.control if self.stream is not None else None
+        control = self.control
+        if control is None:
+            if stream_control is not None and (stream_control.sequences or not self.stop_sequences):
+                control = stream_control
+            else:
+                control = ControlSpan(self.stop_sequences)
+        object.__setattr__(self, "control", control)
+        if self.stream is not None:
+            self.stream.control = control
 
 
 class DecodeContext:
@@ -47,6 +62,8 @@ class DecodeContext:
         self._committed = False
         self._verdict = Verdict.CONTINUE
         self._event_buffer = None
+        self.finalized = False
+        self._finish_parser: bool | None = None
 
     def buffer_events(self):
         self._event_buffer = []
@@ -92,8 +109,12 @@ class DecodeContext:
         return self._cancelled()
 
     def accept(self, token: int) -> Verdict:
+        if self.finalized:
+            return Verdict.STOP_AFTER
         if self.is_stop(token):
-            self.reason = "stop_token"
+            if self._job.stream is not None:
+                self._job.stream.mark_eos(token, self._engine.token_text(token))
+            self.finish("stop_token")
             self._verdict = Verdict.STOP_BEFORE
             return self._verdict
         self._accepted += 1
@@ -106,6 +127,8 @@ class DecodeContext:
 
     def commit(self, token: int, verdict: Verdict | None = None) -> Verdict:
         """Publish an evaluated token, then observe its streaming state."""
+        if self.finalized:
+            return Verdict.STOP_AFTER
         verdict = self._verdict if verdict is None else verdict
         text = self._engine.token_text(token)
         if self._committed:
@@ -117,20 +140,47 @@ class DecodeContext:
         stream = self._job.stream
         if stream is not None:
             stream.observe(token, text, self._publish)
-            if stream.malformed:
-                self.reason = "parser_error"
-                verdict = Verdict.STOP_AFTER
-            elif stream.complete:
-                self.reason = "tool_call_complete"
-                verdict = Verdict.STOP_AFTER
+        elif self._job.control.sequences:
+            self._job.control.Feed(text)
+        if stream is not None and stream.malformed:
+            self.finish("parser_error")
+            verdict = Verdict.STOP_AFTER
+        elif stream is not None and stream.complete:
+            self.finish("tool_call_complete", finish_parser=False)
+            verdict = Verdict.STOP_AFTER
+        elif self._job.control.stop_sequence is not None:
+            self.finish("stop_sequence")
+            verdict = Verdict.STOP_AFTER
         self._verdict = verdict
         return verdict
 
+    def finish(self, reason: str, *, finish_parser: bool = True) -> None:
+        """Set the terminal reason without changing accepted-token counters."""
+        self.reason = reason
+        self.finalized = True
+        self._finish_parser = finish_parser
+        self._verdict = Verdict.STOP_AFTER
+
+    def resume(self, actor: Resume | None = None) -> None:
+        forced_stop = None
+        if self._job.stream is not None:
+            forced_stop = self._job.stream.resume(self._publish, actor)
+        else:
+            self._job.control.resume()
+        self.reason = None
+        self.finalized = False
+        self._finish_parser = None
+        self._verdict = Verdict.CONTINUE
+        if forced_stop is not None:
+            self.finish("stop_sequence")
+
     def finalize(self) -> None:
         stream = self._job.stream
-        if stream is None or self.reason in ("interrupted", "context_reserve"):
+        if stream is None or self.reason in ("interrupted", "context_reserve", "stop_sequence"):
             return
-        finish_parser = self.reason in ("stop_token", "max_tokens")
+        finish_parser = self._finish_parser
+        if finish_parser is None:
+            finish_parser = self.reason in ("stop_token", "max_tokens")
         stream.finalize(parser=finish_parser, emit=self._publish)
         if stream.malformed:
             self.reason = "parser_error"
@@ -181,9 +231,11 @@ def generate(engine: EngineHandle, session: SessionHandle, job: GenerateJob, *,
         if job.hooks is not None:
             session.set_logit_hooks(job.hooks)
             registered = True
+        if job.resume:
+            ctx.resume()
         if limit <= 0:
             ctx.reason = limit_reason
-        else:
+        elif not ctx.finalized:
             decode_step.run(session, ctx)
             if ctx.reason is None:
                 if cancelled():

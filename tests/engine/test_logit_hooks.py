@@ -98,13 +98,13 @@ def test_plain_step_prepares_hooks_for_every_sample_and_always_clears():
     assert session.contexts[0].cap == 3 and session.contexts[0].collect == 0
 
 
-def test_multi_token_step_does_not_run_per_sample_hook_setup():
+def test_multi_token_step_runs_hook_setup_once_per_block():
     hooks = LogitHookSet()
     session = RecordingSession()
     reason, _ = run_with_hooks(session, hooks, FakeMultiTokenStep([[]]))
     assert reason == "stop_token"
     assert session.registrations == [hooks] and session.clears == 1
-    assert session.consts == session.chains == session.contexts == []
+    assert len(session.consts) == len(session.chains) == len(session.contexts) == 2
 
 
 def test_disabling_event_preserves_constraints_and_effective_policy():

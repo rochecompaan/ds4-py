@@ -25,7 +25,7 @@ class FakeMultiTokenStep:
 
     def run(self, session, ctx):
         while not ctx.cancelled():
-            ctx.before_sample()
+            ctx.before_block()
             policy = ctx.sampling()
             sampled = session.sample(
                 policy.temperature, policy.top_k, policy.top_p, policy.min_p, ctx.rng,

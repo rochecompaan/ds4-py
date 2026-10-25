@@ -56,20 +56,29 @@ def append_prefix(session, turns) -> None:
 
 
 def run_round(session, max_tokens, sampling, hooks=None, stop_sequences=()):
-    append_assistant_prefix(session)
+    resuming = session._paused_stream is not None
+    stream = session._paused_stream if resuming else None
+    if not resuming:
+        append_assistant_prefix(session)
     try:
         tokens = session._transcript.tokens
         if (yield from session._job_events(SyncJob(tokens))):
             return
         think = session._engine.think
-        stream = RoundStream(session._engine.info, think)
+        if stream is None:
+            stream = RoundStream(session._engine.info, think)
         yield from session._job_events(GenerateJob(
             sampling or session._engine.sampling_defaults, session._rng,
             max_tokens, session._transcript, think_mode=think, stream=stream,
-            hooks=hooks, stop_sequences=list(stop_sequences),
+            hooks=hooks, stop_sequences=list(stop_sequences), resume=resuming,
         ))
     finally:
-        append_assistant_end(session)
+        if stream is not None and stream.stop_sequence is not None:
+            session._paused_stream = stream
+            session._paused_control = stream.control
+        else:
+            session._paused_stream = session._paused_control = None
+            append_assistant_end(session)
 
 
 def append_assistant_prefix(session):
