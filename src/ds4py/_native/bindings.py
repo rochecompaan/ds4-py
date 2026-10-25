@@ -79,6 +79,16 @@ CORE_BINDINGS: tuple[Binding, ...] = (
 )
 
 
+M2_BINDINGS: tuple[Binding, ...] = (
+    Binding("ds4_session_chain_consts", "ds4_eff_logits ds4_session_chain_consts(ds4_session *s, float temperature, int top_k, float min_p, float top_p)", required=False, source="m2"),
+    Binding("ds4_session_set_sampling_chain", "void ds4_session_set_sampling_chain(ds4_session *s, ds4_eff_logits eff, const int *ids, int n, ds4_sampling_hook_fn fn)", required=False, source="m2"),
+    Binding("ds4_session_set_logit_hook", "void ds4_session_set_logit_hook(ds4_session *s, ds4_logit_hook_fn fn, void *ud)", required=False, source="m2"),
+    Binding("ds4_session_set_sampling_hook", "void ds4_session_set_sampling_hook(ds4_session *s, ds4_sampling_hook_fn fn, void *ud)", required=False, source="m2"),
+    Binding("ds4_session_set_argmax_fn", "void ds4_session_set_argmax_fn(ds4_session *s, ds4_argmax_fn fn, void *ud)", required=False, source="m2"),
+    Binding("ds4_session_set_argmax_context", "void ds4_session_set_argmax_context(ds4_session *s, ds4_argmax_context *ctx)", required=False, source="m2"),
+)
+
+
 def discover_extension_bindings() -> tuple[Binding, ...]:
     """Load installed declarations, rejecting core names and incompatible ABIs.
 
@@ -103,6 +113,7 @@ def discover_extension_bindings() -> tuple[Binding, ...]:
     return tuple(found.values())
 
 
-def all_bindings() -> tuple[Binding, ...]:
-    """Return core declarations first, followed by installed extensions."""
-    return CORE_BINDINGS + discover_extension_bindings()
+def all_bindings(*, m2: bool = False) -> tuple[Binding, ...]:
+    """Return core declarations, optional M2 hooks, then installed extensions."""
+    milestones = M2_BINDINGS if m2 else ()
+    return CORE_BINDINGS + milestones + discover_extension_bindings()

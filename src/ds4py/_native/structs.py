@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 PROGRESS_FN = CFUNCTYPE(None, c_void_p, c_char_p, c_int, c_int)
 CANCEL_FN = CFUNCTYPE(c_bool, c_void_p)
+LOGIT_HOOK_FN = CFUNCTYPE(c_int, c_int, c_int)
 
 
 class Tokens(ctypes.Structure):
@@ -21,6 +22,16 @@ class Tokens(ctypes.Structure):
     ]
 
 
+class Logits(ctypes.Structure):
+    _c_name_ = "ds4_logits"
+    _fields_ = [("p", POINTER(c_float)), ("cap", c_int), ("len", c_int)]
+
+
+class EffLogits(ctypes.Structure):
+    _c_name_ = "ds4_eff_logits"
+    _fields_ = [("p", POINTER(Logits)), ("bytes", POINTER(c_uint8))]
+
+
 class TokenScore(ctypes.Structure):
     _c_name_ = "ds4_token_score"
     _fields_ = [
@@ -28,6 +39,15 @@ class TokenScore(ctypes.Structure):
         ("logit", c_float),
         ("logprob", c_float),
     ]
+
+
+class ArgmaxContext(ctypes.Structure):
+    _c_name_ = "ds4_argmax_context"
+    _fields_ = [("records", POINTER(TokenScore)), ("cap", c_int), ("collect", c_int)]
+
+
+SAMPLING_HOOK_FN = CFUNCTYPE(None, POINTER(EffLogits), POINTER(c_int), c_int)
+ARGMAX_FN = CFUNCTYPE(None, POINTER(ArgmaxContext))
 
 
 class SessionSnapshot(ctypes.Structure):
@@ -142,6 +162,12 @@ STRUCTS: dict[str, type[ctypes.Structure]] = {
     "ds4_distributed_options": DistributedOptions,
     "ds4_tp_options": TpOptions,
     "ds4_engine_options": EngineOptions,
+}
+
+M2_STRUCTS: dict[str, type[ctypes.Structure]] = {
+    "ds4_logits": Logits,
+    "ds4_eff_logits": EffLogits,
+    "ds4_argmax_context": ArgmaxContext,
 }
 
 

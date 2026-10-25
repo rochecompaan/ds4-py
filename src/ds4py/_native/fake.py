@@ -174,6 +174,8 @@ class FakeSession(_Handle):
         self._valid = False
         self.calls: list[tuple] = []
         self.samples: list[tuple] = []
+        self._hooks = self._hook_context = self._hook_chain = None
+        self.sampling_hook = None
 
     def sync(self, tokens, *, progress=None, cancel=None):
         self._check()
@@ -220,6 +222,23 @@ class FakeSession(_Handle):
             return -1
         return self._native.script(self._tokens[:self._prompt_length],
                                    self._tokens[self._prompt_length:])
+
+    def set_logit_hooks(self, hooks):
+        self._hooks = hooks
+
+    def clear_logit_hooks(self):
+        self._hooks = self._hook_context = self._hook_chain = None
+
+    def chain_consts(self, temperature, top_k, min_p, top_p):
+        from .structs import EffLogits
+        self._hook_consts = (temperature, top_k, min_p, top_p)
+        return EffLogits()
+
+    def set_sampling_chain(self, eff, ids, fn):
+        self._hook_chain = (eff, list(ids), fn)
+
+    def set_argmax_context(self, ctx):
+        self._hook_context = ctx
 
     def eval(self, token):
         self._check()

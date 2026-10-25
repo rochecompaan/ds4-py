@@ -55,7 +55,7 @@ def append_prefix(session, turns) -> None:
             append_assistant_end(session)
 
 
-def run_round(session, max_tokens, sampling):
+def run_round(session, max_tokens, sampling, hooks=None, stop_sequences=()):
     append_assistant_prefix(session)
     try:
         tokens = session._transcript.tokens
@@ -66,6 +66,7 @@ def run_round(session, max_tokens, sampling):
         yield from session._job_events(GenerateJob(
             sampling or session._engine.sampling_defaults, session._rng,
             max_tokens, session._transcript, think_mode=think, stream=stream,
+            hooks=hooks, stop_sequences=list(stop_sequences),
         ))
     finally:
         append_assistant_end(session)

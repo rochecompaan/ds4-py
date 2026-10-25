@@ -1,11 +1,12 @@
 """Token acceptance and commit policy separated from native decode steps."""
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 from typing import Callable, Protocol
 
 from ds4py._native.protocol import EngineHandle, SessionHandle
 from ds4py.errors import EngineError
 from .events import Event, Token
+from .hooks import LogitHookSet
 from .sampling import Rng, SamplingPolicy
 from .stream import RoundStream
 from .transcript import Transcript
@@ -26,17 +27,22 @@ class GenerateJob:
     reserve: int = 1
     think_mode: int | None = None
     stream: RoundStream | None = None
+    hooks: LogitHookSet | None = None
+    stop_sequences: list[bytes] = field(default_factory=list)
 
 
 class DecodeContext:
     def __init__(self, engine: EngineHandle, job: GenerateJob, *, limit: int,
                  limit_reason: str, cancelled: Callable[[], bool],
-                 emit: Callable[[Event], None]):
+                 emit: Callable[[Event], None], session: SessionHandle | None = None,
+                 hooks_every_sample: bool = True):
         self.rng = job.rng.state
         self.reason: str | None = None
         self._engine, self._job = engine, job
         self._limit, self._limit_reason = limit, limit_reason
         self._cancelled, self._emit = cancelled, emit
+        self._session = session
+        self._hooks_every_sample = hooks_every_sample
         self._accepted = 0
         self._committed = False
         self._verdict = Verdict.CONTINUE
@@ -56,8 +62,20 @@ class DecodeContext:
         else:
             self._event_buffer.append(event)
 
+    def _prepare_hooks(self) -> None:
+        hooks = self._job.hooks
+        if hooks is None:
+            return
+        stream = self._job.stream
+        thinking = bool(stream and stream.decoder.thinking)
+        hooks.before_sample(self._session, self.sampling(), thinking=thinking)
+
     def before_sample(self) -> None:
-        pass
+        if self._hooks_every_sample:
+            self._prepare_hooks()
+
+    def before_block(self) -> None:
+        self._prepare_hooks()
 
     def is_stop(self, token: int) -> bool:
         if self._job.think_mode is None:
@@ -152,16 +170,28 @@ def generate(engine: EngineHandle, session: SessionHandle, job: GenerateJob, *,
     room = session.ctx() - session.pos()
     limit = min(job.max_tokens, max(room - job.reserve, 0))
     limit_reason = "max_tokens" if job.max_tokens <= room - job.reserve else "context_reserve"
-    ctx = DecodeContext(engine, job, limit=limit, limit_reason=limit_reason,
-                        cancelled=cancelled, emit=emit)
-    if limit <= 0:
-        ctx.reason = limit_reason
-    else:
-        (step or PlainStep()).run(session, ctx)
-        if ctx.reason is None:
-            if cancelled():
-                ctx.reason = "interrupted"
-            else:
-                raise EngineError("decode returned no tokens")
-    ctx.finalize()
-    return ctx.reason
+    decode_step = step or PlainStep()
+    ctx = DecodeContext(
+        engine, job, limit=limit, limit_reason=limit_reason,
+        cancelled=cancelled, emit=emit, session=session,
+        hooks_every_sample=decode_step.hooks_every_sample,
+    )
+    registered = False
+    try:
+        if job.hooks is not None:
+            session.set_logit_hooks(job.hooks)
+            registered = True
+        if limit <= 0:
+            ctx.reason = limit_reason
+        else:
+            decode_step.run(session, ctx)
+            if ctx.reason is None:
+                if cancelled():
+                    ctx.reason = "interrupted"
+                else:
+                    raise EngineError("decode returned no tokens")
+        ctx.finalize()
+        return ctx.reason
+    finally:
+        if registered:
+            session.clear_logit_hooks()

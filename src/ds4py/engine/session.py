@@ -11,6 +11,7 @@ from ds4py.errors import EngineError
 from . import chat as chat_ops
 from .decode import GenerateJob
 from .events import Checkpointed, Event, Interrupted, Stopped, Synced
+from .hooks import LogitHookSet
 from .plan import Plan
 from .sampling import Rng, SamplingPolicy
 from .transcript import Segment, Transcript, TranscriptView
@@ -190,26 +191,31 @@ class Session:
                         self._worker.cancel_event.clear()
         return interrupted
 
-    def _raw_round(self, max_tokens, sampling):
+    def _raw_round(self, max_tokens, sampling, hooks=None, stop_sequences=()):
         tokens = self._transcript.tokens
         if (yield from self._job_events(SyncJob(tokens))):
             return
         yield from self._job_events(GenerateJob(
             sampling or self._engine.sampling_defaults, self._rng,
-            max_tokens, self._transcript,
+            max_tokens, self._transcript, hooks=hooks,
+            stop_sequences=list(stop_sequences),
         ))
 
     def run_round(self, *, max_tokens: int = 50_000,
-                  sampling: SamplingPolicy | None = None) -> Iterator[Event]:
+                  sampling: SamplingPolicy | None = None,
+                  hooks: LogitHookSet | None = None,
+                  stop_sequences: Sequence[bytes] = ()) -> Iterator[Event]:
         with self._lock:
             if self._active_round:
                 raise EngineError("a round is open")
             self._active_round = True
         try:
             if self._transcript.chat:
-                yield from chat_ops.run_round(self, max_tokens, sampling)
+                yield from chat_ops.run_round(
+                    self, max_tokens, sampling, hooks, stop_sequences,
+                )
             else:
-                yield from self._raw_round(max_tokens, sampling)
+                yield from self._raw_round(max_tokens, sampling, hooks, stop_sequences)
         finally:
             with self._lock:
                 self._active_round = False
