@@ -70,7 +70,8 @@ def run_round(session, max_tokens, sampling, hooks=None, stop_sequences=()):
         yield from session._job_events(GenerateJob(
             sampling or session._engine.sampling_defaults, session._rng,
             max_tokens, session._transcript, think_mode=think, stream=stream,
-            hooks=hooks, stop_sequences=list(stop_sequences), resume=resuming,
+            hooks=hooks, logits_hooks=tuple(session._logits_hooks),
+            stop_sequences=list(stop_sequences), resume=resuming,
         ))
     finally:
         if stream is not None and stream.stop_sequence is not None:

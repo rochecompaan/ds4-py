@@ -32,7 +32,7 @@ def workers():
         worker.close()
 
 
-def run_step(workers, tokens, blocks, *, max_tokens=1000, chat=False):
+def run_step(workers, tokens, blocks, *, max_tokens=1000, chat=False, logits_hooks=()):
     worker = EngineWorker(
         FakeNative(script=scripted(tokens)), EngineConfig(Path("f"), ctx=1024),
     )
@@ -44,6 +44,7 @@ def run_step(workers, tokens, blocks, *, max_tokens=1000, chat=False):
     job = GenerateJob(
         SamplingPolicy(), Rng(1), max_tokens, transcript,
         think_mode=ThinkMode.NONE if chat else None, stream=stream,
+        logits_hooks=logits_hooks,
     )
     step = FakeMultiTokenStep(blocks)
     events, token_positions = [], []
@@ -142,3 +143,21 @@ def test_empty_block_after_kept_block_raises_without_changing_position(workers):
     assert str(error) == "decode returned no tokens"
     assert token_ids(events) == [98] and transcript.tokens == (5, 6, 98)
     assert worker.call(lambda e, s: s.pos()).result() == len(transcript) == 3
+
+
+def test_logits_hooks_fall_back_to_plain_step(workers):
+    reason, events, transcript, _worker, step, _positions, error = run_step(
+        workers, [98, 99], [[99]], logits_hooks=(lambda view: None,),
+    )
+    assert error is None and reason == "stop_token"
+    assert token_ids(events) == [98, 99] and transcript.tokens == (5, 6, 98, 99)
+    assert step.block_sizes == []
+
+
+def test_no_logits_hooks_keep_the_multi_token_step(workers):
+    reason, events, transcript, _worker, step, _positions, error = run_step(
+        workers, [98, 99], [[99]],
+    )
+    assert error is None and reason == "stop_token"
+    assert token_ids(events) == [98, 99] and transcript.tokens == (5, 6, 98, 99)
+    assert step.block_sizes == [2]

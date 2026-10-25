@@ -139,6 +139,37 @@ def test_session_abi_and_ownership(stub_engine):
     assert tokens == [1, 2, 3] and session.tokens() == [9]
     rng = ctypes.c_uint64(10)
     assert session.sample(0.5, 7, 0.75, 0.25, rng) == 42 and rng.value == 18
+    from array import array
+    values = array("f", [0.0]) * engine.info().vocab_size
+    session.copy_logits(values)
+    assert list(values[:4]) == [0.0, 1.0, 2.0, 3.0]
+    values[7] = 9.5
+    session.set_logits(values)
+    copied = array("f", [0.0]) * len(values)
+    session.copy_logits(copied)
+    assert copied[7] == pytest.approx(9.5)
+    c.stub_copy_logits_result(0)
+    with pytest.raises(EngineError, match="copy_logits failed"):
+        session.copy_logits(values)
+    c.stub_copy_logits_result(256)
+    doubles = array("d", [1.0]) * len(values)
+    session.set_logits(doubles)
+    session.copy_logits(values)
+    assert list(values) == pytest.approx([1.0] * len(values))
+    with pytest.raises(TypeError, match="contiguous float32"):
+        session.copy_logits(doubles)
+    with pytest.raises(TypeError, match="contiguous float32"):
+        session.copy_logits(memoryview(array("f", [0.0]) * 512)[::2])
+    strided_source = array("f", [0.0]) * 512
+    strided_source[::2] = array("f", [2.0]) * 256
+    session.set_logits(memoryview(strided_source)[::2])
+    session.copy_logits(values)
+    assert list(values) == pytest.approx([2.0] * len(values))
+    for bad in (array("f", [0.0]), array("f", [0.0]) * (len(values) + 1)):
+        with pytest.raises(ValueError, match="vocabulary size"):
+            session.copy_logits(bad)
+        with pytest.raises(ValueError, match="vocabulary size"):
+            session.set_logits(bad)
     assert engine.tokenize("text") == [7, 9]
     assert engine.token_text(7) == b"a\0b"
     snap = session.save_snapshot()

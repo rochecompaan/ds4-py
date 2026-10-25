@@ -59,10 +59,11 @@ class RoundStream:
     def observe(self, token, data, emit):
         self.sampled_tokens.append(token)
         self.snapshot = self.parser.feed(data)
+        was_thinking = self.decoder.thinking
         deltas = self.decoder.feed(data)
         self._match_deltas(deltas)
         if self.decoder.thinking:
-            self.think_tokens += 1
+            self.think_tokens = self.think_tokens + 1 if was_thinking else 1
         self._publish(deltas, emit)
 
     def mark_eos(self, token: int, text: bytes = b"", *,

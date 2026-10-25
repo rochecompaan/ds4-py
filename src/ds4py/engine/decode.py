@@ -7,6 +7,7 @@ from ds4py._native.protocol import EngineHandle, SessionHandle
 from ds4py.errors import EngineError
 from .events import Event, Token
 from .hooks import LogitHookSet
+from .logits import LogitsView
 from .pause import ControlSpan, Resume
 from .sampling import Rng, SamplingPolicy
 from .stream import RoundStream
@@ -29,6 +30,7 @@ class GenerateJob:
     think_mode: int | None = None
     stream: RoundStream | None = None
     hooks: LogitHookSet | None = None
+    logits_hooks: tuple[Callable[[LogitsView], None], ...] = ()
     stop_sequences: list[bytes] = field(default_factory=list)
     control: ControlSpan | None = None
     resume: bool = False
@@ -60,6 +62,13 @@ class DecodeContext:
         self._hooks_every_sample = hooks_every_sample
         self._accepted = 0
         self._committed = False
+        self._sampled_tokens = (
+            list(job.stream.sampled_tokens)
+            if job.logits_hooks and job.stream is not None else []
+        )
+        self._logits_view = (
+            LogitsView(session, engine.info().vocab_size) if job.logits_hooks else None
+        )
         self._verdict = Verdict.CONTINUE
         self._event_buffer = None
         self.finalized = False
@@ -88,6 +97,18 @@ class DecodeContext:
         hooks.before_sample(self._session, self.sampling(), thinking=thinking)
 
     def before_sample(self) -> None:
+        if self._logits_view is not None:
+            assert self._session is not None
+            stream = self._job.stream
+            self._logits_view._update(
+                position=self._session.pos(),
+                in_think=bool(stream and stream.decoder.thinking),
+                think_tokens=stream.think_tokens if stream is not None else 0,
+                parser_state=stream.snapshot.state if stream is not None else None,
+                sampled_tokens=self._sampled_tokens,
+            )
+            for hook in self._job.logits_hooks:
+                hook(self._logits_view)
         if self._hooks_every_sample:
             self._prepare_hooks()
 
@@ -142,6 +163,8 @@ class DecodeContext:
             stream.observe(token, text, self._publish)
         elif self._job.control.sequences:
             self._job.control.Feed(text)
+        if self._logits_view is not None:
+            self._sampled_tokens.append(token)
         if stream is not None and stream.malformed:
             self.finish("parser_error")
             verdict = Verdict.STOP_AFTER
@@ -221,6 +244,8 @@ def generate(engine: EngineHandle, session: SessionHandle, job: GenerateJob, *,
     limit = min(job.max_tokens, max(room - job.reserve, 0))
     limit_reason = "max_tokens" if job.max_tokens <= room - job.reserve else "context_reserve"
     decode_step = step or PlainStep()
+    if job.logits_hooks and not decode_step.hooks_every_sample:
+        decode_step = PlainStep()
     ctx = DecodeContext(
         engine, job, limit=limit, limit_reason=limit_reason,
         cancelled=cancelled, emit=emit, session=session,

@@ -170,6 +170,8 @@ class FakeSession(_Handle):
         super().__init__()
         self._engine, self._native, self._ctx = engine, engine._native, ctx
         self._tokens = []
+        self._logits: list[float] | None = None
+        self.logit_copies = self.logit_sets = 0
         self._prompt_length = 0
         self._valid = False
         self.calls: list[tuple] = []
@@ -179,6 +181,7 @@ class FakeSession(_Handle):
 
     def sync(self, tokens, *, progress=None, cancel=None):
         self._check()
+        self._logits = None
         if not tokens or len(tokens) >= self._ctx:
             raise EngineError("prompt must be nonempty and shorter than context")
         target = list(tokens)
@@ -203,6 +206,41 @@ class FakeSession(_Handle):
         self.calls.append(("sync", len(self._tokens) - start))
         return status
 
+    def _distribution(self):
+        self._check()
+        if not self._valid:
+            return None
+        if self._logits is None:
+            token = self._native.script(self._tokens[:self._prompt_length],
+                                        self._tokens[self._prompt_length:])
+            distribution = [0.0] * self._engine.info().vocab_size
+            if 0 <= token < len(distribution):
+                distribution[token] = 1.0
+            self._logits = distribution
+        return self._logits
+
+    def copy_logits(self, out):
+        self._check()
+        size = self._engine.info().vocab_size
+        if len(out) != size:
+            raise ValueError(f"logits buffer must equal the vocabulary size ({size})")
+        distribution = self._distribution()
+        if distribution is None:
+            raise EngineError("session checkpoint is invalid; sync first")
+        for index, value in enumerate(distribution):
+            out[index] = value
+        self.logit_copies += 1
+
+    def set_logits(self, values):
+        self._check()
+        size = self._engine.info().vocab_size
+        if len(values) != size:
+            raise ValueError(f"logits buffer must equal the vocabulary size ({size})")
+        if not self._valid:
+            raise EngineError("session checkpoint is invalid; sync first")
+        self._logits = [float(value) for value in values]
+        self.logit_sets += 1
+
     def sample(self, temperature, top_k, top_p, min_p, rng):
         self._check()
         if not self._valid:
@@ -214,14 +252,16 @@ class FakeSession(_Handle):
         value = ((value ^ (value >> 30)) * 0xBF58476D1CE4E5B9) & mask
         value = ((value ^ (value >> 27)) * 0x94D049BB133111EB) & mask
         rng.value = value ^ (value >> 31)
-        return self.argmax()
+        distribution = self._distribution()
+        if distribution is None:
+            return -1
+        return max(range(len(distribution)), key=distribution.__getitem__)
 
     def argmax(self):
-        self._check()
-        if not self._valid:
+        distribution = self._distribution()
+        if distribution is None:
             return -1
-        return self._native.script(self._tokens[:self._prompt_length],
-                                   self._tokens[self._prompt_length:])
+        return max(range(len(distribution)), key=distribution.__getitem__)
 
     def set_logit_hooks(self, hooks):
         self._hooks = hooks
@@ -247,6 +287,7 @@ class FakeSession(_Handle):
         if len(self._tokens) >= self._ctx:
             raise EngineError("context is full")
         self._tokens.append(token)
+        self._logits = None
         self.calls.append(("eval", token))
 
     def rewind(self, pos):
@@ -255,6 +296,7 @@ class FakeSession(_Handle):
             del self._tokens[max(0, pos):]
             self._valid = False
             self.calls.append(("rewind", pos))
+        self._logits = None
 
     def pos(self):
         self._check()
@@ -286,6 +328,7 @@ class FakeSession(_Handle):
     def invalidate(self):
         self._check()
         self._valid = False
+        self._logits = None
 
     def payload_bytes(self):
         self._check()
@@ -304,6 +347,7 @@ class FakeSession(_Handle):
         self._tokens = list(snap.tokens)
         self._prompt_length = snap.prompt_length
         self._valid = True
+        self._logits = None
 
     def close(self):
         self._assert_thread()

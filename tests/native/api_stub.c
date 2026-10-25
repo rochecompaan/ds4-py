@@ -9,9 +9,13 @@ struct ds4_session {
     ds4_tokens tokens;
     ds4_session_progress_fn progress, display;
     ds4_session_cancel_fn cancel;
+    float logits[256];
+    int logits_set;
     pthread_t owner;
 };
 static int frees, clears, snapshots, wrong_thread_frees, fail_snapshot;
+static int copy_logits_result = 256;
+void stub_copy_logits_result(int result) { copy_logits_result = result; }
 int stub_wrong_thread_frees(void) { return wrong_thread_frees; }
 void stub_fail_snapshot(int fail) { fail_snapshot = fail; }
 int stub_frees(void) { return frees; }
@@ -48,6 +52,17 @@ int ds4_session_sync(ds4_session *s, const ds4_tokens *t, char *err, size_t n) {
     return 0;
 }
 const ds4_tokens *ds4_session_tokens(ds4_session *s) { return &s->tokens; }
+int ds4_session_copy_logits(ds4_session *s, float *out, int cap) {
+    if (cap != 256) return -1;
+    if (!s->logits_set) for (int i = 0; i < 256; i++) s->logits[i] = (float)i;
+    memcpy(out, s->logits, sizeof(s->logits));
+    return copy_logits_result;
+}
+int ds4_session_set_logits(ds4_session *s, const float *logits, int n) {
+    if (n != 256) return 1;
+    memcpy(s->logits, logits, sizeof(s->logits)); s->logits_set = 1;
+    return 0;
+}
 int ds4_session_eval(ds4_session *s, int token, char *err, size_t n) {
     (void)s; (void)token; snprintf(err, n, "eval rejected"); return 1;
 }

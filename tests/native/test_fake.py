@@ -206,3 +206,47 @@ def test_thread_confinement_and_close():
         other.pos()
     with pytest.raises(EngineError, match="closed"):
         e.info()
+
+
+def test_fake_logits_can_be_copied_set_and_are_invalidated_by_eval():
+    from array import array
+
+    # The fake normally prefers 7, then 9, then EOS.
+    sequence = iter((7, 9, FAKE_EOS))
+    s = engine(script=lambda prompt, generated: next(sequence)).create_session(64)
+    s.sync([5, 6])
+    values = array("f", [0.0]) * s._engine.info().vocab_size
+    s.copy_logits(values)
+    assert (values[7], values[8]) == (1.0, 0.0)
+    values[8] = 3.0
+    s.set_logits(values)
+    assert s.sample(0.0, 0, 1.0, 0.0, ctypes.c_uint64(1)) == 8
+    s.eval(8)
+    s.copy_logits(values)
+    assert (values[8], values[9]) == (0.0, 1.0)
+    for bad in (array("f", [0.0]), array("f", [0.0]) * (len(values) + 1)):
+        with pytest.raises(ValueError, match="vocabulary size"):
+            s.copy_logits(bad)
+        with pytest.raises(ValueError, match="vocabulary size"):
+            s.set_logits(bad)
+
+
+@pytest.mark.parametrize("operation", ["sync", "rewind", "snapshot"])
+def test_fake_logits_cache_is_invalidated_by_state_changes(operation):
+    from array import array
+
+    s = engine(script=lambda prompt, generated: 7).create_session(64)
+    s.sync([5, 6])
+    values = array("f", [0.0]) * s._engine.info().vocab_size
+    s.copy_logits(values)
+    values[8] = 3.0
+    s.set_logits(values)
+    if operation == "sync":
+        s.sync([5, 6])
+    elif operation == "rewind":
+        s.rewind(s.pos())
+    else:
+        snapshot = s.save_snapshot()
+        s.load_snapshot(snapshot)
+        snapshot.close()
+    assert s.argmax() == 7

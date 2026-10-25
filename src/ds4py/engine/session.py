@@ -113,6 +113,7 @@ class Session:
         self._rng = Rng(engine.sampling_defaults.seed)
         self._lock = threading.Lock()
         self._active_round = False
+        self._logits_hooks = []
         self._paused_stream = None
         self._paused_control = None
 
@@ -162,6 +163,17 @@ class Session:
                 raise EngineError("a round is open")
             return chat_ops.append_system_note(self, text)
 
+    def add_logits_hook(self, hook: Callable) -> None:
+        """Register a lazy pre-sample hook on the worker-thread decode path.
+
+        The hook must not call engine, session, harness, cancellation, or
+        blocking-I/O APIs; those calls can deadlock the native worker.
+        """
+        with self._lock:
+            if self._active_round:
+                raise EngineError("cannot add a logits hook during an active round")
+            self._logits_hooks.append(hook)
+
     def _job_events(self, job) -> Iterator[Event]:
         # submit may fail before there is an iterator to drain.
         events = self._worker.submit(job)
@@ -203,6 +215,7 @@ class Session:
             job = GenerateJob(
                 sampling or self._engine.sampling_defaults, self._rng,
                 max_tokens, self._transcript, hooks=hooks,
+                logits_hooks=tuple(self._logits_hooks),
                 stop_sequences=list(stop_sequences), control=control, resume=resuming,
             )
             control = job.control

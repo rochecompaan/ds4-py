@@ -1,5 +1,6 @@
 """Thread-confined ctypes lifecycle and ownership adapters for ds4."""
 import ctypes as C
+from collections.abc import Sequence
 from contextlib import contextmanager
 import fcntl
 import os
@@ -416,6 +417,14 @@ class NativeSession(_Handle):
         token = self._call("ds4_session_argmax")
         self._raise_hook_error()
         return token
+
+    def copy_logits(self, out) -> None:
+        from .logits import copy_logits
+        copy_logits(self, out)
+
+    def set_logits(self, values: Sequence[float]) -> None:
+        from .logits import set_logits
+        set_logits(self, values)
 
     def eval(self, token):
         self._error_call("ds4_session_eval", token)
