@@ -221,6 +221,9 @@ class NativeEngine(_Handle):
     def is_stop(self, token):
         return self._call("ds4_token_is_stop", token)
 
+    def is_stop_for_think_mode(self, token, mode):
+        return self._call("ds4_token_is_stop_for_think_mode", token, mode)
+
     def create_session(self, ctx):
         self._assert_thread()
         if not self.raw:

@@ -190,6 +190,15 @@ class Session:
                         self._worker.cancel_event.clear()
         return interrupted
 
+    def _raw_round(self, max_tokens, sampling):
+        tokens = self._transcript.tokens
+        if (yield from self._job_events(SyncJob(tokens))):
+            return
+        yield from self._job_events(GenerateJob(
+            sampling or self._engine.sampling_defaults, self._rng,
+            max_tokens, self._transcript,
+        ))
+
     def run_round(self, *, max_tokens: int = 50_000,
                   sampling: SamplingPolicy | None = None) -> Iterator[Event]:
         with self._lock:
@@ -197,13 +206,10 @@ class Session:
                 raise EngineError("a round is open")
             self._active_round = True
         try:
-            tokens = self._transcript.tokens
-            if (yield from self._job_events(SyncJob(tokens))):
-                return
-            yield from self._job_events(GenerateJob(
-                sampling or self._engine.sampling_defaults, self._rng,
-                max_tokens, self._transcript,
-            ))
+            if self._transcript.chat:
+                yield from chat_ops.run_round(self, max_tokens, sampling)
+            else:
+                yield from self._raw_round(max_tokens, sampling)
         finally:
             with self._lock:
                 self._active_round = False

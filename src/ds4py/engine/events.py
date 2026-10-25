@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 
 from .plan import Plan
+from .tool_syntax.model import ToolCall
 
 
 @dataclass(frozen=True)
@@ -53,8 +54,23 @@ class Stopped:
     reason: str
 
 
+@dataclass(frozen=True)
+class Thinking:
+    on: bool
+
+
+@dataclass(frozen=True)
+class ToolSyntax:
+    state: str
+
+
+@dataclass(frozen=True)
+class ToolCalls:
+    calls: tuple[ToolCall, ...]
+
+
 STOP_REASONS = (
     "stop_token", "tool_call_complete", "max_tokens", "context_reserve",
     "interrupted", "parser_error", "context_exhausted",
 )
-Event = Prefill | Synced | Interrupted | Checkpointed | Dropped | Token | Stopped
+Event = Prefill | Synced | Interrupted | Checkpointed | Dropped | Token | Stopped | TextDelta | Thinking | ToolSyntax | ToolCalls

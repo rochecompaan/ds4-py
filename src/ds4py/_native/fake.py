@@ -137,6 +137,10 @@ class FakeEngine(_Handle):
         self._check()
         return token == FAKE_EOS
 
+    def is_stop_for_think_mode(self, token, mode):
+        self._check()
+        return token == FAKE_EOS
+
     def create_session(self, ctx):
         self._check()
         session = FakeSession(self, ctx)
@@ -169,6 +173,7 @@ class FakeSession(_Handle):
         self._prompt_length = 0
         self._valid = False
         self.calls: list[tuple] = []
+        self.samples: list[tuple] = []
 
     def sync(self, tokens, *, progress=None, cancel=None):
         self._check()
@@ -200,6 +205,7 @@ class FakeSession(_Handle):
         self._check()
         if not self._valid:
             return -1
+        self.samples.append((temperature, top_k, top_p, min_p))
         # SplitMix64: deterministic state evolution, independent of the script.
         mask = (1 << 64) - 1
         value = (rng.value + 0x9E3779B97F4A7C15) & mask

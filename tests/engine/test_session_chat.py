@@ -1,18 +1,19 @@
+import threading
 from dataclasses import replace
 
 import ds4py
 import pytest
 
 from ds4py import ThinkMode
-from ds4py._native.fake import FakeEngine, FakeNative
-from ds4py._native.fake_chat import SPECIAL_TOKENS
+from ds4py._native.fake import FAKE_EOS, FakeEngine, FakeNative
+from ds4py._native.fake_chat import SPECIAL_TOKENS, tokenize_rendered
 from ds4py.engine.chat import append_assistant_prefix
-from ds4py.engine.events import Token
+from ds4py.engine.events import Prefill, Stopped, Synced, Token, ToolCalls
 from ds4py.engine.prefix import PrefixTurn
 from ds4py.errors import EngineError
 
 
-def fake_engine(family="deepseek4"):
+def fake_engine(family="deepseek4", script=None, cancel=None):
     info = replace(
         FakeNative()._info,
         family=family,
@@ -20,11 +21,17 @@ def fake_engine(family="deepseek4"):
         is_glm_dsa=family == "glm",
         is_qwen4=family == "qwen",
     )
-    return ds4py.open("f.gguf", ctx=1024, think=ThinkMode.NONE, native=FakeNative(info=info))
+    native = FakeNative(info=info) if script is None else FakeNative(info=info, script=script)
+    return ds4py.open("f.gguf", ctx=1024, think=ThinkMode.NONE, native=native, cancel=cancel)
 
 
 def decode(engine, tokens):
     return b"".join(engine.token_text(token) for token in tokens).decode()
+
+
+def scripted_text(text):
+    tokens = tuple(tokenize_rendered(text))
+    return lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
 
 @pytest.mark.parametrize(
@@ -176,3 +183,79 @@ def test_low_level_token_append_leaves_raw_mode_unchanged():
         assert not session.transcript.chat
         with pytest.raises(EngineError, match="chat is not initialized"):
             session.append_user("chat")
+
+
+@pytest.mark.parametrize("family", ["deepseek4", "deepseek41", "glm", "qwen"])
+def test_chat_run_round_syncs_prefix_and_closes_assistant_turn(family):
+    with fake_engine(family) as engine:
+        session = engine.session()
+        session.start_chat()
+        before = len(session.transcript)
+        events = list(session.run_round(max_tokens=10))
+        significant = [event for event in events if not isinstance(event, Prefill)]
+        synced = next(event for event in significant if isinstance(event, Synced))
+        segments = session.transcript.segments
+        prefix = next(segment for segment in segments if segment.kind == "assistant_prefix")
+        assistant = next(segment for segment in segments if segment.kind == "assistant")
+        assert prefix.start == before and synced.pos == prefix.end
+        assert synced.prefilled == synced.pos
+        assert [event.id for event in significant if isinstance(event, Token)] == engine.tokenize("ok")
+        assert decode(engine, session.transcript.tokens[assistant.start:assistant.end]) == "ok"
+        assert significant[-1] == Stopped("stop_token")
+        suffix = ["assistant_prefix", "assistant"] + ([] if family == "glm" else ["eos"])
+        assert [segment.kind for segment in segments[-len(suffix):]] == suffix
+        eos_tokens = 0 if family == "glm" else 1
+        assert session.ctx_used == len(session.transcript) - eos_tokens
+
+
+def test_closing_chat_round_drains_worker_before_eos_close():
+    with fake_engine() as engine:
+        session = engine.session()
+        session.start_chat()
+        events = session.run_round()
+        for event in events:
+            if isinstance(event, Token):
+                break
+        events.close()
+        kinds = [segment.kind for segment in session.transcript.segments]
+        assert kinds[-2:] == ["assistant", "eos"] and kinds.count("eos") == 1
+        session.append_user("next")
+        assert session.transcript.segments[-1].kind == "user"
+
+
+def test_public_chat_round_emits_calls_before_stopped_then_closes_turn():
+    text = "<tool_call><function=read><parameter=path>/tmp/x</parameter></function></tool_call>"
+    with fake_engine("qwen", script=scripted_text(text)) as engine:
+        session = engine.session()
+        session.start_chat()
+        events = list(session.run_round())
+        calls = next(event for event in events if isinstance(event, ToolCalls))
+        assert calls.calls[0].name == "read" and calls.calls[0].args["path"] == "/tmp/x"
+        assert events[-1] == Stopped("tool_call_complete")
+        assert events.index(calls) == len(events) - 2
+        assistant = next(segment for segment in session.transcript.segments if segment.kind == "assistant")
+        assert list(session.transcript.tokens[assistant.start:assistant.end]) == tokenize_rendered(text)
+        assert session.transcript.segments[-1].kind == "eos"
+
+
+def test_chat_caller_limit_and_interruption_close_turn_once():
+    with fake_engine() as engine:
+        session = engine.session()
+        session.start_chat()
+        events = list(session.run_round(max_tokens=0))
+        assert events[-1] == Stopped("max_tokens")
+        kinds = [segment.kind for segment in session.transcript.segments]
+        assert kinds[-2:] == ["assistant_prefix", "eos"] and "assistant" not in kinds
+
+    cancel = threading.Event()
+    def interrupted(prompt, generated):
+        if len(generated) == 1:
+            cancel.set()
+        return ord("a") + 1
+    with fake_engine(script=interrupted, cancel=cancel) as engine:
+        session = engine.session()
+        session.start_chat()
+        events = list(session.run_round())
+        assert events[-1] == Stopped("interrupted")
+        assert [segment.kind for segment in session.transcript.segments][-2:] == ["assistant", "eos"]
+        assert [segment.kind for segment in session.transcript.segments].count("eos") == 1

@@ -1,6 +1,9 @@
 """Session-level chat helpers; these functions own transcript mutations."""
 from ds4py.errors import EngineError
+from .decode import GenerateJob
 from .prompt import PromptBuilder
+from .stream import RoundStream
+from .worker import SyncJob
 
 
 def _append(session, tokens, kind):
@@ -50,6 +53,22 @@ def append_prefix(session, turns) -> None:
         _append(session, tokens, turn.role)
         if turn.role == "assistant":
             append_assistant_end(session)
+
+
+def run_round(session, max_tokens, sampling):
+    append_assistant_prefix(session)
+    try:
+        tokens = session._transcript.tokens
+        if (yield from session._job_events(SyncJob(tokens))):
+            return
+        think = session._engine.think
+        stream = RoundStream(session._engine.info, think)
+        yield from session._job_events(GenerateJob(
+            sampling or session._engine.sampling_defaults, session._rng,
+            max_tokens, session._transcript, think_mode=think, stream=stream,
+        ))
+    finally:
+        append_assistant_end(session)
 
 
 def append_assistant_prefix(session):
