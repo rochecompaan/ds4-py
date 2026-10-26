@@ -1,5 +1,7 @@
 # Development environment
 
+See [Testing ds4-py](testing.md) for backend selection, native checks, and live replay instructions.
+
 Install [Nix](https://nixos.org/download/) and [devenv](https://devenv.sh/getting-started/).
 From this checkout, enter the environment:
 
