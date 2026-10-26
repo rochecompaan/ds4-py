@@ -118,6 +118,7 @@ def _run_round(engine, policy, rng, ordinal, round):
     events = list(engine._worker.submit(GenerateJob(
         policy, rng, max_tokens, transcript,
         reserve=reserve, think_mode=round.think, stream=stream,
+        control=stream.control,
     )))
     # For a C-owned context/edit boundary, an unfinished parser at the token
     # limit is not itself a parity failure; only the partial prefix must match.
