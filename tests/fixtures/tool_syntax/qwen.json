@@ -70,5 +70,12 @@
     "input": "<tool_call><function=list><parameter= \n>x</parameter></function></tool_call>",
     "state": "ERROR",
     "calls": []
+  },
+  {
+    "source": "C live trace agentclinic-easy-project-s1 global round 14 (tool_round=3)",
+    "trace_sha256": "c9f599ef764d69f72df47819f51fdfd83be5e97c82e658051a7249a418fed016",
+    "input": "Run the tests.\n</think>\n\n<tool_call>\n<function=bash>\n<parameter=command>\nuv run --frozen pytest -v 2>&1 | tail -15\n</parameter>\n</function>\n</tool_call>",
+    "state": "DONE",
+    "calls": [{"name": "bash", "args": {"command": "uv run --frozen pytest -v 2>&1 | tail -15"}}]
   }
 ]
