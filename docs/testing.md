@@ -24,9 +24,9 @@ uv sync --dev
 uv run pytest -m "not build and not live" -q
 ```
 
-These tests need no ds4 source tree, native library, or model.
-They test the Python code and synthetic native contracts.
-They do not prove that model inference works on your hardware.
+The above `pytest` run needs no ds4 source tree, native library, or model.
+It tests the Python code and synthetic native contracts.
+It does not prove that model inference works on your hardware.
 
 ## Choose a backend
 
