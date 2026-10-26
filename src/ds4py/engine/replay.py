@@ -138,6 +138,8 @@ class _Reader:
             return
         if text.startswith("tokens label="):
             self.start_block(text)
+        elif text == "prefill sync done" or text.startswith("prefill sync done "):
+            pass
         elif text.startswith("prefill "):
             self.prefill(text)
         elif text.startswith("token index="):
@@ -261,7 +263,12 @@ class _Reader:
             int(value) for value in match.groups()[:5]
         )
         think = _think_mode(match.group(6), self, self.line)
-        if number != len(self.rounds) + 1:
+        if self.rounds:
+            next_number = self.rounds[-1].number + 1
+            valid_number = number == 0 or number == next_number
+        else:
+            valid_number = number in (0, 1)
+        if not valid_number:
             self.error("non-contiguous tool round")
         if cached < 0:
             self.error("negative cached prefix length")

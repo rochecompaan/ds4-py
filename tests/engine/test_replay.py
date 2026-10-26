@@ -97,6 +97,39 @@ def test_early_edit_round_is_prefix_only():
     assert round.context_limited is False
 
 
+def test_ignores_prefill_sync_status(tmp_path):
+    path = mutate(
+        tmp_path, BASIC, FIRST_PREFILL,
+        "prefill sync done prompt=4 cached=0 suffix=4 rc=0 1.0 ms\n"
+        + STAMP + FIRST_PREFILL,
+    )
+
+    trace = read(path)
+
+    assert len(trace.rounds) == 4
+
+
+def test_accepts_c_round_numbers_across_user_turns(tmp_path):
+    data = BASIC.read_text()
+    for old, new in ((1, 0), (2, 1), (3, 2), (4, 3)):
+        data = data.replace(f"tool_round={old}", f"tool_round={new}")
+    data += (
+        STAMP + "prefill tool_round=0 transcript=12 prompt=12 cached=11 suffix=1 think=none\n"
+        + STAMP + "tokens label=prefill_suffix start=11 len=12\n"
+        + STAMP + "token index=11 id=70 bytes=1 text=\"F\" hex=46\n"
+        + STAMP + "token index=1 id=71 bytes=1 text=\"G\" hex=47\n"
+        + STAMP + "generation finished tool_round=0 generated=1 carried=0 context_limited=0\n"
+    )
+    path = tmp_path / "zero-based.trace"
+    path.write_text(data)
+
+    trace = read(path)
+
+    assert [round.number for round in trace.rounds] == [0, 1, 2, 3, 0]
+    assert trace.rounds[-1].prompt == (10, 11, 12, 13, 20, 21, 99, 30, 50, 51, 52, 70)
+    assert trace.rounds[-1].sampled == (71,)
+
+
 def test_missing_initial_prompt_is_rejected(tmp_path):
     lines = BASIC.read_text().splitlines(keepends=True)
     initial = next(i for i, line in enumerate(lines) if "initial_system_prompt" in line)
