@@ -1,5 +1,6 @@
 import threading
 from array import array
+from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -11,6 +12,7 @@ from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.engine.events import Stopped, Token, ToolCalls, Thinking
+from ds4py.engine.logits import LogitsView
 from ds4py.errors import EngineError
 
 
@@ -49,6 +51,36 @@ def test_no_hooks_never_copy_logits():
         native = native_session(session)
         assert list(session.run_round())[-1] == Stopped("stop_token")
         assert native.logit_copies == 0
+
+
+def test_sampled_tokens_materialize_only_on_access():
+    class CountingSequence(Sequence):
+        def __init__(self, values):
+            self.values = values
+            self.iterations = 0
+
+        def __len__(self):
+            return len(self.values)
+
+        def __getitem__(self, index):
+            return self.values[index]
+
+        def __iter__(self):
+            self.iterations += 1
+            return iter(self.values)
+
+    tokens = CountingSequence([7, 8, 9])
+    view = LogitsView(object(), vocab_size=1)
+    view._update(
+        position=3, in_think=False, think_tokens=0, parser_state=None,
+        sampled_tokens=tokens,
+    )
+    assert tokens.iterations == 0
+
+    snapshot = view.sampled_tokens
+    assert snapshot == (7, 8, 9)
+    assert view.sampled_tokens is snapshot
+    assert tokens.iterations == 1
 
 
 def test_logits_view_reuses_one_buffer_and_validates_lengths():

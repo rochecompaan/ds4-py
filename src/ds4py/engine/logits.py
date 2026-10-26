@@ -24,7 +24,8 @@ class LogitsView:
         self._in_think = False
         self._think_tokens = 0
         self._parser_state = None
-        self._sampled_tokens: tuple[int, ...] = ()
+        self._sampled_tokens: Sequence[int] = ()
+        self._sampled_snapshot: tuple[int, ...] | None = None
 
     @property
     def position(self) -> int:
@@ -49,7 +50,9 @@ class LogitsView:
     @property
     def sampled_tokens(self) -> tuple[int, ...]:
         """Immutable history of committed sampled IDs for this assistant round."""
-        return self._sampled_tokens
+        if self._sampled_snapshot is None:
+            self._sampled_snapshot = tuple(self._sampled_tokens)
+        return self._sampled_snapshot
 
     def _update(
         self, *, position, in_think, think_tokens, parser_state, sampled_tokens
@@ -58,7 +61,8 @@ class LogitsView:
         self._in_think = in_think
         self._think_tokens = think_tokens
         self._parser_state = parser_state
-        self._sampled_tokens = tuple(sampled_tokens)
+        self._sampled_tokens = sampled_tokens
+        self._sampled_snapshot = None
 
     def logits(self):
         """Copy and return a view of this invocation's reusable float buffer."""
