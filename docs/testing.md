@@ -4,11 +4,18 @@ This guide covers portable tests, native library checks, and live replay parity.
 Run the commands from the root of a ds4-py checkout.
 Check out the revision that you want to test before you start.
 
-## Install the prerequisites
+## Enter the development environment
 
-Install Git, `uv`, a C compiler, and Make.
-On macOS, run `xcode-select --install` to install the compiler, Make, and the macOS SDK.
-The next section lists the extra requirements for GPU backends.
+Follow [Development environment](development.md) to install Nix and devenv.
+From the ds4-py checkout, enter the project environment:
+
+```bash
+devenv shell
+```
+
+The environment provides Git, `uv`, Python, a C compiler, and Make.
+Run all remaining commands inside this environment.
+It does not provide ds4 source trees, GPU toolkits, or model files.
 
 Run the portable tests before you build a native library:
 
@@ -29,7 +36,7 @@ Pass the backend explicitly because the build defaults to Metal on macOS and CPU
 
 | `BACKEND` value | Choose this backend when | Extra requirements |
 | --- | --- | --- |
-| `cpu` | You want a CPU baseline or have no supported GPU. | None beyond the common prerequisites. |
+| `cpu` | You want a CPU baseline or have no supported GPU. | None beyond the development environment. |
 | `metal` | Your Mac supports Metal. | macOS, the macOS SDK, and Apple Command Line Tools. |
 | `cuda` | Your machine has a supported NVIDIA GPU. | The CUDA toolkit and its `nvcc` compiler. |
 
