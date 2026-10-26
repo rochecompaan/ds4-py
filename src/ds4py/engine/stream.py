@@ -49,9 +49,9 @@ class RoundStream:
         # markers outside argument values are withheld from the matcher.
         markers = (b"<think>", b"</think>")
         for byte in data:
-            literal = self.snapshot.state == "PARAM_VALUE"
-            thinking = self.snapshot.in_think
-            self.snapshot = self.parser.feed(bytes([byte]))
+            literal = self.parser.state == "PARAM_VALUE"
+            thinking = self.parser.in_think
+            self.parser._feed_byte(byte)
             if literal:
                 if not thinking:
                     self._match_control(bytes([byte]))
@@ -67,6 +67,7 @@ class RoundStream:
                 if not thinking:
                     self._match_control(bytes(self._control_pending[:1]))
                 del self._control_pending[:1]
+        self.snapshot = self.parser._snapshot()
 
     def observe(self, token, data, emit):
         self.sampled_tokens.append(token)

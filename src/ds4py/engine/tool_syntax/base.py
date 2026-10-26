@@ -58,16 +58,20 @@ class ToolParser:
         for byte in bytes(data):
             if self.state in ("DONE", "ERROR"):
                 break
-            if self._active:
-                self.raw.append(byte)
-                self._parse()
-                if self.state == "PARAM_VALUE":
-                    self._update_param_close_prefix()
-                else:
-                    self.param_close_prefix = False
-            else:
-                self._feed_inactive(byte)
+            self._feed_byte(byte)
         return self._snapshot()
+
+    def _feed_byte(self, byte: int) -> None:
+        """Apply one byte without copying the parser's accumulated state."""
+        if self._active:
+            self.raw.append(byte)
+            self._parse()
+            if self.state == "PARAM_VALUE":
+                self._update_param_close_prefix()
+            else:
+                self.param_close_prefix = False
+        else:
+            self._feed_inactive(byte)
 
     def _feed_inactive(self, byte):
         self._pending.append(byte)

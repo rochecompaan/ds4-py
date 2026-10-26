@@ -197,6 +197,36 @@ def test_raw_and_chat_use_their_respective_stop_bindings():
             assert engine.chat_stops == [(0, ThinkMode.HIGH)]
 
 
+def test_stream_observe_snapshots_once_per_token():
+    stream = RoundStream(FakeNative()._info, ThinkMode.NONE)
+    prefix = (
+        '<｜DSML｜tool_calls><｜DSML｜invoke name="read">'
+        '<｜DSML｜parameter name="path" string="true">'
+    ).encode()
+    for byte in prefix:
+        stream.observe(byte, bytes([byte]), lambda event: None)
+    assert stream.snapshot.state == "PARAM_VALUE"
+
+    snapshots = []
+    original_snapshot = stream.parser._snapshot
+
+    def counted_snapshot():
+        snapshot = original_snapshot()
+        snapshots.append(snapshot)
+        return snapshot
+
+    stream.parser._snapshot = counted_snapshot
+    events = []
+    stream.observe(999, b"a<b", events.append)
+
+    assert len(snapshots) == 1
+    assert stream.snapshot is snapshots[0]
+    assert stream.snapshot.state == "PARAM_VALUE"
+    assert stream.snapshot.raw == prefix + b"a<b"
+    assert stream.snapshot.calls == () and stream.snapshot.error is None
+    assert events == [TextDelta("a<b", False)]
+
+
 def test_commit_order_is_eval_transcript_token_then_stream_events():
     engine = StopEngine({7: b"<think>", 8: b"x"})
     session, transcript, observed = StopSession([7, 8, 0]), Transcript(), []
