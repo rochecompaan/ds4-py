@@ -8,16 +8,23 @@ from .tool_syntax.text import escape_tool_text
 
 @dataclass(frozen=True)
 class RenderedSegment:
+    """Internal rendered delta and transcript kind; not a second history."""
     kind: str
     tokens: list[int]
 
 
 class PromptBuilder:
+    """Build deltas without mutating history; native work dispatches to the engine worker.
+
+    Call from outside the worker, between rounds. Trusted markup is rendered;
+    caller payloads are tokenized as plain text.
+    """
     def __init__(self, engine):
         self.engine = engine
         self.family = engine.info.family
 
     def begin(self, tools=(), instructions=None) -> list[RenderedSegment]:
+        """Build initial chat segments for definitions and optional plain instructions."""
         segments = []
         prefix = []
 
@@ -62,6 +69,7 @@ class PromptBuilder:
         return self.engine.tokenize("<|im_end|>", rendered=True) + self.engine.tokenize("\n")
 
     def message(self, prefix, role, text) -> list[int]:
+        """Render one role delta against prefix, keeping text untrusted."""
         if role in ("tool", "function"):
             return self._tool_message(prefix, text)
         if self.family == "glm":
@@ -105,10 +113,13 @@ class PromptBuilder:
         return self.engine._render_message(prefix, "tool", text)
 
     def assistant_prefix(self, prefix) -> list[int]:
+        """Build the family/mode assistant opener through the worker."""
         return self.engine._assistant_prefix(prefix, self.engine.think)
 
     def tool_results(self, prefix, results) -> list[int]:
+        """Render all results as one message joined by two newlines."""
         return self._tool_message(prefix, "\n\n".join(results))
 
     def append_assistant_end(self) -> list[int]:
+        """Return the family EOS delta (empty for GLM) through the worker."""
         return [] if self.family == "glm" else [self.engine._eos()]

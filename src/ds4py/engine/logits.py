@@ -28,22 +28,27 @@ class LogitsView:
 
     @property
     def position(self) -> int:
+        """Native position before this sample."""
         return self._position
 
     @property
     def in_think(self) -> bool:
+        """Parser/control thinking state, not the display decoder state."""
         return self._in_think
 
     @property
     def think_tokens(self) -> int:
+        """Committed tokens counted in the current think block."""
         return self._think_tokens
 
     @property
     def parser_state(self):
+        """Current parser phase, or None for raw rounds."""
         return self._parser_state
 
     @property
     def sampled_tokens(self) -> tuple[int, ...]:
+        """Immutable history of committed sampled IDs for this assistant round."""
         return self._sampled_tokens
 
     def _update(

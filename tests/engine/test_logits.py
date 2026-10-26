@@ -1,6 +1,7 @@
 import threading
 from array import array
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,7 @@ import ds4py
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
-from ds4py.engine.events import Stopped, Token
+from ds4py.engine.events import Stopped, Token, ToolCalls, Thinking
 from ds4py.errors import EngineError
 
 
@@ -100,7 +101,7 @@ def test_hook_state_tracks_only_committed_tokens():
     with fake_session(
         scripted(*tokens),
         chat=True,
-        think=ThinkMode.NONE,
+        think=ThinkMode.HIGH,
     ) as session:
         prompt_length = len(session.transcript.tokens)
         # run_round appends the assistant prefix before the first hook.
@@ -130,7 +131,7 @@ def test_hook_state_tracks_only_committed_tokens():
             initial_position + index for index in range(len(tokens) + 1)
         ]
         assert [state[1] for state in states] == [
-            False,
+            True,
             True,
             True,
             False,
@@ -199,3 +200,22 @@ def test_installing_a_hook_during_an_active_round_is_refused():
             session.add_logits_hook(lambda view: None)
         events.close()
         session.add_logits_hook(lambda view: None)
+
+
+def test_literal_think_in_tool_argument_does_not_change_hook_control_state():
+    text = '<tool_call>read<arg_key>path</arg_key><arg_value><think>x</arg_value></tool_call>'
+    tokens = [byte + 1 for byte in text.encode()]
+    states = []
+    with ds4py.open('f.gguf', think=ThinkMode.NONE,
+                    native=FakeNative(script=scripted(*tokens), info=replace(
+                        FakeNative()._info, family='glm', is_glm_dsa=True))) as engine:
+        session = engine.session()
+        session.append_user('read')
+        session.add_logits_hook(lambda view: states.append((view.in_think, view.think_tokens)))
+        events = list(session.run_round())
+    assert events[-1] == Stopped('tool_call_complete')
+    assert len(states) == len(tokens) + 1
+    assert all(state == (False, 0) for state in states)
+    assert not any(isinstance(event, Thinking) for event in events)
+    calls = next(event.calls for event in events if isinstance(event, ToolCalls))
+    assert calls[0].args == {'path': '<think>x'} and calls[0].raw == text

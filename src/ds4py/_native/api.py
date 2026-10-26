@@ -192,20 +192,25 @@ class NativeEngine(_Handle):
             self._lib.fn("ds4_tokens_free")(C.byref(tokens))
 
     def chat_begin(self):
+        """Return the chat-begin delta on the owning worker thread."""
         return chat.append_delta(self, (), "ds4_chat_begin")
 
     def think_prefix(self, prefix, mode):
+        """Return only the appended think delta; worker-thread use only."""
         return chat.append_delta(self, prefix, "ds4_chat_append_think_prefix", mode)
 
     def render_message(self, prefix, role, content):
+        """Return the native role/message delta without changing prefix; worker only."""
         return chat.append_delta(
             self, prefix, "ds4_chat_append_message", role.encode(), content.encode(),
         )
 
     def assistant_prefix(self, prefix, mode):
+        """Return only the appended assistant opener; worker-thread use only."""
         return chat.append_delta(self, prefix, "ds4_chat_append_assistant_prefix", mode)
 
     def qwen_reasoning_effort(self, mode):
+        """Copy borrowed effort text to Python, or return None; worker only."""
         return chat.qwen_reasoning_effort(self, mode)
 
     def token_text(self, token):
@@ -223,6 +228,7 @@ class NativeEngine(_Handle):
         return self._call("ds4_token_is_stop", token)
 
     def is_stop_for_think_mode(self, token, mode):
+        """Apply the native mode-aware stop policy on the owning worker."""
         return self._call("ds4_token_is_stop_for_think_mode", token, mode)
 
     def create_session(self, ctx):
@@ -274,95 +280,6 @@ class NativeSession(_Handle):
         self._progress = self._cancel = self._callback_error = None
         self._progress_fn = structs.PROGRESS_FN(self._on_progress)
         self._cancel_fn = structs.CANCEL_FN(self._on_cancel)
-        self._hook_error = None
-        self._logit_fn = structs.LOGIT_HOOK_FN()
-        self._sampling_fn = structs.SAMPLING_HOOK_FN()
-        self._argmax_fn = structs.ARGMAX_FN()
-        self._chain_ids = self._chain_eff = self._chain_fn = None
-        self._argmax_context = None
-
-    @property
-    def sampling_hook(self):
-        return self._sampling_fn
-
-    def set_logit_hooks(self, hooks) -> None:
-        import weakref
-        hooks_ref, session_ref = weakref.ref(hooks), weakref.ref(self)
-        self._hook_error = None
-
-        def capture(exc):
-            session = session_ref()
-            if session is not None and session._hook_error is None:
-                session._hook_error = exc
-
-        def logit(rctx, token):
-            hooks = hooks_ref()
-            if hooks is None:
-                return 0
-            try:
-                return hooks.logit(rctx, token)
-            except BaseException as exc:
-                capture(exc)
-                return 0
-
-        def sampling(eff, candidates, count):
-            hooks = hooks_ref()
-            if hooks is None:
-                return
-            try:
-                hooks.sampling(eff, candidates, count)
-            except BaseException as exc:
-                capture(exc)
-
-        def argmax(ctx):
-            hooks = hooks_ref()
-            if hooks is None:
-                return
-            try:
-                hooks.argmax(ctx)
-            except BaseException as exc:
-                capture(exc)
-
-        self._logit_fn = structs.LOGIT_HOOK_FN(logit)
-        self._sampling_fn = structs.SAMPLING_HOOK_FN(sampling)
-        self._argmax_fn = structs.ARGMAX_FN(argmax)
-        self._call("ds4_session_set_logit_hook", self._logit_fn, None)
-        self._call("ds4_session_set_sampling_hook", self._sampling_fn, None)
-        self._call("ds4_session_set_argmax_fn", self._argmax_fn, None)
-
-    def clear_logit_hooks(self) -> None:
-        self._call("ds4_session_set_logit_hook", structs.LOGIT_HOOK_FN(), None)
-        self._call("ds4_session_set_sampling_hook", structs.SAMPLING_HOOK_FN(), None)
-        self._call("ds4_session_set_argmax_fn", structs.ARGMAX_FN(), None)
-        self._call("ds4_session_set_argmax_context", None)
-        self._logit_fn = structs.LOGIT_HOOK_FN()
-        self._sampling_fn = structs.SAMPLING_HOOK_FN()
-        self._argmax_fn = structs.ARGMAX_FN()
-        self._chain_ids = self._chain_eff = self._chain_fn = None
-        self._argmax_context = self._hook_error = None
-
-    def chain_consts(self, temperature, top_k, min_p, top_p):
-        eff = self._call("ds4_session_chain_consts", temperature, top_k, min_p, top_p)
-        self._chain_eff = eff
-        return eff
-
-    def set_sampling_chain(self, eff, ids, fn) -> None:
-        ids = list(ids)
-        array = (C.c_int * len(ids))(*ids) if ids else None
-        callback = structs.SAMPLING_HOOK_FN() if fn is None else fn
-        self._chain_ids, self._chain_eff, self._chain_fn = array, eff, callback
-        self._call(
-            "ds4_session_set_sampling_chain", eff, array, len(ids), callback,
-        )
-
-    def set_argmax_context(self, ctx) -> None:
-        self._argmax_context = ctx
-        self._call("ds4_session_set_argmax_context", C.byref(ctx) if ctx is not None else None)
-
-    def _raise_hook_error(self):
-        if self._hook_error is not None:
-            error, self._hook_error = self._hook_error, None
-            raise error
 
     def _on_progress(self, ud, event, current, total):
         try:
@@ -410,19 +327,19 @@ class NativeSession(_Handle):
 
     def sample(self, temperature, top_k, top_p, min_p, rng):
         token = self._call("ds4_session_sample", temperature, top_k, top_p, min_p, C.byref(rng))
-        self._raise_hook_error()
         return token
 
     def argmax(self):
         token = self._call("ds4_session_argmax")
-        self._raise_hook_error()
         return token
 
     def copy_logits(self, out) -> None:
+        """Copy into a vocabulary-sized writable float32 buffer; worker only."""
         from .logits import copy_logits
         copy_logits(self, out)
 
     def set_logits(self, values: Sequence[float]) -> None:
+        """Replace logits from a vocabulary-sized sequence; worker only."""
         from .logits import set_logits
         set_logits(self, values)
 

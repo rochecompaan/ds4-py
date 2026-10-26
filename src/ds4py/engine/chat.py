@@ -38,6 +38,7 @@ def append_user(session, text, images=()):
     if images:
         raise EngineError("image input requires M5 vision support")
     _start_if_empty(session)
+    retire_paused(session)
     builder = PromptBuilder(session._engine)
     return _append(session, builder.message(session._transcript.tokens, "user", text), "user")
 
@@ -47,6 +48,7 @@ def append_prefix(session, turns) -> None:
     if any(turn.role not in ("user", "assistant") for turn in turns):
         raise ValueError("prefix turns must have user or assistant roles")
     _start_if_empty(session)
+    retire_paused(session)
     builder = PromptBuilder(session._engine)
     for turn in turns:
         tokens = builder.message(session._transcript.tokens, turn.role, turn.content)
@@ -55,7 +57,7 @@ def append_prefix(session, turns) -> None:
             append_assistant_end(session)
 
 
-def run_round(session, max_tokens, sampling, hooks=None, stop_sequences=()):
+def run_round(session, max_tokens, sampling, stop_sequences=()):
     resuming = session._paused_stream is not None
     stream = session._paused_stream if resuming else None
     if not resuming:
@@ -79,7 +81,7 @@ def run_round(session, max_tokens, sampling, hooks=None, stop_sequences=()):
                 sampling or session._engine.sampling_defaults, session._rng,
                 remaining, session._transcript, reserve=reserve,
                 think_mode=think, stream=stream,
-                hooks=hooks, logits_hooks=tuple(session._logits_hooks),
+                logits_hooks=tuple(session._logits_hooks),
                 stop_sequences=list(stop_sequences), resume=resuming,
             ), pause_on_reserve=True)
             last_tokens = session._transcript.tokens
@@ -111,6 +113,7 @@ def append_assistant_end(session):
 
 def append_tool_results(session, results):
     _require_chat(session)
+    retire_paused(session)
     builder = PromptBuilder(session._engine)
     tokens = builder.tool_results(session._transcript.tokens, results)
     return _append(session, tokens, "tool")
@@ -118,6 +121,14 @@ def append_tool_results(session, results):
 
 def append_system_note(session, text):
     _require_chat(session)
+    retire_paused(session)
     builder = PromptBuilder(session._engine)
     tokens = builder.message(session._transcript.tokens, "system", "\n" + text)
     return _append(session, tokens, "note")
+
+
+def retire_paused(session):
+    """Close a paused assistant before accepting a different conversation turn."""
+    if session._paused_stream is not None:
+        session._paused_stream = session._paused_control = None
+        append_assistant_end(session)

@@ -16,6 +16,7 @@ def _validate_closing_tag(closing_tag: str) -> None:
 
 
 def escape_tool_text(text: str, closing_tag: str) -> str:
+    """Escape closing-tag collisions and their escaped spellings, not general HTML."""
     _validate_closing_tag(closing_tag)
     output = []
     copied_from = 0
@@ -29,6 +30,7 @@ def escape_tool_text(text: str, closing_tag: str) -> str:
 
 
 def unescape_tool_text(text: str, closing_tag: str) -> str:
+    """Reverse only matching closing-delimiter escapes using the pinned C rules."""
     _validate_closing_tag(closing_tag)
     output = []
     position = 0

@@ -55,7 +55,6 @@ def glm_expected(schemas):
         "# Tools\n\n"
         f"<tools>{schemas}</tools>\n\n"
         "Call example:\n"
-        "<｜tool▁call▁begin｜>read<｜tool▁sep｜>path=\"...\" ...<｜tool▁call▁end｜>\n"
         "<tool_call>read<arg_key>path</arg_key><arg_value>README.md</arg_value></tool_call>\n\n"
         "Escape literal </arg_value> as &lt;/arg_value>; write &lt;/arg_value> literally as "
         "&amp;lt;/arg_value>. Other entities stay unchanged.\n"
@@ -86,10 +85,9 @@ def test_deepseek41_prompt_uses_spaced_dsml_tag_names():
     assert "</｜DSML｜ parameter>" in prompt
 
 
-def test_glm_prompt_is_exact_and_ellipsis_is_outside_quoted_value():
+def test_glm_prompt_is_exact():
     prompt = ToolPromptGenerator("glm").generate(DEFINITIONS)
     assert prompt == glm_expected(SCHEMAS)
-    assert 'path="..." ...<｜tool▁call▁end｜>' in prompt
 
 
 def test_qwen_prompt_is_exact_and_wraps_each_schema():
@@ -134,3 +132,22 @@ def test_generator_does_not_copy_c_tool_contracts_or_edit_upto():
 def test_unknown_family_is_an_error():
     with pytest.raises(ValueError, match="unknown tool prompt family: other"):
         ToolPromptGenerator("other").generate(DEFINITIONS)
+
+
+@pytest.mark.parametrize('family', ['deepseek4', 'deepseek41', 'glm', 'qwen'])
+def test_every_generated_example_executes_the_intended_call(family):
+    from ds4py.engine.tool_syntax.dsml import Dsml
+    from ds4py.engine.tool_syntax.glm import Glm
+    from ds4py.engine.tool_syntax.qwen import Qwen
+    prompt = ToolPromptGenerator(family).generate([])
+    examples = prompt.split('Call example:\n', 1)[1].split('\n\n', 1)[0]
+    factory = {'glm': Glm, 'qwen': Qwen}.get(family, lambda: Dsml(v41=family == 'deepseek41'))
+    # No prose or unsupported teaching stanza may be silently skipped.
+    examples = examples.splitlines() if family == 'glm' else [examples]
+    assert examples
+    for example in examples:
+        parser = factory()
+        parser.feed(example.encode())
+        result = parser.finish()
+        assert result.state == 'DONE'
+        assert [(call.name, dict(call.args)) for call in result.calls] == [('read', {'path': 'README.md'})]

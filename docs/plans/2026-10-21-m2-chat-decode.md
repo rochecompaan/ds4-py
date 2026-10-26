@@ -212,7 +212,7 @@ git commit -m "feat(engine): parse prefix files"
 Use two small definitions: `read(path: string)` and `edit(path: string, new_string: string, whole: boolean)`. Pin exact output for each family, including the V4.1 spaces in ` calls`, ` invoke`, and ` parameter` closing tags. Tests cover:
 
 - DeepSeek's `<tools>{"name":...,"description":...,"parameters":...}</tools>` list and DSML syntax example.
-- GLM's `<｜tool▁call▁begin｜>read<｜tool▁sep｜>...` example with `...` outside the quoted parameter value.
+- GLM's executable `<tool_call>read<arg_key>path</arg_key><arg_value>README.md</arg_value></tool_call>` example, parsed by the GLM parser.
 - Qwen's `<tool_call>\n<function=read>...` example and one `{"type":"function","function":...}` object per line.
 - Compact deterministic JSON with `ensure_ascii=False`; no Python repr or non-deterministic key ordering.
 - Empty definitions produce the same fixed structure with an empty schema list, rather than failing.
@@ -804,7 +804,7 @@ git commit -m "test(live): add ds4-agent replay parity"
 
 ## Completion checklist
 
-- [ ] All new public interfaces have docstrings specifying worker-thread confinement where relevant.
+- [x] All new public interfaces have docstrings specifying worker-thread confinement where relevant. Final-review audit covers Session chat/pause/hooks, PromptBuilder, prefix parsing, Decoder, tool definitions/parsers/results, and replay values; internal worker orchestration remains documented at module boundaries.
 - [ ] `ds4py raw` remains raw and has no `--prefix-file`; M3 owns the chat CLI flag.
 - [ ] Every parser fixture passes one-shot, every single split, bytewise, and seeded random chunking.
 - [ ] GLM/Qwen trusted markup and `<tool_response>` are rendered; untrusted spans remain plain.

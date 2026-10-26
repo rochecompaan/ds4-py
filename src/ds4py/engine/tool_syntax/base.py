@@ -9,6 +9,10 @@ _DSML_MARKERS = tuple(
 
 
 class ToolParser:
+    """Per-round byte parser with immutable snapshots and per-call canonical raw text.
+
+    Own it on the decode worker; do not feed it concurrently.
+    """
     def __init__(self):
         self.state = "SEARCH"
         self.raw = bytearray()
@@ -48,6 +52,7 @@ class ToolParser:
         self.param_close_prefix = False
 
     def feed(self, data: bytes):
+        """Consume bytes incrementally; terminal DONE/ERROR snapshots remain stable."""
         if self.state in ("DONE", "ERROR"):
             return self._snapshot()
         for byte in bytes(data):
@@ -104,6 +109,7 @@ class ToolParser:
         self._pending.clear()
 
     def finish(self):
+        """Finalize end-of-generation syntax, rejecting unfinished active calls."""
         if self.state in ("DONE", "ERROR"):
             return self._snapshot()
         if self._active:
@@ -118,6 +124,7 @@ class ToolParser:
         self._fail("incomplete tool-call stanza")
 
     def wants_greedy_sampling(self) -> bool:
+        """Request structural greedy sampling, never in DONE/ERROR."""
         if self.state in ("DONE", "ERROR"):
             return False
         pending = bytes(self._pending)
@@ -133,6 +140,7 @@ class ToolParser:
 
 
 def make_parser(info):
+    """Select a fresh parser from engine family flags; performs no native calls."""
     from .dsml import Dsml
     if info.is_qwen4:
         from .qwen import Qwen

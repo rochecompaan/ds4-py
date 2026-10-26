@@ -6,7 +6,6 @@ from typing import Callable, Protocol
 from ds4py._native.protocol import EngineHandle, SessionHandle
 from ds4py.errors import EngineError
 from .events import Event, Token
-from .hooks import LogitHookSet
 from .logits import LogitsView
 from .pause import ControlSpan, Resume
 from .sampling import Rng, SamplingPolicy
@@ -29,7 +28,6 @@ class GenerateJob:
     reserve: int = 1
     think_mode: int | None = None
     stream: RoundStream | None = None
-    hooks: LogitHookSet | None = None
     logits_hooks: tuple[Callable[[LogitsView], None], ...] = ()
     stop_sequences: list[bytes] = field(default_factory=list)
     control: ControlSpan | None = None
@@ -51,15 +49,13 @@ class GenerateJob:
 class DecodeContext:
     def __init__(self, engine: EngineHandle, job: GenerateJob, *, limit: int,
                  limit_reason: str, cancelled: Callable[[], bool],
-                 emit: Callable[[Event], None], session: SessionHandle | None = None,
-                 hooks_every_sample: bool = True):
+                 emit: Callable[[Event], None], session: SessionHandle | None = None):
         self.rng = job.rng.state
         self.reason: str | None = None
         self._engine, self._job = engine, job
         self._limit, self._limit_reason = limit, limit_reason
         self._cancelled, self._emit = cancelled, emit
         self._session = session
-        self._hooks_every_sample = hooks_every_sample
         self._accepted = 0
         self._committed = False
         self._sampled_tokens = (
@@ -88,32 +84,19 @@ class DecodeContext:
         else:
             self._event_buffer.append(event)
 
-    def _prepare_hooks(self) -> None:
-        hooks = self._job.hooks
-        if hooks is None:
-            return
-        stream = self._job.stream
-        thinking = bool(stream and stream.decoder.thinking)
-        hooks.before_sample(self._session, self.sampling(), thinking=thinking)
-
     def before_sample(self) -> None:
         if self._logits_view is not None:
             assert self._session is not None
             stream = self._job.stream
             self._logits_view._update(
                 position=self._session.pos(),
-                in_think=bool(stream and stream.decoder.thinking),
+                in_think=bool(stream and stream.snapshot.in_think),
                 think_tokens=stream.think_tokens if stream is not None else 0,
                 parser_state=stream.snapshot.state if stream is not None else None,
                 sampled_tokens=self._sampled_tokens,
             )
             for hook in self._job.logits_hooks:
                 hook(self._logits_view)
-        if self._hooks_every_sample:
-            self._prepare_hooks()
-
-    def before_block(self) -> None:
-        self._prepare_hooks()
 
     def is_stop(self, token: int) -> bool:
         if self._job.think_mode is None:
@@ -213,6 +196,8 @@ class DecodeContext:
             self.reason = "parser_error"
         elif stream.complete:
             self.reason = "tool_call_complete"
+        elif stream.stop_sequence is not None:
+            self.reason = "stop_sequence"
         stream.emit_calls(self._publish)
 
 
@@ -253,26 +238,17 @@ def generate(engine: EngineHandle, session: SessionHandle, job: GenerateJob, *,
     ctx = DecodeContext(
         engine, job, limit=limit, limit_reason=limit_reason,
         cancelled=cancelled, emit=emit, session=session,
-        hooks_every_sample=decode_step.hooks_every_sample,
     )
-    registered = False
-    try:
-        if job.hooks is not None:
-            session.set_logit_hooks(job.hooks)
-            registered = True
-        if job.resume:
-            ctx.resume()
-        if limit <= 0:
-            ctx.reason = limit_reason
-        elif not ctx.finalized:
-            decode_step.run(session, ctx)
-            if ctx.reason is None:
-                if cancelled():
-                    ctx.reason = "interrupted"
-                else:
-                    raise EngineError("decode returned no tokens")
-        ctx.finalize()
-        return ctx.reason
-    finally:
-        if registered:
-            session.clear_logit_hooks()
+    if job.resume:
+        ctx.resume()
+    if limit <= 0:
+        ctx.reason = limit_reason
+    elif not ctx.finalized:
+        decode_step.run(session, ctx)
+        if ctx.reason is None:
+            if cancelled():
+                ctx.reason = "interrupted"
+            else:
+                raise EngineError("decode returned no tokens")
+    ctx.finalize()
+    return ctx.reason

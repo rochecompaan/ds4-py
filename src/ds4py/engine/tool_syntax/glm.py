@@ -16,8 +16,10 @@ _ARG_VALUE_CLOSE = b"</arg_value>"
 
 
 class Glm(ToolParser):
+    """Streaming GLM name-first parser with string-valued arguments."""
     def __init__(self):
         self._after_call = False
+        self._call_start = 0
         self._current_name = None
         self._args = {}
         self._param_name = None
@@ -31,6 +33,7 @@ class Glm(ToolParser):
     def _start(self, implicit_invoke):
         self.state = "STRUCTURAL"
         self._active = True
+        self._call_start = len(self.raw)
         self.raw.extend(_START)
         self.parse_pos = len(self.raw)
 
@@ -56,7 +59,8 @@ class Glm(ToolParser):
             args = MappingProxyType({
                 name: deepcopy(argument.value) for name, argument in self._args.items()
             })
-            self._calls.append(ToolCall(self._current_name, args))
+            raw = bytes(self.raw[self._call_start:self.parse_pos]).decode()
+            self._calls.append(ToolCall(self._current_name, args, raw))
         self._current_name = None
         self._args = {}
         self._param_name = None
@@ -93,6 +97,7 @@ class Glm(ToolParser):
 
     def _parse_after_call(self):
         if self.raw.startswith(_START, self.parse_pos):
+            self._call_start = self.parse_pos
             self.parse_pos += len(_START)
             self._after_call = False
             return

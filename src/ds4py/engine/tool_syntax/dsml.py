@@ -13,6 +13,7 @@ _BAR = "｜".encode()
 
 
 class Dsml(ToolParser):
+    """Streaming DeepSeek DSML parser; v41 selects the spaced tag spellings."""
     def __init__(self, *, v41: bool = False):
         self.v41 = v41
         self._calls_name = " calls" if v41 else "tool_calls"
@@ -22,6 +23,7 @@ class Dsml(ToolParser):
         self._canonical_invoke = f"<｜DSML｜{self._invoke_name}".encode()
         self._param_close_text = f"</｜DSML｜{self._parameter_name}>"
         self._param_close = self._param_close_text.encode()
+        self._call_start = 0
         self._current_name = None
         self._args = {}
         self._param_name = None
@@ -93,12 +95,13 @@ class Dsml(ToolParser):
             self._fail(f"{description} is not valid UTF-8")
             return None
 
-    def _push_current(self):
+    def _push_current(self, end):
         if self._current_name is not None:
             args = MappingProxyType({
                 name: deepcopy(argument.value) for name, argument in self._args.items()
             })
-            self._calls.append(ToolCall(self._current_name, args))
+            raw = bytes(self.raw[self._call_start:end]).decode()
+            self._calls.append(ToolCall(self._current_name, args, raw))
         self._current_name = None
         self._args = {}
         self._param_name = None
@@ -135,7 +138,7 @@ class Dsml(ToolParser):
         end = self._close_tag_at(self.parse_pos, name)
         if end is None:
             return False
-        self._push_current()
+        self._push_current(self.parse_pos if done else end)
         self.parse_pos = end
         if done:
             self.state = "DONE"
@@ -147,6 +150,7 @@ class Dsml(ToolParser):
         if not name:
             self._fail("tool invoke without name")
             return
+        self._call_start = self.parse_pos
         self._current_name = name
         self._args = {}
         self.parse_pos = end

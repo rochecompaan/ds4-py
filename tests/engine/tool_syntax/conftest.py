@@ -50,6 +50,7 @@ def run_chunks(case, chunks):
         "greedy": parser.wants_greedy_sampling(),
         "raw": finished.raw,
         "calls": tuple((call.name, tuple(call.args.items())) for call in finished.calls),
+        "call_raw": tuple(call.raw for call in finished.calls),
         "param_close_prefix": finished.param_close_prefix,
         "in_think": finished.in_think,
         "dsml_in_think": finished.dsml_in_think,

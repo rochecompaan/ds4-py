@@ -23,7 +23,8 @@ class RoundStream:
         self.paused: PausedAfterEos | None = None
         self._eos_token: int | None = None
         self._eos_text = b""
-        self._text_parts: list[str] = []
+        self._text_parts: list[bytes] = []
+        self._control_pending = bytearray()
         self._last_state = self.snapshot.state
         self._last_thinking = thinking
         self._calls_emitted = False
@@ -37,8 +38,8 @@ class RoundStream:
         return self.control.stop_sequence
 
     def _publish(self, deltas, emit):
-        if self.decoder.thinking != self._last_thinking:
-            self._last_thinking = self.decoder.thinking
+        if self.snapshot.in_think != self._last_thinking:
+            self._last_thinking = self.snapshot.in_think
             emit(Thinking(self._last_thinking))
         if self.snapshot.state != self._last_state:
             self._last_state = self.snapshot.state
@@ -46,23 +47,41 @@ class RoundStream:
         for delta in deltas:
             emit(delta)
 
-    def _match_deltas(self, deltas) -> None:
-        if not self.control.sequences:
-            return
-        for delta in deltas:
-            if delta.thinking:
+    def _match_control(self, data):
+        if data and self.control.sequences:
+            self._text_parts.append(data)
+            self.control.Feed(data)
+
+    def _observe_control(self, data):
+        # Control scans sampled bytes, not display deltas. Only actual think
+        # markers outside argument values are withheld from the matcher.
+        markers = (b"<think>", b"</think>")
+        for byte in data:
+            literal = self.snapshot.state == "PARAM_VALUE"
+            thinking = self.snapshot.in_think
+            self.snapshot = self.parser.feed(bytes([byte]))
+            if literal:
+                if not thinking:
+                    self._match_control(bytes([byte]))
                 continue
-            self._text_parts.append(delta.text)
-            if self.control.Feed(delta.text.encode("utf-8")) is not None:
-                break
+            self._control_pending.append(byte)
+            while self._control_pending:
+                pending = bytes(self._control_pending)
+                if pending in markers:
+                    self._control_pending.clear()
+                    break
+                if any(marker.startswith(pending) for marker in markers):
+                    break
+                if not thinking:
+                    self._match_control(bytes(self._control_pending[:1]))
+                del self._control_pending[:1]
 
     def observe(self, token, data, emit):
         self.sampled_tokens.append(token)
-        self.snapshot = self.parser.feed(data)
-        was_thinking = self.decoder.thinking
+        was_thinking = self.snapshot.in_think
+        self._observe_control(data)
         deltas = self.decoder.feed(data)
-        self._match_deltas(deltas)
-        if self.decoder.thinking:
+        if self.snapshot.in_think:
             self.think_tokens = self.think_tokens + 1 if was_thinking else 1
         self._publish(deltas, emit)
 
@@ -72,7 +91,8 @@ class RoundStream:
         self.paused = paused
         self._eos_token, self._eos_text = token, bytes(text)
         self.checkpoint = replace(
-            self.checkpoint, thinking=self.decoder.thinking, text="".join(self._text_parts),
+            self.checkpoint, thinking=self.snapshot.in_think,
+            text=b"".join(self._text_parts).decode("utf-8", errors="replace"),
         )
 
     def resume(self, emit, resume: Resume | None = None) -> bytes | None:
@@ -83,7 +103,7 @@ class RoundStream:
             self.checkpoint = replace(self.checkpoint, force=True)
             if self._eos_token is not None:
                 self.observe(self._eos_token, self._eos_text, emit)
-            if resume.force_end_thinking and self.decoder.thinking:
+            if resume.force_end_thinking and self.snapshot.in_think:
                 self.snapshot = self.parser.feed(b"</think>")
                 deltas = self.decoder.feed(b"</think>")
                 self._publish(deltas, emit)
@@ -101,7 +121,9 @@ class RoundStream:
         if parser:
             self.snapshot = self.parser.finish()
         deltas = self.decoder.finish()
-        self.control.finish()
+        if not self.snapshot.in_think:
+            self._match_control(bytes(self._control_pending))
+        self._control_pending.clear()
         self.finalized = True
         self._publish(deltas, emit)
 

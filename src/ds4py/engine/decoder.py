@@ -10,6 +10,7 @@ _PENDING_LIMIT = 16
 
 
 class Decoder:
+    """Display-only UTF-8/think-marker decoding, local to one assistant round."""
     def __init__(self, *, thinking=False):
         self.thinking = thinking
         self._pending = bytearray()
@@ -35,6 +36,7 @@ class Decoder:
         self._utf8.reset()
 
     def feed(self, data: bytes) -> list[TextDelta]:
+        """Return display deltas for sampled bytes; never mutate decode control."""
         deltas = []
         for byte in bytes(data):
             self._pending.append(byte)
@@ -55,6 +57,7 @@ class Decoder:
         return deltas
 
     def finish(self) -> list[TextDelta]:
+        """Flush ambiguous marker bytes and incomplete UTF-8 deterministically."""
         deltas = []
         if self._pending:
             pending = bytes(self._pending)

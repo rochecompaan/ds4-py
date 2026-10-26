@@ -226,3 +226,19 @@ def test_raw_traces_are_not_replayable(tmp_path, raw_line):
         + STAMP + raw_line + "\n"
     )
     assert_replay_error(path, "raw traces are not replayable")
+
+
+@pytest.mark.parametrize('header', [
+    'agent worker start ctx=4096 backend=cpu model=/models/fake.gguf trace=c.trace',
+    'agent worker start ctx=1 backend=cuda model=/models/other.gguf trace=other.trace',
+])
+def test_duplicate_worker_start_cannot_overwrite_replay_metadata(tmp_path, header):
+    path = tmp_path / 'duplicate.trace'
+    path.write_text(BASIC.read_text() + STAMP + header + '\n')
+    assert_replay_error(path, 'duplicate worker start')
+
+
+def test_initial_state_without_any_round_cannot_claim_replay_parity(tmp_path):
+    path = tmp_path / 'empty.trace'
+    path.write_text('\n'.join(BASIC.read_text().splitlines()[:5]) + '\n')
+    assert_replay_error(path, 'no replay rounds')

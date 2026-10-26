@@ -9,7 +9,6 @@ from ds4py import ThinkMode, open
 from ds4py._native.fake import FakeNative, FakeSession, reply
 from ds4py._native.protocol import EngineConfig
 from ds4py.engine.events import Checkpointed, Interrupted, Prefill, Stopped, Synced, Token
-from ds4py.engine.hooks import LogitHookSet
 from ds4py.engine.plan import Plan
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.session import Engine, Session
@@ -91,7 +90,7 @@ def test_a_round_syncs_generates_and_extends_the_transcript():
             e.session()
 
 
-def test_public_round_forwards_hooks_and_stop_sequences(monkeypatch):
+def test_public_round_forwards_stop_sequences(monkeypatch):
     from ds4py.engine import session as session_module
     original = session_module.GenerateJob
     captured = []
@@ -101,14 +100,12 @@ def test_public_round_forwards_hooks_and_stop_sequences(monkeypatch):
         return original(*args, **kwargs)
 
     monkeypatch.setattr(session_module, "GenerateJob", capture_job)
-    hooks = LogitHookSet()
     with fake_engine(script=reply(b"ok")) as e:
         session = e.session()
         session.append_tokens([5, 6], "user")
         assert isinstance(list(session.run_round(
-            max_tokens=10, hooks=hooks, stop_sequences=[b"stop"],
+            max_tokens=10, stop_sequences=[b"stop"],
         ))[-1], Stopped)
-    assert captured[0]["hooks"] is hooks
     assert captured[0]["stop_sequences"] == [b"stop"]
 
 

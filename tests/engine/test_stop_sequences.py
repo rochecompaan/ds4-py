@@ -7,7 +7,7 @@ from ds4py import ThinkMode
 from ds4py._native.fake import FakeNative
 from ds4py._native.protocol import EngineInfo
 from ds4py.engine.decode import DecodeContext, GenerateJob, Verdict, generate
-from ds4py.engine.events import Stopped
+from ds4py.engine.events import Stopped, Token
 from ds4py.engine.pause import ControlSpan, Pause, PausedAfterEos, Resume, StreamCheckpoint
 from ds4py.engine.sampling import Rng, SamplingPolicy
 from ds4py.engine.stream import RoundStream
@@ -186,3 +186,59 @@ def test_public_chat_stop_sequence_leaves_open_and_next_round_resumes():
         expected = tuple(byte + 1 for byte in b"stopnext")
         assert any(tokens[index:index + len(expected)] == expected
                    for index in range(len(tokens) - len(expected) + 1))
+
+
+def test_terminal_marker_prefix_is_matched_independently_of_display():
+    stream = RoundStream(INFO, ThinkMode.NONE)
+    reason, _, transcript, control = decode(
+        [60], [b"<"], stream=stream, max_tokens=1,
+    )
+    assert reason == "stop_sequence"
+    assert transcript.tokens == (60,) and control.stop_sequence == b"<"
+
+
+def test_new_user_retires_paused_stream_and_starts_fresh_assistant():
+    def script(prompt, generated):
+        return b"stop"[len(generated)] + 1 if len(generated) < 4 else 0
+
+    with ds4py.open("f.gguf", think=ThinkMode.NONE, native=FakeNative(script=script)) as engine:
+        session = engine.session()
+        session.append_user("first")
+        first = list(session.run_round(stop_sequences=[b"stop"]))
+        assert first[-1] == Stopped("stop_sequence")
+        old_stream = session._paused_stream
+        session.append_user("second")
+        assert session._paused_stream is None
+        assert [s.kind for s in session.transcript.segments][-2:] == ["eos", "user"]
+        second = list(session.run_round(stop_sequences=[b"stop"]))
+        assert second[-1] == Stopped("stop_sequence")
+        assert [event.id for event in first if isinstance(event, Token)] == [116, 117, 112, 113]
+        assert [event.id for event in second if isinstance(event, Token)] == [116, 117, 112, 113]
+        assert [s.kind for s in session.transcript.segments][-6:] == [
+            "assistant_prefix", "assistant", "eos", "user", "assistant_prefix", "assistant",
+        ]
+        assert session._paused_stream is not old_stream
+        assert len(session._paused_stream.sampled_tokens) == 4
+        assert [s.kind for s in session.transcript.segments].count("assistant_prefix") == 2
+
+
+@pytest.mark.parametrize('mutation, kind', [
+    (lambda session: session.append_tool_results(['result']), 'tool'),
+    (lambda session: session.append_system_note('note'), 'note'),
+])
+def test_message_mutations_close_a_paused_assistant(mutation, kind):
+    with ds4py.open('f.gguf', think=ThinkMode.NONE, native=FakeNative()) as engine:
+        session = engine.session()
+        session.append_user('first')
+        assert list(session.run_round(stop_sequences=[b'ok']))[-1] == Stopped('stop_sequence')
+        mutation(session)
+        assert session._paused_stream is None
+        assert [segment.kind for segment in session.transcript.segments][-2:] == ['eos', kind]
+
+
+def test_control_checkpoint_preserves_utf8_without_display_decoding():
+    stream = RoundStream(INFO, ThinkMode.NONE, control=ControlSpan([b'never']))
+    for byte in '雪'.encode():
+        stream.observe(byte, bytes([byte]), lambda event: None)
+    stream.mark_eos(0)
+    assert stream.checkpoint.text == '雪'

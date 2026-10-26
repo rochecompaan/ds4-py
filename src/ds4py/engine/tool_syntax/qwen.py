@@ -19,6 +19,7 @@ _NUMBER = re.compile(rb"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)
 
 
 def value_is_json(value):
+    """Classify a Qwen value using the pinned C numeric and container rules."""
     start = 0
     end = len(value)
     while start < end and value[start] in b" \t":
@@ -37,8 +38,10 @@ def value_is_json(value):
 
 
 class Qwen(ToolParser):
+    """Streaming Qwen function/parameter parser with C-compatible JSON inference."""
     def __init__(self):
         self._after_call = False
+        self._call_start = 0
         self._current_name = None
         self._args = {}
         self._param_name = None
@@ -52,6 +55,7 @@ class Qwen(ToolParser):
     def _start(self, implicit_invoke):
         self.state = "STRUCTURAL"
         self._active = True
+        self._call_start = len(self.raw)
         self.raw.extend(_START)
         self.parse_pos = len(self.raw)
 
@@ -77,7 +81,8 @@ class Qwen(ToolParser):
             args = MappingProxyType({
                 name: deepcopy(argument.value) for name, argument in self._args.items()
             })
-            self._calls.append(ToolCall(self._current_name, args))
+            raw = bytes(self.raw[self._call_start:self.parse_pos]).decode()
+            self._calls.append(ToolCall(self._current_name, args, raw))
         self._current_name = None
         self._args = {}
         self._param_name = None
@@ -111,6 +116,7 @@ class Qwen(ToolParser):
 
     def _parse_after_call(self):
         if self.raw.startswith(_START, self.parse_pos):
+            self._call_start = self.parse_pos
             self.parse_pos += len(_START)
             self._after_call = False
             return

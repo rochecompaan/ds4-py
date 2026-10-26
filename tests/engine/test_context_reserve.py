@@ -31,12 +31,12 @@ def scripted(*tokens):
 
 
 @contextmanager
-def chat_session(*tokens, ctx=347, cancel=None):
+def chat_session(*tokens, ctx=347, cancel=None, think=ThinkMode.NONE):
     # The default fake chat prompt plus assistant prefix is 345 tokens.
     with ds4py.open(
         "f.gguf",
         ctx=ctx,
-        think=ThinkMode.NONE,
+        think=think,
         cancel=cancel,
         native=FakeNative(script=scripted(*tokens)),
     ) as engine:
@@ -91,12 +91,12 @@ def test_chat_pause_waits_without_eos_and_fail_closes_once():
 
 def test_resume_matches_unpaused_content_and_extends_one_assistant_segment():
     tokens = tuple(tokenize_rendered("<think>a</think>" + DSML))
-    with chat_session(*tokens, ctx=1024) as session:
+    with chat_session(*tokens, ctx=1024, think=ThinkMode.HIGH) as session:
         expected_events = list(session.run_round(max_tokens=100))
         expected_tokens = session.transcript.tokens
         expected_kinds = [segment.kind for segment in session.transcript.segments]
 
-    with chat_session(*tokens) as session:
+    with chat_session(*tokens, think=ThinkMode.HIGH) as session:
         events = []
         round_ = session.run_round(max_tokens=100)
         pause = next_pause(round_, events)

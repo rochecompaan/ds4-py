@@ -38,6 +38,7 @@ class ReplayError(ValueError):
 
 @dataclass(frozen=True)
 class ReplayRound:
+    """One rebuilt C prompt and sampled-ID sequence with traced boundary policy."""
     number: int
     prompt: tuple[int, ...]
     sampled: tuple[int, ...]
@@ -49,6 +50,7 @@ class ReplayRound:
 
 @dataclass(frozen=True)
 class ReplayTrace:
+    """A single-worker chat trace with at least one replayable round."""
     ctx: int
     model: str
     rounds: tuple[ReplayRound, ...]
@@ -125,6 +127,8 @@ class _Reader:
             self.error("missing initial system prompt")
         if self.model is None:
             self.error("missing model in agent worker start")
+        if not self.rounds:
+            self.error("no replay rounds")
         return ReplayTrace(self.ctx, self.model, tuple(self.rounds))
 
     def dispatch(self, text: str) -> None:
@@ -159,6 +163,8 @@ class _Reader:
             self.worker(text)
 
     def worker(self, text: str) -> None:
+        if self.ctx is not None:
+            self.error("duplicate worker start")
         match = _WORKER.fullmatch(text)
         if match is None:
             self.error("invalid context or worker start")

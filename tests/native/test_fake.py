@@ -250,3 +250,17 @@ def test_fake_logits_cache_is_invalidated_by_state_changes(operation):
         s.load_snapshot(snapshot)
         snapshot.close()
     assert s.argmax() == 7
+
+
+def test_think_mode_none_stops_at_think_opener():
+    from ds4py import ThinkMode
+    from ds4py._native.fake_chat import tokenize_rendered
+    native = FakeNative()
+    engine = native.open_engine(EngineConfig(Path('f')))
+    try:
+        token = tokenize_rendered('<think>')[0]
+        assert engine.is_stop_for_think_mode(token, ThinkMode.NONE)
+        assert not engine.is_stop_for_think_mode(token, ThinkMode.HIGH)
+        assert not engine.is_stop(token)
+    finally:
+        engine.close()

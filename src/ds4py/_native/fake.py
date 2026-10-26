@@ -139,7 +139,12 @@ class FakeEngine(_Handle):
 
     def is_stop_for_think_mode(self, token, mode):
         self._check()
-        return token == FAKE_EOS
+        enabled = mode in (1, 2, 3, 4) or 1001 <= mode <= 1100
+        return self.is_stop(token) or (
+            not enabled and token in (
+                fake_chat.SPECIAL_TOKENS["<think>"], fake_chat.SPECIAL_TOKENS["</think>"],
+            )
+        )
 
     def create_session(self, ctx):
         self._check()
@@ -176,8 +181,6 @@ class FakeSession(_Handle):
         self._valid = False
         self.calls: list[tuple] = []
         self.samples: list[tuple] = []
-        self._hooks = self._hook_context = self._hook_chain = None
-        self.sampling_hook = None
 
     def sync(self, tokens, *, progress=None, cancel=None):
         self._check()
@@ -262,23 +265,6 @@ class FakeSession(_Handle):
         if distribution is None:
             return -1
         return max(range(len(distribution)), key=distribution.__getitem__)
-
-    def set_logit_hooks(self, hooks):
-        self._hooks = hooks
-
-    def clear_logit_hooks(self):
-        self._hooks = self._hook_context = self._hook_chain = None
-
-    def chain_consts(self, temperature, top_k, min_p, top_p):
-        from .structs import EffLogits
-        self._hook_consts = (temperature, top_k, min_p, top_p)
-        return EffLogits()
-
-    def set_sampling_chain(self, eff, ids, fn):
-        self._hook_chain = (eff, list(ids), fn)
-
-    def set_argmax_context(self, ctx):
-        self._hook_context = ctx
 
     def eval(self, token):
         self._check()

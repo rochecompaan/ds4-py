@@ -11,7 +11,6 @@ from ds4py.errors import EngineError
 from . import chat as chat_ops
 from .decode import GenerateJob
 from .events import Checkpointed, Event, Interrupted, ReserveReached, Stopped, Synced
-from .hooks import LogitHookSet
 from .plan import Plan
 from .sampling import Rng, SamplingPolicy
 from .transcript import Segment, Transcript, TranscriptView
@@ -106,6 +105,11 @@ class Engine:
 
 
 class Session:
+    """One exclusively owned transcript; caller mutations occur between rounds.
+
+    Chat helpers dispatch rendering/tokenization to the engine worker. Do not
+    call these blocking methods from a logits hook or an on_worker callback.
+    """
     def __init__(self, engine: Engine):
         self._engine, self._worker = engine, engine._worker
         self._transcript = Transcript()
@@ -134,30 +138,55 @@ class Session:
             return self._transcript.append(tokens, kind, meta)
 
     def start_chat(self, tools=(), instructions=None) -> None:
+        """Initialize chat once, between rounds, with tools and optional instructions.
+
+        Rendering runs on the worker; caller-provided payloads stay plain text.
+        """
         with self._lock:
             if self._active_round:
                 raise EngineError("a round is open")
             chat_ops.start_chat(self, tools, instructions)
 
     def append_user(self, text: str, images=()) -> Segment:
+        """Append a user turn between rounds, initializing an empty chat if needed.
+
+        A stop-sequence-paused assistant is closed first; the next run_round
+        starts a fresh assistant prefix/parser. Nonempty images require M5.
+        Rendering/tokenization is dispatched to the worker.
+        """
         with self._lock:
             if self._active_round:
                 raise EngineError("a round is open")
             return chat_ops.append_user(self, text, images)
 
     def append_prefix(self, turns) -> None:
+        """Append PrefixTurn history between rounds, starting an empty chat if needed.
+
+        Retires a paused assistant and closes each supplied assistant turn using
+        the family's EOS policy. Rendering is dispatched to the worker.
+        """
         with self._lock:
             if self._active_round:
                 raise EngineError("a round is open")
             chat_ops.append_prefix(self, turns)
 
     def append_tool_results(self, results) -> Segment:
+        """Append results joined by two newlines as one tool message in initialized chat.
+
+        Between rounds only; closes a paused assistant before appending. Worker
+        rendering escapes the matching tool-result closing delimiter.
+        """
         with self._lock:
             if self._active_round:
                 raise EngineError("a round is open")
             return chat_ops.append_tool_results(self, results)
 
     def append_system_note(self, text: str) -> Segment:
+        """Append a newline-prefixed note between rounds in initialized chat.
+
+        Closes a paused assistant first and dispatches plain-payload rendering
+        to the worker.
+        """
         with self._lock:
             if self._active_round:
                 raise EngineError("a round is open")
@@ -166,6 +195,8 @@ class Session:
     def add_logits_hook(self, hook: Callable) -> None:
         """Register a lazy pre-sample hook on the worker-thread decode path.
 
+        Registration is allowed only between rounds. Each invocation receives
+        a reusable LogitsView; only committed tokens enter its sampled history.
         The hook must not call engine, session, harness, cancellation, or
         blocking-I/O APIs; those calls can deadlock the native worker.
         """
@@ -225,7 +256,7 @@ class Session:
                         self._worker.cancel_event.clear()
         return interrupted
 
-    def _raw_round(self, max_tokens, sampling, hooks=None, stop_sequences=()):
+    def _raw_round(self, max_tokens, sampling, stop_sequences=()):
         resuming = self._paused_control is not None and self._paused_stream is None
         control = self._paused_control if resuming else None
         try:
@@ -234,7 +265,7 @@ class Session:
                 return
             job = GenerateJob(
                 sampling or self._engine.sampling_defaults, self._rng,
-                max_tokens, self._transcript, hooks=hooks,
+                max_tokens, self._transcript,
                 logits_hooks=tuple(self._logits_hooks),
                 stop_sequences=list(stop_sequences), control=control, resume=resuming,
             )
@@ -248,8 +279,14 @@ class Session:
 
     def run_round(self, *, max_tokens: int = 50_000,
                   sampling: SamplingPolicy | None = None,
-                  hooks: LogitHookSet | None = None,
                   stop_sequences: Sequence[bytes] = ()) -> Iterator[Event]:
+        """Synchronize and generate on the worker; ownership begins at iteration.
+
+        While open, other rounds and caller mutations are refused. A chat stop
+        sequence leaves the assistant paused: another run resumes it; appending
+        a new message closes it first. ReserveReached requires resume(reserve)
+        or fail() before advancing. Closing the iterator drains native work.
+        """
         with self._lock:
             if self._active_round:
                 raise EngineError("a round is open")
@@ -257,10 +294,10 @@ class Session:
         try:
             if self._transcript.chat:
                 yield from chat_ops.run_round(
-                    self, max_tokens, sampling, hooks, stop_sequences,
+                    self, max_tokens, sampling, stop_sequences,
                 )
             else:
-                yield from self._raw_round(max_tokens, sampling, hooks, stop_sequences)
+                yield from self._raw_round(max_tokens, sampling, stop_sequences)
         finally:
             with self._lock:
                 self._active_round = False

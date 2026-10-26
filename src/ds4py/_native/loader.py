@@ -10,7 +10,7 @@ from ds4py.abi.manifest import Manifest, file_sha256, manifest_path, validate
 from ds4py.abi.shaders import metal_source_env
 from ds4py.errors import AbiMismatch, LibraryAlreadyLoaded, LibraryNotFound, MissingBinding
 from .bindings import all_bindings
-from .structs import M2_STRUCTS, STRUCTS, struct_layout
+from .structs import STRUCTS, struct_layout
 from .typemap import ctypes_signature, parse_prototype
 
 LIB_NAME = "libds4.dylib" if sys.platform == "darwin" else "libds4.so"
@@ -94,10 +94,8 @@ def load_library(lib: str | Path | None = None) -> Library:
             manifest = Manifest.read(manifest_file)
         except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
             raise AbiMismatch(f"cannot read {manifest_file}: {exc}." + _REBUILD) from exc
-        bindings = all_bindings(m2=real.name in ("libds4_m2.so", "libds4_m2.dylib"))
-        layouts = dict(STRUCTS)
-        if real.name in ("libds4_m2.so", "libds4_m2.dylib"):
-            layouts.update(M2_STRUCTS)
+        bindings = all_bindings()
+        layouts = STRUCTS
         validation = validate(
             manifest, lib_sha256=file_sha256(real), bindings=bindings,
             layouts={name: struct_layout(cls) for name, cls in layouts.items()},

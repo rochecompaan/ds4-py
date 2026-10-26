@@ -9,7 +9,7 @@ def block_chunks(tokens):
 
 
 class FakeMultiTokenStep:
-    hooks_every_sample = False
+    hooks_every_sample = True
 
     def __init__(self, blocks=()):
         self.blocks = iter(blocks)
@@ -25,7 +25,7 @@ class FakeMultiTokenStep:
 
     def run(self, session, ctx):
         while not ctx.cancelled():
-            ctx.before_block()
+            ctx.before_sample()
             policy = ctx.sampling()
             sampled = session.sample(
                 policy.temperature, policy.top_k, policy.top_p, policy.min_p, ctx.rng,
@@ -38,6 +38,10 @@ class FakeMultiTokenStep:
             drafts = self._drafts(sampled)
             if drafts is None:
                 return
+            if ctx._job.logits_hooks:
+                if self._verify_hooked(session, ctx, sampled, drafts):
+                    return
+                continue
             first_verdict = ctx.accept(sampled)
             tokens = (sampled, *drafts)
             block_start = session.pos()
@@ -47,6 +51,10 @@ class FakeMultiTokenStep:
             ctx.buffer_events()
             committed = 0
             for index, token in enumerate(tokens):
+                if ctx.cancelled():
+                    session.rewind(block_start + committed)
+                    ctx.flush_events()
+                    return
                 verdict = first_verdict if index == 0 else ctx.accept(token)
                 if verdict is Verdict.STOP_BEFORE:
                     session.rewind(block_start + committed)
@@ -60,3 +68,34 @@ class FakeMultiTokenStep:
                     ctx.flush_events()
                     return
             ctx.flush_events()
+
+    def _verify_hooked(self, session, ctx, sampled, drafts):
+        # Verify each draft against a fresh sample with the current committed
+        # parser/history and logits. A mismatch keeps the replacement token,
+        # cuts this run, and returns to the next block without stale drafts.
+        kept = 0
+        for index, expected in enumerate((sampled, *drafts)):
+            if ctx.cancelled():
+                self.block_sizes.append(kept)
+                return True
+            token = sampled
+            if index:
+                ctx.before_sample()
+                p = ctx.sampling()
+                token = session.sample(p.temperature, p.top_k, p.top_p, p.min_p, ctx.rng)
+                if token < 0:
+                    raise EngineError("cannot sample: sync first")
+            verdict = ctx.accept(token)
+            if verdict is Verdict.STOP_BEFORE:
+                self.block_sizes.append(kept)
+                return True
+            session.eval(token)
+            verdict = ctx.commit(token, verdict)
+            kept += 1
+            if verdict is Verdict.STOP_AFTER:
+                self.block_sizes.append(kept)
+                return True
+            if token != expected:
+                break
+        self.block_sizes.append(kept)
+        return False

@@ -10,6 +10,7 @@ from .tool_syntax.model import ToolCall
 
 @dataclass(frozen=True)
 class TextDelta:
+    """Display text only; thinking labels are not decode-control inputs."""
     text: str
     thinking: bool
 
@@ -73,6 +74,7 @@ class ReserveReached:
         self._decision = decision
 
     def resume(self, reserve: int) -> None:
+        """Continue the same assistant with a nonnegative reserve; decide exactly once."""
         if isinstance(reserve, bool) or not isinstance(reserve, int):
             raise TypeError("reserve must be an integer")
         if reserve < 0:
@@ -81,22 +83,26 @@ class ReserveReached:
         self._on_resume(reserve)
 
     def fail(self) -> None:
+        """Close the assistant with context_exhausted; decide exactly once."""
         self._claim("fail")
         self._on_fail()
 
 
 @dataclass(frozen=True)
 class Thinking:
+    """Parser-controlled transition into or out of thinking."""
     on: bool
 
 
 @dataclass(frozen=True)
 class ToolSyntax:
+    """Committed parser state transition."""
     state: str
 
 
 @dataclass(frozen=True)
 class ToolCalls:
+    """Ordered completed calls, each carrying its own canonical raw stanza."""
     calls: tuple[ToolCall, ...]
 
 

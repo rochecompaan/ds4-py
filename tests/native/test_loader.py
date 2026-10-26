@@ -218,3 +218,15 @@ def test_serialized_non_boolean_probe_result_is_refused_before_dlopen(
     with pytest.raises(AbiMismatch, match="ds4_session_eval.*boolean.*ds4py build"):
         load_library(lib)
     assert loader._loaded is None
+
+
+def test_library_basename_does_not_change_manifest_requirements(
+    make_manifest, tmp_path, upstream_headers, stub_dlopen,
+):
+    lib, metadata = make_manifest(tmp_path, upstream_headers)
+    renamed = lib.with_name('libds4_m2.so')
+    lib.rename(renamed)
+    metadata.write(manifest_path(renamed))
+    loaded = load_library(renamed)
+    assert loaded.has('ds4_session_copy_logits')
+    assert loaded.has('ds4_session_set_logits')

@@ -32,7 +32,7 @@ def workers():
         worker.close()
 
 
-def run_step(workers, tokens, blocks, *, max_tokens=1000, chat=False, logits_hooks=()):
+def run_step(workers, tokens, blocks, *, max_tokens=1000, chat=False, logits_hooks=(), step_type=FakeMultiTokenStep, cancelled=lambda: False):
     worker = EngineWorker(
         FakeNative(script=scripted(tokens)), EngineConfig(Path("f"), ctx=1024),
     )
@@ -46,7 +46,7 @@ def run_step(workers, tokens, blocks, *, max_tokens=1000, chat=False, logits_hoo
         think_mode=ThinkMode.NONE if chat else None, stream=stream,
         logits_hooks=logits_hooks,
     )
-    step = FakeMultiTokenStep(blocks)
+    step = step_type(blocks)
     events, token_positions = [], []
 
     def execute(engine, session):
@@ -55,7 +55,7 @@ def run_step(workers, tokens, blocks, *, max_tokens=1000, chat=False, logits_hoo
             if isinstance(event, Token):
                 token_positions.append((event.id, session.pos(), len(transcript)))
         reason = generate(
-            engine, session, job, cancelled=lambda: False, emit=emit, step=step,
+            engine, session, job, cancelled=cancelled, emit=emit, step=step,
         )
         events.append(Stopped(reason))
         return reason
@@ -146,8 +146,12 @@ def test_empty_block_after_kept_block_raises_without_changing_position(workers):
 
 
 def test_logits_hooks_fall_back_to_plain_step(workers):
+    class NonconformingStep(FakeMultiTokenStep):
+        hooks_every_sample = False
+
     reason, events, transcript, _worker, step, _positions, error = run_step(
         workers, [98, 99], [[99]], logits_hooks=(lambda view: None,),
+        step_type=NonconformingStep,
     )
     assert error is None and reason == "stop_token"
     assert token_ids(events) == [98, 99] and transcript.tokens == (5, 6, 98, 99)
@@ -161,3 +165,35 @@ def test_no_logits_hooks_keep_the_multi_token_step(workers):
     assert error is None and reason == "stop_token"
     assert token_ids(events) == [98, 99] and transcript.tokens == (5, 6, 98, 99)
     assert step.block_sizes == [2]
+
+
+def test_hook_changed_draft_cuts_block_and_hooks_see_each_committed_prefix(workers):
+    seen = []
+
+    def hook(view):
+        seen.append((view.position, view.sampled_tokens))
+        if view.sampled_tokens == (98,):
+            view.bias(100, 2.0)
+
+    reason, events, transcript, worker, step, _, error = run_step(
+        workers, [98, 99, 101], [[99, 101]], logits_hooks=(hook,),
+    )
+    assert error is None and reason == "stop_token"
+    assert token_ids(events) == [98, 100, 101]
+    assert transcript.tokens == (5, 6, 98, 100, 101)
+    assert seen == [(2, ()), (3, (98,)), (4, (98, 100)), (5, (98, 100, 101))]
+    assert step.block_sizes == [2, 1]
+    assert worker.call(lambda e, s: s.pos()).result() == len(transcript)
+
+
+def test_cancellation_mid_block_rewinds_the_uncommitted_tail(workers):
+    checks = iter([False, False, False, True])
+    reason, events, transcript, worker, _, positions, error = run_step(
+        workers, [98, 99, 100, 101], [[99, 100, 101]],
+        cancelled=lambda: next(checks, True),
+    )
+    assert error is None and reason == 'interrupted'
+    assert token_ids(events) == [98, 99] and transcript.tokens == (5, 6, 98, 99)
+    assert worker.call(lambda e, s: s.pos()).result() == len(transcript)
+    assert ('rewind', 4) in worker.call(lambda e, s: s.calls).result()
+    assert all(pos == length for _, pos, length in positions)

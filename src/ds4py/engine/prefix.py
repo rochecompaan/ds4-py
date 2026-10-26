@@ -6,11 +6,13 @@ from typing import Literal
 
 @dataclass(frozen=True)
 class PrefixTurn:
+    """One plain-text historical user or assistant turn."""
     role: Literal["user", "assistant"]
     content: str
 
 
 class PrefixError(ValueError):
+    """Invalid prefix-file syntax, encoding, or file access."""
     pass
 
 
@@ -31,6 +33,7 @@ def _decode_content(data: bytes, start: int, end: int, role: str, line: int, tur
 
 
 def parse_prefix(data: bytes) -> tuple[PrefixTurn, ...]:
+    """Parse UTF-8 USER:/ASSISTANT: pairs; require a final assistant turn."""
     if not data:
         raise PrefixError("prefix file is empty")
     if b"\0" in data:
@@ -86,6 +89,7 @@ def parse_prefix(data: bytes) -> tuple[PrefixTurn, ...]:
 
 
 def load_prefix(path: str | Path) -> tuple[PrefixTurn, ...]:
+    """Read and validate a prefix file, reporting path-aware PrefixError failures."""
     if not str(path):
         raise PrefixError("invalid prefix file path")
     file_path = Path(path)

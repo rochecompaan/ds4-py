@@ -6,6 +6,7 @@ from typing import Mapping
 
 @dataclass(frozen=True)
 class ToolDefinition:
+    """Caller-owned tool schema; names, descriptions, and parameters are untrusted."""
     name: str
     description: str
     parameters: Mapping[str, object]
@@ -13,18 +14,22 @@ class ToolDefinition:
 
 @dataclass(frozen=True)
 class ToolPromptSpan:
+    """A template span with an explicit trusted-rendering boundary."""
     text: str
     rendered: bool
 
 
 class ToolPromptGenerator:
+    """Generate executable family examples and schemas without native calls."""
     def __init__(self, family: str):
         self.family = family
 
     def generate(self, definitions) -> str:
+        """Return the full prompt text for ordered tool definitions."""
         return "".join(span.text for span in self.spans(definitions))
 
     def spans(self, definitions) -> list[ToolPromptSpan]:
+        """Separate trusted template markup from plain serialized definitions."""
         schemas = [
             json.dumps(
                 {"name": item.name, "description": item.description, "parameters": item.parameters},
@@ -82,7 +87,6 @@ class ToolPromptGenerator:
         suffix = (
             "</tools>\n\n"
             "Call example:\n"
-            "<｜tool▁call▁begin｜>read<｜tool▁sep｜>path=\"...\" ...<｜tool▁call▁end｜>\n"
             "<tool_call>read<arg_key>path</arg_key><arg_value>README.md</arg_value></tool_call>\n\n"
             "Escape literal </arg_value> as &lt;/arg_value>; write &lt;/arg_value> literally as "
             "&amp;lt;/arg_value>. Other entities stay unchanged.\n"
