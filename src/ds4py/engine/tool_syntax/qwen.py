@@ -1,15 +1,12 @@
 """Incremental Qwen function/parameter tool-call parser."""
-from copy import deepcopy
 import json
 import re
-from types import MappingProxyType
 
-from .base import ToolParser
-from .model import ToolArgument, ToolCall
+from .delimiter import DelimiterParser
+from .model import ToolArgument
 from .text import unescape_tool_text
 
 _ASCII_SPACE = b" \t\r\n"
-_START = b"<tool_call>"
 _CLOSE = b"</tool_call>"
 _FUNCTION = b"<function="
 _FUNCTION_CLOSE = b"</function>"
@@ -37,95 +34,14 @@ def value_is_json(value):
     return len(trimmed) < 64 and _NUMBER.fullmatch(trimmed) is not None
 
 
-class Qwen(ToolParser):
+class Qwen(DelimiterParser):
     """Streaming Qwen function/parameter parser with C-compatible JSON inference."""
-    def __init__(self):
-        self._after_call = False
-        self._call_start = 0
-        self._current_name = None
-        self._args = {}
-        self._param_name = None
-        self._param_value_start = 0
-        self._param_scan_pos = 0
-        super().__init__()
 
-    def _opening_forms(self):
-        return ((_START, False),)
+    _call_close = _FUNCTION_CLOSE
+    _parameter_close = _PARAMETER_CLOSE
+    _family = "Qwen"
 
-    def _start(self, implicit_invoke):
-        self.state = "STRUCTURAL"
-        self._active = True
-        self._call_start = len(self.raw)
-        self.raw.extend(_START)
-        self.parse_pos = len(self.raw)
-
-    @staticmethod
-    def _skip_space(data, position):
-        while position < len(data) and data[position] in _ASCII_SPACE:
-            position += 1
-        return position
-
-    def _partial(self, prefix, position):
-        remaining = bytes(self.raw[position:])
-        return len(remaining) < len(prefix) and prefix.startswith(remaining)
-
-    def _decode(self, value, description):
-        try:
-            return bytes(value).decode()
-        except UnicodeDecodeError:
-            self._fail(f"{description} is not valid UTF-8")
-            return None
-
-    def _push_current(self):
-        if self._current_name is not None:
-            args = MappingProxyType({
-                name: deepcopy(argument.value) for name, argument in self._args.items()
-            })
-            raw = bytes(self.raw[self._call_start:self.parse_pos]).decode()
-            self._calls.append(ToolCall(self._current_name, args, raw))
-        self._current_name = None
-        self._args = {}
-        self._param_name = None
-
-    def _parse(self):
-        while self.state in ("STRUCTURAL", "PARAM_VALUE"):
-            if self.state == "PARAM_VALUE":
-                if not self._parse_parameter_value():
-                    return
-                continue
-            self.parse_pos = self._skip_space(self.raw, self.parse_pos)
-            if self.parse_pos >= len(self.raw):
-                return
-            if self._after_call:
-                self._parse_after_call()
-                if self.state != "STRUCTURAL" or self._after_call:
-                    return
-                continue
-            if self._current_name is None:
-                if not self._parse_function():
-                    return
-                continue
-            if self.raw.startswith(_FUNCTION_CLOSE, self.parse_pos):
-                if not self._parse_function_close():
-                    return
-                continue
-            if self._partial(_FUNCTION_CLOSE, self.parse_pos):
-                return
-            self._parse_parameter()
-            return
-
-    def _parse_after_call(self):
-        if self.raw.startswith(_START, self.parse_pos):
-            self._call_start = self.parse_pos
-            self.parse_pos += len(_START)
-            self._after_call = False
-            return
-        if self._partial(_START, self.parse_pos):
-            return
-        del self.raw[self.parse_pos:]
-        self.state = "DONE"
-
-    def _parse_function(self):
+    def _parse_call(self):
         if not self.raw.startswith(_FUNCTION, self.parse_pos):
             if self._partial(_FUNCTION, self.parse_pos):
                 return False
@@ -146,7 +62,7 @@ class Qwen(ToolParser):
         self.parse_pos = end + 1
         return True
 
-    def _parse_function_close(self):
+    def _parse_call_close(self):
         after = self._skip_space(self.raw, self.parse_pos + len(_FUNCTION_CLOSE))
         if after >= len(self.raw) or self._partial(_CLOSE, after):
             return False
@@ -216,17 +132,3 @@ class Qwen(ToolParser):
     @staticmethod
     def _reject_json_constant(value):
         raise ValueError(f"invalid JSON constant: {value}")
-
-    def _update_param_close_prefix(self):
-        tail = bytes(self.raw[-len(_PARAMETER_CLOSE):])
-        start = tail.rfind(b"<")
-        self.param_close_prefix = start >= 0 and _PARAMETER_CLOSE.startswith(tail[start:])
-
-    def _finish_active(self):
-        trailing = self.raw[self.parse_pos:]
-        if self._after_call and all(byte in _ASCII_SPACE for byte in trailing):
-            self.parse_pos = len(self.raw)
-            self._after_call = False
-            self.state = "DONE"
-            return
-        self._fail("incomplete Qwen tool-call stanza")
