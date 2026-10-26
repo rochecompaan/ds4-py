@@ -228,4 +228,3 @@ def test_interruption_does_not_finalize_stream_or_publish_calls():
     assert reason == "interrupted" and not stream.finalized
     assert stream.snapshot.state != "ERROR"
     assert event_calls(events) == []
-
