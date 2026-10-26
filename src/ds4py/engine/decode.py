@@ -31,6 +31,7 @@ class GenerateJob:
     logits_hooks: tuple[Callable[[LogitsView], None], ...] = ()
     control: ControlSpan = field(default_factory=ControlSpan)
     resume: bool = False
+    sampled_tokens: list[int] = field(default_factory=list)
 
     def __post_init__(self):
         if self.stream is not None and self.stream.control is not self.control:
@@ -50,7 +51,7 @@ class DecodeContext:
         self._accepted = 0
         self._committed = False
         self._sampled_tokens = (
-            job.stream.sampled_tokens if job.stream is not None else []
+            job.stream.sampled_tokens if job.stream is not None else job.sampled_tokens
         )
         self._logits_view = (
             LogitsView(session, engine.info().vocab_size) if job.logits_hooks else None
@@ -138,7 +139,10 @@ class DecodeContext:
             stream.observe(token, text, self._publish)
         elif self._job.control.sequences:
             self._job.control.feed(text)
-        if stream is None and self._logits_view is not None:
+        # Stop sequences can pause a raw round before any hook is registered.
+        if stream is None and (
+            self._logits_view is not None or self._job.control.sequences
+        ):
             self._sampled_tokens.append(token)
         if stream is not None and stream.malformed:
             self.finish("parser_error")

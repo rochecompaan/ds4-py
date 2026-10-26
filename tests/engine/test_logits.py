@@ -127,6 +127,32 @@ def test_bias_changes_the_actual_next_token_and_transcript():
         assert native_session(session).logit_sets == 1
 
 
+def test_raw_sampled_tokens_survive_stop_sequence_resume():
+    stop = (116, 117, 112, 113)
+    following = (111, 102, 121, 117)
+
+    def script(prompt, generated):
+        tokens = following if any(
+            tuple(prompt[index:index + len(stop)]) == stop
+            for index in range(len(prompt) - len(stop) + 1)
+        ) else stop
+        return tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
+
+    states = []
+    with fake_session(script, think=ThinkMode.NONE) as session:
+        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped(
+            "stop_sequence"
+        )
+        # Registration after the pause proves the round owns this history.
+        session.add_logits_hook(lambda view: states.append(view.sampled_tokens))
+        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped(
+            "stop_token"
+        )
+
+    assert states[0] == stop
+    assert states[-1] == stop + following
+
+
 def test_hook_state_tracks_only_committed_tokens():
     tokens = tokenize_rendered("<think>a</think>b<think>c</think>")
 
@@ -172,7 +198,7 @@ def test_hook_state_tracks_only_committed_tokens():
             True,
             False,
         ]
-        assert [state[2] for state in states] == [0, 1, 2, 2, 2, 1, 2, 2]
+        assert [state[2] for state in states] == [0, 1, 2, 0, 0, 1, 2, 0]
         assert [state[3] for state in states] == ["SEARCH"] * (len(tokens) + 1)
         assert [state[4] for state in states] == [
             tuple(tokens[:index]) for index in range(len(tokens) + 1)

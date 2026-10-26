@@ -76,6 +76,8 @@ class RoundStream:
         deltas = self.decoder.feed(data)
         if self.snapshot.in_think:
             self.think_tokens = self.think_tokens + 1 if was_thinking else 1
+        else:
+            self.think_tokens = 0
         self._publish(deltas, emit)
 
     def resume(self) -> None:

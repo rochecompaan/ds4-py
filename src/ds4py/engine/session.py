@@ -121,6 +121,7 @@ class Session:
         self._logits_hooks = []
         self._paused_stream = None
         self._paused_control = None
+        self._paused_sampled_tokens = None
 
     @property
     def transcript(self) -> TranscriptView:
@@ -260,6 +261,8 @@ class Session:
     def _raw_round(self, max_tokens, sampling, stop_sequences=()):
         resuming = self._paused_control is not None and self._paused_stream is None
         control = resolve_control(self._paused_control if resuming else None, stop_sequences)
+        sampled_tokens = self._paused_sampled_tokens if resuming else []
+        assert sampled_tokens is not None
         try:
             tokens = self._transcript.tokens
             if (yield from self._job_events(SyncJob(tokens))):
@@ -268,13 +271,15 @@ class Session:
                 sampling or self._engine.sampling_defaults, self._rng,
                 max_tokens, self._transcript,
                 logits_hooks=tuple(self._logits_hooks), control=control, resume=resuming,
+                sampled_tokens=sampled_tokens,
             )
             yield from self._job_events(job)
         finally:
             if control is not None and control.stop_sequence is not None:
                 self._paused_control = control
+                self._paused_sampled_tokens = sampled_tokens
             else:
-                self._paused_control = None
+                self._paused_control = self._paused_sampled_tokens = None
 
     def run_round(self, *, max_tokens: int = 50_000,
                   sampling: SamplingPolicy | None = None,

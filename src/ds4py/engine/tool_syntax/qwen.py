@@ -15,6 +15,10 @@ _PARAMETER_CLOSE = b"</parameter>"
 _NUMBER = re.compile(rb"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 
 
+def _parse_number(value):
+    return float(value) if any(marker in value for marker in ".eE") else int(value)
+
+
 def value_is_json(value):
     """Classify a Qwen value using the pinned C numeric and container rules."""
     start = 0
@@ -117,7 +121,11 @@ class Qwen(DelimiterParser):
         is_json = value_is_json(value_bytes)
         if is_json:
             try:
-                value = json.loads(text, parse_constant=self._reject_json_constant)
+                number = text.strip()
+                if len(number) < 64 and _NUMBER.fullmatch(number.encode()):
+                    value = _parse_number(number)
+                else:
+                    value = json.loads(text, parse_constant=self._reject_json_constant)
             except (json.JSONDecodeError, ValueError):
                 self._fail(f"Qwen parameter {self._param_name!r} contains malformed JSON")
                 return True
