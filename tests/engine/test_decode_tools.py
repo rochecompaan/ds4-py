@@ -10,6 +10,7 @@ from ds4py.engine.decode import GenerateJob, generate
 from ds4py.engine.events import (
     Stopped, TextDelta, Thinking, Token, ToolCalls, ToolSyntax,
 )
+from ds4py.engine.pause import ControlSpan
 from ds4py.engine.sampling import Rng, SamplingPolicy
 from ds4py.engine.stream import RoundStream
 from ds4py.engine.transcript import Transcript
@@ -59,6 +60,7 @@ def run_native(workers, native, *, chat=True, max_tokens=1000, ctx=1024,
     job = GenerateJob(
         policy or SamplingPolicy(), Rng(1), max_tokens, transcript,
         think_mode=think if chat else None, stream=stream,
+        control=stream.control if stream is not None else ControlSpan(),
     )
     events = list(worker.submit(job))
     return events, transcript, stream, worker
@@ -184,7 +186,8 @@ def test_raw_and_chat_use_their_respective_stop_bindings():
         reason = generate(
             engine, session,
             GenerateJob(SamplingPolicy(), Rng(1), 5, transcript,
-                        think_mode=ThinkMode.HIGH if chat else None, stream=stream),
+                        think_mode=ThinkMode.HIGH if chat else None, stream=stream,
+                        control=stream.control if stream is not None else ControlSpan()),
             cancelled=lambda: False, emit=lambda event: None,
         )
         assert reason == "stop_token"
@@ -201,7 +204,7 @@ def test_commit_order_is_eval_transcript_token_then_stream_events():
     reason = generate(
         engine, session,
         GenerateJob(SamplingPolicy(), Rng(1), 5, transcript,
-                    think_mode=ThinkMode.NONE, stream=stream),
+                    think_mode=ThinkMode.NONE, stream=stream, control=stream.control),
         cancelled=lambda: False,
         emit=lambda event: observed.append((event, transcript.tokens)),
     )
@@ -222,7 +225,7 @@ def test_interruption_does_not_finalize_stream_or_publish_calls():
     reason = generate(
         engine, session,
         GenerateJob(SamplingPolicy(), Rng(1), 5, transcript,
-                    think_mode=ThinkMode.NONE, stream=stream),
+                    think_mode=ThinkMode.NONE, stream=stream, control=stream.control),
         cancelled=lambda: next(answers, True), emit=events.append,
     )
     assert reason == "interrupted" and not stream.finalized

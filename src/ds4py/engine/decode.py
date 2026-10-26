@@ -29,21 +29,12 @@ class GenerateJob:
     think_mode: int | None = None
     stream: RoundStream | None = None
     logits_hooks: tuple[Callable[[LogitsView], None], ...] = ()
-    stop_sequences: list[bytes] = field(default_factory=list)
-    control: ControlSpan | None = None
+    control: ControlSpan = field(default_factory=ControlSpan)
     resume: bool = False
 
     def __post_init__(self):
-        stream_control = self.stream.control if self.stream is not None else None
-        control = self.control
-        if control is None:
-            if stream_control is not None and (stream_control.sequences or not self.stop_sequences):
-                control = stream_control
-            else:
-                control = ControlSpan(self.stop_sequences)
-        object.__setattr__(self, "control", control)
-        if self.stream is not None:
-            self.stream.control = control
+        if self.stream is not None and self.stream.control is not self.control:
+            raise ValueError("stream and job control must be identical")
 
 
 class DecodeContext:

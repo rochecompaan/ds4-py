@@ -11,6 +11,7 @@ from ds4py.errors import EngineError
 from . import chat as chat_ops
 from .decode import GenerateJob
 from .events import Checkpointed, Event, Interrupted, ReserveReached, Stopped, Synced
+from .pause import resolve_control
 from .plan import Plan
 from .sampling import Rng, SamplingPolicy
 from .transcript import Segment, Transcript, TranscriptView
@@ -258,7 +259,7 @@ class Session:
 
     def _raw_round(self, max_tokens, sampling, stop_sequences=()):
         resuming = self._paused_control is not None and self._paused_stream is None
-        control = self._paused_control if resuming else None
+        control = resolve_control(self._paused_control if resuming else None, stop_sequences)
         try:
             tokens = self._transcript.tokens
             if (yield from self._job_events(SyncJob(tokens))):
@@ -266,10 +267,8 @@ class Session:
             job = GenerateJob(
                 sampling or self._engine.sampling_defaults, self._rng,
                 max_tokens, self._transcript,
-                logits_hooks=tuple(self._logits_hooks),
-                stop_sequences=list(stop_sequences), control=control, resume=resuming,
+                logits_hooks=tuple(self._logits_hooks), control=control, resume=resuming,
             )
-            control = job.control
             yield from self._job_events(job)
         finally:
             if control is not None and control.stop_sequence is not None:
@@ -282,10 +281,12 @@ class Session:
                   stop_sequences: Sequence[bytes] = ()) -> Iterator[Event]:
         """Synchronize and generate on the worker; ownership begins at iteration.
 
-        While open, other rounds and caller mutations are refused. A chat stop
-        sequence leaves the assistant paused: another run resumes it; appending
-        a new message closes it first. ReserveReached requires resume(reserve)
-        or fail() before advancing. Closing the iterator drains native work.
+        While open, other rounds and caller mutations are refused. A stop
+        sequence leaves the raw or chat round paused: another run resumes it
+        with unchanged stop_sequences; changed sequences raise ValueError before
+        sampling. Appending a new chat message closes the pause first.
+        ReserveReached requires resume(reserve) or fail() before advancing.
+        Closing the iterator drains native work.
         """
         with self._lock:
             if self._active_round:

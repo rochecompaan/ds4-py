@@ -127,7 +127,7 @@ def test_public_round_forwards_stop_sequences(monkeypatch):
         assert isinstance(list(session.run_round(
             max_tokens=10, stop_sequences=[b"stop"],
         ))[-1], Stopped)
-    assert captured[0]["stop_sequences"] == [b"stop"]
+    assert captured[0]["control"].sequences == (b"stop",)
 
 
 @pytest.mark.parametrize("pause_at", [Synced, Token])

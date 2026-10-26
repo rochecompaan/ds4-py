@@ -4,7 +4,7 @@ import pytest
 
 import ds4py
 from ds4py import ThinkMode
-from ds4py._native.fake import FakeNative
+from ds4py._native.fake import FakeNative, FakeSession
 from ds4py._native.protocol import EngineInfo
 from ds4py.engine.decode import DecodeContext, GenerateJob, Verdict, generate
 from ds4py.engine.events import Stopped, Token
@@ -48,15 +48,29 @@ def decode(tokens, stop_sequences, *, texts=None, stream=None, control=None,
     session = ScriptedSession(tokens, ctx=ctx)
     transcript = Transcript()
     control = control or ControlSpan(stop_sequences)
+    if stream is not None:
+        stream.control = control
     job = GenerateJob(
         SamplingPolicy(), Rng(1), max_tokens, transcript, stream=stream,
-        control=control, stop_sequences=list(stop_sequences), resume=resume,
+        control=control, resume=resume,
     )
     reason = generate(
         TextEngine(texts), session, job, cancelled=lambda: False,
         emit=lambda event: None, step=step,
     )
     return reason, session, transcript, control
+
+
+def test_generate_job_rejects_a_different_stream_controller():
+    stream = RoundStream(INFO, ThinkMode.NONE, control=ControlSpan([b"stop"]))
+    original = stream.control
+    with pytest.raises(ValueError, match="identical"):
+        GenerateJob(
+            SamplingPolicy(), Rng(1), 5, Transcript(),
+            stream=stream, control=ControlSpan([b"other"]),
+        )
+    assert stream.control is original
+    assert stream.control.sequences == (b"stop",)
 
 
 def test_stop_sequence_matches_across_tokens_and_stops_after_matching_token():
@@ -186,6 +200,43 @@ def test_public_chat_stop_sequence_leaves_open_and_next_round_resumes():
         expected = tuple(byte + 1 for byte in b"stopnext")
         assert any(tokens[index:index + len(expected)] == expected
                    for index in range(len(tokens) - len(expected) + 1))
+
+
+@pytest.mark.parametrize("chat", [False, True], ids=["raw", "chat"])
+def test_paused_round_rejects_changed_stop_sequences(chat, monkeypatch):
+    stop = tuple(byte + 1 for byte in b"stop")
+
+    def script(prompt, generated):
+        source = b"next" if any(
+            tuple(prompt[index:index + len(stop)]) == stop
+            for index in range(len(prompt) - len(stop) + 1)
+        ) else b"stop"
+        return source[len(generated)] + 1 if len(generated) < len(source) else 0
+
+    sample_calls = 0
+    original_sample = FakeSession.sample
+
+    def counting_sample(self, *args):
+        nonlocal sample_calls
+        sample_calls += 1
+        return original_sample(self, *args)
+
+    monkeypatch.setattr(FakeSession, "sample", counting_sample)
+    with ds4py.open("f.gguf", think=ThinkMode.NONE, native=FakeNative(script=script)) as engine:
+        session = engine.session()
+        if chat:
+            session.append_user("hi")
+        else:
+            session.append_tokens([5, 6], "user")
+        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped("stop_sequence")
+        sampled_before = sample_calls
+        with pytest.raises(
+            ValueError, match="^stop_sequences cannot change while resuming a round$",
+        ):
+            list(session.run_round(stop_sequences=[b"other"]))
+        assert sample_calls == sampled_before
+        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped("stop_token")
+        assert sample_calls > sampled_before
 
 
 def test_terminal_marker_prefix_is_matched_independently_of_display():

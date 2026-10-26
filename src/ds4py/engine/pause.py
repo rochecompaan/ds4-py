@@ -161,6 +161,15 @@ class ControlSpan:
         return self.record(text, override_ids, done=done)
 
 
+def resolve_control(current: ControlSpan | None, sequences: Iterable[bytes]) -> ControlSpan:
+    """Create fresh control or validate that a paused round keeps its sequences."""
+    if current is None:
+        return ControlSpan(sequences)
+    if current.sequences != ControlSpan(sequences).sequences:
+        raise ValueError("stop_sequences cannot change while resuming a round")
+    return current
+
+
 @dataclass(frozen=True, slots=True)
 class Pause:
     reason: str = "pause"

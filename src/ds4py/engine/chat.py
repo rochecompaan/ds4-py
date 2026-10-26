@@ -1,6 +1,7 @@
 """Session-level chat helpers; these functions own transcript mutations."""
 from ds4py.errors import EngineError
 from .decode import GenerateJob
+from .pause import resolve_control
 from .prompt import PromptBuilder
 from .stream import RoundStream
 from .worker import SyncJob
@@ -60,12 +61,13 @@ def append_prefix(session, turns) -> None:
 def run_round(session, max_tokens, sampling, stop_sequences=()):
     resuming = session._paused_stream is not None
     stream = session._paused_stream if resuming else None
+    control = resolve_control(stream.control if resuming else None, stop_sequences)
     if not resuming:
         append_assistant_prefix(session)
     try:
         think = session._engine.think
         if stream is None:
-            stream = RoundStream(session._engine.info, think)
+            stream = RoundStream(session._engine.info, think, control=control)
         remaining = max_tokens
         reserve = 1
         last_tokens = None
@@ -82,7 +84,7 @@ def run_round(session, max_tokens, sampling, stop_sequences=()):
                 remaining, session._transcript, reserve=reserve,
                 think_mode=think, stream=stream,
                 logits_hooks=tuple(session._logits_hooks),
-                stop_sequences=list(stop_sequences), resume=resuming,
+                control=control, resume=resuming,
             ), pause_on_reserve=True)
             last_tokens = session._transcript.tokens
             if not isinstance(action, tuple) or action[0] != "resume":

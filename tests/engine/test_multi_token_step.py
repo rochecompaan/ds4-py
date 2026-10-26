@@ -7,6 +7,7 @@ from ds4py._native.fake_chat import tokenize_rendered
 from ds4py._native.protocol import EngineConfig, ThinkMode
 from ds4py.engine.decode import GenerateJob, generate
 from ds4py.engine.events import Stopped, Token, ToolCalls
+from ds4py.engine.pause import ControlSpan
 from ds4py.engine.sampling import Rng, SamplingPolicy
 from ds4py.engine.stream import RoundStream
 from ds4py.engine.transcript import Transcript
@@ -44,6 +45,7 @@ def run_step(workers, tokens, blocks, *, max_tokens=1000, chat=False, logits_hoo
     job = GenerateJob(
         SamplingPolicy(), Rng(1), max_tokens, transcript,
         think_mode=ThinkMode.NONE if chat else None, stream=stream,
+        control=stream.control if stream is not None else ControlSpan(),
         logits_hooks=logits_hooks,
     )
     step = step_type(blocks)
