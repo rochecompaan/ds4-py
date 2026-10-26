@@ -100,7 +100,9 @@ class Dsml(ToolParser):
             args = MappingProxyType({
                 name: deepcopy(argument.value) for name, argument in self._args.items()
             })
-            raw = bytes(self.raw[self._call_start:end]).decode()
+            raw = self._decode(self.raw[self._call_start:end], "tool call raw")
+            if raw is None:
+                return
             self._calls.append(ToolCall(self._current_name, args, raw))
         self._current_name = None
         self._args = {}
@@ -139,6 +141,8 @@ class Dsml(ToolParser):
         if end is None:
             return False
         self._push_current(self.parse_pos if done else end)
+        if self.state == "ERROR":
+            return True
         self.parse_pos = end
         if done:
             self.state = "DONE"

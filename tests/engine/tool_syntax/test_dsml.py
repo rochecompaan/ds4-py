@@ -117,6 +117,33 @@ def test_malformed_dsml_markers_outside_blocks_are_errors(marker):
     assert snapshot.state == "ERROR" and snapshot.calls == ()
 
 
+@pytest.mark.parametrize("v41", [False, True])
+@pytest.mark.parametrize("explicit_invoke_close", [True, False])
+def test_invalid_utf8_in_ignored_attribute_is_parser_error_for_all_chunks(
+    v41, explicit_invoke_close,
+):
+    invoke, parameter, calls = (" invoke", " parameter", " calls") if v41 else (
+        "invoke", "parameter", "tool_calls",
+    )
+    invoke_close = f"</｜DSML｜{invoke}>" if explicit_invoke_close else ""
+    data = (
+        f'<｜DSML｜{calls}><｜DSML｜{invoke} name="read" extra="'.encode()
+        + b"\xff"
+        + (f'"><｜DSML｜{parameter} name="path" string="true">x'
+           f'</｜DSML｜{parameter}>{invoke_close}</｜DSML｜{calls}>').encode()
+    )
+    partitions = [[data], [bytes([byte]) for byte in data]]
+    partitions += [[data[:split], data[split:]] for split in range(len(data) + 1)]
+
+    for chunks in partitions:
+        parser = Dsml(v41=v41)
+        for chunk in chunks:
+            snapshot = parser.feed(chunk)
+        assert snapshot.state == "ERROR"
+        assert "raw" in snapshot.error and "UTF-8" in snapshot.error
+        assert snapshot.calls == ()
+
+
 def test_split_think_markers_reject_dsml_inside_thinking():
     parser = Dsml()
     parser.feed(b"<th")
