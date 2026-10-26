@@ -71,6 +71,9 @@ Set `BACKEND` to one value from the table:
 export BACKEND=cpu  # Change this to metal or cuda when appropriate.
 ```
 
+For Metal, `devenv.nix` selects Apple SDK 15 for the pinned ds4 source's macOS 15 Metal APIs.
+This also avoids the deployment-target conflict between devenv's default SDK and PyTorch on macOS.
+
 For CUDA, set the GPU architecture before the native builds:
 
 ```bash
@@ -89,7 +92,8 @@ Do not substitute the current ds4 `main` branch.
 ```bash
 export DS4_SRC="$PWD/../ds4-src"
 read -r DS4_REPO DS4_COMMIT <<< "$(
-  uv run python -c     'from ds4py.abi import pins; print(pins.UPSTREAM.repo, pins.UPSTREAM.commit)'
+  uv run python -c \
+    'from ds4py.abi import pins; print(pins.UPSTREAM.repo, pins.UPSTREAM.commit)'
 )"
 
 if [ -d "$DS4_SRC/.git" ]; then
@@ -151,13 +155,21 @@ The CUDA command uses `CUDA_ARCH` from the environment or `native` when it is un
 Use the exact `frozen-1221-quantized-DS4-Flash.gguf` model for the standard parity check.
 Change the path below to its location on your machine.
 Make sure that the machine has enough free memory for the model.
+Metal reads shader files from the agent's working directory.
+Run the agent from `DS4_SRC` in a subshell so your shell stays in the ds4-py checkout.
 
 ```bash
 export MODEL="$HOME/models/frozen-1221-quantized-DS4-Flash.gguf"
 export TRACE="$PWD/c-agent.trace"
 rm -f "$TRACE"
 
-"$DS4_AGENT" --non-interactive --model "$MODEL" --backend "$BACKEND"   --ctx 4096 --tokens 2048 --temp 0 --seed 1   --prompt 'Read pyproject.toml and report the project name.'   --trace "$TRACE"
+(
+  cd "$DS4_SRC"
+  "$DS4_AGENT" --non-interactive --model "$MODEL" --backend "$BACKEND" \
+    --ctx 4096 --tokens 2048 --temp 0 --seed 1 \
+    --prompt 'Read pyproject.toml and report the project name.' \
+    --trace "$TRACE"
+)
 ```
 
 Remove the old trace before each capture because `--trace` appends to an existing file.
@@ -167,12 +179,17 @@ The trace records the model path, prompt tokens, sampled tokens, and round bound
 Replay the trace through ds4-py:
 
 ```bash
-DS4_TEST_MODEL="$MODEL" DS4_REPLAY_TRACE="$TRACE"   uv run pytest -m live tests/live/test_replay_parity.py -v
+DS4_TEST_MODEL="$MODEL" DS4_REPLAY_TRACE="$TRACE" \
+  uv run pytest -m live tests/live/test_replay_parity.py -v
 ```
 
 `DS4_TEST_MODEL` must resolve to the same model path that the trace records.
 Replay uses the prompts from the C trace and does not execute parsed tool calls.
 A successful replay ends with `1 passed`; a skipped test does not prove live parity.
+
+The 27B model can produce `ds4-agent: failed to save system prompt KV: unsupported routed quantization for KV save`.
+The agent continues without saving that KV cache.
+This warning does not invalidate replay when capture completes and `pytest` reports `1 passed`.
 
 See [`tests/live/REPLAY.md`](../tests/live/REPLAY.md) for trace semantics and bake-off captures.
 When you report a result, include the backend, operating system, GPU or chip, and test output.

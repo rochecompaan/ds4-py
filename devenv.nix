@@ -3,6 +3,12 @@
 {
   languages.c.enable = true;
 
+  # The pinned ds4 source uses macOS 15 Metal APIs.
+  apple.sdk =
+    if pkgs.stdenv.isDarwin
+    then pkgs.apple-sdk_15
+    else null;
+
   languages.python = {
     enable = true;
     package = pkgs.python3;

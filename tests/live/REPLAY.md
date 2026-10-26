@@ -17,9 +17,12 @@ backend (the compute implementation) for both binaries. If the library is not in
 ds4-py's default library directory, set `DS4_LIB`. Replace the paths and backend
 below with the values for that installation. Use the actual filename of the
 frozen model. The placeholder is not a second model choice.
+Metal reads shader files from the agent's working directory.
+Run the agent from `DS4_SRC` in a subshell so your shell stays in the ds4-py checkout.
 
 ```bash
-export DS4_AGENT=/absolute/path/to/ds4-agent
+export DS4_SRC=/absolute/path/to/ds4
+export DS4_AGENT="$DS4_SRC/ds4-agent"
 export DS4_LIB=/absolute/path/to/libds4.so
 export MODEL=/absolute/path/to/frozen-1221-quantized-DS4-Flash.gguf
 export BACKEND=cpu  # Or cuda or metal; it must match libds4.
@@ -27,10 +30,13 @@ export TRACE="$PWD/c-agent.trace"
 
 # --trace appends, so start with a fresh file.
 rm -f "$TRACE"
-"$DS4_AGENT" --non-interactive --model "$MODEL" --backend "$BACKEND" \
-  --ctx 4096 --tokens 2048 --temp 0 --seed 1 \
-  --prompt 'Read pyproject.toml and report the project name.' \
-  --trace "$TRACE"
+(
+  cd "$DS4_SRC"
+  "$DS4_AGENT" --non-interactive --model "$MODEL" --backend "$BACKEND" \
+    --ctx 4096 --tokens 2048 --temp 0 --seed 1 \
+    --prompt 'Read pyproject.toml and report the project name.' \
+    --trace "$TRACE"
+)
 ```
 
 Set `--tokens` (`-n`) high. This lets the model reach a natural stop or a tool
