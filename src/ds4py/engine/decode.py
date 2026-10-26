@@ -7,7 +7,7 @@ from ds4py._native.protocol import EngineHandle, SessionHandle
 from ds4py.errors import EngineError
 from .events import Event, Token
 from .logits import LogitsView
-from .pause import ControlSpan, Resume
+from .pause import ControlSpan
 from .sampling import Rng, SamplingPolicy
 from .stream import RoundStream
 from .transcript import Transcript
@@ -107,8 +107,6 @@ class DecodeContext:
         if self.finalized:
             return Verdict.STOP_AFTER
         if self.is_stop(token):
-            if self._job.stream is not None:
-                self._job.stream.mark_eos(token, self._engine.token_text(token))
             self.finish("stop_token")
             self._verdict = Verdict.STOP_BEFORE
             return self._verdict
@@ -140,7 +138,7 @@ class DecodeContext:
         if stream is not None:
             stream.observe(token, text, self._publish)
         elif self._job.control.sequences:
-            self._job.control.Feed(text)
+            self._job.control.feed(text)
         if self._logits_view is not None:
             self._sampled_tokens.append(token)
         if stream is not None and stream.malformed:
@@ -162,18 +160,15 @@ class DecodeContext:
         self._finish_parser = finish_parser
         self._verdict = Verdict.STOP_AFTER
 
-    def resume(self, actor: Resume | None = None) -> None:
-        forced_stop = None
+    def resume(self) -> None:
         if self._job.stream is not None:
-            forced_stop = self._job.stream.resume(self._publish, actor)
+            self._job.stream.resume()
         else:
             self._job.control.resume()
         self.reason = None
         self.finalized = False
         self._finish_parser = None
         self._verdict = Verdict.CONTINUE
-        if forced_stop is not None:
-            self.finish("stop_sequence")
 
     def finalize(self) -> None:
         stream = self._job.stream

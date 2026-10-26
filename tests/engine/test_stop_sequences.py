@@ -1,5 +1,3 @@
-from dataclasses import replace
-
 import pytest
 
 import ds4py
@@ -8,7 +6,7 @@ from ds4py._native.fake import FakeNative, FakeSession
 from ds4py._native.protocol import EngineInfo
 from ds4py.engine.decode import DecodeContext, GenerateJob, Verdict, generate
 from ds4py.engine.events import Stopped, Token
-from ds4py.engine.pause import ControlSpan, Pause, PausedAfterEos, Resume, StreamCheckpoint
+from ds4py.engine.pause import ControlSpan
 from ds4py.engine.sampling import Rng, SamplingPolicy
 from ds4py.engine.stream import RoundStream
 from ds4py.engine.transcript import Transcript
@@ -128,31 +126,6 @@ def test_resume_retains_matcher_state_and_clears_only_stop_field():
     assert reason == "stop_sequence" and control.stop_sequence == b"stop"
 
 
-def test_forced_eos_resume_feeds_sampled_eos_with_checkpoint_state():
-    stream = RoundStream(INFO, ThinkMode.NONE, control=ControlSpan([b"stop"]))
-    events = []
-    stream.observe(1, b"st", events.append)
-    stream.mark_eos(0, b"", paused=PausedAfterEos(0, b""))
-    checkpoint = replace(stream.checkpoint, force=True)
-    stream.checkpoint = checkpoint
-    stream.resume(events.append, Resume(force_end_thinking=True))
-    assert isinstance(checkpoint, StreamCheckpoint) and checkpoint.force
-    assert stream.checkpoint.thinking is False and stream.checkpoint.text == "st"
-    assert stream.stop_was_eos is False and stream.finalized is False
-    assert stream.control.matcher.pending == 2
-
-
-def test_forced_eos_match_preserves_stop_reason_and_does_not_sample_again():
-    control = ControlSpan([b"</s>"])
-    stream = RoundStream(INFO, ThinkMode.NONE, control=control)
-    stream.mark_eos(0, b"</s>")
-    reason, session, _, _ = decode(
-        [5], [b"</s>"], stream=stream, control=control, resume=True,
-    )
-    assert reason == "stop_sequence" and session.sample_calls == 0
-    assert stream.stop_sequence == b"</s>" and stream.stop_was_eos is False
-
-
 def test_finish_guards_accepted_token_counters_and_later_commits():
     transcript = Transcript()
     job = GenerateJob(SamplingPolicy(), Rng(1), 10, transcript)
@@ -162,7 +135,7 @@ def test_finish_guards_accepted_token_counters_and_later_commits():
     )
     ctx.accept(1)
     assert ctx.commit(1) is Verdict.CONTINUE
-    ctx.finish(Pause().reason, finish_parser=False)
+    ctx.finish("pause", finish_parser=False)
     assert ctx.accept(2) is Verdict.STOP_AFTER
     assert ctx.commit(2) is Verdict.STOP_AFTER
     assert ctx._accepted == 1 and transcript.tokens == (1,)
@@ -285,11 +258,3 @@ def test_message_mutations_close_a_paused_assistant(mutation, kind):
         mutation(session)
         assert session._paused_stream is None
         assert [segment.kind for segment in session.transcript.segments][-2:] == ['eos', kind]
-
-
-def test_control_checkpoint_preserves_utf8_without_display_decoding():
-    stream = RoundStream(INFO, ThinkMode.NONE, control=ControlSpan([b'never']))
-    for byte in '雪'.encode():
-        stream.observe(byte, bytes([byte]), lambda event: None)
-    stream.mark_eos(0)
-    assert stream.checkpoint.text == '雪'

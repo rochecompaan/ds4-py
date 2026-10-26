@@ -1,9 +1,8 @@
 """Per-assistant-round parser, control matching, and display stream state."""
-from dataclasses import replace
 
 from .decoder import Decoder
 from .events import Thinking, ToolCalls, ToolSyntax
-from .pause import ControlSpan, PausedAfterEos, Resume, StreamCheckpoint
+from .pause import ControlSpan
 from .tool_syntax import make_parser
 
 
@@ -14,16 +13,10 @@ class RoundStream:
         self.parser.in_think = thinking
         self.decoder = Decoder(thinking=thinking)
         self.control = control or ControlSpan()
-        self.checkpoint = StreamCheckpoint(thinking=thinking)
         self.snapshot = self.parser.feed(b"")
         self.sampled_tokens = []
         self.think_tokens = 0
         self.finalized = False
-        self.stop_was_eos = False
-        self.paused: PausedAfterEos | None = None
-        self._eos_token: int | None = None
-        self._eos_text = b""
-        self._text_parts: list[bytes] = []
         self._control_pending = bytearray()
         self._last_state = self.snapshot.state
         self._last_thinking = thinking
@@ -49,8 +42,7 @@ class RoundStream:
 
     def _match_control(self, data):
         if data and self.control.sequences:
-            self._text_parts.append(data)
-            self.control.Feed(data)
+            self.control.feed(data)
 
     def _observe_control(self, data):
         # Control scans sampled bytes, not display deltas. Only actual think
@@ -85,35 +77,10 @@ class RoundStream:
             self.think_tokens = self.think_tokens + 1 if was_thinking else 1
         self._publish(deltas, emit)
 
-    def mark_eos(self, token: int, text: bytes = b"", *,
-                 paused: PausedAfterEos | None = None) -> None:
-        self.stop_was_eos = True
-        self.paused = paused
-        self._eos_token, self._eos_text = token, bytes(text)
-        self.checkpoint = replace(
-            self.checkpoint, thinking=self.snapshot.in_think,
-            text=b"".join(self._text_parts).decode("utf-8", errors="replace"),
-        )
-
-    def resume(self, emit, resume: Resume | None = None) -> bytes | None:
-        """Retain KMP state and replay a paused EOS before more sampling."""
-        resume = resume or Resume()
+    def resume(self) -> None:
+        """Retain matcher state and clear the matched stop before continuing."""
         self.control.resume()
-        if self.stop_was_eos or resume.force_end_thinking:
-            self.checkpoint = replace(self.checkpoint, force=True)
-            if self._eos_token is not None:
-                self.observe(self._eos_token, self._eos_text, emit)
-            if resume.force_end_thinking and self.snapshot.in_think:
-                self.snapshot = self.parser.feed(b"</think>")
-                deltas = self.decoder.feed(b"</think>")
-                self._publish(deltas, emit)
-            self.checkpoint = replace(self.checkpoint, force=False)
-        self.stop_was_eos = False
-        self.paused = None
-        self._eos_token = None
-        self._eos_text = b""
         self.finalized = False
-        return self.stop_sequence
 
     def finalize(self, *, parser, emit):
         if self.finalized:
