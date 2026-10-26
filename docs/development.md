@@ -6,7 +6,14 @@ Check out the revision that you want to test before you start.
 
 ## Enter the development environment
 
-Install [Nix](https://nixos.org/download/) and [devenv](https://devenv.sh/getting-started/).
+Follow [devenv's installation guide](https://devenv.sh/getting-started/) to install Nix and devenv.
+On macOS, use the recommended Nix installer:
+
+```bash
+curl -sSfL https://artifacts.nixos.org/nix-installer | sh -s -- install
+```
+
+Devenv recommends this installer because it can handle OS upgrades and has better support for Apple silicon.
 From the ds4-py checkout, enter the project environment:
 
 ```bash
