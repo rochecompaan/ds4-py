@@ -24,7 +24,7 @@
     unzip
   ];
 
-  env.MACOSX_DEPLOYMENT_TARGET = "15.0";
+  enterShell = "export MACOSX_DEPLOYMENT_TARGET=15.0";
 
   # Use Nix's Python for uv projects, including the initial scaffold.
   env.UV_PYTHON = "${config.languages.python.package}/bin/python3";

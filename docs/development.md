@@ -102,7 +102,7 @@ if [ -d "$DS4_SRC/.git" ]; then
 else
   git clone "$DS4_REPO" "$DS4_SRC"
 fi
-git -C "$DS4_SRC" checkout "$DS4_COMMIT"
+git -C "$DS4_SRC" checkout -f "$DS4_COMMIT"
 ```
 
 For fork-specific work, replace `pins.UPSTREAM` with `pins.FORK` in the Python command.
