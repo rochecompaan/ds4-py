@@ -48,6 +48,18 @@ class Dropped:
 
 
 @dataclass(frozen=True)
+class Saved:
+    tokens: int
+    payload_bytes: int
+
+
+@dataclass(frozen=True)
+class Loaded:
+    tokens: int
+    payload_bytes: int
+
+
+@dataclass(frozen=True)
 class Token:
     id: int
     text_bytes: bytes
@@ -110,4 +122,4 @@ STOP_REASONS = (
     "stop_token", "tool_call_complete", "max_tokens", "context_reserve",
     "interrupted", "parser_error", "context_exhausted",
 )
-Event = Prefill | Synced | Interrupted | Checkpointed | Dropped | Token | Stopped | ReserveReached | TextDelta | Thinking | ToolSyntax | ToolCalls
+Event = Prefill | Synced | Interrupted | Checkpointed | Dropped | Saved | Loaded | Token | Stopped | ReserveReached | TextDelta | Thinking | ToolSyntax | ToolCalls

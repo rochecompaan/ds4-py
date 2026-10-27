@@ -39,6 +39,14 @@ class SessionSnapshot(ctypes.Structure):
     ]
 
 
+class SessionPayloadFile(ctypes.Structure):
+    _c_name_ = "ds4_session_payload_file"
+    _fields_ = [
+        ("path", c_char_p),
+        ("bytes", c_uint64),
+    ]
+
+
 class DistributedLayers(ctypes.Structure):
     _c_name_ = "ds4_distributed_layers"
     _fields_ = [
@@ -138,6 +146,7 @@ STRUCTS: dict[str, type[ctypes.Structure]] = {
     "ds4_tokens": Tokens,
     "ds4_token_score": TokenScore,
     "ds4_session_snapshot": SessionSnapshot,
+    "ds4_session_payload_file": SessionPayloadFile,
     "ds4_distributed_layers": DistributedLayers,
     "ds4_distributed_options": DistributedOptions,
     "ds4_tp_options": TpOptions,

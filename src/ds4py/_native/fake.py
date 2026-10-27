@@ -1,6 +1,8 @@
 """Deterministic, thread-confined native handles for model-free tests."""
+import struct
 import threading
 from typing import Callable, Iterable, Mapping, Sequence
+import zlib
 
 from ds4py.errors import EngineError, MissingBinding
 from . import fake_chat
@@ -8,7 +10,52 @@ from .bindings import all_bindings
 from .protocol import EngineConfig, EngineInfo, SyncStatus, ThinkMode
 
 FAKE_EOS = 0
+PAYLOAD_MAGIC = b"DFKP"
+PAYLOAD_VERSION = 1
+PAYLOAD_STRIDE = 1024
+PAYLOAD_HEADER = struct.Struct("<4sIII")
 Script = Callable[[Sequence[int], Sequence[int]], int]
+
+
+def encode_payload(tokens: Sequence[int]) -> bytes:
+    """Encode a versioned token payload padded to the fake's declared byte size."""
+    tokens = list(tokens)
+    if not tokens:
+        return b""
+    raw = b"".join(struct.pack("<i", token) for token in tokens)
+    size = PAYLOAD_STRIDE * len(tokens)
+    encoded = PAYLOAD_HEADER.pack(
+        PAYLOAD_MAGIC, PAYLOAD_VERSION, len(tokens), zlib.crc32(raw),
+    ) + raw
+    return encoded + bytes(size - len(encoded))
+
+
+def decode_payload(data: bytes, payload_bytes: int) -> list[int]:
+    """Validate and decode a fake payload; never accept a corrupt token list."""
+    if payload_bytes == 0:
+        return []
+    if len(data) != payload_bytes:
+        raise EngineError(
+            f"truncated payload: declared {payload_bytes} bytes, read {len(data)}"
+        )
+    if payload_bytes % PAYLOAD_STRIDE:
+        raise EngineError(f"corrupt payload: invalid size {payload_bytes}")
+    if payload_bytes < PAYLOAD_HEADER.size:
+        raise EngineError(f"corrupt payload: header is truncated at {payload_bytes} bytes")
+    magic, version, count, checksum = PAYLOAD_HEADER.unpack_from(data)
+    if magic != PAYLOAD_MAGIC:
+        raise EngineError("corrupt payload: bad magic")
+    if version != PAYLOAD_VERSION:
+        raise EngineError(f"corrupt payload: unsupported version {version}")
+    if count != payload_bytes // PAYLOAD_STRIDE:
+        raise EngineError(f"corrupt payload: token count {count} does not match its size")
+    end = PAYLOAD_HEADER.size + count * 4
+    raw = data[PAYLOAD_HEADER.size:end]
+    if data[end:] != bytes(payload_bytes - end):
+        raise EngineError("corrupt payload: nonzero padding")
+    if zlib.crc32(raw) != checksum:
+        raise EngineError("corrupt payload: token checksum mismatch")
+    return list(struct.unpack(f"<{count}i", raw))
 
 
 def reply(text: bytes) -> Script:
@@ -157,6 +204,23 @@ class FakeEngine(_Handle):
         for session in list(self._sessions):
             session.close()
         self.raw = 0
+
+
+class FakeStagedPayload:
+    def __init__(self, tokens):
+        self.tokens = list(tokens)
+        self.bytes = PAYLOAD_STRIDE * len(self.tokens)
+        self._data = encode_payload(self.tokens)
+        self.closed = False
+
+    def write(self, file):
+        if self.closed:
+            raise EngineError("staged payload is closed")
+        file.write(self._data)
+        file.flush()
+
+    def close(self):
+        self.closed = True
 
 
 class FakeSnapshot:
@@ -318,7 +382,23 @@ class FakeSession(_Handle):
 
     def payload_bytes(self):
         self._check()
-        return 1024 * len(self._tokens)
+        return PAYLOAD_STRIDE * len(self._tokens)
+
+    def stage_payload(self):
+        self._check()
+        if not self._valid:
+            raise EngineError("session checkpoint is invalid")
+        return FakeStagedPayload(self._tokens)
+
+    def load_payload(self, file, payload_bytes):
+        self._check()
+        data = file.read(payload_bytes)
+        tokens = decode_payload(data, payload_bytes)
+        self._tokens = tokens
+        self._prompt_length = len(tokens)
+        self._valid = True
+        self._logits = None
+        self.calls.append(("load_payload", len(tokens)))
 
     def save_snapshot(self):
         self._check()

@@ -12,14 +12,19 @@ from ds4py._native.protocol import EngineConfig, Native, ThinkMode
 from ds4py.errors import EngineError
 from . import chat as chat_ops
 from .decode import GenerateJob
-from .events import Checkpointed, Event, Interrupted, ReserveReached, Stopped, Synced
+from .events import (
+    Checkpointed, Event, Interrupted, Loaded, ReserveReached, Saved, Stopped, Synced,
+)
 from .lifecycle import SessionEvent, SessionLifecycle
 from .pause import resolve_control
 from .plan import Plan
 from .prompt import PromptBuilder
 from .sampling import Rng, SamplingPolicy
 from .transcript import Segment, Transcript, TranscriptView
-from .worker import CheckpointJob, EngineWorker, Handles, ResetJob, SyncJob
+from .worker import (
+    CheckpointJob, EngineWorker, Handles, LoadPayloadJob, ResetJob, SavePayloadJob,
+    SyncJob,
+)
 
 T = TypeVar("T")
 
@@ -381,7 +386,10 @@ class Session:
         exhausted = interrupted = terminal = False
         try:
             for event in events:
-                terminal = isinstance(event, (Synced, Interrupted, Stopped))
+                if isinstance(job, (SavePayloadJob, LoadPayloadJob)):
+                    terminal = isinstance(event, (Saved, Loaded, Interrupted, Stopped))
+                else:
+                    terminal = isinstance(event, (Synced, Interrupted, Stopped))
                 interrupted = isinstance(event, Interrupted) or (
                     isinstance(event, Stopped) and event.reason == "interrupted"
                 )
@@ -471,6 +479,48 @@ class Session:
     def drop_checkpoint(self, key: str) -> None:
         list(self._job_events(CheckpointJob(key, drop=True)))
         self._checkpoint_tokens.pop(key, None)
+
+    def save_payload(self, file, *, header: bytes) -> Saved:
+        """Sync the transcript and write the header plus staged native payload.
+
+        The caller owns ``file``; only a duplicated descriptor reaches native
+        code. A failed sync or write leaves the Python file usable.
+        """
+        with self._lock:
+            self._require_idle()
+            saved = None
+            for event in self._job_events(
+                SavePayloadJob(self._transcript.tokens, header, file),
+            ):
+                if isinstance(event, Saved):
+                    saved = event
+            if saved is None:
+                raise EngineError("save did not complete")
+            return saved
+
+    def load_payload(self, file, *, payload_bytes: int) -> list[int]:
+        """Load a payload after the caller's header and adopt its token list.
+
+        The loaded KV becomes the live checkpoint; stale snapshots and paused
+        streams from the previous transcript are discarded. No tokenization or
+        prefill occurs during the load.
+        """
+        payload_bytes = operator.index(payload_bytes)
+        if payload_bytes < 0:
+            raise ValueError("payload byte count cannot be negative")
+        with self._lock:
+            self._require_idle()
+            loaded = None
+            for event in self._job_events(
+                LoadPayloadJob(file, payload_bytes, self._transcript),
+            ):
+                if isinstance(event, Loaded):
+                    loaded = event
+            if loaded is None:
+                raise EngineError("load did not complete")
+            self._checkpoint_tokens.clear()
+            self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
+            return list(self._transcript.tokens)
 
     def on_worker(self, fn: Callable[[Handles], T]) -> Future[T]:
         return self._worker.call(lambda e, s: fn(Handles(e.raw, s.raw)))

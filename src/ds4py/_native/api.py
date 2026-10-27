@@ -10,7 +10,7 @@ import weakref
 
 from ds4py.abi.shaders import metal_source_env
 from ds4py.errors import EngineError, EngineLockedError
-from . import chat, structs
+from . import chat, payload, structs
 from .loader import Library
 from .modelcheck import inspect_model
 from .protocol import BACKENDS, EngineConfig, EngineInfo, SyncStatus, family_of
@@ -268,6 +268,28 @@ class NativeSnapshot:
             self._closed = True
 
 
+class NativeStagedPayload:
+    def __init__(self, lib, data):
+        self._lib, self._data = lib, data
+        self.bytes = data.bytes
+        self._closed = False
+
+    def write(self, file):
+        if self._closed:
+            raise EngineError("staged payload is closed")
+        error = C.create_string_buffer(512)
+        with payload.native_stream(file, "wb") as stream:
+            status = self._lib.fn("ds4_session_write_staged_payload")(
+                C.byref(self._data), stream, error, len(error))
+        if status:
+            raise EngineError(error.value.decode(errors="replace"))
+
+    def close(self):
+        if not self._closed:
+            self._lib.fn("ds4_session_payload_file_free")(C.byref(self._data))
+            self._closed = True
+
+
 def _tokens(tokens):
     array = (C.c_int * len(tokens))(*tokens)
     return structs.Tokens(array, len(tokens), len(tokens))
@@ -370,6 +392,21 @@ class NativeSession(_Handle):
 
     def payload_bytes(self):
         return self._call("ds4_session_payload_bytes")
+
+    def stage_payload(self):
+        self._assert_thread()
+        data = structs.SessionPayloadFile()
+        try:
+            self._error_call("ds4_session_stage_payload", C.byref(data))
+            return NativeStagedPayload(self._lib, data)
+        except BaseException:
+            self._lib.fn("ds4_session_payload_file_free")(C.byref(data))
+            raise
+
+    def load_payload(self, file, payload_bytes):
+        self._assert_thread()
+        with payload.native_stream(file, "rb") as stream:
+            self._error_call("ds4_session_load_payload", stream, payload_bytes)
 
     def save_snapshot(self):
         self._assert_thread()

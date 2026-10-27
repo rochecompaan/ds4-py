@@ -12,8 +12,9 @@ from ds4py._native.protocol import (
 )
 from ds4py.errors import CheckpointError, EngineError
 from .decode import GenerateJob, generate
-from .events import Checkpointed, Dropped, Event, Interrupted, Prefill, Stopped, Synced
+from .events import Checkpointed, Dropped, Event, Interrupted, Loaded, Prefill, Saved, Stopped, Synced
 from .plan import Plan, plan_sync
+from .transcript import Transcript
 
 SYSTEM = "system"
 T = TypeVar("T")
@@ -35,6 +36,28 @@ class CheckpointJob:
 @dataclass(frozen=True)
 class ResetJob:
     """Return the native session to an empty, unsynchronized transcript."""
+
+
+@dataclass(frozen=True)
+class SavePayloadJob:
+    """Sync the transcript, then write the caller header and native payload."""
+
+    tokens: tuple[int, ...]
+    header: bytes
+    file: object
+
+    def __post_init__(self):
+        if not isinstance(self.header, bytes) or len(self.header) != 20:
+            raise ValueError("a payload header must be exactly 20 bytes (a 20-byte header)")
+
+
+@dataclass(frozen=True)
+class LoadPayloadJob:
+    """Read one payload after the caller's header and replace the transcript."""
+
+    file: object
+    payload_bytes: int
+    transcript: Transcript
 
 
 # The only sync rejection a reset may absorb: both libds4 and FakeSession
@@ -100,7 +123,7 @@ class _JobEvents(Iterator[Event]):
 
 @dataclass(frozen=True)
 class _Submission:
-    job: SyncJob | CheckpointJob | ResetJob | GenerateJob
+    job: SyncJob | CheckpointJob | ResetJob | GenerateJob | SavePayloadJob | LoadPayloadJob
     events: _JobEvents
 
 
@@ -146,7 +169,8 @@ class EngineWorker:
                 raise EngineError("engine worker is closed")
             self._queue.put(item)
 
-    def submit(self, job: SyncJob | CheckpointJob | ResetJob | GenerateJob) -> _JobEvents:
+    def submit(self, job: SyncJob | CheckpointJob | ResetJob | GenerateJob
+               | SavePayloadJob | LoadPayloadJob) -> _JobEvents:
         events = _JobEvents()
         self._enqueue(_Submission(job, events))
         return events
@@ -227,6 +251,10 @@ class EngineWorker:
             if reason == "interrupted":
                 self.cancel_event.clear()
             emit(Stopped(reason))
+        elif isinstance(job, SavePayloadJob):
+            self._save_payload(session, job, emit)
+        elif isinstance(job, LoadPayloadJob):
+            self._load_payload(session, job, emit)
         else:
             raise EngineError(f"unsupported engine job: {type(job).__name__}")
 
@@ -266,6 +294,36 @@ class EngineWorker:
             emit(Interrupted(session.pos()))
         else:
             emit(Synced(session.pos(), plan, prefilled))
+        return status
+
+    def _save_payload(self, session, job, emit):
+        status = self._sync(session, job.tokens, emit)
+        if status is not SyncStatus.DONE:
+            raise EngineError("save was interrupted before staging the payload")
+        staged = session.stage_payload()
+        try:
+            payload_bytes = staged.bytes
+            start = job.file.tell()
+            job.file.write(job.header)
+            staged.write(job.file)
+            written = job.file.tell() - start - len(job.header)
+            if written != payload_bytes:
+                raise EngineError(
+                    f"staged payload wrote {written} bytes, declared {payload_bytes}"
+                )
+        finally:
+            staged.close()
+        emit(Saved(len(job.tokens), payload_bytes))
+
+    def _load_payload(self, session, job, emit):
+        session.load_payload(job.file, job.payload_bytes)
+        tokens = session.tokens()
+        job.transcript.reset()
+        if tokens:
+            job.transcript.append(tokens, "system")
+        job.transcript.set_chat()
+        self._close_checkpoints()
+        emit(Loaded(len(tokens), job.payload_bytes))
 
     def _reset(self, session):
         try:
