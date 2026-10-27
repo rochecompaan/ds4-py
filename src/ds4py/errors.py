@@ -47,3 +47,7 @@ class EngineLockedError(EngineError):
 
 class CheckpointError(Ds4pyError):
     """Checkpoint failure."""
+
+
+class StoreError(Ds4pyError):
+    """Session store failure."""
