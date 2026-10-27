@@ -7,10 +7,10 @@ from .stream import RoundStream
 from .worker import SyncJob
 
 
-def _append(session, tokens, kind):
+def _append(session, tokens, kind, meta=None):
     if not tokens:
         return None
-    return session._transcript.append(tokens, kind)
+    return session._transcript.append(tokens, kind, meta)
 
 
 def start_chat(session, tools=(), instructions=None) -> None:
@@ -121,12 +121,13 @@ def append_tool_results(session, results):
     return _append(session, tokens, "tool")
 
 
-def append_system_note(session, text):
+def append_system_note(session, text, subtype=None):
     _require_chat(session)
     retire_paused(session)
     builder = PromptBuilder(session._engine)
     tokens = builder.message(session._transcript.tokens, "system", "\n" + text)
-    return _append(session, tokens, "note")
+    meta = {"subtype": subtype} if subtype else None
+    return _append(session, tokens, "note", meta)
 
 
 def retire_paused(session):

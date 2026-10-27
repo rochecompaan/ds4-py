@@ -333,16 +333,16 @@ class Session:
                 raise EngineError("a round is open")
             return chat_ops.append_tool_results(self, results)
 
-    def append_system_note(self, text: str) -> Segment:
+    def append_system_note(self, text: str, *, subtype: str | None = None) -> Segment:
         """Append a newline-prefixed note between rounds in initialized chat.
 
         Closes a paused assistant first and dispatches plain-payload rendering
-        to the worker.
+        to the worker. ``subtype`` becomes save provenance metadata.
         """
         with self._lock:
             if self._active_round:
                 raise EngineError("a round is open")
-            return chat_ops.append_system_note(self, text)
+            return chat_ops.append_system_note(self, text, subtype)
 
     def add_logits_hook(self, hook: Callable) -> None:
         """Register a lazy pre-sample hook on the worker-thread decode path.

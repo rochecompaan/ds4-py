@@ -191,6 +191,7 @@ class MessageBinder:
 
     def __init__(self, session):
         self.session = session
+        self.note_provider = None
         self._records: list[_BoundMessage] = []
         self._signature = None
 
@@ -297,6 +298,15 @@ class MessageBinder:
         return _BoundMessage(key, content_hash, start, len(target.transcript))
 
     @staticmethod
+    def _trailing_request(messages):
+        if not messages or not isinstance(messages[-1], ModelRequest):
+            return False
+        return any(
+            isinstance(part, (UserPromptPart, ToolReturnPart, RetryPromptPart))
+            for part in messages[-1].parts
+        )
+
+    @staticmethod
     def _continuation(messages):
         return bool(
             messages and isinstance(messages[-1], ModelRequest)
@@ -345,7 +355,15 @@ class MessageBinder:
             previous.key, previous.content_hash, previous.start, end,
         )
 
-    def prepare(self, messages, *, tools=(), instructions=None) -> BindingChange:
+    def _sync_notes(self, provider):
+        sync = getattr(provider, "resync_from_segments", None)
+        if sync is None:
+            sync = getattr(provider, "sync_from_segments", None)
+        if sync is not None:
+            sync(self.session.transcript.segments)
+
+    def prepare(self, messages, *, tools=(), instructions=None,
+                note_provider=None) -> BindingChange:
         messages = list(messages)
         _validate(messages)
         keyed = [(_ensure_key(message), _content_hash(message)) for message in messages]
@@ -353,15 +371,21 @@ class MessageBinder:
         signature = (_tool_digest(definitions), instructions, int(self.session.engine.think))
         had_binding = self._signature is not None
         system_changed = self._signature != signature or not self.session.transcript.chat
+        provider = note_provider if note_provider is not None else self.note_provider
 
         if system_changed:
             self._preflight(messages)
             start = 0
+            removed_notes = any(
+                segment.kind == "note" for segment in self.session.transcript.segments
+            )
             if len(self.session.transcript):
                 self.session.truncate(0)
             self._records = []
             self.session.start_chat(definitions, instructions)
             self._signature = signature
+            if removed_notes:
+                self._sync_notes(provider)
             common = 0
             kind = "rewrite" if had_binding else "append"
         else:
@@ -372,22 +396,45 @@ class MessageBinder:
             ):
                 common += 1
             if common == len(messages) == len(self._records):
-                return BindingChange("unchanged", len(self.session.transcript), self._continuation(messages))
+                pending = getattr(provider, "pending", None)
+                if not (
+                    pending is not None
+                    and self._trailing_request(messages)
+                    and pending(messages)
+                ):
+                    return BindingChange(
+                        "unchanged", len(self.session.transcript), self._continuation(messages),
+                    )
+                # A required note is pending; rewrite the trailing request so the
+                # note lands at its boundary instead of returning unchanged.
+                common = len(messages) - 1
             self._preflight(messages[common:])
             if common < len(self._records):
                 start = self._records[common].start
+                removed_notes = any(
+                    segment.kind == "note" and segment.end > start
+                    for segment in self.session.transcript.segments
+                )
                 self.session.truncate(start)
                 self._records = self._records[:common]
                 kind = "rewrite"
+                if removed_notes:
+                    self._sync_notes(provider)
             else:
                 self._retire_paused()
                 start = len(self.session.transcript)
                 kind = "append"
 
-        for message, (key, content_hash) in zip(messages[common:], keyed[common:]):
-            self._records.append(self._append_message(
+        for offset, (message, (key, content_hash)) in enumerate(
+            zip(messages[common:], keyed[common:]),
+        ):
+            if provider is not None and isinstance(message, ModelRequest):
+                for text, subtype in provider.notes(messages[:common + offset + 1]):
+                    chat_ops.append_system_note(self.session, text, subtype)
+            record = self._append_message(
                 self.session, message, key, content_hash,
-            ))
+            )
+            self._records.append(record)
         return BindingChange(kind, start, self._continuation(messages))
 
     def count_tokens(self, messages, *, tools=(), instructions=None) -> int:
@@ -429,14 +476,18 @@ class MessageBinder:
             self._records.append(record)
 
     def export_segments(self) -> tuple[SegmentProvenance, ...]:
-        return tuple(
-            SegmentProvenance(
+        exported = []
+        for segment in self.session.transcript.segments:
+            kind = segment.kind
+            if kind == "note":
+                subtype = segment.meta.get("subtype")
+                kind = f"system_note:{subtype}" if subtype else "system_note"
+            exported.append(SegmentProvenance(
                 segment.start,
                 segment.end,
-                segment.kind,
+                kind,
                 str(segment.meta.get("key", "")),
                 str(segment.meta.get("content_hash", "")),
                 str(segment.meta.get("source", "rendered")),
-            )
-            for segment in self.session.transcript.segments
-        )
+            ))
+        return tuple(exported)

@@ -145,6 +145,7 @@ class DS4Model(Model):
             messages,
             tools=params.declared_tool_defs.values(),
             instructions=_instructions(instruction_parts),
+            note_provider=self.note_provider,
         )
         response = DS4StreamedResponse(
             self, params, policy, max_tokens, stop_sequences,
