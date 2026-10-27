@@ -4,7 +4,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import math
 import operator
+import sys
 from uuid import uuid4
+
+import anyio
 
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
@@ -14,12 +17,25 @@ from pydantic_ai.usage import RequestUsage
 
 from ds4py.binding import MessageBinder
 from ds4py.engine.events import (
-    Interrupted, Stopped, Synced, TextDelta, Token, ToolCalls, ToolSyntax,
+    Interrupted, ReserveReached, Stopped, Synced, TextDelta, Token, ToolCalls,
+    ToolSyntax,
 )
 from ds4py.engine.sampling import SamplingPolicy
+from ds4py.errors import EngineError
 
 
 _END = object()
+
+
+class ContextReserveError(EngineError):
+    """The response hit the context reserve and M3 has no compaction strategy."""
+
+
+def _context_reserve_message(needed):
+    return (
+        f"context reserve reached with {needed} token(s) needed; "
+        "M4 compaction is not available in this build"
+    )
 
 
 def _next(iterator):
@@ -64,7 +80,8 @@ class DS4Model(Model):
     supported_tool_deferral_modes = frozenset()
 
     def __init__(self, session, *, binder=None, sampling: SamplingPolicy,
-                 max_tokens=50_000, stop_sequences=(), note_provider=None):
+                 max_tokens=50_000, stop_sequences=(), note_provider=None,
+                 reserve_handler=None):
         super().__init__()
         self.session = session
         self.binder = binder or MessageBinder(session)
@@ -72,6 +89,9 @@ class DS4Model(Model):
         self.max_tokens = max_tokens
         self.stop_sequences = stop_sequences
         self.note_provider = note_provider
+        # M3 installs no compaction. A handler may free space and return the new
+        # reserve budget; otherwise the default policy fails the open response.
+        self.reserve_handler = reserve_handler
 
     @property
     def model_name(self):
@@ -164,7 +184,8 @@ class DS4StreamedResponse(StreamedResponse):
             stop_sequences=stop_sequences,
         )
         self._round_exhausted = False
-        self._closing = False
+        self._reconciled = False
+        self._round_started = False
         self._bound = False
         self._round_start = len(self._session.transcript)
         self._sampled_start = None
@@ -172,6 +193,11 @@ class DS4StreamedResponse(StreamedResponse):
         self._output_tokens = 0
         self._tool_index = 0
         self._in_tool_syntax = False
+        self._pull_lock = asyncio.Lock()
+        self._pending_pull = None
+        self._cleanup_task = None
+        self._reserve_needed = None
+        self._context_exhausted = False
 
     @property
     def model_name(self):
@@ -208,14 +234,19 @@ class DS4StreamedResponse(StreamedResponse):
             self._interrupted()
 
     def _finalize(self):
-        if self._bound or self._closing:
+        if self._bound:
             return
         self._usage = RequestUsage(
             input_tokens=self._prefilled,
             output_tokens=self._output_tokens,
             details={"prefill_tokens": self._prefilled},
         )
-        self._binder.bind_response(self.get())
+        # A round that never reached its first sync never opened a response: its
+        # assistant prefix (if any) was rolled back, so the only assistant/eos
+        # segments left belong to an earlier response and must keep their
+        # provenance. Only a started round owns the trailing response boundary.
+        if self._sampled_start is not None:
+            self._binder.bind_response(self.get())
         self._bound = True
 
     def __aiter__(self):
@@ -227,81 +258,197 @@ class DS4StreamedResponse(StreamedResponse):
             try:
                 async for event in parent:
                     yield event
+            except asyncio.CancelledError:
+                # Cleanup cancels the facade before closing the round; do not
+                # re-arm cancellation after it has drained and cleared the event.
+                self._interrupted()
+                raise
             finally:
-                await parent.aclose()
-                await self._close_round()
-                self._finalize()
+                await self._finish()
 
         return iterate()
 
-    async def _close_round(self):
-        if self._round_exhausted or self._closing:
-            return
-        self._closing = True
-        try:
-            await asyncio.to_thread(self._round.close)
-            sampled_start = (
-                self._sampled_start if self._sampled_start is not None else self._round_start
+    def _dispatch(self, event):
+        """Apply one facade event; return harness stream events to publish."""
+        outputs = []
+        if isinstance(event, ReserveReached):
+            self._reserve_needed = event.needed
+            budget = (
+                self._model.reserve_handler(event.needed)
+                if self._model.reserve_handler is not None else None
             )
-            cutoff = sampled_start + self._output_tokens
+            if budget is None:
+                event.fail()
+            else:
+                event.resume(budget)
+        elif isinstance(event, ToolSyntax):
+            self._in_tool_syntax = event.state != "DONE"
+        elif isinstance(event, TextDelta):
+            if not self._in_tool_syntax:
+                if event.thinking:
+                    outputs.extend(self._parts_manager.handle_thinking_delta(
+                        vendor_part_id="thinking", content=event.text,
+                    ))
+                else:
+                    outputs.extend(self._parts_manager.handle_text_delta(
+                        vendor_part_id="content", content=event.text,
+                    ))
+        elif isinstance(event, ToolCalls):
+            for call in event.calls:
+                index = self._tool_index
+                self._tool_index += 1
+                outputs.append(self._parts_manager.handle_tool_call_part(
+                    vendor_part_id=f"tool:{index}",
+                    tool_name=call.name,
+                    args=dict(call.args),
+                    tool_call_id=f"{self._response_key}:tool:{index}",
+                    provider_details={"ds4py.raw": call.raw},
+                ))
+        elif isinstance(event, Token):
+            self._output_tokens += 1
+        elif isinstance(event, Synced):
+            if self._sampled_start is None:
+                self._sampled_start = event.pos
+            # A reserve-resumed round may sync again; that later sync reports
+            # only the work it did, so total prefill is the sum of all syncs.
+            self._prefilled += event.prefilled
+        elif isinstance(event, Stopped):
+            self._stopped(event.reason)
+            if event.reason == "context_exhausted":
+                self._context_exhausted = True
+        elif isinstance(event, Interrupted):
+            self._interrupted()
+        return outputs
 
-            def reconcile():
-                self._session.truncate(cutoff)
-                self._session._worker.call(
-                    lambda engine, native: native.rewind(cutoff)
-                ).result()
+    async def _pull(self):
+        async with self._pull_lock:
+            if self._round_exhausted:
+                return _END
+            self._round_started = True
+            pull = asyncio.get_running_loop().run_in_executor(
+                None, _next, self._round,
+            )
+            try:
+                return await asyncio.shield(pull)
+            except asyncio.CancelledError:
+                # The executor thread cannot be cancelled; keep the future so a
+                # cancellation drain can finish the already-running pull.
+                self._pending_pull = pull
+                raise
 
-            await asyncio.to_thread(reconcile)
-            self._round_exhausted = True
+    async def _drain_locked(self, pull):
+        """Consume facade events until interruption or facade completion."""
+        self._round_started = True
+        while not self._round_exhausted:
+            if pull is None:
+                pull = asyncio.get_running_loop().run_in_executor(
+                    None, _next, self._round,
+                )
+            try:
+                event = await asyncio.shield(pull)
+            except asyncio.CancelledError:
+                self._pending_pull = pull
+                raise
+            pull = None
+            if event is _END:
+                self._round_exhausted = True
+                return
+            self._dispatch(event)
+            if isinstance(event, (Stopped, Interrupted)):
+                return
+
+    async def _close_round_locked(self):
+        if self._reconciled:
+            return
+        pending, self._pending_pull = self._pending_pull, None
+        if pending is not None:
+            try:
+                event = await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                self._pending_pull = pending
+                raise
+            if event is not _END:
+                self._dispatch(event)
+        await asyncio.to_thread(self._round.close)
+        sampled_start = (
+            self._sampled_start if self._sampled_start is not None else self._round_start
+        )
+        cutoff = sampled_start + self._output_tokens
+
+        def reconcile():
+            self._session.truncate(cutoff)
+            self._session._worker.call(
+                lambda engine, native: native.rewind(cutoff)
+            ).result()
+            # The facade round is closed, so no job remains to observe and
+            # clear a cancellation that arrived after the last sample.
+            self._session._worker.cancel_event.clear()
+
+        await asyncio.to_thread(reconcile)
+        self._round_exhausted = True
+        self._reconciled = True
+
+    async def _cleanup(self):
+        """Terminal drain, close, reconcile, and finalization in one owner."""
+        try:
+            async with self._pull_lock:
+                pending, self._pending_pull = self._pending_pull, None
+                if pending is not None:
+                    # A cancelled pull already has a sample in flight. Finish and
+                    # publish it, then drain to the facade's terminal event.
+                    # Closing without draining would leave that pull executing.
+                    await self._drain_locked(pending)
+                await self._close_round_locked()
         finally:
-            self._closing = False
+            self._finalize()
+
+    async def _finish(self):
+        # Every terminal path awaits this same task, so drain/close/reconcile
+        # runs once even when the consumer and the harness race to close.
+        task = self._cleanup_task
+        if task is None:
+            task = self._cleanup_task = asyncio.create_task(self._cleanup())
+        # AnyIO propagates request-deadline/level cancellation into every
+        # checkpoint. Shield the whole teardown, not just the executor future,
+        # so cleanup cannot be interrupted halfway through reconciliation.
+        primary = sys.exc_info()[0] is not None
+        try:
+            with anyio.CancelScope(shield=True):
+                await asyncio.shield(task)
+        except BaseException:
+            # A timeout/cancellation already unwinding keeps its own surface;
+            # a teardown failure must not replace the original exception.
+            if not primary:
+                raise
 
     async def _get_event_iterator(self):
         try:
             while True:
-                event = await asyncio.to_thread(_next, self._round)
-                if event is _END:
-                    self._round_exhausted = True
-                    break
-                if isinstance(event, ToolSyntax):
-                    self._in_tool_syntax = event.state != "DONE"
-                elif isinstance(event, TextDelta):
-                    if self._in_tool_syntax:
-                        continue
-                    if event.thinking:
-                        events = self._parts_manager.handle_thinking_delta(
-                            vendor_part_id="thinking", content=event.text,
-                        )
-                    else:
-                        events = self._parts_manager.handle_text_delta(
-                            vendor_part_id="content", content=event.text,
-                        )
-                    for part_event in events:
-                        yield part_event
-                elif isinstance(event, ToolCalls):
-                    for call in event.calls:
-                        index = self._tool_index
-                        self._tool_index += 1
-                        yield self._parts_manager.handle_tool_call_part(
-                            vendor_part_id=f"tool:{index}",
-                            tool_name=call.name,
-                            args=dict(call.args),
-                            tool_call_id=f"{self._response_key}:tool:{index}",
-                            provider_details={"ds4py.raw": call.raw},
-                        )
-                elif isinstance(event, Token):
-                    self._output_tokens += 1
-                elif isinstance(event, Synced):
-                    if self._sampled_start is None:
-                        self._sampled_start = event.pos
-                    self._prefilled = event.prefilled
-                elif isinstance(event, Stopped):
-                    self._stopped(event.reason)
-                elif isinstance(event, Interrupted):
+                try:
+                    event = await self._pull()
+                except asyncio.CancelledError:
+                    self._session.cancel()
                     self._interrupted()
+                    raise
+                if event is _END:
+                    # A naturally finished facade round already closed its
+                    # assistant with EOS; only early/interrupted cleanup rolls
+                    # that uncommitted tail back.
+                    self._round_exhausted = True
+                    self._reconciled = True
+                    break
+                for part_event in self._dispatch(event):
+                    yield part_event
+                if self._context_exhausted:
+                    raise ContextReserveError(
+                        _context_reserve_message(self._reserve_needed)
+                    )
         finally:
-            await self._close_round()
-            self._finalize()
+            await self._finish()
 
     async def close_stream(self):
-        self._session.cancel()
+        self._cancelled = True
+        self._interrupted()
+        if self._round_started and not self._round_exhausted:
+            self._session.cancel()
+        await self._finish()
