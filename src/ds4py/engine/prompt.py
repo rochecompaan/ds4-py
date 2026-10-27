@@ -112,6 +112,23 @@ class PromptBuilder:
             )
         return self.engine._render_message(prefix, "tool", text)
 
+    def restored_assistant(self, prefix, spans) -> list[int]:
+        """Render an assistant body from plain text and trusted-markup spans.
+
+        This path is only for genuinely reconstructed history. Ordinary external
+        assistant text uses message(), which never renders payload markup.
+        """
+        tokens = self.message(prefix, "assistant", "")
+        closing = self._qwen_close() if self.family == "qwen" else []
+        if closing:
+            if tokens[-len(closing):] != closing:
+                raise EngineError("native Qwen assistant template has an unexpected close")
+            tokens = tokens[:-len(closing)]
+        for text, rendered in spans:
+            if text:
+                tokens.extend(self.engine.tokenize(text, rendered=rendered))
+        return tokens + closing
+
     def assistant_prefix(self, prefix) -> list[int]:
         """Build the family/mode assistant opener through the worker."""
         return self.engine._assistant_prefix(prefix, self.engine.think)

@@ -92,6 +92,17 @@ class Transcript:
             self._tokens.extend(added)
             self._segments[-1] = replace(self._segments[-1], end=len(self._tokens))
 
+    def annotate(self, start: int, *, kinds: tuple[str, ...], meta: Mapping) -> None:
+        """Merge provenance into existing ranges without changing token history."""
+        with self._lock:
+            self._segments = [
+                replace(
+                    segment,
+                    meta=MappingProxyType({**segment.meta, **meta}),
+                ) if segment.start >= start and segment.kind in kinds else segment
+                for segment in self._segments
+            ]
+
     def truncate(self, n: int) -> None:
         with self._lock:
             if not 0 <= n <= len(self._tokens):
@@ -101,3 +112,5 @@ class Transcript:
                 self._segments.pop()
             if self._segments and self._segments[-1].end > n:
                 self._segments[-1] = replace(self._segments[-1], end=n)
+            if n == 0:
+                self._chat = False

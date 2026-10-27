@@ -1,4 +1,5 @@
 """Public token-oriented engine facade and lazy, exclusively owned rounds."""
+import operator
 import threading
 from concurrent.futures import Future
 from pathlib import Path
@@ -13,6 +14,7 @@ from .decode import GenerateJob
 from .events import Checkpointed, Event, Interrupted, ReserveReached, Stopped, Synced
 from .pause import resolve_control
 from .plan import Plan
+from .prompt import PromptBuilder
 from .sampling import Rng, SamplingPolicy
 from .transcript import Segment, Transcript, TranscriptView
 from .worker import CheckpointJob, EngineWorker, Handles, SyncJob
@@ -122,6 +124,12 @@ class Session:
         self._paused_stream = None
         self._paused_control = None
         self._paused_sampled_tokens = None
+        self._checkpoint_tokens: dict[str, int] = {}
+
+    @property
+    def engine(self) -> Engine:
+        """The facade-owned engine; ownership remains with the caller."""
+        return self._engine
 
     @property
     def transcript(self) -> TranscriptView:
@@ -148,6 +156,33 @@ class Session:
             if self._active_round:
                 raise EngineError("a round is open")
             chat_ops.start_chat(self, tools, instructions)
+
+    def append_message(self, role: str, text: str, *, images=(),
+                       meta: Mapping | None = None) -> Segment:
+        """Append one plain-payload chat message with optional provenance metadata."""
+        with self._lock:
+            if self._active_round:
+                raise EngineError("a round is open")
+            if images:
+                raise EngineError("image input requires M5 vision support")
+            chat_ops._start_if_empty(self)
+            chat_ops.retire_paused(self)
+            tokens = PromptBuilder(self._engine).message(self._transcript.tokens, role, text)
+            return self._transcript.append(tokens, role, meta)
+
+    def truncate(self, token_count: int) -> None:
+        """Truncate between rounds and invalidate checkpoints beyond the new end."""
+        with self._lock:
+            if self._active_round:
+                raise EngineError("a round is open")
+            token_count = operator.index(token_count)
+            if not 0 <= token_count <= len(self._transcript):
+                raise ValueError("truncate position is outside the transcript")
+            for key, length in tuple(self._checkpoint_tokens.items()):
+                if length > token_count:
+                    self.drop_checkpoint(key)
+            self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
+            self._transcript.truncate(token_count)
 
     def append_user(self, text: str, images=()) -> Segment:
         """Append a user turn between rounds, initializing an empty chat if needed.
@@ -312,10 +347,13 @@ class Session:
         return self._worker.plan(self._transcript.tokens if tokens is None else tokens)
 
     def checkpoint(self, key: str) -> Checkpointed:
-        return list(self._worker.submit(CheckpointJob(key)))[0]
+        event = list(self._worker.submit(CheckpointJob(key)))[0]
+        self._checkpoint_tokens[key] = event.tokens
+        return event
 
     def drop_checkpoint(self, key: str) -> None:
         list(self._worker.submit(CheckpointJob(key, drop=True)))
+        self._checkpoint_tokens.pop(key, None)
 
     def on_worker(self, fn: Callable[[Handles], T]) -> Future[T]:
         return self._worker.call(lambda e, s: fn(Handles(e.raw, s.raw)))
