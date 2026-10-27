@@ -72,7 +72,8 @@ export BACKEND=cpu  # Change this to metal or cuda when appropriate.
 ```
 
 For Metal, `devenv.nix` selects Apple SDK 15 for the pinned ds4 source's macOS 15 Metal APIs.
-This also avoids the deployment-target conflict between devenv's default SDK and PyTorch on macOS.
+It also sets `MACOSX_DEPLOYMENT_TARGET` to `15.0`.
+These settings avoid the deployment-target conflict between devenv's default SDK and PyTorch on macOS.
 
 For CUDA, set the GPU architecture before the native builds:
 
@@ -106,7 +107,42 @@ git -C "$DS4_SRC" checkout "$DS4_COMMIT"
 
 For fork-specific work, replace `pins.UPSTREAM` with `pins.FORK` in the Python command.
 The source pin then selects the matching fork repository and commit.
-Keep the selected source revision for both native builds.
+
+### Apply the Metal language-version patch
+
+On macOS with `BACKEND=metal`, apply the patch that matches the selected source pin.
+Apply it once to the clean source checkout before building `libds4` or `ds4-agent`.
+
+For `pins.UPSTREAM`, run:
+
+```bash
+git -C "$DS4_SRC" apply \
+  "$PWD/docs/patches/ds4-metal-language-version-upstream.patch"
+```
+
+For `pins.FORK`, run:
+
+```bash
+git -C "$DS4_SRC" apply \
+  "$PWD/docs/patches/ds4-metal-language-version-fork.patch"
+```
+
+Do not apply both patches.
+If you reset or check out the source again, apply the matching patch again.
+Keep the same patched source tree for both native builds.
+CPU and CUDA builds do not need these patches.
+
+Metal chooses its default shader language from the SDK of the host executable.
+The host executable is Nix Python in this environment.
+The current Nix Python links against macOS SDK 14.4.
+Metal can therefore select a language below Metal 3.2, even when `libds4` uses the macOS 15 SDK.
+The macOS 15 deployment target does not change Nix Python's SDK metadata.
+
+The pinned ds4 shaders use `memory_order_seq_cst` and `thread_scope_device`.
+These features require Metal 3.2 on macOS 15.
+Without explicit language selection, the native build can succeed but model loading or replay fails during shader compilation.
+The patches select Metal 3.2 when the SDK and operating system support it.
+They select Metal 4.0 on macOS 26 or later when the SDK supports it.
 
 ## Build and check the native library
 
@@ -167,7 +203,7 @@ rm -f "$TRACE"
   cd "$DS4_SRC"
   "$DS4_AGENT" --non-interactive --model "$MODEL" --backend "$BACKEND" \
     --ctx 4096 --tokens 2048 --temp 0 --seed 1 \
-    --prompt 'Read pyproject.toml and report the project name.' \
+    --prompt 'Read README.md and report the project name.' \
     --trace "$TRACE"
 )
 ```

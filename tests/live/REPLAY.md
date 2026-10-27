@@ -17,6 +17,11 @@ backend (the compute implementation) for both binaries. If the library is not in
 ds4-py's default library directory, set `DS4_LIB`. Replace the paths and backend
 below with the values for that installation. Use the actual filename of the
 frozen model. The placeholder is not a second model choice.
+If you use Metal with devenv's Nix Python, apply the matching language-version
+patch before these builds. Follow [the development guide's patch
+step](../../docs/development.md#apply-the-metal-language-version-patch).
+The patch prevents Nix Python from selecting a shader language older than
+Metal 3.2 during replay.
 Metal reads shader files from the agent's working directory.
 Run the agent from `DS4_SRC` in a subshell so your shell stays in the ds4-py checkout.
 
@@ -34,7 +39,7 @@ rm -f "$TRACE"
   cd "$DS4_SRC"
   "$DS4_AGENT" --non-interactive --model "$MODEL" --backend "$BACKEND" \
     --ctx 4096 --tokens 2048 --temp 0 --seed 1 \
-    --prompt 'Read pyproject.toml and report the project name.' \
+    --prompt 'Read README.md and report the project name.' \
     --trace "$TRACE"
 )
 ```
