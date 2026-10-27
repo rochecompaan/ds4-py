@@ -1,0 +1,24 @@
+diff --git a/ds4_metal.m b/ds4_metal.m
+index 2ff4ea1..d9c15e0 100644
+--- a/ds4_metal.m
++++ b/ds4_metal.m
+@@ -2812,11 +2812,15 @@ static bool ds4_gpu_ported_m5_decode_feature_enabled(
+ }
+ 
+ static MTLCompileOptions *ds4_gpu_compile_options(void) {
+-    /* The default language version follows the SDK the host executable was
+-     * linked against, not this library's: under a Python built on an older
+-     * SDK it is below 4.0 (Metal 3.2 under uv's CPython), which hides
+-     * <MetalPerformancePrimitives>. */
++    /* The default language version follows the host executable's SDK, which
++     * can predate this library's SDK. The shaders need Metal 3.2 on macOS 15
++     * and MetalPerformancePrimitives needs Metal 4.0 on macOS 26. */
+     MTLCompileOptions *options = [MTLCompileOptions new];
++#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
++    if (@available(macOS 15.0, *)) {
++        options.languageVersion = MTLLanguageVersion3_2;
++    }
++#endif
+ #if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
+     if (@available(macOS 26.0, *)) {
+         options.languageVersion = MTLLanguageVersion4_0;

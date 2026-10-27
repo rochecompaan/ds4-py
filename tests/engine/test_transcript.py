@@ -38,6 +38,17 @@ def test_snapshots_and_metadata_do_not_change_when_transcript_changes():
     assert t.tokens == (1, 2)
 
 
+def test_chat_flag_is_explicit_and_snapshot_safe():
+    transcript = Transcript()
+    assert not transcript.chat
+    transcript.append([1], "user")
+    assert not transcript.chat
+    transcript.set_chat()
+    assert transcript.chat
+    transcript.extend([2])
+    assert transcript.chat
+
+
 def test_truncate_bounds_and_extend_without_segment():
     t = Transcript()
     with pytest.raises(ValueError):

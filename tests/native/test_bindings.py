@@ -8,10 +8,12 @@ from ds4py._native import bindings, typemap
 
 def test_core_bindings_are_the_m1_list():
     names = [b.name for b in bindings.CORE_BINDINGS]
-    assert len(names) == len(set(names)) == 43
+    assert len(names) == len(set(names)) == 48
     assert all(b.required for b in bindings.CORE_BINDINGS)
     assert {"ds4_session_sync", "ds4_session_save_snapshot", "ds4_session_checkpoint_valid",
-            "ds4_think_mode_parse_level"} <= set(names)
+            "ds4_think_mode_parse_level", "ds4_chat_begin", "ds4_chat_append_think_prefix",
+            "ds4_chat_append_message", "ds4_chat_append_assistant_prefix",
+            "ds4_qwen4_reasoning_effort_text"} <= set(names)
 
 
 def test_every_core_binding_maps_to_ctypes():
@@ -49,7 +51,7 @@ def test_extension_discovered_through_entry_point(ext_site):
     assert not found["ds4_engine_sampling_defaults"].required
     assert found["ds4_engine_layer_count"].source == "test_ext"
     combined = bindings.all_bindings()
-    assert combined[:43] == bindings.CORE_BINDINGS
+    assert combined[:48] == bindings.CORE_BINDINGS
     assert [b.name for b in combined][-2:] == list(found)
 
 

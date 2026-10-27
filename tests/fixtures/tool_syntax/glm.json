@@ -1,0 +1,56 @@
+[
+  {
+    "source": "C test_agent_glm_tool_parser_single_arg",
+    "input": "prose before <tool_call> read \r\n<arg_key> path \t</arg_key><arg_value>README.md</arg_value></tool_call>",
+    "state": "DONE",
+    "calls": [{"name": "read", "args": {"path": "README.md"}}]
+  },
+  {
+    "source": "C test_agent_glm_tool_parser_chunked_multi_arg; all values stay strings",
+    "input": "<tool_call>edit<arg_key>old</arg_key><arg_value>12</arg_value><arg_key>new</arg_key><arg_value>true</arg_value><arg_key>mode</arg_key><arg_value>{\"x\":1}</arg_value></tool_call>",
+    "state": "DONE",
+    "calls": [{"name": "edit", "args": {"old": "12", "new": "true", "mode": "{\"x\":1}"}}]
+  },
+  {
+    "source": "C test_agent_glm_tool_parser_multiple_adjacent_calls and trailing whitespace finish",
+    "input": "<tool_call>one<arg_key>x</arg_key><arg_value>1</arg_value></tool_call> \n<tool_call>two<arg_key>y</arg_key><arg_value>2</arg_value></tool_call> \t\n",
+    "state": "DONE",
+    "calls": [{"name": "one", "args": {"x": "1"}}, {"name": "two", "args": {"y": "2"}}]
+  },
+  {
+    "source": "C test_agent_tool_argument_literal_markup GLM case",
+    "input": "<tool_call>write<arg_key>content</arg_key><arg_value><p>&amp; &lt;</p> </tool_call> </think> &lt;/arg_value> &amp;lt;/arg_value></arg_value></tool_call>",
+    "state": "DONE",
+    "calls": [{"name": "write", "args": {"content": "<p>&amp; &lt;</p> </tool_call> </think> </arg_value> &lt;/arg_value>"}}]
+  },
+  {
+    "source": "C test_agent_glm_tool_parser_rejects_missing_value",
+    "input": "<tool_call>list<arg_key>path</arg_key></tool_call>",
+    "state": "ERROR",
+    "calls": []
+  },
+  {
+    "source": "spec: empty argument key is ERROR",
+    "input": "<tool_call>read<arg_key> \t</arg_key><arg_value>x</arg_value></tool_call>",
+    "state": "ERROR",
+    "calls": []
+  },
+  {
+    "source": "spec: missing function name is ERROR",
+    "input": "<tool_call> \n</tool_call>",
+    "state": "ERROR",
+    "calls": []
+  },
+  {
+    "source": "spec: unexpected structural tag is ERROR",
+    "input": "<tool_call>read<unexpected>x</unexpected></tool_call>",
+    "state": "ERROR",
+    "calls": []
+  },
+  {
+    "source": "spec: an opener without a completed call is ERROR at finish",
+    "input": "<tool_call>read<arg_key>path</arg_key><arg_value>x</arg_value>",
+    "state": "ERROR",
+    "calls": []
+  }
+]

@@ -8,6 +8,7 @@ from ds4py.errors import TypeMapError
 from .structs import CANCEL_FN, PROGRESS_FN, STRUCTS
 
 TYPE_MAP_VERSION = 1
+_ALL_STRUCTS = STRUCTS
 
 _SCALARS = {
     "int": ctypes.c_int,
@@ -42,7 +43,7 @@ _CALLBACKS = {
 _TYPE_WORDS = set("void int unsigned short long bool float double char const".split())
 _TYPE_WORDS.update(_SCALARS)
 _TYPE_WORDS.update(_CALLBACKS)
-_TYPE_WORDS.update(STRUCTS)
+_TYPE_WORDS.update(_ALL_STRUCTS)
 _TYPE_WORDS.update(("FILE", "ds4_engine", "ds4_session"))
 
 
@@ -119,13 +120,15 @@ def _ctypes_type(ctype: CType, function: str, *, returning: bool = False):
             return _SCALARS[base]
         if base in _CALLBACKS:
             return _CALLBACKS[base]
+        if base == "ds4_eff_logits":
+            return _ALL_STRUCTS[base]
     if pointers == 1:
         if base == "char" and ctype.const:
             return ctypes.c_char_p
         if base in ("void", "FILE", "ds4_engine", "ds4_session"):
             return ctypes.c_void_p
-        if base in STRUCTS:
-            return ctypes.POINTER(STRUCTS[base])
+        if base in _ALL_STRUCTS:
+            return ctypes.POINTER(_ALL_STRUCTS[base])
         if base in _SCALARS:
             return ctypes.POINTER(_SCALARS[base])
     if pointers == 2 and base in ("ds4_engine", "ds4_session") and not ctype.const:

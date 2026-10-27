@@ -3,6 +3,7 @@ import threading
 from typing import Callable, Iterable, Mapping, Sequence
 
 from ds4py.errors import EngineError, MissingBinding
+from . import fake_chat
 from .bindings import all_bindings
 from .protocol import EngineConfig, EngineInfo, SyncStatus, ThinkMode
 
@@ -44,7 +45,7 @@ class FakeNative:
         self._info = info if info is not None else EngineInfo(
             name="fake", model_id=0, family="deepseek4", is_deepseek41=False,
             is_glm_dsa=False, is_qwen4=False, has_vision=False,
-            routed_quant_bits=0, mtp_draft_tokens=1, vocab_size=257,
+            routed_quant_bits=0, mtp_draft_tokens=1, vocab_size=fake_chat.VOCAB_SIZE,
         )
 
     def open_engine(self, config: EngineConfig) -> "FakeEngine":
@@ -97,11 +98,36 @@ class FakeEngine(_Handle):
 
     def tokenize(self, text, *, rendered=False):
         self._check()
+        if rendered:
+            return fake_chat.tokenize_rendered(text)
         return [byte + 1 for byte in text.encode()]
 
     def token_text(self, token):
         self._check()
-        return b"</s>" if token == FAKE_EOS else bytes([token - 1])
+        if token == FAKE_EOS:
+            return b"</s>"
+        special = fake_chat.special_token_text(token)
+        return special if special is not None else bytes([token - 1])
+
+    def chat_begin(self):
+        self._check()
+        return fake_chat.chat_begin(self)
+
+    def think_prefix(self, prefix, mode):
+        self._check()
+        return fake_chat.think_prefix(self, prefix, mode)
+
+    def render_message(self, prefix, role, content):
+        self._check()
+        return fake_chat.render_message(self, prefix, role, content)
+
+    def assistant_prefix(self, prefix, mode):
+        self._check()
+        return fake_chat.assistant_prefix(self, prefix, mode)
+
+    def qwen_reasoning_effort(self, mode):
+        self._check()
+        return fake_chat.qwen_reasoning_effort(mode)
 
     def eos(self):
         self._check()
@@ -110,6 +136,15 @@ class FakeEngine(_Handle):
     def is_stop(self, token):
         self._check()
         return token == FAKE_EOS
+
+    def is_stop_for_think_mode(self, token, mode):
+        self._check()
+        enabled = mode in (1, 2, 3, 4) or 1001 <= mode <= 1100
+        return self.is_stop(token) or (
+            not enabled and token in (
+                fake_chat.SPECIAL_TOKENS["<think>"], fake_chat.SPECIAL_TOKENS["</think>"],
+            )
+        )
 
     def create_session(self, ctx):
         self._check()
@@ -140,12 +175,16 @@ class FakeSession(_Handle):
         super().__init__()
         self._engine, self._native, self._ctx = engine, engine._native, ctx
         self._tokens = []
+        self._logits: list[float] | None = None
+        self.logit_copies = self.logit_sets = 0
         self._prompt_length = 0
         self._valid = False
         self.calls: list[tuple] = []
+        self.samples: list[tuple] = []
 
     def sync(self, tokens, *, progress=None, cancel=None):
         self._check()
+        self._logits = None
         if not tokens or len(tokens) >= self._ctx:
             raise EngineError("prompt must be nonempty and shorter than context")
         target = list(tokens)
@@ -170,24 +209,62 @@ class FakeSession(_Handle):
         self.calls.append(("sync", len(self._tokens) - start))
         return status
 
+    def _distribution(self):
+        self._check()
+        if not self._valid:
+            return None
+        if self._logits is None:
+            token = self._native.script(self._tokens[:self._prompt_length],
+                                        self._tokens[self._prompt_length:])
+            distribution = [0.0] * self._engine.info().vocab_size
+            if 0 <= token < len(distribution):
+                distribution[token] = 1.0
+            self._logits = distribution
+        return self._logits
+
+    def copy_logits(self, out):
+        self._check()
+        size = self._engine.info().vocab_size
+        if len(out) != size:
+            raise ValueError(f"logits buffer must equal the vocabulary size ({size})")
+        distribution = self._distribution()
+        if distribution is None:
+            raise EngineError("session checkpoint is invalid; sync first")
+        for index, value in enumerate(distribution):
+            out[index] = value
+        self.logit_copies += 1
+
+    def set_logits(self, values):
+        self._check()
+        size = self._engine.info().vocab_size
+        if len(values) != size:
+            raise ValueError(f"logits buffer must equal the vocabulary size ({size})")
+        if not self._valid:
+            raise EngineError("session checkpoint is invalid; sync first")
+        self._logits = [float(value) for value in values]
+        self.logit_sets += 1
+
     def sample(self, temperature, top_k, top_p, min_p, rng):
         self._check()
         if not self._valid:
             return -1
+        self.samples.append((temperature, top_k, top_p, min_p))
         # SplitMix64: deterministic state evolution, independent of the script.
         mask = (1 << 64) - 1
         value = (rng.value + 0x9E3779B97F4A7C15) & mask
         value = ((value ^ (value >> 30)) * 0xBF58476D1CE4E5B9) & mask
         value = ((value ^ (value >> 27)) * 0x94D049BB133111EB) & mask
         rng.value = value ^ (value >> 31)
-        return self.argmax()
+        distribution = self._distribution()
+        if distribution is None:
+            return -1
+        return max(range(len(distribution)), key=distribution.__getitem__)
 
     def argmax(self):
-        self._check()
-        if not self._valid:
+        distribution = self._distribution()
+        if distribution is None:
             return -1
-        return self._native.script(self._tokens[:self._prompt_length],
-                                   self._tokens[self._prompt_length:])
+        return max(range(len(distribution)), key=distribution.__getitem__)
 
     def eval(self, token):
         self._check()
@@ -196,6 +273,7 @@ class FakeSession(_Handle):
         if len(self._tokens) >= self._ctx:
             raise EngineError("context is full")
         self._tokens.append(token)
+        self._logits = None
         self.calls.append(("eval", token))
 
     def rewind(self, pos):
@@ -204,6 +282,7 @@ class FakeSession(_Handle):
             del self._tokens[max(0, pos):]
             self._valid = False
             self.calls.append(("rewind", pos))
+        self._logits = None
 
     def pos(self):
         self._check()
@@ -235,6 +314,7 @@ class FakeSession(_Handle):
     def invalidate(self):
         self._check()
         self._valid = False
+        self._logits = None
 
     def payload_bytes(self):
         self._check()
@@ -253,6 +333,7 @@ class FakeSession(_Handle):
         self._tokens = list(snap.tokens)
         self._prompt_length = snap.prompt_length
         self._valid = True
+        self._logits = None
 
     def close(self):
         self._assert_thread()

@@ -1,0 +1,12 @@
+2026-10-21 09:05:07.042 agent worker start ctx=4096 backend=cpu model=/models/early.gguf trace=c.trace
+2026-10-21 09:05:07.043 tokens label=initial_system_prompt start=0 len=2
+2026-10-21 09:05:07.044 token index=0 id=1 bytes=1 text="A" hex=41
+2026-10-21 09:05:07.045 token index=1 id=2 bytes=1 text="B" hex=42
+2026-10-21 09:05:07.046 prefill tool_round=1 transcript=3 prompt=3 cached=2 suffix=1 think=max
+2026-10-21 09:05:07.047 tokens label=prefill_suffix start=2 len=3
+2026-10-21 09:05:07.048 token index=2 id=3 bytes=1 text="C" hex=43
+2026-10-21 09:05:07.049 token index=1 id=60 bytes=1 text="<" hex=3c
+2026-10-21 09:05:07.050 token index=2 id=61 bytes=1 text="e" hex=65
+2026-10-21 09:05:07.051 token index=3 id=62 bytes=1 text=">" hex=3e
+2026-10-21 09:05:07.052 edit old preflight failed: edit old selector failed before new was generated: old text is not a unique match
+2026-10-21 09:05:07.053 generation finished tool_round=1 generated=3 carried=0 context_limited=0

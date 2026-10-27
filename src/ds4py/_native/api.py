@@ -1,5 +1,6 @@
 """Thread-confined ctypes lifecycle and ownership adapters for ds4."""
 import ctypes as C
+from collections.abc import Sequence
 from contextlib import contextmanager
 import fcntl
 import os
@@ -9,7 +10,7 @@ import weakref
 
 from ds4py.abi.shaders import metal_source_env
 from ds4py.errors import EngineError, EngineLockedError
-from . import structs
+from . import chat, structs
 from .loader import Library
 from .modelcheck import inspect_model
 from .protocol import BACKENDS, EngineConfig, EngineInfo, SyncStatus, family_of
@@ -190,6 +191,28 @@ class NativeEngine(_Handle):
         finally:
             self._lib.fn("ds4_tokens_free")(C.byref(tokens))
 
+    def chat_begin(self):
+        """Return the chat-begin delta on the owning worker thread."""
+        return chat.append_delta(self, (), "ds4_chat_begin")
+
+    def think_prefix(self, prefix, mode):
+        """Return only the appended think delta; worker-thread use only."""
+        return chat.append_delta(self, prefix, "ds4_chat_append_think_prefix", mode)
+
+    def render_message(self, prefix, role, content):
+        """Return the native role/message delta without changing prefix; worker only."""
+        return chat.append_delta(
+            self, prefix, "ds4_chat_append_message", role.encode(), content.encode(),
+        )
+
+    def assistant_prefix(self, prefix, mode):
+        """Return only the appended assistant opener; worker-thread use only."""
+        return chat.append_delta(self, prefix, "ds4_chat_append_assistant_prefix", mode)
+
+    def qwen_reasoning_effort(self, mode):
+        """Copy borrowed effort text to Python, or return None; worker only."""
+        return chat.qwen_reasoning_effort(self, mode)
+
     def token_text(self, token):
         length = C.c_size_t()
         ptr = self._call("ds4_token_text", token, C.byref(length))
@@ -203,6 +226,10 @@ class NativeEngine(_Handle):
 
     def is_stop(self, token):
         return self._call("ds4_token_is_stop", token)
+
+    def is_stop_for_think_mode(self, token, mode):
+        """Apply the native mode-aware stop policy on the owning worker."""
+        return self._call("ds4_token_is_stop_for_think_mode", token, mode)
 
     def create_session(self, ctx):
         self._assert_thread()
@@ -299,10 +326,22 @@ class NativeSession(_Handle):
             self._progress = self._cancel = self._callback_error = None
 
     def sample(self, temperature, top_k, top_p, min_p, rng):
-        return self._call("ds4_session_sample", temperature, top_k, top_p, min_p, C.byref(rng))
+        token = self._call("ds4_session_sample", temperature, top_k, top_p, min_p, C.byref(rng))
+        return token
 
     def argmax(self):
-        return self._call("ds4_session_argmax")
+        token = self._call("ds4_session_argmax")
+        return token
+
+    def copy_logits(self, out) -> None:
+        """Copy into a vocabulary-sized writable float32 buffer; worker only."""
+        from .logits import copy_logits
+        copy_logits(self, out)
+
+    def set_logits(self, values: Sequence[float]) -> None:
+        """Replace logits from a vocabulary-sized sequence; worker only."""
+        from .logits import set_logits
+        set_logits(self, values)
 
     def eval(self, token):
         self._error_call("ds4_session_eval", token)

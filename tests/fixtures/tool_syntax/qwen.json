@@ -1,0 +1,81 @@
+[
+  {
+    "source": "C test_agent_qwen_tool_parser_chunked_multi_arg",
+    "input": "intro <tool_call>\n<function=bash>\n<parameter=command>\nprintf hi\n</parameter>\n<parameter=refresh_sec>\n1\n</parameter>\n</function>\n</tool_call>",
+    "state": "DONE",
+    "calls": [{"name": "bash", "args": {"command": "printf hi", "refresh_sec": 1}}]
+  },
+  {
+    "source": "spec: remove one framing newline and preserve all other whitespace",
+    "input": "<tool_call><function=write><parameter=content>\n\n  x \n\n</parameter><parameter=tabs>\t value \t</parameter></function></tool_call>",
+    "state": "DONE",
+    "calls": [{"name": "write", "args": {"content": "\n  x \n", "tabs": "\t value \t"}}]
+  },
+  {
+    "source": "spec: Qwen JSON value kinds",
+    "input": "<tool_call><function=json><parameter=object>\n{\"a\":1}\n</parameter><parameter=array>\n[1,2]\n</parameter><parameter=number>\n2.5\n</parameter><parameter=yes>\ntrue\n</parameter><parameter=no>\nfalse\n</parameter><parameter=nothing>\nnull\n</parameter></function></tool_call>",
+    "state": "DONE",
+    "calls": [{"name": "json", "args": {"object": {"a": 1}, "array": [1, 2], "number": 2.5, "yes": true, "no": false, "nothing": null}}]
+  },
+  {
+    "source": "spec: malformed bracketed JSON is ERROR",
+    "input": "<tool_call><function=json><parameter=value>\n{\"x\":}\n</parameter></function></tool_call>",
+    "state": "ERROR",
+    "calls": []
+  },
+  {
+    "source": "C test_agent_qwen_tool_parser_two_calls_and_error two calls plus trailing whitespace",
+    "input": "<tool_call><function=list><parameter=path>\n.\n</parameter></function></tool_call>\n<tool_call><function=read><parameter=path>\n/tmp/x\n</parameter></function></tool_call> \t\n",
+    "state": "DONE",
+    "calls": [{"name": "list", "args": {"path": "."}}, {"name": "read", "args": {"path": "/tmp/x"}}]
+  },
+  {
+    "source": "C test_agent_tool_argument_literal_markup Qwen case",
+    "input": "<tool_call><function=write><parameter=content>\n<p>&amp; &lt;</p> </tool_call> </think> &lt;/parameter> &amp;lt;/parameter>\n</parameter></function></tool_call>",
+    "state": "DONE",
+    "calls": [{"name": "write", "args": {"content": "<p>&amp; &lt;</p> </tool_call> </think> </parameter> &lt;/parameter>"}}]
+  },
+  {
+    "source": "C test_agent_qwen_tool_parser_two_calls_and_error missing function close",
+    "input": "<tool_call><function=list><parameter=path>\n.\n</parameter></tool_call>",
+    "state": "ERROR",
+    "calls": []
+  },
+  {
+    "source": "spec: missing tool close after function close is ERROR",
+    "input": "<tool_call><function=list></function>",
+    "state": "ERROR",
+    "calls": []
+  },
+  {
+    "source": "spec: unexpected structural tag is ERROR",
+    "input": "<tool_call><function=list><unexpected>x</unexpected></function></tool_call>",
+    "state": "ERROR",
+    "calls": []
+  },
+  {
+    "source": "spec: unfinished value is ERROR",
+    "input": "<tool_call><function=write><parameter=content>abc",
+    "state": "ERROR",
+    "calls": []
+  },
+  {
+    "source": "spec: empty function name is ERROR",
+    "input": "<tool_call><function= \t></function></tool_call>",
+    "state": "ERROR",
+    "calls": []
+  },
+  {
+    "source": "spec: empty parameter name is ERROR",
+    "input": "<tool_call><function=list><parameter= \n>x</parameter></function></tool_call>",
+    "state": "ERROR",
+    "calls": []
+  },
+  {
+    "source": "C live trace agentclinic-easy-project-s1 global round 14 (tool_round=3)",
+    "trace_sha256": "c9f599ef764d69f72df47819f51fdfd83be5e97c82e658051a7249a418fed016",
+    "input": "Run the tests.\n</think>\n\n<tool_call>\n<function=bash>\n<parameter=command>\nuv run --frozen pytest -v 2>&1 | tail -15\n</parameter>\n</function>\n</tool_call>",
+    "state": "DONE",
+    "calls": [{"name": "bash", "args": {"command": "uv run --frozen pytest -v 2>&1 | tail -15"}}]
+  }
+]

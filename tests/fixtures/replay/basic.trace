@@ -1,0 +1,29 @@
+2026-10-21 09:05:07.042 agent worker start ctx=4096 backend=cpu model=/models/fake.gguf trace=c.trace
+2026-10-21 09:05:07.043 agent worker status state=idle
+2026-10-21 09:05:07.044 tokens label=initial_system_prompt start=0 len=2
+2026-10-21 09:05:07.045 token index=0 id=10 bytes=1 text="S" hex=53
+2026-10-21 09:05:07.046 token index=1 id=11 bytes=1 text="\n" hex=0a
+2026-10-21 09:05:07.047 prefill tool_round=1 transcript=4 prompt=4 cached=2 suffix=2 think=high
+2026-10-21 09:05:07.048 tokens label=prefill_suffix start=2 len=4
+2026-10-21 09:05:07.049 token index=2 id=12 bytes=1 text="\"" hex=22
+2026-10-21 09:05:07.050 token index=3 id=13 bytes=1 text="\\" hex=5c
+2026-10-21 09:05:07.051 token index=1 id=20 bytes=1 text="a" hex=61
+2026-10-21 09:05:07.052 token index=2 id=21 bytes=1 text="\t" hex=09
+2026-10-21 09:05:07.053 agent stream state=generating
+2026-10-21 09:05:07.054 generation finished tool_round=1 generated=2 carried=0 context_limited=0
+2026-10-21 09:05:07.055 prefill tool_round=2 transcript=9 prompt=9 cached=6 suffix=3 think=none
+2026-10-21 09:05:07.056 tokens label=prefill_suffix start=6 len=9
+2026-10-21 09:05:07.057 token index=6 id=99 bytes=1 text="E" hex=45
+2026-10-21 09:05:07.058 token index=7 id=30 bytes=1 text="R" hex=52
+2026-10-21 09:05:07.059 token index=8 id=31 bytes=1 text="P" hex=50
+2026-10-21 09:05:07.060 token index=1 id=40 bytes=1 text="x" hex=78
+2026-10-21 09:05:07.061 generation finished tool_round=2 generated=1 carried=0 context_limited=0
+2026-10-21 09:05:07.062 prefill tool_round=3 transcript=11 prompt=11 cached=8 suffix=3 think=75
+2026-10-21 09:05:07.063 tokens label=prefill_suffix start=8 len=11
+2026-10-21 09:05:07.064 token index=8 id=50 bytes=1 text="2" hex=32
+2026-10-21 09:05:07.065 token index=9 id=51 bytes=1 text="3" hex=33
+2026-10-21 09:05:07.066 token index=10 id=52 bytes=1 text="4" hex=34
+2026-10-21 09:05:07.067 generation finished tool_round=3 generated=0 carried=0 context_limited=0
+2026-10-21 09:05:07.068 prefill tool_round=4 transcript=11 prompt=11 cached=11 suffix=0 think=medium
+2026-10-21 09:05:07.069 tokens label=prefill_suffix start=11 len=11
+2026-10-21 09:05:07.070 generation finished tool_round=4 generated=0 carried=0 context_limited=0

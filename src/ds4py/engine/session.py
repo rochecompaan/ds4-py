@@ -8,8 +8,10 @@ from ds4py._native.api import LibNative
 from ds4py._native.loader import load_library
 from ds4py._native.protocol import EngineConfig, Native, ThinkMode
 from ds4py.errors import EngineError
+from . import chat as chat_ops
 from .decode import GenerateJob
-from .events import Checkpointed, Event, Interrupted, Stopped, Synced
+from .events import Checkpointed, Event, Interrupted, ReserveReached, Stopped, Synced
+from .pause import resolve_control
 from .plan import Plan
 from .sampling import Rng, SamplingPolicy
 from .transcript import Segment, Transcript, TranscriptView
@@ -65,8 +67,26 @@ class Engine:
     def tokenize(self, text: str, *, rendered: bool = False) -> list[int]:
         return self._worker.call(lambda e, s: e.tokenize(text, rendered=rendered)).result()
 
+    def _chat_begin(self) -> list[int]:
+        return self._worker.call(lambda e, s: e.chat_begin()).result()
+
+    def _think_prefix(self, prefix: Sequence[int], mode: int) -> list[int]:
+        return self._worker.call(lambda e, s: e.think_prefix(prefix, mode)).result()
+
+    def _render_message(self, prefix: Sequence[int], role: str, content: str) -> list[int]:
+        return self._worker.call(lambda e, s: e.render_message(prefix, role, content)).result()
+
+    def _assistant_prefix(self, prefix: Sequence[int], mode: int) -> list[int]:
+        return self._worker.call(lambda e, s: e.assistant_prefix(prefix, mode)).result()
+
+    def _qwen_reasoning_effort(self, mode: int) -> str | None:
+        return self._worker.call(lambda e, s: e.qwen_reasoning_effort(mode)).result()
+
     def token_text(self, token: int) -> bytes:
         return self._worker.call(lambda e, s: e.token_text(token)).result()
+
+    def _eos(self) -> int:
+        return self._worker.call(lambda e, s: e.eos()).result()
 
     def session(self) -> "Session":
         with self._session_lock:
@@ -86,6 +106,11 @@ class Engine:
 
 
 class Session:
+    """One exclusively owned transcript; caller mutations occur between rounds.
+
+    Chat helpers dispatch rendering/tokenization to the engine worker. Do not
+    call these blocking methods from a logits hook or an on_worker callback.
+    """
     def __init__(self, engine: Engine):
         self._engine, self._worker = engine, engine._worker
         self._transcript = Transcript()
@@ -93,6 +118,10 @@ class Session:
         self._rng = Rng(engine.sampling_defaults.seed)
         self._lock = threading.Lock()
         self._active_round = False
+        self._logits_hooks = []
+        self._paused_stream = None
+        self._paused_control = None
+        self._paused_sampled_tokens = None
 
     @property
     def transcript(self) -> TranscriptView:
@@ -110,7 +139,92 @@ class Session:
                 raise EngineError("a round is open")
             return self._transcript.append(tokens, kind, meta)
 
-    def _job_events(self, job) -> Iterator[Event]:
+    def start_chat(self, tools=(), instructions=None) -> None:
+        """Initialize chat once, between rounds, with tools and optional instructions.
+
+        Rendering runs on the worker; caller-provided payloads stay plain text.
+        """
+        with self._lock:
+            if self._active_round:
+                raise EngineError("a round is open")
+            chat_ops.start_chat(self, tools, instructions)
+
+    def append_user(self, text: str, images=()) -> Segment:
+        """Append a user turn between rounds, initializing an empty chat if needed.
+
+        A stop-sequence-paused assistant is closed first; the next run_round
+        starts a fresh assistant prefix/parser. Nonempty images require M5.
+        Rendering/tokenization is dispatched to the worker.
+        """
+        with self._lock:
+            if self._active_round:
+                raise EngineError("a round is open")
+            return chat_ops.append_user(self, text, images)
+
+    def append_prefix(self, turns) -> None:
+        """Append PrefixTurn history between rounds, starting an empty chat if needed.
+
+        Retires a paused assistant and closes each supplied assistant turn using
+        the family's EOS policy. Rendering is dispatched to the worker.
+        """
+        with self._lock:
+            if self._active_round:
+                raise EngineError("a round is open")
+            chat_ops.append_prefix(self, turns)
+
+    def append_tool_results(self, results) -> Segment:
+        """Append results joined by two newlines as one tool message in initialized chat.
+
+        Between rounds only; closes a paused assistant before appending. Worker
+        rendering escapes the matching tool-result closing delimiter.
+        """
+        with self._lock:
+            if self._active_round:
+                raise EngineError("a round is open")
+            return chat_ops.append_tool_results(self, results)
+
+    def append_system_note(self, text: str) -> Segment:
+        """Append a newline-prefixed note between rounds in initialized chat.
+
+        Closes a paused assistant first and dispatches plain-payload rendering
+        to the worker.
+        """
+        with self._lock:
+            if self._active_round:
+                raise EngineError("a round is open")
+            return chat_ops.append_system_note(self, text)
+
+    def add_logits_hook(self, hook: Callable) -> None:
+        """Register a lazy pre-sample hook on the worker-thread decode path.
+
+        Registration is allowed only between rounds. Each invocation receives
+        a reusable LogitsView; only committed tokens enter its sampled history.
+        The hook must not call engine, session, harness, cancellation, or
+        blocking-I/O APIs; those calls can deadlock the native worker.
+        """
+        with self._lock:
+            if self._active_round:
+                raise EngineError("cannot add a logits hook during an active round")
+            self._logits_hooks.append(hook)
+
+    def _reserve_decision(self, job) -> Iterator[Event]:
+        decision = {}
+        pause = ReserveReached(
+            job.reserve,
+            on_resume=lambda reserve: decision.update(
+                action="resume", reserve=reserve,
+            ),
+            on_fail=lambda: decision.update(action="fail"),
+        )
+        yield pause
+        if not decision:
+            raise EngineError("reserve pause requires a decision before advancing")
+        if decision["action"] == "fail":
+            yield Stopped("context_exhausted")
+            return False
+        return "resume", decision["reserve"]
+
+    def _job_events(self, job, *, pause_on_reserve=False) -> Iterator[Event]:
         # submit may fail before there is an iterator to drain.
         events = self._worker.submit(job)
         exhausted = interrupted = terminal = False
@@ -120,6 +234,9 @@ class Session:
                 interrupted = isinstance(event, Interrupted) or (
                     isinstance(event, Stopped) and event.reason == "interrupted"
                 )
+                if (pause_on_reserve and isinstance(event, Stopped)
+                        and event.reason == "context_reserve"):
+                    return (yield from self._reserve_decision(job))
                 yield event
             exhausted = True
         finally:
@@ -141,20 +258,52 @@ class Session:
                         self._worker.cancel_event.clear()
         return interrupted
 
+    def _raw_round(self, max_tokens, sampling, stop_sequences=()):
+        resuming = self._paused_control is not None and self._paused_stream is None
+        control = resolve_control(self._paused_control if resuming else None, stop_sequences)
+        sampled_tokens = self._paused_sampled_tokens if resuming else []
+        assert sampled_tokens is not None
+        try:
+            tokens = self._transcript.tokens
+            if (yield from self._job_events(SyncJob(tokens))):
+                return
+            job = GenerateJob(
+                sampling or self._engine.sampling_defaults, self._rng,
+                max_tokens, self._transcript,
+                logits_hooks=tuple(self._logits_hooks), control=control, resume=resuming,
+                sampled_tokens=sampled_tokens,
+            )
+            yield from self._job_events(job)
+        finally:
+            if control is not None and control.stop_sequence is not None:
+                self._paused_control = control
+                self._paused_sampled_tokens = sampled_tokens
+            else:
+                self._paused_control = self._paused_sampled_tokens = None
+
     def run_round(self, *, max_tokens: int = 50_000,
-                  sampling: SamplingPolicy | None = None) -> Iterator[Event]:
+                  sampling: SamplingPolicy | None = None,
+                  stop_sequences: Sequence[bytes] = ()) -> Iterator[Event]:
+        """Synchronize and generate on the worker; ownership begins at iteration.
+
+        While open, other rounds and caller mutations are refused. A stop
+        sequence leaves the raw or chat round paused: another run resumes it
+        with unchanged stop_sequences; changed sequences raise ValueError before
+        sampling. Appending a new chat message closes the pause first.
+        ReserveReached requires resume(reserve) or fail() before advancing.
+        Closing the iterator drains native work.
+        """
         with self._lock:
             if self._active_round:
                 raise EngineError("a round is open")
             self._active_round = True
         try:
-            tokens = self._transcript.tokens
-            if (yield from self._job_events(SyncJob(tokens))):
-                return
-            yield from self._job_events(GenerateJob(
-                sampling or self._engine.sampling_defaults, self._rng,
-                max_tokens, self._transcript,
-            ))
+            if self._transcript.chat:
+                yield from chat_ops.run_round(
+                    self, max_tokens, sampling, stop_sequences,
+                )
+            else:
+                yield from self._raw_round(max_tokens, sampling, stop_sequences)
         finally:
             with self._lock:
                 self._active_round = False

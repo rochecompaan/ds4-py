@@ -95,9 +95,10 @@ def load_library(lib: str | Path | None = None) -> Library:
         except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
             raise AbiMismatch(f"cannot read {manifest_file}: {exc}." + _REBUILD) from exc
         bindings = all_bindings()
+        layouts = STRUCTS
         validation = validate(
             manifest, lib_sha256=file_sha256(real), bindings=bindings,
-            layouts={name: struct_layout(cls) for name, cls in STRUCTS.items()},
+            layouts={name: struct_layout(cls) for name, cls in layouts.items()},
         )
         if manifest.backend == "metal":
             metal_source_env(real.parent, manifest.metal_sources, os.environ)

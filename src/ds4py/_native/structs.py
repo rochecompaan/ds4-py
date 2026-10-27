@@ -144,7 +144,6 @@ STRUCTS: dict[str, type[ctypes.Structure]] = {
     "ds4_engine_options": EngineOptions,
 }
 
-
 @dataclass(frozen=True)
 class StructLayout:
     size: int

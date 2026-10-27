@@ -8,7 +8,9 @@ import ds4py
 from ds4py import ThinkMode, open
 from ds4py._native.fake import FakeNative, FakeSession, reply
 from ds4py._native.protocol import EngineConfig
-from ds4py.engine.events import Checkpointed, Interrupted, Prefill, Stopped, Synced, Token
+from ds4py.engine.events import (
+    Checkpointed, Interrupted, Prefill, Stopped, Synced, Token, ToolCalls,
+)
 from ds4py.engine.plan import Plan
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.session import Engine, Session
@@ -88,6 +90,44 @@ def test_a_round_syncs_generates_and_extends_the_transcript():
         assert s.ctx_used == 4 and s.plan() == Plan("extend", 4, 0, True, None)
         with pytest.raises(EngineError, match="one session"):
             e.session()
+
+
+def test_malformed_dsml_raw_utf8_finishes_as_parser_error():
+    payload = (
+        '<｜DSML｜tool_calls><｜DSML｜invoke name="read" extra="'.encode()
+        + b"\xff"
+        + ('"><｜DSML｜parameter name="path" string="true">x'
+           '</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>').encode()
+    )
+    with ds4py.open(
+        "f.gguf", think=ThinkMode.NONE,
+        native=FakeNative(script=reply(payload)),
+    ) as engine:
+        session = engine.session()
+        session.append_user("hi")
+        events = list(session.run_round())
+
+    assert events[-1] == Stopped("parser_error")
+    assert not any(isinstance(event, ToolCalls) for event in events)
+
+
+def test_public_round_forwards_stop_sequences(monkeypatch):
+    from ds4py.engine import session as session_module
+    original = session_module.GenerateJob
+    captured = []
+
+    def capture_job(*args, **kwargs):
+        captured.append(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(session_module, "GenerateJob", capture_job)
+    with fake_engine(script=reply(b"ok")) as e:
+        session = e.session()
+        session.append_tokens([5, 6], "user")
+        assert isinstance(list(session.run_round(
+            max_tokens=10, stop_sequences=[b"stop"],
+        ))[-1], Stopped)
+    assert captured[0]["control"].sequences == (b"stop",)
 
 
 @pytest.mark.parametrize("pause_at", [Synced, Token])

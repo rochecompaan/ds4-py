@@ -29,6 +29,10 @@ class TranscriptView:
     def segments(self) -> tuple[Segment, ...]:
         return self._transcript.segments
 
+    @property
+    def chat(self) -> bool:
+        return self._transcript.chat
+
     def __len__(self) -> int:
         return len(self._transcript)
 
@@ -38,6 +42,7 @@ class Transcript:
         self._lock = Lock()
         self._tokens: list[int] = []
         self._segments: list[Segment] = []
+        self._chat = False
 
     @property
     def tokens(self) -> tuple[int, ...]:
@@ -48,6 +53,15 @@ class Transcript:
     def segments(self) -> tuple[Segment, ...]:
         with self._lock:
             return tuple(self._segments)
+
+    @property
+    def chat(self) -> bool:
+        with self._lock:
+            return self._chat
+
+    def set_chat(self) -> None:
+        with self._lock:
+            self._chat = True
 
     def __len__(self) -> int:
         with self._lock:
