@@ -13,6 +13,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -129,7 +130,7 @@ def _projection(message) -> dict:
         projected["instructions"] = message.instructions
     for part in dumped["parts"]:
         kind = part["part_kind"]
-        if kind in ("system-prompt", "instruction", "user-prompt", "text"):
+        if kind in ("system-prompt", "instruction", "user-prompt", "text", "thinking"):
             projected["parts"].append({"kind": kind, "content": part["content"]})
         elif kind == "tool-call":
             item = {
@@ -174,7 +175,9 @@ def _validate(messages) -> None:
                 SystemPromptPart, InstructionPart, UserPromptPart, ToolReturnPart, RetryPromptPart,
             )):
                 raise EngineError(f"unsupported harness request part: {type(part).__name__}")
-            if isinstance(message, ModelResponse) and not isinstance(part, (TextPart, ToolCallPart)):
+            if isinstance(message, ModelResponse) and not isinstance(
+                part, (TextPart, ThinkingPart, ToolCallPart)
+            ):
                 raise EngineError(f"unsupported harness response part: {type(part).__name__}")
 
 
@@ -202,8 +205,6 @@ class MessageBinder:
                 segments.append(RenderedSegment(kind, tokens))
                 prefix = (*prefix, *tokens)
 
-        if message.instructions is not None:
-            append("system", message.instructions)
         parts = list(message.parts)
         index = 0
         while index < len(parts):
@@ -249,13 +250,16 @@ class MessageBinder:
         family = self.session.engine.info.family
         parts = [
             part for part in message.parts
-            if not isinstance(part, TextPart) or part.content
+            if not isinstance(part, (TextPart, ThinkingPart)) or part.content
         ]
         index = 0
         while index < len(parts):
             part = parts[index]
             if isinstance(part, TextPart):
                 spans.append((part.content, False))
+                index += 1
+            elif isinstance(part, ThinkingPart):
+                spans.extend((("<think>", True), (part.content, False), ("</think>", True)))
                 index += 1
             elif family in ("deepseek4", "deepseek41"):
                 end = index
