@@ -7,7 +7,7 @@
 | Revised | 2026-10-23: ds4-py no longer shares session files with `ds4-agent` ([ADR 0001](../adr/0001-no-session-compatibility-with-ds4-agent.md)). Section 27 lists what changed |
 | Replaces | [`archive/2026-10-21-ds4-py-first-draft.md`](archive/2026-10-21-ds4-py-first-draft.md), the first draft, kept for its framework comparison |
 | Upstream ds4 | antirez/ds4 `5379c1c` (2026-10-19). Line numbers below refer to this commit |
-| Harness | `pydantic-ai-harness==0.59.0`, which pins `pydantic-ai-slim==2.59.0`. Both were released 2026-10-21 |
+| Harness | `pydantic-ai-harness==0.59.0`, whose package metadata pins `pydantic-ai-slim[cli]==2.59.0`. Both were released 2026-10-21 |
 | Downstream fork | pauleveritt/ds4 `3e61e09bbe4599ca71197d8ec21933a93e24f022`, approved 2026-10-23. Section 18 describes the earlier 2026-10-21 comparison |
 
 ## 1. Intent
@@ -459,7 +459,7 @@ The harness sees one `Model` subclass and a list of capabilities. The hard part 
 | --- | --- |
 | `system` | `'ds4'` |
 | `model_name` | `engine_info.model_name` |
-| `profile` | `context_window=ctx`, tools and thinking supported, `thinking_tags=('<think>', '</think>')`, inline system prompts supported (the ds4 templates accept a `system` message anywhere, which is how the C agent appends its notes), `default_structured_output_mode='prompted'`, no JSON-schema output, no tool-return schema |
+| `profile` | `context_window=ctx`, `supports_thinking=True`, `supports_tools=True`, `supports_json_schema_output=False`, `supports_json_object_output=False`, `thinking_tags=('<think>', '</think>')`, inline system prompts supported (the ds4 templates accept a `system` message anywhere, which is how the C agent appends its notes), `default_structured_output_mode='prompted'`, no tool-return schema |
 | `request()` | `prepare_request`, then `request_stream` collected into a `ModelResponse` |
 | `request_stream()` | `prepare_request`; bind the messages to the transcript (below); run `session.run_round()` on the worker; yield a `DS4StreamedResponse`. Its `_get_event_iterator` turns facade events into `handle_text_delta(vendor_part_id='content', content=…, thinking_tags=…)` and, when the parser completes a block, one `handle_tool_call_part(vendor_part_id=i, tool_name=…, args=…, tool_call_id=…)` per call. `finish_reason` is `'tool_call'`, `'stop'` or `'length'`, and `'length'` means only that `max_tokens` was reached. A `ReserveReached` event never ends the stream (below). Usage is `RequestUsage(input_tokens=prefilled, cache_read_tokens=cached_prefix, output_tokens=generated)` |
 | `close_stream()` | `session.cancel()`. The partial tokens stay in the transcript, as in C |
@@ -513,7 +513,7 @@ agent = Agent(
         DS4Approvals(),                               # section 14
         DS4Compaction(soft=0.85),                     # a context strategy; swap for RollingWindow(...) or Bookmarks(...)
         DS4RunRecord(path),                           # events.jsonl, telemetry only (section 15)
-        StepPersistence(FileStepStore(session_dir / 'steps')),  # canonical history; each run gets conversation_id=session.id
+        StepPersistence(store=FileStepStore(session_dir / 'steps')),  # canonical history; each run gets conversation_id=session.id
         Instrumentation(),
     ],
 )
@@ -652,7 +652,7 @@ ds4-py keeps three records. Only the first two are used to recover a session.
 
 | Record | Where | What it holds | Used to recover? |
 | --- | --- | --- | --- |
-| Message history | `StepPersistence(FileStepStore(<session dir>/steps))` | `ContinuableSnapshot`s: the full harness message list, with every part and `metadata['ds4.key']` | yes; it is the canonical history |
+| Message history | `StepPersistence(store=FileStepStore(<session dir>/steps))` | `ContinuableSnapshot`s: the full harness message list, with every part and `metadata['ds4.key']` | yes; it is the canonical history |
 | Save record | `<session dir>/save.json`, next to the KV file, rewritten with each save | the snapshot the KV file was saved from, and the token provenance of the transcript (below) | yes |
 | Run record | `<session dir>/events.jsonl`, written by `DS4RunRecord` | one line per `AgentStreamEvent`, plus engine events | no; telemetry only |
 
@@ -1004,7 +1004,7 @@ These are my decisions, not the user's. Each can be changed.
 
 - The tools: the default list keeps the first draft's harness tools without `WebSearch`, `WebFetch` and the guardrails. Each capability keeps its own default tools and limits, in place of the first draft's settings modelled on C (`Shell(tools=['shell'], default_timeout=270)` and a 128,000-character `Truncate`). The tools prompt is generated from the tool definitions, and `DS4ShellJobs` stops background commands when the session ends.
 - Session files: ds4-py saves sessions in its own format under `~/.ds4py/`, not in `ds4-agent`'s `~/.ds4/kvcache/`, and the two agents cannot open each other's sessions (ADR 0001).
-- Harness names, checked against the 0.59.0 wheel: `Guardrails(...)` becomes `InputGuardrail`, `OutputGuardrail` and `ToolGuardrail`. The `Compaction` strategies are `SlidingWindowCompaction`, `SummarizingCompaction` and `TieredCompaction`. `SystemReminders(every_tokens=…)` does not exist; `Reminder.trigger` is the predicate to use. `StepPersistence(FileStore(…))` becomes `StepPersistence(FileStepStore(…))`. `params.declared_function_tools` becomes `params.function_tools`.
+- Harness names, checked against the 0.59.0 wheel: `Guardrails(...)` becomes `InputGuardrail`, `OutputGuardrail` and `ToolGuardrail`. The `Compaction` strategies are `SlidingWindowCompaction`, `SummarizingCompaction` and `TieredCompaction`. `SystemReminders(every_tokens=…)` does not exist; `Reminder.trigger` is the predicate to use. `StepPersistence(FileStore(…))` becomes `StepPersistence(store=FileStepStore(…))`. `params.declared_function_tools` becomes `params.function_tools`.
 - The harness pin moves from 0.17.0 to 0.59.0.
 - The ABI claim: `argtypes` does not make a signature change fail at import. The signature and layout probes replace that claim.
 - The downstream agent's needs: building from any tree, loading from a path, required and optional bindings, the extension API, the decode-step contract and the logits hook are new.
