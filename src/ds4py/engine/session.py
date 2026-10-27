@@ -4,6 +4,7 @@ import threading
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Callable, Iterator, Mapping, Sequence, TypeVar
+from uuid import uuid4
 
 from ds4py._native.api import LibNative
 from ds4py._native.loader import load_library
@@ -12,12 +13,13 @@ from ds4py.errors import EngineError
 from . import chat as chat_ops
 from .decode import GenerateJob
 from .events import Checkpointed, Event, Interrupted, ReserveReached, Stopped, Synced
+from .lifecycle import SessionEvent, SessionLifecycle
 from .pause import resolve_control
 from .plan import Plan
 from .prompt import PromptBuilder
 from .sampling import Rng, SamplingPolicy
 from .transcript import Segment, Transcript, TranscriptView
-from .worker import CheckpointJob, EngineWorker, Handles, SyncJob
+from .worker import CheckpointJob, EngineWorker, Handles, ResetJob, SyncJob
 
 T = TypeVar("T")
 
@@ -98,7 +100,13 @@ class Engine:
             return self._session
 
     def close(self) -> None:
-        self._worker.close()
+        with self._session_lock:
+            session = self._session
+        try:
+            if session is not None:
+                session.close()
+        finally:
+            self._worker.close()
 
     def __enter__(self) -> "Engine":
         return self
@@ -118,13 +126,20 @@ class Session:
         self._transcript = Transcript()
         self._transcript_view = TranscriptView(self._transcript)
         self._rng = Rng(engine.sampling_defaults.seed)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._active_round = False
         self._logits_hooks = []
         self._paused_stream = None
         self._paused_control = None
         self._paused_sampled_tokens = None
         self._checkpoint_tokens: dict[str, int] = {}
+        self._lifecycle = SessionLifecycle()
+        self._closed = False
+
+    @property
+    def id(self) -> str:
+        """The live session identity; a fork or switch replaces it."""
+        return self._lifecycle.id
 
     @property
     def engine(self) -> Engine:
@@ -139,6 +154,101 @@ class Session:
     @property
     def ctx_used(self) -> int:
         return self._worker.call(lambda e, s: s.pos()).result()
+
+    def on_event(self, listener: Callable[[SessionEvent], None], *,
+                 kinds=None) -> Callable[[], None]:
+        """Subscribe on the consuming thread; the returned call unsubscribes.
+
+        Listeners must not call blocking session methods. ``kinds`` filters by
+        event kind, including engine class names such as ``"Prefill"``.
+        """
+        return self._lifecycle.on_event(listener, kinds=kinds)
+
+    def emit(self, kind: str, **payload) -> None:
+        """Publish an extension/status event on this session's bus."""
+        self._lifecycle.emit(kind, **payload)
+
+    def state(self, key: str, factory: Callable[[], T]) -> T:
+        """Return the session-owned state for ``key``, creating it once."""
+        self._require_open()
+        return self._lifecycle.state(key, factory)
+
+    def new(self) -> str:
+        """End the old session, drop scoped state, and reset history/KV."""
+        with self._lock:
+            self._require_idle()
+            old = self.id
+            self._lifecycle.emit("session_end", old=old)
+            self._lifecycle.close_states()
+            self._reset()
+            new = self._lifecycle.set_id()
+            self._lifecycle.emit("session_start", old=old, new=new)
+            return new
+
+    def switch(self, new_id: str, restore: Callable[[], None] | None = None, **payload) -> str:
+        """Change identity across a restore boundary, closing old scoped state.
+
+        ``restore`` runs between ``session_end`` and ``session_start`` so a
+        runtime can load history/KV without a second identity or state set.
+        """
+        with self._lock:
+            self._require_idle()
+            old = self.id
+            self._lifecycle.emit("switching", old=old, new=new_id)
+            self._lifecycle.emit("session_end", old=old)
+            self._lifecycle.close_states()
+            if restore is not None:
+                restore()
+            self._lifecycle.set_id(new_id)
+            self._lifecycle.emit("session_start", old=old, new=new_id)
+            self._lifecycle.emit("switched", **{"old": old, "new": new_id, **payload})
+            return new_id
+
+    def fork(self) -> str:
+        """Change only identity; transcript, KV, checkpoints, and state survive."""
+        with self._lock:
+            self._require_idle()
+            old = self.id
+            new = uuid4().hex
+            self._lifecycle.emit("forked", old=old, new=new)
+            self._lifecycle.set_id(new)
+            return new
+
+    def set_think(self, mode: int) -> None:
+        """Set the think mode between rounds; bound prefixes rebuild next request."""
+        with self._lock:
+            self._require_idle()
+            normalized = self._worker.call(
+                lambda e, s: self._engine.native.think_mode_for_context(
+                    mode, self._engine.config.ctx,
+                )
+            ).result()
+            self._engine.think = normalized
+
+    def close(self) -> None:
+        """End the live session and close all state; safe to call repeatedly."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._lifecycle.emit("session_end", old=self.id)
+            self._lifecycle.close_states()
+
+    def _require_open(self) -> None:
+        if self._closed:
+            raise EngineError("session is closed")
+
+    def _require_idle(self) -> None:
+        self._require_open()
+        if self._active_round:
+            raise EngineError("a round is open")
+
+    def _reset(self) -> None:
+        for _ in self._job_events(ResetJob()):
+            pass
+        self._checkpoint_tokens.clear()
+        self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
+        self._transcript.reset()
 
     def append_tokens(self, tokens: Sequence[int], kind: str,
                       meta: Mapping | None = None) -> Segment:
@@ -242,6 +352,9 @@ class Session:
                 raise EngineError("cannot add a logits hook during an active round")
             self._logits_hooks.append(hook)
 
+    def _publish(self, event: Event) -> None:
+        self._lifecycle.emit(type(event).__name__, event=event)
+
     def _reserve_decision(self, job) -> Iterator[Event]:
         decision = {}
         pause = ReserveReached(
@@ -251,11 +364,14 @@ class Session:
             ),
             on_fail=lambda: decision.update(action="fail"),
         )
+        self._publish(pause)
         yield pause
         if not decision:
             raise EngineError("reserve pause requires a decision before advancing")
         if decision["action"] == "fail":
-            yield Stopped("context_exhausted")
+            stopped = Stopped("context_exhausted")
+            self._publish(stopped)
+            yield stopped
             return False
         return "resume", decision["reserve"]
 
@@ -272,6 +388,7 @@ class Session:
                 if (pause_on_reserve and isinstance(event, Stopped)
                         and event.reason == "context_reserve"):
                     return (yield from self._reserve_decision(job))
+                self._publish(event)
                 yield event
             exhausted = True
         finally:
@@ -347,12 +464,12 @@ class Session:
         return self._worker.plan(self._transcript.tokens if tokens is None else tokens)
 
     def checkpoint(self, key: str) -> Checkpointed:
-        event = list(self._worker.submit(CheckpointJob(key)))[0]
+        event = list(self._job_events(CheckpointJob(key)))[0]
         self._checkpoint_tokens[key] = event.tokens
         return event
 
     def drop_checkpoint(self, key: str) -> None:
-        list(self._worker.submit(CheckpointJob(key, drop=True)))
+        list(self._job_events(CheckpointJob(key, drop=True)))
         self._checkpoint_tokens.pop(key, None)
 
     def on_worker(self, fn: Callable[[Handles], T]) -> Future[T]:

@@ -33,6 +33,19 @@ class CheckpointJob:
 
 
 @dataclass(frozen=True)
+class ResetJob:
+    """Return the native session to an empty, unsynchronized transcript."""
+
+
+# The only sync rejection a reset may absorb: both libds4 and FakeSession
+# refuse an empty prompt before touching native state.
+EMPTY_PROMPT_REJECTIONS = frozenset({
+    "empty prompt",
+    "prompt must be nonempty and shorter than context",
+})
+
+
+@dataclass(frozen=True)
 class Handles:
     engine: int
     session: int
@@ -87,7 +100,7 @@ class _JobEvents(Iterator[Event]):
 
 @dataclass(frozen=True)
 class _Submission:
-    job: SyncJob | CheckpointJob | GenerateJob
+    job: SyncJob | CheckpointJob | ResetJob | GenerateJob
     events: _JobEvents
 
 
@@ -133,7 +146,7 @@ class EngineWorker:
                 raise EngineError("engine worker is closed")
             self._queue.put(item)
 
-    def submit(self, job: SyncJob | CheckpointJob | GenerateJob) -> _JobEvents:
+    def submit(self, job: SyncJob | CheckpointJob | ResetJob | GenerateJob) -> _JobEvents:
         events = _JobEvents()
         self._enqueue(_Submission(job, events))
         return events
@@ -206,6 +219,8 @@ class EngineWorker:
             self._sync(session, job.tokens, emit)
         elif isinstance(job, CheckpointJob):
             self._checkpoint(session, job, emit)
+        elif isinstance(job, ResetJob):
+            self._reset(session)
         elif isinstance(job, GenerateJob):
             reason = generate(engine, session, job,
                               cancelled=self.cancel_event.is_set, emit=emit)
@@ -251,6 +266,22 @@ class EngineWorker:
             emit(Interrupted(session.pos()))
         else:
             emit(Synced(session.pos(), plan, prefilled))
+
+    def _reset(self, session):
+        try:
+            status = session.sync(())
+        except EngineError as error:
+            if str(error) not in EMPTY_PROMPT_REJECTIONS:
+                raise
+            # This native build rejects an empty prompt. Rewind to the same
+            # empty prefix; the next sync then rebuilds from position zero.
+            session.invalidate()
+            session.rewind(0)
+        else:
+            if status == SyncStatus.INTERRUPTED:
+                self.cancel_event.clear()
+                raise EngineError("session reset was interrupted")
+        self._close_checkpoints()
 
     def _checkpoint(self, session, job, emit):
         if job.drop:

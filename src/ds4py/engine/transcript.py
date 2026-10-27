@@ -103,6 +103,13 @@ class Transcript:
                 for segment in self._segments
             ]
 
+    def reset(self) -> None:
+        """Drop all tokens, segments, and chat initialization."""
+        with self._lock:
+            self._tokens.clear()
+            self._segments.clear()
+            self._chat = False
+
     def truncate(self, n: int) -> None:
         with self._lock:
             if not 0 <= n <= len(self._tokens):
