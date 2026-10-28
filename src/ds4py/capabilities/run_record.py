@@ -49,6 +49,7 @@ class DS4RunRecord(AbstractCapability):
         self.path = Path(path)
         self.failure = None
         self._run_id = None
+        self._written_run_end = None
         self._subscribed = False
         if hasattr(session, "on_event"):
             session.on_event(self._on_engine_event)
@@ -84,10 +85,21 @@ class DS4RunRecord(AbstractCapability):
             "payload": values,
         }
 
+    def write_run_end(self, **payload) -> None:
+        """Persist a terminal line before publishing its matching bus event."""
+        line = self._line("run_end", payload)
+        self._write(line)
+        self._written_run_end = (line["run_id"], line["payload"].get("status"))
+
     def _on_engine_event(self, event):
         kind = getattr(event, "kind", type(event).__name__)
+        payload = dict(getattr(event, "payload", {}) or {})
+        terminal = (payload.get("run_id", self._run_id), payload.get("status"))
+        if kind == "run_end" and terminal == self._written_run_end:
+            self._written_run_end = None
+            return
         try:
-            self._write(self._line(kind, dict(getattr(event, "payload", {}) or {})))
+            self._write(self._line(kind, payload))
         except OSError:
             # Telemetry must never break the engine that is publishing.
             pass

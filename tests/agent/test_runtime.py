@@ -454,6 +454,8 @@ def test_terminal_success_record_failure_is_an_error(tmp_path, monkeypatch):
     with fake_engine(script=scripted_rounds("answer")) as engine:
         model = make_model(engine)
         runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
+        terminal_events = []
+        runtime.on_event(terminal_events.append, kinds={"run_end"})
         original_write = runtime._record._write
         blocked = tmp_path / "terminal-events"
         blocked.mkdir()
@@ -476,6 +478,7 @@ def test_terminal_success_record_failure_is_an_error(tmp_path, monkeypatch):
             events = read_events(store.session_dir(runtime.session_id) / "events.jsonl")
             terminal = [line for line in events if line["kind"] == "run_end"]
             assert terminal[-1]["payload"]["status"] == "error"
+            assert [event.payload["status"] for event in terminal_events] == ["error"]
         finally:
             asyncio.run(runtime.close())
 

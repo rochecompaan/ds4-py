@@ -300,12 +300,14 @@ class AgentRuntime:
                 failure = self._record.failure
                 await self._fail(run_id, "error", failure)
                 raise EngineError(f"run record failed: {failure}") from failure
+            if self._record is not None:
+                try:
+                    self._record.write_run_end(run_id=run_id, status="success")
+                except OSError as failure:
+                    await self._fail(run_id, "error", failure)
+                    raise EngineError(f"run record failed: {failure}") from failure
             self._status = "success"
             self._session.emit("run_end", run_id=run_id, status="success")
-            if self._record is not None and self._record.failure is not None:
-                failure = self._record.failure
-                await self._fail(run_id, "error", failure)
-                raise EngineError(f"run record failed: {failure}") from failure
             return result
         finally:
             self._running = False
