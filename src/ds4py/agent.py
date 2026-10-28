@@ -33,6 +33,8 @@ def build_agent_components(
     project_dir,
     *,
     read_only=False,
+    yolo=False,
+    system=None,
     interactive=False,
     answerer=None,
     step_store=None,
@@ -65,9 +67,12 @@ def build_agent_components(
         StepPersistence(store=step_store),
         Instrumentation(),
         notes,
-        DS4Approvals(answerer, project_dir=project_dir),
+        DS4Approvals(answerer, yolo=yolo, project_dir=project_dir),
     ]
     if interactive:
         components.append(AskUser(answerer=answerer))
 
-    return AgentComponents(agent=Agent(model, capabilities=components), components=components)
+    options = {"capabilities": components}
+    if system is not None:
+        options["instructions"] = system
+    return AgentComponents(agent=Agent(model, **options), components=components)

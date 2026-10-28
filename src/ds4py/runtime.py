@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -85,6 +86,19 @@ class SessionStepStore:
             close()
 
 
+class _ModelStepTrace(AbstractCapability):
+    """Expose the harness's actual model-step identity on the session bus."""
+
+    def __init__(self, session):
+        self._session = session
+
+    async def before_model_request(self, ctx, request_context):
+        self._session.emit(
+            "model_step", run_id=ctx.run_id, step_index=ctx.run_step,
+        )
+        return request_context
+
+
 @dataclass(frozen=True)
 class _RestorePlan:
     path: str
@@ -109,6 +123,8 @@ class AgentRuntime:
         store=None,
         clock=None,
         read_only=False,
+        yolo=False,
+        system=None,
         interactive=False,
         answerer=None,
     ):
@@ -130,6 +146,8 @@ class AgentRuntime:
             model,
             self.project_dir,
             read_only=read_only,
+            yolo=yolo,
+            system=system,
             interactive=interactive,
             answerer=answerer,
             step_store=FileStepStore(self._session_dir / "steps"),
@@ -279,7 +297,10 @@ class AgentRuntime:
                     message_history=list(self._messages),
                     conversation_id=self._session.id,
                     run_id=run_id,
-                    capabilities=[StepPersistence(store=holder.current)],
+                    capabilities=[
+                        StepPersistence(store=holder.current),
+                        _ModelStepTrace(self._session),
+                    ],
                 )
             except asyncio.CancelledError:
                 await self._fail(run_id, "interrupted", None)

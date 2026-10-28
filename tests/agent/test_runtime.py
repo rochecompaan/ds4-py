@@ -17,6 +17,8 @@ from ds4py.engine.prefix import PrefixTurn
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.errors import EngineError
 from ds4py.model import DS4Model
+from ds4py.prefill_trace import PrefillTraceWriter
+from ds4py.engine.replay import read_replay
 from ds4py.runtime import AgentRuntime
 from ds4py.store import SessionStore
 from pydantic_ai.messages import (
@@ -180,6 +182,34 @@ def runtime_steps(directory):
     from pydantic_ai_harness.step_persistence import FileStepStore
 
     return FileStepStore(Path(directory))
+
+
+def test_prefill_trace_uses_persistence_step_indices(tmp_path):
+    project = project_dir(tmp_path)
+    store = SessionStore(tmp_path / "home")
+    trace_path = tmp_path / "prefill.jsonl"
+    with fake_engine(script=scripted_rounds(READ_CALL, "first answer")) as engine:
+        model = make_model(engine)
+        runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
+
+        async def scenario():
+            with PrefillTraceWriter(model.session, trace_path, think=engine.think):
+                result = await runtime.run("read hello")
+            snapshots = await runtime_steps(
+                store.session_dir(runtime.session_id) / "steps",
+            ).list_snapshots(run_id=result.run_id)
+            return snapshots
+
+        try:
+            snapshots = asyncio.run(scenario())
+        finally:
+            asyncio.run(runtime.close())
+
+    read_replay(trace_path)  # Validate the records before inspecting harness-only metadata.
+    trace_steps = [json.loads(line)["step_index"] for line in trace_path.read_text().splitlines()]
+    snapshot_steps = sorted({snapshot.step_index for snapshot in snapshots})
+    assert snapshot_steps == [1, 2]
+    assert trace_steps == snapshot_steps
 
 
 def test_run_record_is_valid_jsonl_with_ids_and_hex_token_bytes(tmp_path):

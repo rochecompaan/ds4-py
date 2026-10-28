@@ -3,7 +3,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import re
 
-from ds4py import ThinkMode
+from .ds4py_replay import read_ds4py
+from .replay_types import _THINK_NAMES, ReplayError, ReplayRound, ReplayTrace
 
 
 _TIMESTAMP = re.compile(
@@ -23,39 +24,6 @@ _GENERATION = re.compile(
 _WORKER = re.compile(
     r"^agent worker start ctx=(\S+) backend=(\S+) model=(.*?) trace=(\S+)$"
 )
-_THINK_NAMES = {
-    "none": ThinkMode.NONE,
-    "high": ThinkMode.HIGH,
-    "max": ThinkMode.MAX,
-    "low": ThinkMode.LOW,
-    "medium": ThinkMode.MEDIUM,
-}
-
-
-class ReplayError(ValueError):
-    """A trace cannot be reconstructed without guessing at its token stream."""
-
-
-@dataclass(frozen=True)
-class ReplayRound:
-    """One rebuilt C prompt and sampled-ID sequence with traced boundary policy."""
-    number: int
-    prompt: tuple[int, ...]
-    sampled: tuple[int, ...]
-    think: int
-    cached: int
-    context_limited: bool
-    prefix_only: bool = False
-
-
-@dataclass(frozen=True)
-class ReplayTrace:
-    """A single-worker chat trace with at least one replayable round."""
-    ctx: int
-    model: str
-    rounds: tuple[ReplayRound, ...]
-
-
 @dataclass
 class _Block:
     label: str
@@ -90,8 +58,12 @@ def _think_mode(value: str, reader, line: int) -> int:
 
 
 def read_replay(path: str | Path) -> ReplayTrace:
-    """Parse *path*, returning only the token IDs and decisions needed to replay it."""
-    return _Reader(Path(path)).read()
+    """Parse a C text trace or ds4-py JSONL prefill records."""
+    path = Path(path)
+    text = path.read_text(encoding="utf-8")
+    if text.lstrip().startswith("{"):
+        return read_ds4py(path, text)
+    return _Reader(path).read(text)
 
 
 class _Reader:
@@ -109,8 +81,10 @@ class _Reader:
     def error(self, message: str, line: int | None = None):
         raise ReplayError(f"{self.path}:{line or self.line or 1}: {message}")
 
-    def read(self) -> ReplayTrace:
-        lines = self.path.read_text(encoding="utf-8").splitlines()
+    def read(self, text: str | None = None) -> ReplayTrace:
+        if text is None:
+            text = self.path.read_text(encoding="utf-8")
+        lines = text.splitlines()
         for number, raw in enumerate(lines, 1):
             self.line = number
             text = _TIMESTAMP.sub("", raw, count=1)

@@ -73,6 +73,28 @@ def test_build_agent_components_behavior(tmp_path):
     assert asyncio.run(store.latest_snapshot(run_id=result.run_id)) is not None
 
 
+def test_factory_wires_yolo_and_persistent_instructions(tmp_path):
+    from ds4py.capabilities.approvals import DS4Approvals
+
+    def scripted(messages, info):
+        return ModelResponse(parts=[TextPart("done")])
+
+    async def stream_function(messages, info):
+        yield "done"
+
+    model = FunctionModel(scripted, stream_function=stream_function)
+    model.session = MockSession()
+    components = build_agent_components(
+        model, tmp_path, yolo=True, system="persistent rules",
+    )
+
+    approvals = next(c for c in components.components if isinstance(c, DS4Approvals))
+    result = asyncio.run(components.agent.run("hello"))
+
+    assert approvals.yolo is True
+    assert result.all_messages()[0].instructions == "persistent rules"
+
+
 def test_no_ask_user_unless_interactive(tmp_path):
     def scripted(messages, info):
         return ModelResponse(parts=[TextPart("done")])
