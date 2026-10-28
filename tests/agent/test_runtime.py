@@ -479,6 +479,46 @@ def test_terminal_success_record_failure_is_an_error(tmp_path, monkeypatch):
             terminal = [line for line in events if line["kind"] == "run_end"]
             assert terminal[-1]["payload"]["status"] == "error"
             assert [event.payload["status"] for event in terminal_events] == ["error"]
+
+            monkeypatch.setattr(runtime._record, "_write", original_write)
+            asyncio.run(runtime.run("again"))
+            assert runtime.status == "success"
+            events = read_events(store.session_dir(runtime.session_id) / "events.jsonl")
+            terminal = [line for line in events if line["kind"] == "run_end"]
+            assert [line["payload"]["status"] for line in terminal] == ["error", "success"]
+            assert len({line["run_id"] for line in terminal}) == 2
+            assert [event.payload["status"] for event in terminal_events] == ["error", "success"]
+        finally:
+            asyncio.run(runtime.close())
+
+
+def test_terminal_success_close_failure_rolls_back_before_error(tmp_path, monkeypatch):
+    project = project_dir(tmp_path)
+    store = SessionStore(tmp_path / "home")
+    with fake_engine(script=scripted_rounds("answer")) as engine:
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
+        terminal_events = []
+        runtime.on_event(terminal_events.append, kinds={"run_end"})
+        original_write = runtime._record._write
+
+        def fail_terminal_close(record):
+            if record["kind"] == "run_end" and record["payload"].get("status") == "success":
+                original_write(record)
+                error = OSError("terminal close failed")
+                runtime._record.failure = error
+                raise error
+            return original_write(record)
+
+        monkeypatch.setattr(runtime._record, "_write", fail_terminal_close)
+        try:
+            with pytest.raises(EngineError, match="run record failed"):
+                asyncio.run(runtime.run("hello"))
+            assert runtime.status == "error"
+            events = read_events(store.session_dir(runtime.session_id) / "events.jsonl")
+            terminal = [line for line in events if line["kind"] == "run_end"]
+            assert [line["payload"]["status"] for line in terminal] == ["error"]
+            assert terminal[0]["payload"]["error"] == "terminal close failed"
+            assert [event.payload["status"] for event in terminal_events] == ["error"]
         finally:
             asyncio.run(runtime.close())
 

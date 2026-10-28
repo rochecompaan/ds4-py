@@ -88,7 +88,20 @@ class DS4RunRecord(AbstractCapability):
     def write_run_end(self, **payload) -> None:
         """Persist a terminal line before publishing its matching bus event."""
         line = self._line("run_end", payload)
-        self._write(line)
+        try:
+            offset = self.path.stat().st_size
+        except FileNotFoundError:
+            offset = 0
+        try:
+            self._write(line)
+        except OSError:
+            try:
+                with self.path.open("r+b") as handle:
+                    handle.truncate(offset)
+            except OSError:
+                # Rollback must not replace the original terminal write error.
+                pass
+            raise
         self._written_run_end = (line["run_id"], line["payload"].get("status"))
 
     def _on_engine_event(self, event):

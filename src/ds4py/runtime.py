@@ -269,6 +269,8 @@ class AgentRuntime:
         self._status = "running"
         run_id = uuid4().hex
         try:
+            if self._record is not None:
+                self._record.failure = None
             self._session.emit("run_start", run_id=run_id)
             holder = self._holder()
             try:
