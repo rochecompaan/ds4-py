@@ -188,6 +188,10 @@ class AgentRuntime:
     def created_at(self) -> str:
         return self._created_at
 
+    @property
+    def context_size(self) -> int:
+        return self._session.engine.config.ctx
+
     def on_event(self, listener, *, kinds=None):
         """Subscribe to session events; returns the unsubscribe call."""
         return self._session.on_event(listener, kinds=kinds)
@@ -339,6 +343,12 @@ class AgentRuntime:
         """Cancel the active run's engine work; a no-op while idle."""
         if self._status == "running":
             self._session.cancel()
+
+    def set_hints(self, enabled: bool) -> None:
+        """Change the system-note setting used by the next request."""
+        self._require_open()
+        if self._notes is not None:
+            self._notes.hints_enabled = bool(enabled)
 
     def load_prefix(self, turns) -> list[ModelMessage]:
         """Seed the history from prefix-file turns so the next run renders them.

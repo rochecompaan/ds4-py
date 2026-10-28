@@ -103,17 +103,26 @@ def command(args) -> int:
             trace = (PrefillTraceWriter(session, args.trace, think=engine.think)
                      if args.trace is not None else nullcontext())
             with trace:
-                return asyncio.run(run_noninteractive(runtime, prompt))
+                if args.non_interactive:
+                    return asyncio.run(run_noninteractive(runtime, prompt))
+                return asyncio.run(_run_tui(runtime, prompt))
         finally:
             asyncio.run(runtime.close())
+
+
+async def _run_tui(runtime, prompt):
+    from ds4py.tui import TUI
+
+    tui = TUI(runtime)
+    if prompt is not None:
+        return await tui.run(prompt)
+    return await tui.run()
 
 
 def main(argv: list[str]) -> int:
     arg_parser = parser()
     args = arg_parser.parse_args(argv)
-    if not args.non_interactive:
-        arg_parser.error("use --non-interactive; the interactive TUI is not available yet")
-    if args.prompt is None and args.prompt_file is None:
+    if args.non_interactive and args.prompt is None and args.prompt_file is None:
         arg_parser.error("--non-interactive requires --prompt or --prompt-file")
     try:
         return command(args)

@@ -186,6 +186,54 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(monkeypatch
     assert next(item for item in created if getattr(item, "kind", None) == "engine").engine.exited
 
 
+def test_agent_cli_interactive_constructs_and_runs_tui(monkeypatch):
+    import ds4py.model as model_module
+    import ds4py.runtime as runtime_module
+    import ds4py.tui as tui_module
+
+    created = []
+
+    class Engine:
+        info = SimpleNamespace(is_glm_dsa=False)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            created.append("engine-closed")
+
+        def session(self):
+            return object()
+
+    class Runtime:
+        def __init__(self, model, project_dir, **kwargs):
+            created.append(self)
+
+        async def close(self):
+            created.append("runtime-closed")
+
+    class FakeTUI:
+        def __init__(self, runtime):
+            self.runtime = runtime
+            created.append(self)
+
+        async def run(self):
+            created.append("tui-ran")
+            return 0
+
+    monkeypatch.setattr(ds4py, "open", lambda *args, **kwargs: Engine())
+    monkeypatch.setattr(model_module, "DS4Model", lambda session, **kwargs: object())
+    monkeypatch.setattr(runtime_module, "AgentRuntime", Runtime)
+    monkeypatch.setattr(tui_module, "TUI", FakeTUI)
+
+    assert cli.main([]) == 0
+    runtime = next(item for item in created if isinstance(item, Runtime))
+    tui = next(item for item in created if isinstance(item, FakeTUI))
+    assert tui.runtime is runtime
+    assert "tui-ran" in created
+    assert created[-2:] == ["runtime-closed", "engine-closed"]
+
+
 def test_raw_alias_and_core_commands_do_not_import_the_harness(monkeypatch, tmp_path, capsys):
     import ds4py.raw as raw_module
 

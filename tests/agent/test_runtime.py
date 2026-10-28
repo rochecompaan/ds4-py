@@ -88,6 +88,19 @@ def dump(messages):
     return ModelMessagesTypeAdapter.dump_json(list(messages)).decode()
 
 
+def test_runtime_exposes_context_and_updates_hint_notes(tmp_path):
+    with fake_engine() as engine:
+        runtime = AgentRuntime(make_model(engine), project_dir(tmp_path))
+        try:
+            assert runtime.context_size == 65536
+            runtime.set_hints(True)
+            assert runtime._notes.hints_enabled is True
+            runtime.set_hints(False)
+            assert runtime._notes.hints_enabled is False
+        finally:
+            asyncio.run(runtime.close())
+
+
 def test_two_prompts_and_a_tool_round_persist_exact_snapshots(tmp_path):
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")

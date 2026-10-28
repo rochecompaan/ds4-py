@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai_harness.shell import CommandFinishedEvent, CommandStartedEvent
 
 
 def _json_safe(value):
@@ -106,6 +107,8 @@ class DS4RunRecord(AbstractCapability):
 
     def _on_engine_event(self, event):
         kind = getattr(event, "kind", type(event).__name__)
+        if kind == "agent_event":
+            return
         payload = dict(getattr(event, "payload", {}) or {})
         terminal = (payload.get("run_id", self._run_id), payload.get("status"))
         if kind == "run_end" and terminal == self._written_run_end:
@@ -124,3 +127,19 @@ class DS4RunRecord(AbstractCapability):
         if run_id is not None:
             line["run_id"] = run_id
         self._write(line)
+        if not hasattr(self.session, "emit"):
+            return
+        self.session.emit("agent_event", event=event)
+        if isinstance(event, CommandStartedEvent):
+            self.session.emit(
+                "service_started", service="shell", pid=event.pid, status="running",
+            )
+        elif isinstance(event, CommandFinishedEvent):
+            running = event.exit_code is None
+            self.session.emit(
+                "service_status" if running else "service_stopped",
+                service="shell",
+                pid=event.pid,
+                status="running" if running else "stopped",
+                exit_code=event.exit_code,
+            )
