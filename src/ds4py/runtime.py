@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -33,6 +32,7 @@ from ds4py.agent import build_agent_components
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.errors import Ds4pyError, EngineError, StoreError
+from ds4py.runtime_restore import plan_restore, restore_snapshot
 from ds4py.store import (
     KV_HEADER,
     KV_MAGIC,
@@ -99,13 +99,6 @@ class _ModelStepTrace(AbstractCapability):
         return request_context
 
 
-@dataclass(frozen=True)
-class _RestorePlan:
-    path: str
-    payload_bytes: int | None
-    mismatch: str | None
-
-
 class AgentRuntime:
     """One project session driven by one installed engine.
 
@@ -113,6 +106,11 @@ class AgentRuntime:
     views. ``run`` executes one prompt, ``save`` / ``switch`` publish and adopt
     session directories, ``new`` / ``fork`` change identity, and ``close``
     stops the session and everything scoped to it.
+
+    An instance is confined to the event-loop thread that creates it. ``run``
+    rejects an overlapping prompt. ``save``, ``switch``, ``new``, ``fork``, and
+    ``close`` cancel and await an active run before changing state. ``cancel``
+    requests native cancellation without waiting for the run to finish.
     """
 
     def __init__(
@@ -353,7 +351,8 @@ class AgentRuntime:
     def load_prefix(self, turns) -> list[ModelMessage]:
         """Seed the history from prefix-file turns so the next run renders them.
 
-        A stripped restore keeps messages but no tokens; prefix turns are the
+        Call this method while idle, before the first run. A stripped restore
+        keeps messages but no tokens; prefix turns are the
         same situation before the first run. Nothing renders here: the next
         ``prepare`` renders these messages through the binder like any history.
         """
@@ -450,21 +449,6 @@ class AgentRuntime:
         ]
         return f"{prefix}{max(numbers, default=0) + 1}"
 
-    def _restore_plan(self, record: SaveRecord, session_dir: Path) -> _RestorePlan:
-        kv_path = session_dir / "session.kv"
-        if record.payload_bytes == 0:
-            return _RestorePlan("render", None, "the save record declares no KV payload")
-        if not kv_path.is_file():
-            return _RestorePlan("render", None, f"{kv_path}: the KV file is missing")
-        declared = self.store.read_kv_header(kv_path)
-        if declared != record.payload_bytes:
-            return _RestorePlan(
-                "render", None,
-                f"{kv_path}: the KV payload is {declared} bytes, "
-                f"the save record declares {record.payload_bytes}",
-            )
-        return _RestorePlan("kv", declared, None)
-
     async def switch(self, session_prefix: str) -> SaveRecord:
         """Adopt a saved session: load its KV, or render its snapshot fresh."""
         self._require_open()
@@ -483,61 +467,26 @@ class AgentRuntime:
                 f"{session_dir}: the save record names snapshot {record.run_id} "
                 f"step {record.step_index}, which is missing"
             )
-        plan = self._restore_plan(record, session_dir)
+        plan = plan_restore(record, session_dir, self.store)
         if self._record is not None:
             self._record.relocate(session_dir / "events.jsonl")
         outcome = {}
 
         def restore():
-            try:
-                self.model.binder.validate_restore(snapshot.messages, record.segments)
-            except EngineError as error:
-                raise StoreError(
-                    f"{session_dir / 'save.json'}: cannot restore: {error}"
-                ) from error
-            loaded = None
-            if plan.payload_bytes is not None:
-                with (session_dir / "session.kv").open("rb") as file:
-                    file.seek(KV_HEADER.size)
-                    loaded = self._session.load_payload(
-                        file, payload_bytes=plan.payload_bytes,
-                    )
-                if len(loaded) != record.tokens:
-                    outcome["rejected"] = (
-                        f"the loaded payload has {len(loaded)} tokens, "
-                        f"the save record declares {record.tokens}"
-                    )
-                elif token_digest(loaded) != record.tokens_sha256:
-                    outcome["rejected"] = (
-                        "the loaded payload token hash does not match the save record"
-                    )
-                if "rejected" in outcome:
-                    loaded = None
-            if loaded is not None:
-                try:
-                    self.model.binder.restore(snapshot.messages, record.segments)
-                except EngineError as error:
-                    raise StoreError(
-                        f"{session_dir / 'save.json'}: cannot restore: {error}"
-                    ) from error
-                if self._notes is not None:
-                    self._notes.restore_from_segments(self._session.transcript.segments)
-            else:
-                self._session.truncate(0)
-                self.model.binder.forget()
-                if self._notes is not None:
-                    self._notes.restore_from_segments(record.segments)
-                    self._notes.sync_from_segments(())
+            result = restore_snapshot(
+                session=self._session,
+                binder=self.model.binder,
+                notes=self._notes,
+                record=record,
+                snapshot=snapshot,
+                plan=plan,
+                session_dir=session_dir,
+            )
+            outcome.update(result)
             self._messages = list(snapshot.messages)
             self._title = record.title
             self._created_at = record.created_at
-            return {
-                "restore_path": "kv" if loaded is not None else "render",
-                "mismatch": (
-                    None if loaded is not None
-                    else outcome.get("rejected", plan.mismatch)
-                ),
-            }
+            return {key: result[key] for key in ("restore_path", "mismatch")}
 
         self._session.switch(
             record.session_id,

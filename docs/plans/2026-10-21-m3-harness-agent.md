@@ -1072,11 +1072,11 @@ Do not mark the live completion item done from a guarded skip. If assets are una
 - Modify: `docs/specs/2026-10-21-ds4-py-design.md` only for a further concrete, evidenced mismatch found during implementation; the verified harness corrections are already in Task 1
 - Verify all M3 files
 
-- [ ] **Step 1: Document installation and behavior**
+- [x] **Step 1: Document installation and behavior**
 
 Document `uv sync --extra agent`, interactive and noninteractive examples, `DS4PY_HOME`, approvals/read-only behavior, save/switch restore cases, trace files, and the live bake-off command. State clearly that core/raw/build/check do not require the harness extra and that M4 owns compaction and the remaining persistence commands.
 
-- [ ] **Step 2: Run non-live verification**
+- [x] **Step 2: Run non-live verification**
 
 ```bash
 uv sync --extra agent
@@ -1090,17 +1090,21 @@ git status --short
 
 All selected tests must pass. The core isolated import must not import `pydantic_ai`, `pydantic_ai_harness`, or `prompt_toolkit`. Run `ds4py raw --help`, `ds4py check --help`, and `ds4py build --help` in that isolated environment as an extension-loading/import smoke check; help is sufficient here only for CLI import verification, not for behavior coverage.
 
-- [ ] **Step 3: Inspect module boundaries and the complete diff**
+- [x] **Step 3: Inspect module boundaries and the complete diff**
 
 Review changed modules against the module-size guide: `model.py`, `binding.py`, `runtime.py`, `tui.py`, and `store.py` should each have one clear responsibility and stay near or below 400 meaningful lines. Split async streaming from request preparation, restore matching from file I/O, or footer state from prompt orchestration if a file grows beyond that. Do not create generic `utils`/`helpers` modules.
 
 Inspect `git diff main...HEAD` for the review focus: cancellation/rewind, save ordering, key/hash binding, denied outcomes, truncation/corrupt restore, and honest gate calculations. Check every new public facade/runtime API documents thread and active-round restrictions.
 
-- [ ] **Step 4: Record live evidence separately**
+The final audit extracted `message_rendering.py` and `runtime_restore.py`. Meaningful line counts are 411 for binding, 405 for runtime, 342 for model, 349 for store, and 159 for the TUI. Existing binding, restore, runtime, and noninteractive tests verified the behavior-preserving moves.
+
+- [x] **Step 4: Record live evidence separately**
+
+live bake-off: not run (missing assets). All four opt-in variables were unset, and the machine reported 62.7 GiB RAM. M3 is not yet live-verified.
 
 If the required assets exist, run the exact live command in `bench/README.md` and record the report path/result. All six gates must pass before claiming M3 is complete. If not, state `live bake-off: not run (missing assets)` and do not substitute unit/integration tests for it.
 
-- [ ] **Step 5: Commit documentation and final verification updates**
+- [x] **Step 5: Commit documentation and final verification updates**
 
 ```bash
 git add README.md docs/agent.md docs/plans/2026-10-21-m3-harness-agent.md
@@ -1111,23 +1115,25 @@ git commit -m "docs(agent): document M3 usage and acceptance"
 
 ## Completion checklist
 
-- [ ] The agent extra pins `pydantic-ai-harness[cli]==0.59.0` and resolves `pydantic-ai-slim[cli]==2.59.0`; the spec's stale API names are corrected and core imports remain dependency-free.
-- [ ] `DS4Model` supports tools/thinking, no native tools, structured-output prompting, exact usage, finish reasons, and interrupted partial responses.
-- [ ] Stable key/hash binding reuses identical reserialized prefixes and re-renders only from the first change; sampled tokens are not re-rendered on the normal path.
-- [ ] Tool results are one ordered tool message; all payloads stay plain; canonical restored calls round-trip through all family parsers.
-- [ ] Cancellation and speculative rewind leave native tokens and transcript aligned; M3 reserve failure is explicit and facade resume still works.
-- [ ] Required payload bindings pass ABI probing; save syncs before staging; load takes token IDs from the native session.
-- [ ] Save order is KV → complete named snapshot → save record; case 1 does no prefill and case 2 renders fresh; corrupt/missing records fail clearly.
-- [ ] Approvals produce real denied tool results without executing denied tools; read-only remains effective under `--yolo`.
-- [ ] Date/hints notes match C behavior; the 50,000-token reminder and real compaction remain M4, and interactive `/think` remains M5.
-- [ ] Background commands persist across prompts and stop on new/switch/exit; `ToolOutputLimits` handles large results without another model call.
-- [ ] StepPersistence and events.jsonl retain success/interrupted/error evidence; new/switch close state, fork preserves it, and old files remain.
-- [ ] Noninteractive runs save in `finally`; ds4-py and C traces feed strict replay readers without executing tools.
-- [ ] TUI supports cancellation, editing, slash completion, Markdown/status rendering, and bounded one-line footers.
-- [ ] Conformance items 1, 6, 7, and 9 pass; items 2–5 are not prematurely marked complete.
-- [ ] The 12-task manifest is pinned and hidden grading works; per-task reports contain all required metrics.
-- [ ] `uv run --extra agent pytest -m "not live and not build"` passes and `git diff --check main...HEAD` is clean.
-- [ ] The explicit live bake-off has run on the required model/machine and all six gates pass, or M3 is explicitly reported as not yet live-verified.
+- [x] The agent extra pins `pydantic-ai-harness[cli]==0.59.0` and resolves `pydantic-ai-slim[cli]==2.59.0`; the spec's stale API names are corrected and core imports remain dependency-free.
+- [x] `DS4Model` supports tools/thinking, no native tools, structured-output prompting, exact usage, finish reasons, and interrupted partial responses.
+- [x] Stable key/hash binding reuses identical reserialized prefixes and re-renders only from the first change; sampled tokens are not re-rendered on the normal path.
+- [x] Tool results are one ordered tool message; all payloads stay plain; canonical restored calls round-trip through all family parsers.
+- [x] Cancellation and speculative rewind leave native tokens and transcript aligned; M3 reserve failure is explicit and facade resume still works.
+- [x] Required payload bindings pass ABI probing; save syncs before staging; load takes token IDs from the native session.
+- [x] Save order is KV → complete named snapshot → save record; case 1 does no prefill and case 2 renders fresh; corrupt/missing records fail clearly.
+- [x] Approvals produce real denied tool results without executing denied tools; read-only remains effective under `--yolo`.
+- [x] Date/hints notes match C behavior; the 50,000-token reminder and real compaction remain M4, and interactive `/think` remains M5.
+- [x] Background commands persist across prompts and stop on new/switch/exit; `ToolOutputLimits` handles large results without another model call.
+- [x] StepPersistence and events.jsonl retain success/interrupted/error evidence; new/switch close state, fork preserves it, and old files remain.
+- [x] Noninteractive runs save in `finally`; ds4-py and C traces feed strict replay readers without executing tools.
+- [x] TUI supports cancellation, editing, slash completion, Markdown/status rendering, and bounded one-line footers.
+- [x] Conformance items 1, 6, 7, and 9 pass; items 2–5 are not prematurely marked complete.
+- [x] The 12-task manifest is pinned and hidden grading works; per-task reports contain all required metrics.
+- [x] `uv run --extra agent pytest -m "not live and not build"` passes and `git diff --check main...HEAD` is clean.
+- [x] The explicit live bake-off has run on the required model/machine and all six gates pass, or M3 is explicitly reported as not yet live-verified.
+
+Non-live implementation and acceptance completed on 2026-10-28: 1,420 tests passed and 17 live tests were deselected. Isolated core imports, agent imports, dependency pins, and diff checks passed. M3 remains not yet live-verified because the live bake-off did not run.
 
 ---
 

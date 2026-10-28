@@ -74,7 +74,12 @@ def _instructions(parts):
 
 
 class DS4Model(Model):
-    """A harness model backed by one facade-owned native/sampling session."""
+    """A harness model backed by one facade-owned native/sampling session.
+
+    Calls are confined to the session's consuming event-loop thread. Do not
+    overlap requests or streams, and do not call the facade from a native worker
+    callback. A response must be drained or closed before the next round.
+    """
 
     supported_tool_addition_modes = frozenset()
     supported_tool_deferral_modes = frozenset()

@@ -486,8 +486,9 @@ class Session:
     def save_payload(self, file, *, header: bytes) -> Saved:
         """Sync the transcript and write the header plus staged native payload.
 
-        The caller owns ``file``; only a duplicated descriptor reaches native
-        code. A failed sync or write leaves the Python file usable.
+        Call on the consuming thread between rounds. The caller owns ``file``;
+        only a duplicated descriptor reaches native code. A failed sync or write
+        leaves the Python file usable.
         """
         with self._lock:
             self._require_idle()
@@ -504,9 +505,9 @@ class Session:
     def load_payload(self, file, *, payload_bytes: int) -> list[int]:
         """Load a payload after the caller's header and adopt its token list.
 
-        The loaded KV becomes the live checkpoint; stale snapshots and paused
-        streams from the previous transcript are discarded. No tokenization or
-        prefill occurs during the load.
+        Call on the consuming thread between rounds. The loaded KV becomes the
+        live checkpoint; stale snapshots and paused streams from the previous
+        transcript are discarded. No tokenization or prefill occurs during load.
         """
         payload_bytes = operator.index(payload_bytes)
         if payload_bytes < 0:
@@ -535,4 +536,5 @@ class Session:
         return self._worker.call(lambda e, s: fn(Handles(e.raw, s.raw)))
 
     def cancel(self) -> None:
+        """Request worker cancellation from any thread without closing the round."""
         self._worker.cancel_event.set()

@@ -2,7 +2,6 @@
 from dataclasses import dataclass
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from uuid import uuid4
 
@@ -23,11 +22,11 @@ from pydantic_ai.messages import (
 )
 
 from ds4py.engine import chat as chat_ops
-from ds4py.engine.prompt import PromptBuilder, RenderedSegment
+from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.tool_prompt import ToolDefinition
-from ds4py.engine.tool_syntax.render import render_tool_call
 from ds4py.engine.transcript import Segment, Transcript, TranscriptView
 from ds4py.errors import EngineError
+from ds4py.message_rendering import MessageRenderer, stable_text
 
 
 @dataclass(frozen=True)
@@ -70,18 +69,6 @@ class _ScratchSession:
 
     def append_tokens(self, tokens, kind, meta=None):
         return self._transcript.append(tokens, kind, meta)
-
-
-def _stable_text(value) -> str:
-    if isinstance(value, str):
-        return value
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    if isinstance(value, Mapping) or (
-        isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
-    ):
-        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return str(value)
 
 
 def _definitions(tools) -> tuple[ToolDefinition, ...]:
@@ -151,14 +138,14 @@ def _projection(message) -> dict:
             projected["parts"].append({
                 "kind": kind,
                 "name": part["tool_name"],
-                "content": _stable_text(part["content"]),
+                "content": stable_text(part["content"]),
                 "id": part["tool_call_id"],
             })
         elif kind == "retry-prompt":
             projected["parts"].append({
                 "kind": kind,
                 "name": part["tool_name"],
-                "content": _stable_text(part["content"]),
+                "content": stable_text(part["content"]),
                 "id": part["tool_call_id"],
             })
     return projected
@@ -185,16 +172,17 @@ def _validate(messages) -> None:
                 raise EngineError(f"unsupported harness response part: {type(part).__name__}")
 
 
-def _retry_text(part) -> str:
-    text = _stable_text(part.content)
-    return text if text.startswith("Tool error:") else "Tool error: " + text
-
-
 class MessageBinder:
-    """Longest-valid-prefix binding keyed by persistent message key and content hash."""
+    """Longest-valid-prefix binding keyed by persistent message key and content hash.
+
+    The binder belongs to one session's consuming thread. ``prepare`` requires
+    an idle native round. ``bind_response`` runs during response finalization,
+    before that round closes.
+    """
 
     def __init__(self, session):
         self.session = session
+        self._renderer = MessageRenderer(session.engine)
         self.note_provider = None
         self._records: list[_BoundMessage] = []
         self._signature = None
@@ -329,142 +317,6 @@ class MessageBinder:
 
         return installed, records
 
-    def _request_segments(self, builder, prefix, message):
-        segments = []
-
-        def append(role, text):
-            nonlocal prefix
-            tokens = builder.message(prefix, role, text)
-            if tokens:
-                kind = "tool" if role in ("tool", "function") else role
-                segments.append(RenderedSegment(kind, tokens))
-                prefix = (*prefix, *tokens)
-
-        parts = list(message.parts)
-        index = 0
-        while index < len(parts):
-            part = parts[index]
-            if isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
-                # Framework bookkeeping: the request's ``instructions`` carry the
-                # prefix these parts describe, and no model is sent them.
-                index += 1
-            elif isinstance(part, (SystemPromptPart, InstructionPart)):
-                append("system", part.content)
-                index += 1
-            elif isinstance(part, UserPromptPart):
-                append("user", part.content)
-                index += 1
-            else:
-                results = []
-                while index < len(parts) and isinstance(parts[index], (ToolReturnPart, RetryPromptPart)):
-                    current = parts[index]
-                    if isinstance(current, ToolReturnPart):
-                        results.append(
-                            f"Tool result {len(results) + 1} ({current.tool_name}):\n"
-                            f"{_stable_text(current.content)}"
-                        )
-                    else:
-                        results.append(_retry_text(current))
-                    index += 1
-                append("tool", "\n\n".join(results))
-        return segments
-
-    def _dsml_calls(self, parts, sampled):
-        family = self.session.engine.info.family
-        calls = " calls" if family == "deepseek41" else "tool_calls"
-        stanzas = []
-        for part in parts:
-            details = part.provider_details or {}
-            raw = details.get("ds4py.raw")
-            if sampled and isinstance(raw, str):
-                stanzas.append(raw)
-                continue
-            markup = render_tool_call(family, part.tool_name, part.args)
-            stanzas.append("\n".join(markup.split("\n")[1:-1]))
-        return f"<｜DSML｜{calls}>\n{'\n'.join(stanzas)}\n</｜DSML｜{calls}>"
-
-    def _response_segments(self, builder, prefix, message):
-        spans = []
-        sampled = (message.metadata or {}).get("ds4.source") == "sampled"
-        family = self.session.engine.info.family
-        parts = [
-            part for part in message.parts
-            if not isinstance(part, (TextPart, ThinkingPart)) or part.content
-        ]
-        in_thinking = False
-
-        def close_thinking():
-            nonlocal in_thinking
-            if sampled and in_thinking:
-                spans.append(("</think>", True))
-                in_thinking = False
-
-        index = 0
-        while index < len(parts):
-            part = parts[index]
-            if isinstance(part, TextPart):
-                close_thinking()
-                spans.append((part.content, sampled))
-                index += 1
-            elif isinstance(part, ThinkingPart):
-                if sampled:
-                    # The native assistant prefix already opened this span.
-                    spans.append((part.content, True))
-                    in_thinking = True
-                else:
-                    spans.extend((("<think>", True), (part.content, False), ("</think>", True)))
-                index += 1
-            elif family in ("deepseek4", "deepseek41"):
-                close_thinking()
-                end = index
-                while end < len(parts) and isinstance(parts[end], ToolCallPart):
-                    end += 1
-                spans.append((self._dsml_calls(parts[index:end], sampled), True))
-                index = end
-            else:
-                close_thinking()
-                details = part.provider_details or {}
-                raw = details.get("ds4py.raw")
-                markup = raw if sampled and isinstance(raw, str) else render_tool_call(
-                    family, part.tool_name, part.args,
-                )
-                spans.append((markup, True))
-                index += 1
-        if sampled:
-            body = []
-            for text, rendered in spans:
-                if text:
-                    body.extend(builder.engine.tokenize(text, rendered=rendered))
-            segments = [
-                RenderedSegment("assistant_prefix", builder.assistant_prefix(prefix)),
-                RenderedSegment("assistant", body),
-            ]
-        else:
-            segments = [RenderedSegment(
-                "assistant", builder.restored_assistant(prefix, spans),
-            )]
-        end = builder.append_assistant_end()
-        if end:
-            segments.append(RenderedSegment("eos", end))
-        return segments
-
-    def _append_message(self, target, message, key, content_hash):
-        start = len(target.transcript)
-        builder = PromptBuilder(target._engine)
-        if isinstance(message, ModelRequest):
-            segments = self._request_segments(builder, target.transcript.tokens, message)
-        else:
-            segments = self._response_segments(builder, target.transcript.tokens, message)
-        meta = {"key": key, "content_hash": content_hash, "source": "rendered"}
-        sampled = isinstance(message, ModelResponse) and (
-            (message.metadata or {}).get("ds4.source") == "sampled"
-        )
-        for segment in segments:
-            if segment.tokens:
-                segment_meta = None if sampled and segment.kind == "assistant_prefix" else meta
-                target.append_tokens(segment.tokens, segment.kind, segment_meta)
-        return _BoundMessage(key, content_hash, start, len(target.transcript))
-
     @staticmethod
     def _trailing_request(messages):
         if not messages or not isinstance(messages[-1], ModelRequest):
@@ -481,27 +333,6 @@ class MessageBinder:
             and messages[-1].parts
             and isinstance(messages[-1].parts[-1], (ToolReturnPart, RetryPromptPart))
         )
-
-    def _preflight(self, messages):
-        family = self.session.engine.info.family
-        for message in messages:
-            if not isinstance(message, ModelResponse):
-                continue
-            sampled = (message.metadata or {}).get("ds4.source") == "sampled"
-            saw_call = separated = False
-            for part in message.parts:
-                if isinstance(part, TextPart):
-                    separated = separated or (saw_call and bool(part.content))
-                    continue
-                if not isinstance(part, ToolCallPart):
-                    continue
-                if separated:
-                    raise ValueError("cannot restore a tool call after ordinary text following a call")
-                saw_call = True
-                details = part.provider_details or {}
-                if sampled and isinstance(details.get("ds4py.raw"), str):
-                    continue
-                render_tool_call(family, part.tool_name, part.args)
 
     def _retire_paused(self):
         if self.session._paused_stream is None:
@@ -576,7 +407,7 @@ class MessageBinder:
             self._restored = False
 
         if system_changed:
-            self._preflight(messages)
+            self._renderer.preflight(messages)
             start = 0
             removed_notes = any(
                 segment.kind == "note" for segment in self.session.transcript.segments
@@ -610,7 +441,7 @@ class MessageBinder:
                 # A required note is pending; rewrite the trailing request so the
                 # note lands at its boundary instead of returning unchanged.
                 common = len(messages) - 1
-            self._preflight(messages[common:])
+            self._renderer.preflight(messages[common:])
             if common < len(self._records):
                 start = self._records[common].start
                 removed_notes = any(
@@ -633,10 +464,10 @@ class MessageBinder:
             if provider is not None and isinstance(message, ModelRequest):
                 for text, subtype in provider.notes(messages[:common + offset + 1]):
                     chat_ops.append_system_note(self.session, text, subtype)
-            record = self._append_message(
+            message_start, end = self._renderer.append(
                 self.session, message, key, content_hash,
             )
-            self._records.append(record)
+            self._records.append(_BoundMessage(key, content_hash, message_start, end))
         return BindingChange(kind, start, self._continuation(messages))
 
     def count_tokens(self, messages, *, tools=(), instructions=None) -> int:
@@ -646,7 +477,7 @@ class MessageBinder:
         scratch.start_chat(_definitions(tools), instructions)
         for message in messages:
             key = (message.metadata or {}).get("ds4.key", "")
-            self._append_message(scratch, message, key, _content_hash(message))
+            self._renderer.append(scratch, message, key, _content_hash(message))
         prefix = PromptBuilder(self.session.engine).assistant_prefix(scratch.transcript.tokens)
         if prefix:
             scratch.append_tokens(prefix, "assistant_prefix")
