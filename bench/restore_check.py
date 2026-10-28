@@ -3,13 +3,14 @@
 import argparse
 import asyncio
 from contextlib import contextmanager, nullcontext
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+from types import SimpleNamespace
 
 from ds4py.engine.replay import read_replay
 from ds4py.errors import Ds4pyError
@@ -408,13 +409,51 @@ def check_result_saves(task_results, config, results_root):
     return tuple(results)
 
 
+def check_command(argv):
+    """Recheck every ds4-py save referenced by a written M3 report."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--backend", default="cpu")
+    parser.add_argument("--ctx", type=int, default=100000)
+    parser.add_argument("--temp", type=float, default=0.0)
+    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--results", type=Path)
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args(argv)
+    data = json.loads(args.report.read_text())
+    tasks = [SimpleNamespace(**item) for item in data.get("tasks", [])]
+    config = SimpleNamespace(
+        executable=(sys.executable, str(Path(__file__).resolve()), "attempt"),
+        model=args.model, backend=args.backend, ctx=args.ctx,
+        temperature=args.temp, seed=args.seed,
+    )
+    results = check_result_saves(
+        tasks, config, args.results or args.report.parent / "restores",
+    )
+    if not results:
+        raise RestoreError("report contains no ds4-py attempt saves")
+    passed = all(result.passed for result in results)
+    output = args.output or args.report.parent / "restore-check.json"
+    output.write_text(json.dumps({
+        "passed": passed, "results": [asdict(result) for result in results],
+    }, indent=2, sort_keys=True, default=str) + "\n")
+    for result in results:
+        print(f"{'PASS' if result.passed else 'FAIL'} {result.save_dir}: {result.detail}")
+    return 0 if passed else 1
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv or argv[0] not in {"attempt", "restore"}:
-        raise SystemExit("usage: restore_check.py attempt|restore [options]")
+    if not argv or argv[0] not in {"attempt", "restore", "check"}:
+        raise SystemExit("usage: restore_check.py attempt|restore|check [options]")
     command, arguments = argv[0], argv[1:]
     try:
-        return attempt_command(arguments) if command == "attempt" else restore_command(arguments)
+        if command == "attempt":
+            return attempt_command(arguments)
+        if command == "restore":
+            return restore_command(arguments)
+        return check_command(arguments)
     except (RestoreError, OSError, ValueError) as error:
         print(f"M3 driver: {error}", file=sys.stderr)
         return 1

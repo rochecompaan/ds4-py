@@ -1010,19 +1010,19 @@ git commit -m "test(bench): measure M3 outcomes and restore gates"
 - Modify: `bench/report.py`
 - Test: `tests/bench/test_m3_runner.py`
 
-- [ ] **Step 1: Write failing replay-selection tests with synthetic traces**
+- [x] **Step 1: Write failing replay-selection tests with synthetic traces**
 
 Require gate 6 to select every round from every C `--trace` file, generate at temperature 0, and reproduce the complete recorded committed-token sequence and terminal boundary. Do not cap C replay at 16 tokens or pad a round that ended naturally. A tool-call round must parse/stop without executing any tool. Fail if the full 12-run C set contains no tool-call round to replay.
 
 Reuse the existing C replay reader/runner directly; do not translate C traces into another fixture format or substitute ds4-py self-replay for C parity. Test malformed C records and a token mismatch produce a failing gate with task/round/index details.
 
-- [ ] **Step 2: Implement replay without tools**
+- [x] **Step 2: Implement replay without tools**
 
 Load the model once for the sequential C replay phase and reuse the M2 replay machinery. For each C record, rebuild the exact prompt tokens, sync a fresh transcript/session, and generate the full recorded round with its think mode and temperature 0. Compare committed IDs and the terminal boundary only. Use an empty executable toolset and a guard that fails if any tool execution is requested.
 
 Use the same absolute GGUF and the M2 parity rules for every C trace. Close the engine before any later replay phase starts. Write per-round C replay results into the same six-gate report.
 
-- [ ] **Step 3: Document and guard the live run**
+- [x] **Step 3: Document and guard the live run**
 
 `bench/README.md` records:
 
@@ -1048,7 +1048,9 @@ uv run --extra agent pytest tests/live/test_m3_bakeoff.py -m live -vv -s
 
 The runner uses `--yolo` for all normal ds4-py runs and the PTY approval path for gate 4. It writes `bench/results/m3.json` and per-task logs/traces/saves under `bench/results/`.
 
-- [ ] **Step 4: Verify non-live logic, then run live evidence when assets are available**
+- [x] **Step 4: Verify non-live logic, then run live evidence when assets are available**
+
+Non-live verification passed on 2026-10-28: 51 bench tests, two guarded live skips, and the full 1,420-test regression. Live evidence was not run: all four opt-in variables were unset and the machine reported 62.7 GiB RAM, below the 96 GB requirement. M3 remains not live-verified.
 
 ```bash
 uv run --extra agent pytest tests/bench -m "not live and not build" -q

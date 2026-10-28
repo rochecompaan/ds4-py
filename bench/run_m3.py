@@ -14,7 +14,11 @@ import subprocess
 import sys
 import time
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from bench.m3 import clone_workspace, grade_workspace, load_manifest, prepare_manifest
+from bench.replay_m3 import replay_task_results
 from bench.report import build_report
 from bench.restore_check import CheckResult, RestoreSummary, check_result_saves
 from bench.metrics import (
@@ -403,7 +407,7 @@ def approval_acceptance(config, workspace, results_root, *, grade_runner=None):
 
 
 def run_bakeoff(manifest_path, benchmark, repo_root, configs, results_root, *, grade_runner=None):
-    """Run all tasks, acceptance checks, restores, and the gates 1–5 report."""
+    """Run all tasks and acceptance checks, then write all six gate results."""
     results_root = Path(results_root)
     results_root.mkdir(parents=True, exist_ok=False)
     manifest = load_manifest(manifest_path)
@@ -425,8 +429,9 @@ def run_bakeoff(manifest_path, benchmark, repo_root, configs, results_root, *, g
         ds4_config, approval_workspace, results_root, grade_runner=grade_runner,
     )
     restore = RestoreSummary(restore_runs, interruption, approval)
-    report = build_report(task_results, restore)
-    report.write_json(results_root / "report.json")
+    replay = replay_task_results(task_results, ds4_config)
+    report = build_report(task_results, restore, replay)
+    report.write_json(results_root / "m3.json")
     (results_root / "report.txt").write_text(report.compact_table())
     return report
 
@@ -434,7 +439,7 @@ def run_bakeoff(manifest_path, benchmark, repo_root, configs, results_root, *, g
 def _parser():
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", type=Path, default=Path(__file__).with_name("m3") / "manifest.json")
+    parser.add_argument("--manifest", type=Path, default=Path(__file__).with_name("m3.yaml"))
     parser.add_argument("--benchmark", type=Path, default=root.parent / "benchmark")
     parser.add_argument("--repo-root", type=Path, default=root)
     parser.add_argument("--results", type=Path, required=True)
@@ -463,7 +468,7 @@ def main(argv=None):
         args.manifest, args.benchmark, args.repo_root, configs, args.results,
     )
     print(report.compact_table(), end="")
-    return 0 if all(report.gates[f"gate-{index}"].passed for index in range(1, 6)) else 1
+    return 0 if report.passed else 1
 
 
 if __name__ == "__main__":

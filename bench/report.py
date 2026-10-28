@@ -24,6 +24,10 @@ class BakeoffReport:
     gates: dict[str, GateResult]
     replay: object = None
 
+    @property
+    def passed(self):
+        return all(gate.passed for gate in self.gates.values())
+
     def to_dict(self):
         return _json({
             "tasks": self.tasks,
@@ -94,6 +98,30 @@ def _common_tasks(tasks):
 
 def _gate(name, passed, detail):
     return name, GateResult(bool(passed), detail)
+
+
+def replay_gate(replay_results):
+    """Gate 6 requires complete per-round evidence and a real tool-call round."""
+    values = None if replay_results is None else tuple(replay_results)
+    coverage = any(item.tool_call for item in values or ())
+    passed = bool(values) and all(item.passed for item in values) and coverage
+    detail = "not run" if values is None else (
+        f"{sum(item.passed for item in values)}/{len(values)} replay checks passed; "
+        f"tool-call round {'present' if coverage else 'missing'}"
+    )
+    return GateResult(passed, detail)
+
+
+def update_replay_report(path, replay_results):
+    """Replace only replay evidence and gate 6 in an existing six-gate report."""
+    path = Path(path)
+    data = json.loads(path.read_text())
+    values = tuple(replay_results)
+    gate = replay_gate(values)
+    data["replay"] = _json(values)
+    data["gates"]["gate-6"] = asdict(gate)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    return gate
 
 
 def _restore_runs(restore):
@@ -182,10 +210,5 @@ def build_report(task_results, restore_results, replay_results=None):
     ))
 
     replay_values = None if replay_results is None else tuple(replay_results)
-    gate6 = bool(replay_values) and all(item.passed for item in replay_values)
-    gates.append(_gate(
-        "gate-6", gate6,
-        "not run" if replay_values is None else
-        f"{sum(item.passed for item in replay_values)}/{len(replay_values)} replay checks passed",
-    ))
+    gates.append(("gate-6", replay_gate(replay_values)))
     return BakeoffReport(tasks, restore_results, dict(gates), replay_results)

@@ -3,6 +3,7 @@
 from dataclasses import replace
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import subprocess
 import sys
 import textwrap
@@ -13,12 +14,14 @@ sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from bench.m3 import clone_workspace, prepare_exercise
 from bench.metrics import ToolAccounting
+from bench.replay_m3 import ReplayResult
 from bench.report import build_report
 from bench.restore_check import CheckResult, RestoreResult, RestoreSummary
 from bench.run_m3 import (
     AgentConfig,
     TaskRunResult,
     build_agent_command,
+    run_bakeoff,
     run_task,
     run_tasks_sequentially,
 )
@@ -278,3 +281,44 @@ with lock_path.open("w") as lock:
         stream.write(json.dumps(invocation) + "\n")
     fcntl.flock(lock, fcntl.LOCK_UN)
 '''
+
+
+def test_complete_runner_writes_gate_six_after_acceptance(tmp_path, monkeypatch):
+    import bench.run_m3 as runner
+
+    order = []
+    staged = [SimpleNamespace(task_id="repo-glm-close")]
+    monkeypatch.setattr(runner, "load_manifest", lambda _path: object())
+    monkeypatch.setattr(runner, "prepare_manifest", lambda *args: staged)
+    monkeypatch.setattr(
+        runner, "run_tasks_sequentially",
+        lambda *args, **kwargs: order.append("tasks") or (),
+    )
+    monkeypatch.setattr(
+        runner, "check_result_saves",
+        lambda *args: order.append("restores") or (),
+    )
+    monkeypatch.setattr(runner, "clone_workspace", lambda *args: object())
+    monkeypatch.setattr(
+        runner, "interruption_acceptance",
+        lambda *args: order.append("interruption") or CheckResult(True, "ok"),
+    )
+    monkeypatch.setattr(
+        runner, "approval_acceptance",
+        lambda *args, **kwargs: order.append("approval") or CheckResult(True, "ok"),
+    )
+    replay = ReplayResult("task", 0, True, "tool replay", tool_call=True)
+    monkeypatch.setattr(
+        runner, "replay_task_results",
+        lambda *args: order.append("replay") or (replay,),
+    )
+
+    report = run_bakeoff(
+        tmp_path / "manifest", tmp_path / "benchmark", tmp_path,
+        (config(tmp_path),), tmp_path / "results",
+    )
+
+    assert order == ["tasks", "restores", "interruption", "approval", "replay"]
+    assert report.gates["gate-6"].passed
+    assert (tmp_path / "results/m3.json").is_file()
+    assert "gate-6: PASS" in (tmp_path / "results/report.txt").read_text()
