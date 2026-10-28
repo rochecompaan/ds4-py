@@ -3,9 +3,12 @@ from dataclasses import dataclass
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
+from types import MappingProxyType
 from uuid import uuid4
 
 from pydantic_ai.messages import (
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     InstructionPart,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -23,7 +26,7 @@ from ds4py.engine import chat as chat_ops
 from ds4py.engine.prompt import PromptBuilder, RenderedSegment
 from ds4py.engine.tool_prompt import ToolDefinition
 from ds4py.engine.tool_syntax.render import render_tool_call
-from ds4py.engine.transcript import Transcript, TranscriptView
+from ds4py.engine.transcript import Segment, Transcript, TranscriptView
 from ds4py.errors import EngineError
 
 
@@ -172,7 +175,8 @@ def _validate(messages) -> None:
             if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
                 raise EngineError("image input requires M5 vision support")
             if isinstance(message, ModelRequest) and not isinstance(part, (
-                SystemPromptPart, InstructionPart, UserPromptPart, ToolReturnPart, RetryPromptPart,
+                SystemPromptPart, InstructionPart, InstructionBaselinePart,
+                InstructionDeltaPart, UserPromptPart, ToolReturnPart, RetryPromptPart,
             )):
                 raise EngineError(f"unsupported harness request part: {type(part).__name__}")
             if isinstance(message, ModelResponse) and not isinstance(
@@ -194,6 +198,120 @@ class MessageBinder:
         self.note_provider = None
         self._records: list[_BoundMessage] = []
         self._signature = None
+        self._restored = False
+
+    def forget(self) -> None:
+        """Drop binding state so the next request renders the message list fresh."""
+        self._records = []
+        self._signature = None
+        self._restored = False
+
+    @staticmethod
+    def _installed_segment(provenance) -> Segment:
+        kind = provenance.kind
+        meta = {
+            "key": provenance.key,
+            "content_hash": provenance.content_hash,
+            "source": provenance.source,
+        }
+        if kind == "note" or kind.startswith("system_note"):
+            subtype = kind.split(":", 1)[1] if ":" in kind else ""
+            if subtype:
+                meta["subtype"] = subtype
+            kind = "note"
+        return Segment(provenance.start, provenance.end, kind, MappingProxyType(meta))
+
+    def _restored_preamble(self, definitions, instructions) -> bool:
+        """True when the loaded transcript still starts with the current preamble."""
+        if not self.session.transcript.chat:
+            return False
+        segments = PromptBuilder(self.session.engine).begin(definitions, instructions)
+        preamble = tuple(token for segment in segments for token in segment.tokens)
+        loaded = self.session.transcript.tokens
+        return bool(preamble) and len(preamble) <= len(loaded) and loaded[:len(preamble)] == preamble
+
+    def restore(self, messages, segments) -> None:
+        """Bind a loaded native payload to a saved message history.
+
+        ``segments`` is a save record's provenance (values with ``start``,
+        ``end``, ``kind``, ``key``, ``content_hash`` and ``source``). The
+        transcript already holds the loaded tokens, so this installs the saved
+        ranges and rebuilds the prefix records without rendering anything.
+        Snapshot messages are matched to keyed ranges in order and by content
+        hash: a record and its snapshot are written by one save, so the order is
+        fixed, and the hash proves the snapshot still describes the tokens.
+        """
+        messages = list(messages)
+        _validate(messages)
+        loaded = len(self.session.transcript)
+        installed = []
+        ranges: dict[str, list[int]] = {}
+        keys: list[str] = []
+        hashes: dict[str, str] = {}
+        expected = 0
+        for provenance in segments:
+            if provenance.start != expected or provenance.end <= provenance.start:
+                raise EngineError(
+                    f"save record segment {provenance.start}:{provenance.end} "
+                    "does not continue the loaded transcript"
+                )
+            expected = provenance.end
+            installed.append(self._installed_segment(provenance))
+            if not provenance.key:
+                continue
+            if provenance.key in ranges:
+                if provenance.content_hash != hashes[provenance.key]:
+                    raise EngineError(
+                        f"save record ranges for message key {provenance.key!r} "
+                        "disagree on the content hash"
+                    )
+                ranges[provenance.key][1] = provenance.end
+            else:
+                ranges[provenance.key] = [provenance.start, provenance.end]
+                keys.append(provenance.key)
+                hashes[provenance.key] = provenance.content_hash
+        if expected != loaded:
+            raise EngineError(
+                f"save record covers {expected} tokens, the loaded payload has {loaded}"
+            )
+
+        # A response's range starts at its assistant prefix, which has no key.
+        pending_prefix = None
+        for provenance in segments:
+            if not provenance.key:
+                if provenance.kind == "assistant_prefix":
+                    pending_prefix = provenance.start
+                continue
+            if pending_prefix is not None and pending_prefix < ranges[provenance.key][0]:
+                ranges[provenance.key][0] = pending_prefix
+            pending_prefix = None
+
+        if len(keys) != len(messages):
+            raise EngineError(
+                f"the save record holds {len(keys)} keyed messages, "
+                f"the snapshot has {len(messages)}"
+            )
+        records = []
+        for message, key in zip(messages, keys):
+            metadata = dict(message.metadata or {})
+            existing = metadata.get("ds4.key")
+            if existing is not None and existing != key:
+                raise EngineError(
+                    f"the snapshot message key {existing!r} is not the save "
+                    f"record key {key!r}"
+                )
+            content_hash = _content_hash(message)
+            if content_hash != hashes[key]:
+                raise EngineError(
+                    f"the save record content hash for message key {key!r} "
+                    "does not match the snapshot"
+                )
+            records.append(_BoundMessage(key, content_hash, ranges[key][0], ranges[key][1]))
+
+        self.session._transcript.install(installed)
+        self._records = records
+        self._signature = None
+        self._restored = True
 
     def _request_segments(self, builder, prefix, message):
         segments = []
@@ -210,7 +328,11 @@ class MessageBinder:
         index = 0
         while index < len(parts):
             part = parts[index]
-            if isinstance(part, (SystemPromptPart, InstructionPart)):
+            if isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                # Framework bookkeeping: the request's ``instructions`` carry the
+                # prefix these parts describe, and no model is sent them.
+                index += 1
+            elif isinstance(part, (SystemPromptPart, InstructionPart)):
                 append("system", part.content)
                 index += 1
             elif isinstance(part, UserPromptPart):
@@ -362,16 +484,50 @@ class MessageBinder:
         if sync is not None:
             sync(self.session.transcript.segments)
 
+    def _keyed(self, messages) -> list[tuple[str, str]]:
+        """Pair each message with its key and content hash.
+
+        The harness renders requests from processed copies, so a key written on
+        an earlier request can be missing from the message handed back here. The
+        transcript records are the authority: a message at the same position with
+        the same content is the message they were rendered from, so it keeps
+        their key instead of forcing a rewrite.
+        """
+        keyed = []
+        for index, message in enumerate(messages):
+            content_hash = _content_hash(message)
+            key = (message.metadata or {}).get("ds4.key")
+            if (
+                key is None and index < len(self._records)
+                and self._records[index].content_hash == content_hash
+            ):
+                key = self._records[index].key
+                metadata = dict(message.metadata or {})
+                metadata["ds4.key"] = key
+                message.metadata = metadata
+            else:
+                key = _ensure_key(message)
+            keyed.append((key, content_hash))
+        return keyed
+
     def prepare(self, messages, *, tools=(), instructions=None,
                 note_provider=None) -> BindingChange:
         messages = list(messages)
         _validate(messages)
-        keyed = [(_ensure_key(message), _content_hash(message)) for message in messages]
+        keyed = self._keyed(messages)
         definitions = _definitions(tools)
         signature = (_tool_digest(definitions), instructions, int(self.session.engine.think))
         had_binding = self._signature is not None
         system_changed = self._signature != signature or not self.session.transcript.chat
         provider = note_provider if note_provider is not None else self.note_provider
+        if self._restored:
+            # A restore adopts a loaded KV without knowing the request that will
+            # extend it; adopt the signature only when the preamble really is the
+            # one already loaded, otherwise fall back to a rewrite.
+            if system_changed and self._restored_preamble(definitions, instructions):
+                self._signature = signature
+                system_changed = False
+            self._restored = False
 
         if system_changed:
             self._preflight(messages)

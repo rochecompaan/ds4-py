@@ -103,6 +103,30 @@ class Transcript:
                 for segment in self._segments
             ]
 
+    def install(self, segments: Sequence[Segment]) -> None:
+        """Replace provenance over tokens a native payload already established.
+
+        The loaded KV is authoritative for the tokens; the saved ranges must
+        describe them without gaps or overlap, and the transcript is a chat
+        transcript from then on.
+        """
+        with self._lock:
+            installed = list(segments)
+            expected = 0
+            for segment in installed:
+                if segment.start != expected or segment.end <= segment.start:
+                    raise ValueError(
+                        "installed segments must cover the tokens without gaps"
+                    )
+                expected = segment.end
+            if expected != len(self._tokens):
+                raise ValueError(
+                    f"installed segments cover {expected} tokens, "
+                    f"not the {len(self._tokens)} tokens present"
+                )
+            self._segments = installed
+            self._chat = True
+
     def reset(self) -> None:
         """Drop all tokens, segments, and chat initialization."""
         with self._lock:
