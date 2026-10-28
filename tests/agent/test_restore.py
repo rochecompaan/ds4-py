@@ -314,8 +314,11 @@ def test_missing_named_snapshot_fails_with_the_run_id(tmp_path):
             asyncio.run(runtime.close())
 
 
-def test_missing_segment_key_fails_with_the_key(tmp_path):
+@pytest.mark.parametrize("restore_path", ["kv", "render"])
+def test_missing_segment_key_fails_with_the_key(tmp_path, restore_path):
     project, store, record, saved = saved_session(tmp_path)
+    if restore_path == "render":
+        zero_payload_kv(store, saved["session_id"])
     keyed = [index for index, segment in enumerate(record.segments) if segment.key]
     assert keyed
     target_key = record.segments[keyed[-1]].key
@@ -337,8 +340,11 @@ def test_missing_segment_key_fails_with_the_key(tmp_path):
             asyncio.run(runtime.close())
 
 
-def test_first_request_key_tamper_is_rejected(tmp_path):
+@pytest.mark.parametrize("restore_path", ["kv", "render"])
+def test_first_request_key_tamper_is_rejected(tmp_path, restore_path):
     project, store, record, saved = saved_session(tmp_path)
+    if restore_path == "render":
+        zero_payload_kv(store, saved["session_id"])
     first_key = next(segment.key for segment in record.segments if segment.key)
     changed = [
         replace(segment, key="0" * 32) if segment.key == first_key else segment
@@ -358,8 +364,11 @@ def test_first_request_key_tamper_is_rejected(tmp_path):
             asyncio.run(runtime.close())
 
 
-def test_missing_response_key_is_rejected(tmp_path):
+@pytest.mark.parametrize("restore_path", ["kv", "render"])
+def test_missing_response_key_is_rejected(tmp_path, restore_path):
     project, store, record, saved = saved_session(tmp_path)
+    if restore_path == "render":
+        zero_payload_kv(store, saved["session_id"])
     steps = _steps(store.session_dir(saved["session_id"]))
     snapshot = asyncio.run(steps.latest_snapshot(run_id=record.run_id))
     response = next(message for message in snapshot.messages if isinstance(message, ModelResponse))
@@ -377,8 +386,11 @@ def test_missing_response_key_is_rejected(tmp_path):
             asyncio.run(runtime.close())
 
 
-def test_reordered_requests_are_rejected(tmp_path):
+@pytest.mark.parametrize("restore_path", ["kv", "render"])
+def test_reordered_requests_are_rejected(tmp_path, restore_path):
     project, store, record, saved = saved_session(tmp_path)
+    if restore_path == "render":
+        zero_payload_kv(store, saved["session_id"])
     steps = _steps(store.session_dir(saved["session_id"]))
     snapshot = asyncio.run(steps.latest_snapshot(run_id=record.run_id))
     request_indexes = [
@@ -401,8 +413,11 @@ def test_reordered_requests_are_rejected(tmp_path):
             asyncio.run(runtime.close())
 
 
-def test_wrong_content_hash_fails_with_the_key(tmp_path):
+@pytest.mark.parametrize("restore_path", ["kv", "render"])
+def test_wrong_content_hash_fails_with_the_key(tmp_path, restore_path):
     project, store, record, saved = saved_session(tmp_path)
+    if restore_path == "render":
+        zero_payload_kv(store, saved["session_id"])
     keyed = [index for index, segment in enumerate(record.segments) if segment.key]
     changed = list(record.segments)
     target = changed[keyed[-1]]

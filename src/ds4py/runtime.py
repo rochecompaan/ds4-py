@@ -238,14 +238,19 @@ class AgentRuntime:
             snapshot.idempotency_key = None
             await self._holder().current.save_snapshot(snapshot)
 
-    async def _fail(self, run_id: str, status: str, error) -> None:
+    async def _fail(self, run_id: str, status: str, error, *, persist=True) -> None:
         self._status = status
-        snapshot = await self._latest(run_id)
-        if snapshot is not None:
-            await self._adopt_history(
-                run_id, _bindable(list(snapshot.messages)), snapshot=snapshot,
-            )
-            self._note_title()
+        if persist:
+            try:
+                snapshot = await self._latest(run_id)
+                if snapshot is not None:
+                    await self._adopt_history(
+                        run_id, _bindable(list(snapshot.messages)), snapshot=snapshot,
+                    )
+                    self._note_title()
+            except Exception as persistence_error:  # noqa: BLE001 - preserve the run error
+                if error is None:
+                    error = persistence_error
         self._session.emit(
             "run_end",
             run_id=run_id,
@@ -282,7 +287,14 @@ class AgentRuntime:
                     run_id, "interrupted" if self._interrupted else "error", error,
                 )
                 raise
-            await self._adopt_history(run_id, list(result.all_messages()))
+            try:
+                await self._adopt_history(run_id, list(result.all_messages()))
+            except asyncio.CancelledError:
+                await self._fail(run_id, "interrupted", None, persist=False)
+                raise
+            except BaseException as error:
+                await self._fail(run_id, "error", error, persist=False)
+                raise
             self._note_title()
             if self._record is not None and self._record.failure is not None:
                 failure = self._record.failure
@@ -442,6 +454,12 @@ class AgentRuntime:
         outcome = {}
 
         def restore():
+            try:
+                self.model.binder.validate_restore(snapshot.messages, record.segments)
+            except EngineError as error:
+                raise StoreError(
+                    f"{session_dir / 'save.json'}: cannot restore: {error}"
+                ) from error
             loaded = None
             if plan.payload_bytes is not None:
                 with (session_dir / "session.kv").open("rb") as file:

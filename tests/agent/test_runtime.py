@@ -304,6 +304,69 @@ def test_failed_run_reports_error_and_keeps_a_loadable_snapshot(tmp_path):
     assert any(isinstance(part, ToolReturnPart) for part in last.parts)
 
 
+def test_canonical_snapshot_write_failure_ends_a_successful_run_as_error(
+    tmp_path, monkeypatch,
+):
+    project = project_dir(tmp_path)
+    store = SessionStore(tmp_path / "home")
+    with fake_engine(script=scripted_rounds("answer")) as engine:
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
+        original_save = runtime._holder().current.save_snapshot
+
+        async def fail_canonical_save(snapshot):
+            if snapshot.idempotency_key is None:
+                raise OSError("canonical snapshot write failed")
+            return await original_save(snapshot)
+
+        monkeypatch.setattr(runtime._holder().current, "save_snapshot", fail_canonical_save)
+        try:
+            with pytest.raises(OSError, match="canonical snapshot write failed"):
+                asyncio.run(runtime.run("hello"))
+            assert runtime.status == "error"
+            session_id = runtime.session_id
+        finally:
+            asyncio.run(runtime.close())
+
+    terminal = [
+        line for line in read_events(store.session_dir(session_id) / "events.jsonl")
+        if line["kind"] == "run_end"
+    ]
+    assert terminal[-1]["payload"]["status"] == "error"
+    assert "canonical snapshot write failed" in terminal[-1]["payload"]["error"]
+
+
+def test_canonical_snapshot_write_failure_preserves_the_model_error(
+    tmp_path, monkeypatch,
+):
+    project = project_dir(tmp_path)
+    store = SessionStore(tmp_path / "home")
+    with fake_engine(script=scripted_rounds(READ_CALL, "never reached")) as engine:
+        model = FailingModel(engine.session(), sampling=SamplingPolicy(seed=1), fail_from_request=2)
+        runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
+        original_save = runtime._holder().current.save_snapshot
+
+        async def fail_canonical_save(snapshot):
+            if snapshot.idempotency_key is None:
+                raise OSError("canonical snapshot write failed")
+            return await original_save(snapshot)
+
+        monkeypatch.setattr(runtime._holder().current, "save_snapshot", fail_canonical_save)
+        try:
+            with pytest.raises(RuntimeError, match="scripted model failure"):
+                asyncio.run(runtime.run("read hello"))
+            assert runtime.status == "error"
+            session_id = runtime.session_id
+        finally:
+            asyncio.run(runtime.close())
+
+    terminal = [
+        line for line in read_events(store.session_dir(session_id) / "events.jsonl")
+        if line["kind"] == "run_end"
+    ]
+    assert terminal[-1]["payload"]["status"] == "error"
+    assert "scripted model failure" in terminal[-1]["payload"]["error"]
+
+
 class BlockingModel(DS4Model):
     """Hold the first model request until the test cancels the run."""
 

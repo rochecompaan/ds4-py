@@ -237,6 +237,10 @@ class MessageBinder:
         loaded = self.session.transcript.tokens
         return bool(preamble) and len(preamble) <= len(loaded) and loaded[:len(preamble)] == preamble
 
+    def validate_restore(self, messages, segments) -> None:
+        """Validate saved history without installing a native transcript."""
+        self._restore_state(messages, segments, loaded=None)
+
     def restore(self, messages, segments) -> None:
         """Bind a loaded native payload to a saved message history.
 
@@ -248,9 +252,17 @@ class MessageBinder:
         hash: a record and its snapshot are written by one save, so the order is
         fixed, and the hash proves the snapshot still describes the tokens.
         """
+        installed, records = self._restore_state(
+            messages, segments, loaded=len(self.session.transcript),
+        )
+        self.session._transcript.install(installed)
+        self._records = records
+        self._signature = None
+        self._restored = True
+
+    def _restore_state(self, messages, segments, loaded):
         messages = list(messages)
         _validate(messages)
-        loaded = len(self.session.transcript)
         installed = []
         ranges: dict[str, list[int]] = {}
         keys: list[str] = []
@@ -277,7 +289,7 @@ class MessageBinder:
                 ranges[provenance.key] = [provenance.start, provenance.end]
                 keys.append(provenance.key)
                 hashes[provenance.key] = provenance.content_hash
-        if expected != loaded:
+        if loaded is not None and expected != loaded:
             raise EngineError(
                 f"save record covers {expected} tokens, the loaded payload has {loaded}"
             )
@@ -315,10 +327,7 @@ class MessageBinder:
                 )
             records.append(_BoundMessage(key, content_hash, ranges[key][0], ranges[key][1]))
 
-        self.session._transcript.install(installed)
-        self._records = records
-        self._signature = None
-        self._restored = True
+        return installed, records
 
     def _request_segments(self, builder, prefix, message):
         segments = []
