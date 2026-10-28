@@ -228,11 +228,23 @@ class AgentRuntime:
         except (Ds4pyError, OSError, ValueError):
             return None
 
+    async def _adopt_history(self, run_id, messages, snapshot=None) -> None:
+        """Adopt canonical keys and keep the terminal harness snapshot exact."""
+        self._messages = self.model.binder.adopt(messages)
+        if snapshot is None:
+            snapshot = await self._latest(run_id)
+        if snapshot is not None:
+            snapshot.messages = deepcopy(self._messages)
+            snapshot.idempotency_key = None
+            await self._holder().current.save_snapshot(snapshot)
+
     async def _fail(self, run_id: str, status: str, error) -> None:
         self._status = status
         snapshot = await self._latest(run_id)
         if snapshot is not None:
-            self._messages = _bindable(list(snapshot.messages))
+            await self._adopt_history(
+                run_id, _bindable(list(snapshot.messages)), snapshot=snapshot,
+            )
             self._note_title()
         self._session.emit(
             "run_end",
@@ -270,7 +282,7 @@ class AgentRuntime:
                     run_id, "interrupted" if self._interrupted else "error", error,
                 )
                 raise
-            self._messages = list(result.all_messages())
+            await self._adopt_history(run_id, list(result.all_messages()))
             self._note_title()
             if self._record is not None and self._record.failure is not None:
                 failure = self._record.failure
@@ -278,6 +290,10 @@ class AgentRuntime:
                 raise EngineError(f"run record failed: {failure}") from failure
             self._status = "success"
             self._session.emit("run_end", run_id=run_id, status="success")
+            if self._record is not None and self._record.failure is not None:
+                failure = self._record.failure
+                await self._fail(run_id, "error", failure)
+                raise EngineError(f"run record failed: {failure}") from failure
             return result
         finally:
             self._running = False
@@ -433,11 +449,16 @@ class AgentRuntime:
                     loaded = self._session.load_payload(
                         file, payload_bytes=plan.payload_bytes,
                     )
-                if len(loaded) != record.tokens or token_digest(loaded) != record.tokens_sha256:
+                if len(loaded) != record.tokens:
                     outcome["rejected"] = (
                         f"the loaded payload has {len(loaded)} tokens, "
                         f"the save record declares {record.tokens}"
                     )
+                elif token_digest(loaded) != record.tokens_sha256:
+                    outcome["rejected"] = (
+                        "the loaded payload token hash does not match the save record"
+                    )
+                if "rejected" in outcome:
                     loaded = None
             if loaded is not None:
                 try:
@@ -452,10 +473,18 @@ class AgentRuntime:
                 self._session.truncate(0)
                 self.model.binder.forget()
                 if self._notes is not None:
+                    self._notes.restore_from_segments(record.segments)
                     self._notes.sync_from_segments(())
             self._messages = list(snapshot.messages)
             self._title = record.title
             self._created_at = record.created_at
+            return {
+                "restore_path": "kv" if loaded is not None else "render",
+                "mismatch": (
+                    None if loaded is not None
+                    else outcome.get("rejected", plan.mismatch)
+                ),
+            }
 
         self._session.switch(
             record.session_id,

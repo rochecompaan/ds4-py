@@ -4,8 +4,8 @@ import pytest
 
 import ds4py
 from ds4py import ThinkMode
-from ds4py._native.fake import FakeNative
-from ds4py._native.fake_chat import SPECIAL_TOKENS
+from ds4py._native.fake import FAKE_EOS, FakeNative
+from ds4py._native.fake_chat import SPECIAL_TOKENS, tokenize_rendered
 from ds4py.binding import MessageBinder
 from ds4py.engine.tool_syntax import make_parser
 from ds4py.engine.tool_syntax.render import render_tool_call
@@ -13,6 +13,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -22,7 +23,7 @@ from pydantic_ai.messages import (
 FAMILIES = ("deepseek4", "deepseek41", "glm", "qwen")
 
 
-def fake_engine(family):
+def fake_engine(family, *, think=ThinkMode.NONE, script=None):
     info = replace(
         FakeNative()._info,
         family=family,
@@ -31,8 +32,8 @@ def fake_engine(family):
         is_qwen4=family == "qwen",
     )
     return ds4py.open(
-        "f.gguf", ctx=8192, think=ThinkMode.NONE,
-        native=FakeNative(info=info),
+        "f.gguf", ctx=8192, think=think,
+        native=FakeNative(info=info, script=script),
     )
 
 
@@ -392,6 +393,28 @@ def test_raw_tool_syntax_is_trusted_only_for_sampled_responses(sampled):
         assert dict(snapshot.calls[0].args) == {
             "path": "raw.txt" if sampled else "canonical.txt"
         }
+
+
+def test_sampled_thinking_response_round_trips_native_tokens():
+    request = ModelRequest([UserPromptPart("think")])
+    response = ModelResponse([ThinkingPart("reason"), TextPart("answer")])
+    sequence = tuple(tokenize_rendered("reason</think>answer"))
+
+    def script(prompt, generated):
+        return sequence[len(generated)] if len(generated) < len(sequence) else FAKE_EOS
+
+    with fake_engine("qwen", think=ThinkMode.LOW, script=script) as engine:
+        session = engine.session()
+        binder = MessageBinder(session)
+        binder.prepare([request])
+        list(session.run_round(max_tokens=32))
+        binder.bind_response(response)
+        original = list(session.transcript.tokens)
+
+    with fake_engine("qwen", think=ThinkMode.LOW) as engine:
+        session = engine.session()
+        MessageBinder(session).prepare([request, response])
+        assert list(session.transcript.tokens) == original
 
 
 def test_render_tool_call_rejects_unknown_family():

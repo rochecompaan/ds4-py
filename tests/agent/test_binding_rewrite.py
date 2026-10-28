@@ -402,7 +402,7 @@ def test_rejected_replacement_is_atomic(family, parts):
         session.drop_checkpoint("kept")
 
 
-def test_rewriting_sampled_response_cuts_at_its_assistant_prefix():
+def test_rewriting_sampled_response_rebuilds_native_prefix():
     with fake_engine() as engine:
         session = engine.session()
         binder = MessageBinder(session)
@@ -414,6 +414,7 @@ def test_rewriting_sampled_response_cuts_at_its_assistant_prefix():
         old_prefix = next(
             p for p in binder.export_segments() if p.kind == "assistant_prefix"
         )
+        old_prefix_tokens = session.transcript.tokens[old_prefix.start:old_prefix.end]
 
         changed = deepcopy(response)
         changed.parts[0].content = "replacement"
@@ -421,9 +422,9 @@ def test_rewriting_sampled_response_cuts_at_its_assistant_prefix():
 
         assert change.kind == "rewrite"
         assert change.start == old_prefix.start
-        assert not [
-            p for p in binder.export_segments() if p.kind == "assistant_prefix"
-        ]
+        prefixes = [p for p in binder.export_segments() if p.kind == "assistant_prefix"]
+        assert len(prefixes) == 1
+        assert session.transcript.tokens[prefixes[0].start:prefixes[0].end] == old_prefix_tokens
         assert len([p for p in binder.export_segments() if p.kind == "assistant"]) == 1
         decoded = b"".join(engine.token_text(token) for token in session.transcript.tokens)
         assert b"replacement" in decoded

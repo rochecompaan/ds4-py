@@ -18,7 +18,7 @@ from ds4py.errors import StoreError
 from ds4py.model import DS4Model
 from ds4py.runtime import AgentRuntime
 from ds4py.store import KV_HEADER, KV_MAGIC, KV_VERSION, SessionStore, token_digest
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, ModelResponse
 
 READ_CALL = (
     "<tool_call><function=read_file><parameter=path>hello.txt</parameter>"
@@ -92,7 +92,7 @@ def read_events(path):
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
-def saved_session(tmp_path, script=(READ_CALL, "first answer")):
+def saved_session(tmp_path, script=(READ_CALL, "first answer"), *, hints=False):
     """Run one prompt and save; return the runtime parts still needed."""
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
@@ -101,6 +101,7 @@ def saved_session(tmp_path, script=(READ_CALL, "first answer")):
     with fake_engine(script=scripted_rounds(*script)) as engine:
         model = make_model(engine)
         runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
+        runtime._notes.hints_enabled = hints
         try:
             asyncio.run(runtime.run("read hello"))
             record = asyncio.run(runtime.save())
@@ -140,6 +141,7 @@ def test_valid_kv_switch_restores_binding_without_prefill(tmp_path):
             assert len(loaded) == record.tokens
             assert token_digest(loaded) == record.tokens_sha256
             assert dump(runtime.messages) == dump(saved["messages"])
+            assert all(message.metadata["ds4.key"] for message in runtime.messages)
 
             # Every saved provenance range is installed on the loaded transcript
             # and every keyed range still names its snapshot message.
@@ -184,8 +186,9 @@ def zero_payload_kv(store, session_id):
     store.write_kv_atomic(store.session_dir(session_id) / "session.kv", b"")
 
 
-def test_stripped_payload_switch_renders_fresh_with_full_prefill(tmp_path):
-    project, store, record, saved = saved_session(tmp_path)
+@pytest.mark.parametrize("hints", [False, True])
+def test_stripped_payload_switch_renders_fresh_with_full_prefill(tmp_path, hints):
+    project, store, record, saved = saved_session(tmp_path, hints=hints)
     session_id = saved["session_id"]
 
     # Case 1 output with the same follow-up is the deterministic reference.
@@ -213,15 +216,21 @@ def test_stripped_payload_switch_renders_fresh_with_full_prefill(tmp_path):
             assert len(model.session.transcript) == 0
             assert not model.session.transcript.chat
             assert dump(runtime.messages) == dump(saved["messages"])
+            assert runtime._notes.hints_enabled is hints
 
             requests = capture(runtime, {"Synced"})
             output = asyncio.run(runtime.run("second answer")).output
             synced = engine_events(requests, "Synced")
             assert synced[0].plan.kind == "rebuild"
             assert synced[0].prefilled == synced[0].pos  # full prefill
-            # The render path rebuilds the conversation, not the saved byte
-            # stream: the assistant opener omits the mode's empty thinking
-            # block, so only the messages and the output are identical.
+            rebuilt = list(model.session.transcript.tokens[: len(saved["tokens"])])
+            assert rebuilt == saved["tokens"]
+            note_subtypes = [
+                segment.meta.get("subtype")
+                for segment in model.session.transcript.segments
+                if segment.kind == "note"
+            ]
+            assert note_subtypes == (["date", "hints_full"] if hints else ["date"])
             assert dump(runtime.messages[: len(saved["messages"])]) == dump(saved["messages"])
             assert output == reference["output"]
         finally:
@@ -258,6 +267,38 @@ def test_newer_kv_than_record_takes_the_render_path_and_reports_the_mismatch(tmp
     assert str(record.payload_bytes) in switched[-1]["payload"]["mismatch"]
 
 
+def test_token_hash_mismatch_renders_and_reports_the_actual_path(tmp_path, monkeypatch):
+    project, store, _record, saved = saved_session(tmp_path)
+    session_id = saved["session_id"]
+
+    with fake_engine(script=scripted_rounds("second answer")) as engine:
+        model = make_model(engine)
+        runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
+        original_load = model.session.load_payload
+
+        def load_with_wrong_digest(file, **kwargs):
+            loaded = list(original_load(file, **kwargs))
+            loaded[0] += 1
+            return loaded
+
+        monkeypatch.setattr(model.session, "load_payload", load_with_wrong_digest)
+        try:
+            asyncio.run(runtime.switch(session_id))
+            assert len(model.session.transcript) == 0
+            asyncio.run(runtime.run("second answer"))
+            rebuilt = list(model.session.transcript.tokens[: len(saved["tokens"])])
+            assert rebuilt == saved["tokens"]
+        finally:
+            asyncio.run(runtime.close())
+
+    switched = [
+        line for line in read_events(store.session_dir(session_id) / "events.jsonl")
+        if line["kind"] == "switched"
+    ]
+    assert switched[-1]["payload"]["restore_path"] == "render"
+    assert "hash" in switched[-1]["payload"]["mismatch"]
+
+
 def test_missing_named_snapshot_fails_with_the_run_id(tmp_path):
     project, store, record, saved = saved_session(tmp_path)
     shutil.rmtree(store.session_dir(saved["session_id"]) / "steps" / record.run_id)
@@ -292,6 +333,70 @@ def test_missing_segment_key_fails_with_the_key(tmp_path):
             with pytest.raises(StoreError, match="0" * 32):
                 asyncio.run(runtime.switch(saved["session_id"]))
             assert runtime.messages == []
+        finally:
+            asyncio.run(runtime.close())
+
+
+def test_first_request_key_tamper_is_rejected(tmp_path):
+    project, store, record, saved = saved_session(tmp_path)
+    first_key = next(segment.key for segment in record.segments if segment.key)
+    changed = [
+        replace(segment, key="0" * 32) if segment.key == first_key else segment
+        for segment in record.segments
+    ]
+    store.write_record_atomic(
+        store.session_dir(saved["session_id"]) / "save.json",
+        replace(record, segments=tuple(changed)),
+    )
+
+    with fake_engine(script=scripted_rounds("second answer")) as engine:
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
+        try:
+            with pytest.raises(StoreError, match="0" * 32):
+                asyncio.run(runtime.switch(saved["session_id"]))
+        finally:
+            asyncio.run(runtime.close())
+
+
+def test_missing_response_key_is_rejected(tmp_path):
+    project, store, record, saved = saved_session(tmp_path)
+    steps = _steps(store.session_dir(saved["session_id"]))
+    snapshot = asyncio.run(steps.latest_snapshot(run_id=record.run_id))
+    response = next(message for message in snapshot.messages if isinstance(message, ModelResponse))
+    metadata = dict(response.metadata or {})
+    metadata.pop("ds4.key")
+    response.metadata = metadata
+    _replace_snapshot(steps, snapshot)
+
+    with fake_engine(script=scripted_rounds("second answer")) as engine:
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
+        try:
+            with pytest.raises(StoreError, match="key"):
+                asyncio.run(runtime.switch(saved["session_id"]))
+        finally:
+            asyncio.run(runtime.close())
+
+
+def test_reordered_requests_are_rejected(tmp_path):
+    project, store, record, saved = saved_session(tmp_path)
+    steps = _steps(store.session_dir(saved["session_id"]))
+    snapshot = asyncio.run(steps.latest_snapshot(run_id=record.run_id))
+    request_indexes = [
+        index for index, message in enumerate(snapshot.messages)
+        if isinstance(message, ModelRequest)
+    ]
+    assert len(request_indexes) >= 2
+    first, second = request_indexes[:2]
+    snapshot.messages[first], snapshot.messages[second] = (
+        snapshot.messages[second], snapshot.messages[first],
+    )
+    _replace_snapshot(steps, snapshot)
+
+    with fake_engine(script=scripted_rounds("second answer")) as engine:
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
+        try:
+            with pytest.raises(StoreError):
+                asyncio.run(runtime.switch(saved["session_id"]))
         finally:
             asyncio.run(runtime.close())
 
@@ -416,6 +521,17 @@ def _steps(directory):
     from pydantic_ai_harness.step_persistence import FileStepStore
 
     return FileStepStore(Path(directory) / "steps")
+
+
+def _replace_snapshot(steps, snapshot):
+    """Append a tampered step and remove the original so switch selects it."""
+    directory = steps._run_dir(snapshot.run_id) / "snapshots"
+    original = set(directory.glob("*.json"))
+    asyncio.run(steps.save_snapshot(snapshot))
+    created = set(directory.glob("*.json")) - original
+    assert len(created) == 1
+    for path in original:
+        path.unlink()
 
 
 class Sentry:

@@ -15,6 +15,7 @@ from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.engine.prefix import PrefixTurn
 from ds4py.engine.sampling import SamplingPolicy
+from ds4py.errors import EngineError
 from ds4py.model import DS4Model
 from ds4py.runtime import AgentRuntime
 from ds4py.store import SessionStore
@@ -380,6 +381,38 @@ def test_load_prefix_seeds_history_the_next_run_renders(tmp_path):
             assert [m.parts[0].content for m in runtime.messages[:2]] == [
                 "start the story", "The door opened",
             ]
+        finally:
+            asyncio.run(runtime.close())
+
+
+def test_terminal_success_record_failure_is_an_error(tmp_path, monkeypatch):
+    project = project_dir(tmp_path)
+    store = SessionStore(tmp_path / "home")
+    with fake_engine(script=scripted_rounds("answer")) as engine:
+        model = make_model(engine)
+        runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
+        original_write = runtime._record._write
+        blocked = tmp_path / "terminal-events"
+        blocked.mkdir()
+
+        def fail_terminal_success(record):
+            if record["kind"] == "run_end" and record["payload"].get("status") == "success":
+                path = runtime._record.path
+                runtime._record.path = blocked
+                try:
+                    return original_write(record)
+                finally:
+                    runtime._record.path = path
+            return original_write(record)
+
+        monkeypatch.setattr(runtime._record, "_write", fail_terminal_success)
+        try:
+            with pytest.raises(EngineError, match="run record failed"):
+                asyncio.run(runtime.run("hello"))
+            assert runtime.status == "error"
+            events = read_events(store.session_dir(runtime.session_id) / "events.jsonl")
+            terminal = [line for line in events if line["kind"] == "run_end"]
+            assert terminal[-1]["payload"]["status"] == "error"
         finally:
             asyncio.run(runtime.close())
 

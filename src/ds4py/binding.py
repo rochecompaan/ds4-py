@@ -206,6 +206,13 @@ class MessageBinder:
         self._signature = None
         self._restored = False
 
+    def adopt(self, messages):
+        """Write recovered binding keys onto canonical harness history."""
+        messages = list(messages)
+        _validate(messages)
+        self._keyed(messages)
+        return messages
+
     @staticmethod
     def _installed_segment(provenance) -> Segment:
         kind = provenance.kind
@@ -295,7 +302,7 @@ class MessageBinder:
         for message, key in zip(messages, keys):
             metadata = dict(message.metadata or {})
             existing = metadata.get("ds4.key")
-            if existing is not None and existing != key:
+            if existing != key:
                 raise EngineError(
                     f"the snapshot message key {existing!r} is not the save "
                     f"record key {key!r}"
@@ -375,22 +382,38 @@ class MessageBinder:
             part for part in message.parts
             if not isinstance(part, (TextPart, ThinkingPart)) or part.content
         ]
+        in_thinking = False
+
+        def close_thinking():
+            nonlocal in_thinking
+            if sampled and in_thinking:
+                spans.append(("</think>", True))
+                in_thinking = False
+
         index = 0
         while index < len(parts):
             part = parts[index]
             if isinstance(part, TextPart):
-                spans.append((part.content, False))
+                close_thinking()
+                spans.append((part.content, sampled))
                 index += 1
             elif isinstance(part, ThinkingPart):
-                spans.extend((("<think>", True), (part.content, False), ("</think>", True)))
+                if sampled:
+                    # The native assistant prefix already opened this span.
+                    spans.append((part.content, True))
+                    in_thinking = True
+                else:
+                    spans.extend((("<think>", True), (part.content, False), ("</think>", True)))
                 index += 1
             elif family in ("deepseek4", "deepseek41"):
+                close_thinking()
                 end = index
                 while end < len(parts) and isinstance(parts[end], ToolCallPart):
                     end += 1
                 spans.append((self._dsml_calls(parts[index:end], sampled), True))
                 index = end
             else:
+                close_thinking()
                 details = part.provider_details or {}
                 raw = details.get("ds4py.raw")
                 markup = raw if sampled and isinstance(raw, str) else render_tool_call(
@@ -398,9 +421,19 @@ class MessageBinder:
                 )
                 spans.append((markup, True))
                 index += 1
-        segments = [RenderedSegment(
-            "assistant", builder.restored_assistant(prefix, spans),
-        )]
+        if sampled:
+            body = []
+            for text, rendered in spans:
+                if text:
+                    body.extend(builder.engine.tokenize(text, rendered=rendered))
+            segments = [
+                RenderedSegment("assistant_prefix", builder.assistant_prefix(prefix)),
+                RenderedSegment("assistant", body),
+            ]
+        else:
+            segments = [RenderedSegment(
+                "assistant", builder.restored_assistant(prefix, spans),
+            )]
         end = builder.append_assistant_end()
         if end:
             segments.append(RenderedSegment("eos", end))
@@ -414,9 +447,13 @@ class MessageBinder:
         else:
             segments = self._response_segments(builder, target.transcript.tokens, message)
         meta = {"key": key, "content_hash": content_hash, "source": "rendered"}
+        sampled = isinstance(message, ModelResponse) and (
+            (message.metadata or {}).get("ds4.source") == "sampled"
+        )
         for segment in segments:
             if segment.tokens:
-                target.append_tokens(segment.tokens, segment.kind, meta)
+                segment_meta = None if sampled and segment.kind == "assistant_prefix" else meta
+                target.append_tokens(segment.tokens, segment.kind, segment_meta)
         return _BoundMessage(key, content_hash, start, len(target.transcript))
 
     @staticmethod

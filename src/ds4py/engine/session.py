@@ -195,6 +195,7 @@ class Session:
 
         ``restore`` runs between ``session_end`` and ``session_start`` so a
         runtime can load history/KV without a second identity or state set.
+        Its returned mapping can refine the final ``switched`` payload.
         """
         with self._lock:
             self._require_idle()
@@ -202,11 +203,13 @@ class Session:
             self._lifecycle.emit("switching", old=old, new=new_id)
             self._lifecycle.emit("session_end", old=old)
             self._lifecycle.close_states()
-            if restore is not None:
-                restore()
+            restored = restore() if restore is not None else None
             self._lifecycle.set_id(new_id)
             self._lifecycle.emit("session_start", old=old, new=new_id)
-            self._lifecycle.emit("switched", **{"old": old, "new": new_id, **payload})
+            self._lifecycle.emit(
+                "switched",
+                **{"old": old, "new": new_id, **payload, **(restored or {})},
+            )
             return new_id
 
     def fork(self) -> str:
