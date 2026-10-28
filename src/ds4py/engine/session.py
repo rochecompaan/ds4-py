@@ -526,6 +526,12 @@ class Session:
             return list(self._transcript.tokens)
 
     def on_worker(self, fn: Callable[[Handles], T]) -> Future[T]:
+        """Run ``fn`` on the engine worker and return a future for its result.
+
+        The handles are borrowed and confined to the callback: do not retain
+        them or use them on another thread. Blocking session or engine calls
+        from the callback can deadlock the worker.
+        """
         return self._worker.call(lambda e, s: fn(Handles(e.raw, s.raw)))
 
     def cancel(self) -> None:
