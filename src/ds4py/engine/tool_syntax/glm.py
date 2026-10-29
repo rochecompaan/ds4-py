@@ -19,7 +19,7 @@ class Glm(DelimiterParser):
     _parameter_close = _ARG_VALUE_CLOSE
     _family = "GLM"
 
-    def _parse_call(self):
+    def _parse_call(self) -> bool:
         end = self.raw.find(b"<", self.parse_pos)
         if end < 0:
             return False
@@ -40,7 +40,7 @@ class Glm(DelimiterParser):
         self.parse_pos = end
         return True
 
-    def _parse_parameter(self):
+    def _parse_parameter(self) -> None:
         if not self.raw.startswith(_ARG_KEY, self.parse_pos):
             if self._partial(_ARG_KEY, self.parse_pos):
                 return
@@ -69,7 +69,7 @@ class Glm(DelimiterParser):
         self._param_scan_pos = self.parse_pos
         self.state = "PARAM_VALUE"
 
-    def _parse_parameter_value(self):
+    def _parse_parameter_value(self) -> bool:
         end = self.raw.find(_ARG_VALUE_CLOSE, self._param_scan_pos)
         if end < 0:
             self._param_scan_pos = max(
@@ -82,7 +82,9 @@ class Glm(DelimiterParser):
         if text is None:
             return True
         value = unescape_tool_text(text, _ARG_VALUE_CLOSE.decode())
-        self._args[self._param_name] = ToolArgument(self._param_name, value, True)
+        param_name = self._param_name
+        assert param_name is not None
+        self._args[param_name] = ToolArgument(param_name, value, True)
         self._param_name = None
         self.parse_pos = end + len(_ARG_VALUE_CLOSE)
         self.state = "STRUCTURAL"

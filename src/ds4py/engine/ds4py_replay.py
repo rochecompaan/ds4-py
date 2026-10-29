@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from .replay_types import _THINK_NAMES, ReplayError, ReplayRound, ReplayTrace
+from typing import Never
 
 
 _FIELDS = (
@@ -13,7 +14,7 @@ _FIELDS = (
 
 
 def read_ds4py(path: Path, text: str) -> ReplayTrace:
-    def error(line: int, message: str):
+    def error(line: int, message: str) -> Never:
         raise ReplayError(f"{path}:{line}: {message}")
 
     rounds = []

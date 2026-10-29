@@ -5,6 +5,7 @@ import re
 
 from .ds4py_replay import read_ds4py
 from .replay_types import _THINK_NAMES, ReplayError, ReplayRound, ReplayTrace
+from typing import Never
 
 
 _TIMESTAMP = re.compile(
@@ -47,7 +48,7 @@ class _Round:
     prefix_only: bool = False
 
 
-def _think_mode(value: str, reader, line: int) -> int:
+def _think_mode(value: str, reader: "_Reader", line: int) -> int:
     if value in _THINK_NAMES:
         return _THINK_NAMES[value]
     if value.isdecimal():
@@ -67,7 +68,7 @@ def read_replay(path: str | Path) -> ReplayTrace:
 
 
 class _Reader:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path) -> None:
         self.path = path
         self.ctx: int | None = None
         self.model: str | None = None
@@ -78,7 +79,7 @@ class _Reader:
         self.can_compact = False
         self.line = 0
 
-    def error(self, message: str, line: int | None = None):
+    def error(self, message: str, line: int | None = None) -> Never:
         raise ReplayError(f"{self.path}:{line or self.line or 1}: {message}")
 
     def read(self, text: str | None = None) -> ReplayTrace:
@@ -206,6 +207,7 @@ class _Reader:
             self.current.sampled.append(token_id)
             return
         block = self.block
+        assert block is not None
         expected = block.start + len(block.ids)
         if index != expected:
             self.error("non-contiguous token index in token block")
@@ -217,6 +219,7 @@ class _Reader:
 
     def finish_block(self) -> None:
         block = self.block
+        assert block is not None
         self.block = None
         ids = tuple(block.ids)
         if block.label == "initial_system_prompt":
@@ -226,6 +229,7 @@ class _Reader:
             self.can_compact = False
         else:
             current = self.current
+            assert current is not None and self.base is not None
             expected = current.prompt_length - current.cached
             if len(ids) != expected:
                 self.error("suffix length does not match prefill", block.line)

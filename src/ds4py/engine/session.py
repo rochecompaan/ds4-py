@@ -1,9 +1,12 @@
 """Public token-oriented engine facade and lazy, exclusively owned rounds."""
 import operator
 import threading
+from asyncio import AbstractEventLoop
+from collections.abc import Generator, Iterable
 from concurrent.futures import Future
+from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Callable, Iterator, Mapping, Sequence, TypeVar
+from typing import Any, BinaryIO, Callable, Iterator, Mapping, Sequence, TypeVar, cast
 from uuid import uuid4
 
 from ds4py._native.api import LibNative
@@ -16,13 +19,17 @@ from .events import (
     Checkpointed, Event, Interrupted, Loaded, ReserveReached, Saved, Stopped, Synced,
 )
 from .lifecycle import SessionEvent, SessionLifecycle
-from .pause import resolve_control
+from .logits import LogitsView
+from .pause import ControlSpan, resolve_control
 from .plan import Plan
+from .prefix import PrefixTurn
 from .prompt import PromptBuilder
 from .sampling import Rng, SamplingPolicy
+from .stream import RoundStream
+from .tool_prompt import ToolDefinition
 from .transcript import Segment, Transcript, TranscriptView
 from .worker import (
-    CheckpointJob, EngineWorker, Handles, LoadPayloadJob, ResetJob, SavePayloadJob,
+    CheckpointJob, EngineWorker, Handles, Job, LoadPayloadJob, ResetJob, SavePayloadJob,
     SyncJob,
 )
 
@@ -66,7 +73,7 @@ def open(model: str | Path = "ds4flash.gguf", *, ctx: int = 100_000,
 
 class Engine:
     def __init__(self, native: Native, worker: EngineWorker, config: EngineConfig,
-                 think: int, sampling_defaults: SamplingPolicy):
+                 think: int, sampling_defaults: SamplingPolicy) -> None:
         self.native, self._worker = native, worker
         self.info, self.config, self.think = worker.info, config, think
         self.sampling_defaults = sampling_defaults
@@ -116,7 +123,7 @@ class Engine:
     def __enter__(self) -> "Engine":
         return self
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(self, *exc: Any) -> None:
         self.close()
 
 
@@ -126,17 +133,17 @@ class Session:
     Chat helpers dispatch rendering/tokenization to the engine worker. Do not
     call these blocking methods from a logits hook or an on_worker callback.
     """
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine) -> None:
         self._engine, self._worker = engine, engine._worker
         self._transcript = Transcript()
         self._transcript_view = TranscriptView(self._transcript)
         self._rng = Rng(engine.sampling_defaults.seed)
         self._lock = threading.RLock()
         self._active_round = False
-        self._logits_hooks = []
-        self._paused_stream = None
-        self._paused_control = None
-        self._paused_sampled_tokens = None
+        self._logits_hooks: list[Callable[[LogitsView], None]] = []
+        self._paused_stream: RoundStream | None = None
+        self._paused_control: ControlSpan | None = None
+        self._paused_sampled_tokens: list[int] | None = None
         self._checkpoint_tokens: dict[str, int] = {}
         self._lifecycle = SessionLifecycle()
         self._closed = False
@@ -160,8 +167,10 @@ class Session:
     def ctx_used(self) -> int:
         return self._worker.call(lambda e, s: s.pos()).result()
 
-    def on_event(self, listener: Callable[[SessionEvent], None], *,
-                 kinds=None) -> Callable[[], None]:
+    def on_event(
+        self, listener: Callable[[SessionEvent], None], *,
+        kinds: Iterable[str] | None = None,
+    ) -> Callable[[], None]:
         """Subscribe on the consuming thread; the returned call unsubscribes.
 
         Listeners must not call blocking session methods. ``kinds`` filters by
@@ -169,11 +178,11 @@ class Session:
         """
         return self._lifecycle.on_event(listener, kinds=kinds)
 
-    def emit(self, kind: str, **payload) -> None:
+    def emit(self, kind: str, **payload: Any) -> None:
         """Publish an extension/status event on this session's bus."""
         self._lifecycle.emit(kind, **payload)
 
-    def events_on_loop(self, loop):
+    def events_on_loop(self, loop: AbstractEventLoop) -> AbstractContextManager[None]:
         """Scope all session-bus delivery to one asyncio loop's owning thread."""
         return self._lifecycle.deliver_on(loop)
 
@@ -194,7 +203,11 @@ class Session:
             self._lifecycle.emit("session_start", old=old, new=new)
             return new
 
-    def switch(self, new_id: str, restore: Callable[[], None] | None = None, **payload) -> str:
+    def switch(
+        self, new_id: str,
+        restore: Callable[[], Mapping[str, Any] | None] | None = None,
+        **payload: Any,
+    ) -> str:
         """Change identity across a restore boundary, closing old scoped state.
 
         ``restore`` runs between ``session_end`` and ``session_start`` so a
@@ -280,7 +293,9 @@ class Session:
                 raise EngineError("a round is open")
             return self._transcript.append(tokens, kind, meta)
 
-    def start_chat(self, tools=(), instructions=None) -> None:
+    def start_chat(
+        self, tools: Iterable[ToolDefinition] = (), instructions: str | None = None,
+    ) -> None:
         """Initialize chat once, between rounds, with tools and optional instructions.
 
         Rendering runs on the worker; caller-provided payloads stay plain text.
@@ -290,8 +305,10 @@ class Session:
                 raise EngineError("a round is open")
             chat_ops.start_chat(self, tools, instructions)
 
-    def append_message(self, role: str, text: str, *, images=(),
-                       meta: Mapping | None = None) -> Segment:
+    def append_message(
+        self, role: str, text: str, *, images: Sequence[object] = (),
+        meta: Mapping[str, object] | None = None,
+    ) -> Segment:
         """Append one plain-payload chat message with optional provenance metadata."""
         with self._lock:
             if self._active_round:
@@ -332,7 +349,7 @@ class Session:
             ).result()
             self._worker.cancel_event.clear()
 
-    def append_user(self, text: str, images=()) -> Segment:
+    def append_user(self, text: str, images: Sequence[object] = ()) -> Segment:
         """Append a user turn between rounds, initializing an empty chat if needed.
 
         A stop-sequence-paused assistant is closed first; the next run_round
@@ -344,7 +361,7 @@ class Session:
                 raise EngineError("a round is open")
             return chat_ops.append_user(self, text, images)
 
-    def append_prefix(self, turns) -> None:
+    def append_prefix(self, turns: Iterable[PrefixTurn]) -> None:
         """Append PrefixTurn history between rounds, starting an empty chat if needed.
 
         Retires a paused assistant and closes each supplied assistant turn using
@@ -355,7 +372,7 @@ class Session:
                 raise EngineError("a round is open")
             chat_ops.append_prefix(self, turns)
 
-    def append_tool_results(self, results) -> Segment:
+    def append_tool_results(self, results: Iterable[str]) -> Segment:
         """Append results joined by two newlines as one tool message in initialized chat.
 
         Between rounds only; closes a paused assistant before appending. Worker
@@ -377,7 +394,7 @@ class Session:
                 raise EngineError("a round is open")
             return chat_ops.append_system_note(self, text, subtype)
 
-    def add_logits_hook(self, hook: Callable) -> None:
+    def add_logits_hook(self, hook: Callable[[LogitsView], None]) -> None:
         """Register a lazy pre-sample hook on the worker-thread decode path.
 
         Registration is allowed only between rounds. Each invocation receives
@@ -393,8 +410,10 @@ class Session:
     def _publish(self, event: Event) -> None:
         self._lifecycle.emit(type(event).__name__, event=event)
 
-    def _reserve_decision(self, job) -> Iterator[Event]:
-        decision = {}
+    def _reserve_decision(
+        self, job: GenerateJob,
+    ) -> Generator[Event, None, bool | tuple[str, int]]:
+        decision: dict[str, object] = {}
         pause = ReserveReached(
             job.reserve,
             on_resume=lambda reserve: decision.update(
@@ -411,9 +430,11 @@ class Session:
             self._publish(stopped)
             yield stopped
             return False
-        return "resume", decision["reserve"]
+        return "resume", cast(int, decision["reserve"])
 
-    def _job_events(self, job, *, pause_on_reserve=False) -> Iterator[Event]:
+    def _job_events(
+        self, job: Job, *, pause_on_reserve: bool = False,
+    ) -> Generator[Event, None, bool | tuple[str, int] | None]:
         # submit may fail before there is an iterator to drain.
         events = self._worker.submit(job)
         exhausted = interrupted = terminal = False
@@ -428,7 +449,7 @@ class Session:
                 )
                 if (pause_on_reserve and isinstance(event, Stopped)
                         and event.reason == "context_reserve"):
-                    return (yield from self._reserve_decision(job))
+                    return (yield from self._reserve_decision(cast(GenerateJob, job)))
                 self._publish(event)
                 yield event
             exhausted = True
@@ -451,7 +472,10 @@ class Session:
                         self._worker.cancel_event.clear()
         return interrupted
 
-    def _raw_round(self, max_tokens, sampling, stop_sequences=()):
+    def _raw_round(
+        self, max_tokens: int, sampling: SamplingPolicy | None,
+        stop_sequences: Sequence[bytes] = (),
+    ) -> Generator[Event, None, None]:
         resuming = self._paused_control is not None and self._paused_stream is None
         control = resolve_control(self._paused_control if resuming else None, stop_sequences)
         sampled_tokens = self._paused_sampled_tokens if resuming else []
@@ -506,6 +530,7 @@ class Session:
 
     def checkpoint(self, key: str) -> Checkpointed:
         event = list(self._job_events(CheckpointJob(key)))[0]
+        assert isinstance(event, Checkpointed)
         self._checkpoint_tokens[key] = event.tokens
         return event
 
@@ -513,7 +538,7 @@ class Session:
         list(self._job_events(CheckpointJob(key, drop=True)))
         self._checkpoint_tokens.pop(key, None)
 
-    def save_payload(self, file, *, header: bytes) -> Saved:
+    def save_payload(self, file: BinaryIO, *, header: bytes) -> Saved:
         """Sync the transcript and write the header plus staged native payload.
 
         Call on the consuming thread between rounds. The caller owns ``file``;
@@ -532,7 +557,7 @@ class Session:
                 raise EngineError("save did not complete")
             return saved
 
-    def load_payload(self, file, *, payload_bytes: int) -> list[int]:
+    def load_payload(self, file: BinaryIO, *, payload_bytes: int) -> list[int]:
         """Load a payload after the caller's header and adopt its token list.
 
         Call on the consuming thread between rounds. The loaded KV becomes the

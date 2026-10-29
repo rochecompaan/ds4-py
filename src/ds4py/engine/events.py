@@ -74,7 +74,7 @@ class ReserveReached:
     """A one-shot decision that keeps a chat assistant round open."""
 
     def __init__(self, needed: int, *, on_resume: Callable[[int], None],
-                 on_fail: Callable[[], None]):
+                 on_fail: Callable[[], None]) -> None:
         self.needed = needed
         self._on_resume = on_resume
         self._on_fail = on_fail

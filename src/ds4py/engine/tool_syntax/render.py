@@ -6,7 +6,7 @@ from .qwen import value_is_json
 from .text import escape_tool_text
 
 
-def _arguments(args) -> dict[str, object]:
+def _arguments(args: Mapping[str, object] | str | None) -> dict[str, object]:
     if args is None:
         return {}
     if isinstance(args, str):
@@ -18,7 +18,7 @@ def _arguments(args) -> dict[str, object]:
     return dict(value)
 
 
-def _validate_json(value):
+def _validate_json(value: object) -> None:
     if value is None or type(value) in (str, bool, int, float):
         return
     if type(value) is list:
@@ -34,14 +34,14 @@ def _validate_json(value):
     raise ValueError(f"cannot preserve non-JSON value of type {type(value).__name__}")
 
 
-def _json(value) -> str:
+def _json(value: object) -> str:
     _validate_json(value)
     return json.dumps(
         value, ensure_ascii=False, separators=(",", ":"), allow_nan=False,
     ).replace("<", "\\u003c")
 
 
-def _validate_name(family, value, kind):
+def _validate_name(family: str, value: object, kind: str) -> None:
     invalid = not isinstance(value, str) or not value
     if family in ("deepseek4", "deepseek41"):
         invalid = invalid or (isinstance(value, str) and any(c in value for c in '">'))
@@ -58,7 +58,7 @@ def _validate_name(family, value, kind):
         raise ValueError(f"{family} cannot preserve {kind} {value!r}")
 
 
-def _dsml(name, args, *, v41):
+def _dsml(name: str, args: Mapping[str, object], *, v41: bool) -> str:
     calls = " calls" if v41 else "tool_calls"
     invoke = " invoke" if v41 else "invoke"
     parameter = " parameter" if v41 else "parameter"
@@ -78,7 +78,7 @@ def _dsml(name, args, *, v41):
     return "\n".join(lines)
 
 
-def _glm(name, args):
+def _glm(name: str, args: Mapping[str, object]) -> str:
     spans = [f"<tool_call>{name}"]
     for key, value in args.items():
         if not isinstance(value, str):
@@ -92,7 +92,7 @@ def _glm(name, args):
     return "".join(spans)
 
 
-def _qwen(name, args):
+def _qwen(name: str, args: Mapping[str, object]) -> str:
     lines = ["<tool_call>", f"<function={name}>"]
     for key, value in args.items():
         value_text = value if isinstance(value, str) else _json(value)
@@ -109,7 +109,9 @@ def _qwen(name, args):
     return "\n".join(lines)
 
 
-def render_tool_call(family, name, args) -> str:
+def render_tool_call(
+    family: str, name: str, args: Mapping[str, object] | str | None,
+) -> str:
     """Render one call in the model family's existing native syntax."""
     arguments = _arguments(args)
     if family not in ("deepseek4", "deepseek41", "glm", "qwen"):

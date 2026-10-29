@@ -18,7 +18,7 @@ class Segment:
 class TranscriptView:
     """Live, read-only observations of session-owned history."""
 
-    def __init__(self, transcript: "Transcript"):
+    def __init__(self, transcript: "Transcript") -> None:
         self._transcript = transcript
 
     @property
@@ -38,7 +38,7 @@ class TranscriptView:
 
 
 class Transcript:
-    def __init__(self):
+    def __init__(self) -> None:
         self._lock = Lock()
         self._tokens: list[int] = []
         self._segments: list[Segment] = []

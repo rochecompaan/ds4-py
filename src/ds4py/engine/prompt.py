@@ -1,9 +1,14 @@
 """Render trusted chat structure while keeping caller payloads plain."""
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ds4py.errors import EngineError
-from .tool_prompt import ToolPromptGenerator
+from .tool_prompt import ToolDefinition, ToolPromptGenerator
 from .tool_syntax.text import escape_tool_text
+
+if TYPE_CHECKING:
+    from .session import Engine
 
 
 @dataclass(frozen=True)
@@ -19,16 +24,18 @@ class PromptBuilder:
     Call from outside the worker, between rounds. Trusted markup is rendered;
     caller payloads are tokenized as plain text.
     """
-    def __init__(self, engine):
+    def __init__(self, engine: "Engine") -> None:
         self.engine = engine
         self.family = engine.info.family
 
-    def begin(self, tools=(), instructions=None) -> list[RenderedSegment]:
+    def begin(
+        self, tools: Iterable[ToolDefinition] = (), instructions: str | None = None,
+    ) -> list[RenderedSegment]:
         """Build initial chat segments for definitions and optional plain instructions."""
-        segments = []
-        prefix = []
+        segments: list[RenderedSegment] = []
+        prefix: list[int] = []
 
-        def append(kind, tokens):
+        def append(kind: str, tokens: list[int]) -> None:
             if tokens:
                 segments.append(RenderedSegment(kind, tokens))
                 prefix.extend(tokens)
@@ -56,19 +63,19 @@ class PromptBuilder:
             append("system", self.message(prefix, "system", "\n\n" + instructions))
         return segments
 
-    def _tool_tokens(self, tools) -> list[int]:
-        tokens = []
+    def _tool_tokens(self, tools: Iterable[ToolDefinition]) -> list[int]:
+        tokens: list[int] = []
         for span in ToolPromptGenerator(self.family).spans(tools):
             tokens.extend(self.engine.tokenize(span.text, rendered=span.rendered))
         return tokens
 
-    def _qwen_open(self, role):
+    def _qwen_open(self, role: str) -> list[int]:
         return self.engine.tokenize("<|im_start|>", rendered=True) + self.engine.tokenize(role + "\n")
 
-    def _qwen_close(self):
+    def _qwen_close(self) -> list[int]:
         return self.engine.tokenize("<|im_end|>", rendered=True) + self.engine.tokenize("\n")
 
-    def message(self, prefix, role, text) -> list[int]:
+    def message(self, prefix: Sequence[int], role: str, text: str) -> list[int]:
         """Render one role delta against prefix, keeping text untrusted."""
         if role in ("tool", "function"):
             return self._tool_message(prefix, text)
@@ -81,7 +88,7 @@ class PromptBuilder:
             return self._qwen_open("assistant") + self.engine.tokenize(text) + self._qwen_close()
         return self.engine._render_message(prefix, role, text)
 
-    def _glm_assistant(self, prefix, text):
+    def _glm_assistant(self, prefix: Sequence[int], text: str) -> list[int]:
         if text.startswith(("<think>", "</think>")):
             marker = "<think>" if text.startswith("<think>") else "</think>"
             rendered = self.engine._render_message(prefix, "assistant", marker)
@@ -91,7 +98,7 @@ class PromptBuilder:
             return rendered[:-len(suffix)] + self.engine.tokenize(text)
         return self.engine._render_message(prefix, "assistant", "") + self.engine.tokenize(text)
 
-    def _tool_message(self, prefix, text):
+    def _tool_message(self, prefix: Sequence[int], text: str) -> list[int]:
         if self.family == "glm":
             closing = self.engine.tokenize("</tool_response>", rendered=True)
             rendered = self.engine._render_message(prefix, "tool", "")
@@ -112,7 +119,9 @@ class PromptBuilder:
             )
         return self.engine._render_message(prefix, "tool", text)
 
-    def restored_assistant(self, prefix, spans) -> list[int]:
+    def restored_assistant(
+        self, prefix: Sequence[int], spans: Iterable[tuple[str, bool]],
+    ) -> list[int]:
         """Render an assistant body from plain text and trusted-markup spans.
 
         This path is only for genuinely reconstructed history. Ordinary external
@@ -129,11 +138,11 @@ class PromptBuilder:
                 tokens.extend(self.engine.tokenize(text, rendered=rendered))
         return tokens + closing
 
-    def assistant_prefix(self, prefix) -> list[int]:
+    def assistant_prefix(self, prefix: Sequence[int]) -> list[int]:
         """Build the family/mode assistant opener through the worker."""
         return self.engine._assistant_prefix(prefix, self.engine.think)
 
-    def tool_results(self, prefix, results) -> list[int]:
+    def tool_results(self, prefix: Sequence[int], results: Iterable[str]) -> list[int]:
         """Render all results as one message joined by two newlines."""
         return self._tool_message(prefix, "\n\n".join(results))
 
