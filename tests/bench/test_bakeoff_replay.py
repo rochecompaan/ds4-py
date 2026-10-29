@@ -12,7 +12,7 @@ from ds4py._native.fake_chat import tokenize_rendered
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bench.replay_m3 import (
+from bench.replay_c_traces import (
     ReplayResult,
     generation_limit,
     replay_with_engine,
@@ -184,7 +184,7 @@ def test_gate_six_cannot_pass_without_tool_call_evidence():
 
 
 def test_standalone_replay_updates_only_its_evidence_and_gate(tmp_path):
-    path = tmp_path / "m3.json"
+    path = tmp_path / "bakeoff.json"
     original = build_report([], RestoreSummary())
     original.write_json(path)
     gate1 = json.loads(path.read_text())["gates"]["gate-1"]

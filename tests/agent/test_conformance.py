@@ -1,4 +1,4 @@
-"""M3 extension conformance on the deterministic native test double."""
+"""Agent extension conformance on the deterministic native test double."""
 
 import asyncio
 from dataclasses import replace

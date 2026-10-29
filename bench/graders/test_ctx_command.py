@@ -1,4 +1,4 @@
-"""Hidden behavioral grader for the M3 /ctx repository task."""
+"""Hidden behavioral grader for the bakeoff /ctx repository task."""
 
 import asyncio
 import re

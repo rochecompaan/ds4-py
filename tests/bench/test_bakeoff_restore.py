@@ -1,4 +1,4 @@
-"""M3 save evidence and fresh-process restore checks."""
+"""Bakeoff save evidence and fresh-process restore checks."""
 
 import asyncio
 import json
@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bench.run_m3 import drive_pty
+from bench.run_bakeoff import drive_pty
 from bench.restore_check import (
     RestoreError,
     RestoreRun,

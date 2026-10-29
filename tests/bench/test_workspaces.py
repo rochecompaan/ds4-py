@@ -1,4 +1,4 @@
-"""Workspace isolation, hidden grading, and retry behavior for the M3 bake-off."""
+"""Workspace isolation, hidden grading, and retry behavior for the agent bake-off."""
 
 from pathlib import Path
 import subprocess
@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bench.m3 import (
+from bench.workspaces import (
     BenchmarkError,
     PreparationError,
     clone_workspace,
@@ -49,8 +49,8 @@ def git(cwd, *args):
 def commit_repo(root):
     root.mkdir(parents=True, exist_ok=True)
     git(root, "init", "-q")
-    git(root, "config", "user.email", "m3@example.invalid")
-    git(root, "config", "user.name", "M3 Test")
+    git(root, "config", "user.email", "bakeoff@example.invalid")
+    git(root, "config", "user.name", "Bakeoff Test")
     git(root, "add", ".")
     git(root, "commit", "-qm", "fixture")
     return git(root, "rev-parse", "HEAD")
@@ -167,8 +167,8 @@ def test_ctx_repository_copy_keeps_hidden_grader_outside(tmp_path):
 
     assert (workspace.agent_dir / "TASK.md").read_text() == "Add /ctx without generation."
     assert not (workspace.agent_dir / "bench").exists()
-    assert not (workspace.agent_dir / "tests" / "m3_hidden" / "test_ctx_command.py").exists()
-    assert (workspace.grader_dir / "tests" / "m3_hidden" / "test_ctx_command.py").is_file()
+    assert not (workspace.agent_dir / "tests" / "bakeoff_hidden" / "test_ctx_command.py").exists()
+    assert (workspace.grader_dir / "tests" / "bakeoff_hidden" / "test_ctx_command.py").is_file()
     assert (workspace.agent_dir / "tests" / "engine" / "tool_syntax" / "test_glm.py").is_file()
 
 

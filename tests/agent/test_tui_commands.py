@@ -118,7 +118,7 @@ def test_command_errors_name_the_problem_and_usage():
     asyncio.run(scenario())
 
 
-def test_slash_completion_covers_only_m3_builtins_and_extensions():
+def test_slash_completion_covers_only_builtin_commands_and_extensions():
     tui = make_tui()
     names = {item.text.strip() for item in tui.commands.completions("/")}
     assert names == {"/exit", "/new", "/save", "/switch", "/hints"}

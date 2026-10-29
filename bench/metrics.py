@@ -1,4 +1,4 @@
-"""Strict comparison metrics extracted from M3 event and trace evidence."""
+"""Strict comparison metrics extracted from bakeoff event and trace evidence."""
 
 from dataclasses import dataclass
 import math

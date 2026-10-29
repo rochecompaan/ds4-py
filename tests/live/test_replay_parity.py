@@ -14,7 +14,7 @@ from ds4py.engine.replay import read_replay
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bench.replay_m3 import replay_trace
+from bench.replay_c_traces import replay_trace
 
 
 @pytest.mark.live

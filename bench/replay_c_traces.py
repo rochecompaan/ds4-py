@@ -273,12 +273,12 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--model", type=Path, default=os.environ.get("DS4_TEST_MODEL"))
-    parser.add_argument("--backend", default=os.environ.get("DS4_M3_BACKEND", "cpu"))
+    parser.add_argument("--backend", default=os.environ.get("DS4_BAKEOFF_BACKEND", "cpu"))
     parser.add_argument("--lib")
     args = parser.parse_args(argv)
     if args.model is None:
         parser.error("--model or DS4_TEST_MODEL is required")
-    report_path = args.report / "m3.json" if args.report.is_dir() else args.report
+    report_path = args.report / "bakeoff.json" if args.report.is_dir() else args.report
     import json
     data = json.loads(report_path.read_text())
     tasks = [SimpleNamespace(**item) for item in data.get("tasks", [])]

@@ -264,7 +264,7 @@ def attempt_command(argv):
     if prompt is None:
         raise RestoreError("attempt driver requires --prompt or --prompt-file")
     metadata = Path(os.environ.get(
-        "M3_ATTEMPT_METADATA", str(args.trace or "attempt") + ".attempt.json",
+        "BAKEOFF_ATTEMPT_METADATA", str(args.trace or "attempt") + ".attempt.json",
     ))
     save_dir = None
     status = 1
@@ -380,7 +380,7 @@ def check_result_saves(task_results, config, results_root):
 
 
 def check_command(argv):
-    """Recheck every ds4-py save referenced by a written M3 report."""
+    """Recheck every ds4-py save referenced by a written bakeoff report."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--model", required=True)
@@ -425,7 +425,7 @@ def main(argv=None):
             return restore_command(arguments)
         return check_command(arguments)
     except (RestoreError, OSError, ValueError) as error:
-        print(f"M3 driver: {error}", file=sys.stderr)
+        print(f"Bakeoff driver: {error}", file=sys.stderr)
         return 1
 
 

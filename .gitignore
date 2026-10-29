@@ -17,5 +17,5 @@ __pycache__/
 build/
 dist/
 
-# M3 bake-off outputs
+# Agent bake-off outputs
 bench/results/

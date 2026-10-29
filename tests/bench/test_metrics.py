@@ -1,4 +1,4 @@
-"""Synthetic event and trace metrics for M3 gates."""
+"""Synthetic event and trace metrics for bakeoff gates."""
 
 from pathlib import Path
 import sys

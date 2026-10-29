@@ -1,1 +1,1 @@
-"""Pinned M3 bake-off preparation, execution, and reporting."""
+"""Pinned bakeoff preparation, execution, and reporting."""

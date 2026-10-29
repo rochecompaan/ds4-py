@@ -110,7 +110,7 @@ export DS4PY_HOME=/absolute/path/ds4py-home
 Each session has a directory under `$DS4PY_HOME/sessions/`. It contains the
 save record, native payload, step snapshots, and `events.jsonl`.
 
-The M3 interactive shell supports these commands:
+The interactive shell supports these commands:
 
 - `/save`: Save the current session.
 - `/switch <prefix>`: Restore the saved session with that unique ID prefix.
@@ -157,31 +157,31 @@ Set the required paths and the explicit opt-in:
 export DS4_TEST_MODEL=/absolute/path/ds4f-q2.gguf
 export DS4_AGENT=/absolute/path/ds4-agent
 export POLYGLOT_BENCHMARK=/absolute/path/polyglot-benchmark
-export DS4_RUN_M3_BAKEOFF=1
+export DS4_RUN_BAKEOFF=1
 ```
 
 Make sure that the benchmark checkout uses commit
 `7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f`. Then run the preparation command:
 
 ```bash
-uv run --extra agent python bench/prepare_m3.py \
-  --manifest bench/m3.yaml --check-only
+uv run --extra agent python bench/prepare_bakeoff.py \
+  --manifest bench/bakeoff.yaml --check-only
 ```
 
 If the preparation succeeds, run the complete suite:
 
 ```bash
-uv run --extra agent pytest tests/live/test_m3_bakeoff.py -m live -vv -s
+uv run --extra agent pytest tests/live/test_bakeoff.py -m live -vv -s
 ```
 
-The suite writes `bench/results/m3.json`. All six gates must pass before M3 is
-live-verified. A guarded skip is not live evidence.
+The suite writes `bench/results/bakeoff.json`. All six gates must pass before the
+agent bakeoff is live-verified. A guarded skip is not live evidence.
 
 ## Milestone limits
 
 M4 owns real compaction, the 50,000-token reminder, and the remaining
-persistence commands. M5 owns interactive `/think`. The M3 shell does not
+persistence commands. M5 owns interactive `/think`. The shell does not
 provide those commands.
 
-The runtime has a fork primitive for later milestones. M3 does not expose an
+The runtime has a fork primitive for later milestones. The shell does not expose an
 interactive `/fork` command.

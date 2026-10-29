@@ -28,7 +28,7 @@ _END = object()
 
 
 class ContextReserveError(EngineError):
-    """The response hit the context reserve and M3 has no compaction strategy."""
+    """The response hit the context reserve and no compaction strategy is installed."""
 
 
 def _context_reserve_message(needed):
@@ -94,7 +94,7 @@ class DS4Model(Model):
         self.max_tokens = max_tokens
         self.stop_sequences = stop_sequences
         self.note_provider = note_provider
-        # M3 installs no compaction. A handler may free space and return the new
+        # No compaction strategy is installed. A handler may free space and return the new
         # reserve budget; otherwise the default policy fails the open response.
         self.reserve_handler = reserve_handler
 

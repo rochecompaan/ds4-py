@@ -1,4 +1,4 @@
-"""Pinned M3 workspace staging and hidden-test grading.
+"""Pinned bakeoff workspace staging and hidden-test grading.
 
 Agents see only ``Workspace.agent_dir``. Test files live in the separate
 ``grader_dir`` and are mounted only for the duration of one grading call.
@@ -59,7 +59,7 @@ class Workspace:
 
     def __post_init__(self):
         if self.max_attempts not in {1, 2}:
-            raise ValueError("M3 workspaces allow one or two attempts")
+            raise ValueError("Bakeoff workspaces allow one or two attempts")
 
 
 def _reset_directory(path):
@@ -154,7 +154,7 @@ def prepare_repository_task(
     hidden = []
     if grader is not None:
         grader = Path(grader)
-        relative = Path("tests") / "m3_hidden" / grader.name
+        relative = Path("tests") / "bakeoff_hidden" / grader.name
         _copy_file(grader, grader_dir / relative)
         hidden.append(str(relative))
     test_paths = list(hidden)
@@ -310,7 +310,7 @@ def load_manifest(path):
     if missing:
         raise PreparationError(f"{path}: missing manifest keys: {', '.join(missing)}")
     if len(data["exercises"]) != 10 or len(data["repository_tasks"]) != 2:
-        raise PreparationError(f"{path}: M3 requires ten exercises and two repository tasks")
+        raise PreparationError(f"{path}: bakeoff requires ten exercises and two repository tasks")
     return Manifest(
         path=path,
         repository=str(data["repository"]),

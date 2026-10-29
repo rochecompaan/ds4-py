@@ -1,4 +1,4 @@
-"""Sequential M3 runner and gates 1–5 with fake executables."""
+"""Sequential bakeoff runner and gates 1–5 with fake executables."""
 
 from dataclasses import replace
 import json
@@ -12,12 +12,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bench.m3 import clone_workspace, prepare_exercise
+from bench.workspaces import clone_workspace, prepare_exercise
 from bench.metrics import EventSummary, ToolAccounting
-from bench.replay_m3 import ReplayResult
+from bench.replay_c_traces import ReplayResult
 from bench.report import build_report
 from bench.restore_check import CheckResult, RestoreResult, RestoreSummary
-from bench.run_m3 import (
+from bench.run_bakeoff import (
     AgentConfig,
     TaskRunResult,
     build_agent_command,
@@ -299,10 +299,10 @@ args = sys.argv[1:]
 def option(name):
     return args[args.index(name) + 1]
 
-root = Path(os.environ["M3_ATTEMPT_ROOT"])
+root = Path(os.environ["BAKEOFF_ATTEMPT_ROOT"])
 root.mkdir(parents=True, exist_ok=True)
-agent = os.environ["M3_AGENT_NAME"]
-lock_path = Path(os.environ["M3_LOCK_PATH"])
+agent = os.environ["BAKEOFF_AGENT_NAME"]
+lock_path = Path(os.environ["BAKEOFF_LOCK_PATH"])
 lock_path.parent.mkdir(parents=True, exist_ok=True)
 with lock_path.open("w") as lock:
     try:
@@ -322,7 +322,7 @@ with lock_path.open("w") as lock:
         {"kind": "run_end", "run_id": "run-1", "payload": {"status": "success"}},
     ]
     events_text = "\n".join(json.dumps(item) for item in events) + "\n"
-    Path(os.environ["M3_EVENTS_PATH"]).write_text(events_text)
+    Path(os.environ["BAKEOFF_EVENTS_PATH"]).write_text(events_text)
     trace = {
         "session_id": "fake", "run_id": "run-1", "step_index": 0,
         "round_index": 0, "prompt": [1, 2], "think": 0, "cached": 0,
@@ -330,19 +330,19 @@ with lock_path.open("w") as lock:
     }
     Path(option("--trace")).write_text(json.dumps(trace) + "\n")
     if agent == "ds4py":
-        save = Path(os.environ["DS4PY_HOME"]) / "sessions" / ("save-" + os.environ["M3_ATTEMPT"])
+        save = Path(os.environ["DS4PY_HOME"]) / "sessions" / ("save-" + os.environ["BAKEOFF_ATTEMPT"])
         save.mkdir(parents=True)
         (save / "save.json").write_text("{}")
         (save / "events.jsonl").write_text(events_text)
     invocation = {"agent": agent, "prompt": option("--prompt"), "argv": args}
-    with Path(os.environ["M3_INVOCATIONS"]).open("a") as stream:
+    with Path(os.environ["BAKEOFF_INVOCATIONS"]).open("a") as stream:
         stream.write(json.dumps(invocation) + "\n")
     fcntl.flock(lock, fcntl.LOCK_UN)
 '''
 
 
 def test_complete_runner_writes_gate_six_after_acceptance(tmp_path, monkeypatch):
-    import bench.run_m3 as runner
+    import bench.run_bakeoff as runner
 
     order = []
     staged = [SimpleNamespace(task_id="repo-glm-close")]
@@ -378,5 +378,5 @@ def test_complete_runner_writes_gate_six_after_acceptance(tmp_path, monkeypatch)
 
     assert order == ["tasks", "restores", "interruption", "approval", "replay"]
     assert report.gates["gate-6"].passed
-    assert (tmp_path / "results/m3.json").is_file()
+    assert (tmp_path / "results/bakeoff.json").is_file()
     assert "gate-6: PASS" in (tmp_path / "results/report.txt").read_text()

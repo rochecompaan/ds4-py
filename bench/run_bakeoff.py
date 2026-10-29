@@ -1,4 +1,4 @@
-"""Sequential M3 agent runner and per-task evidence collection."""
+"""Sequential bakeoff agent runner and per-task evidence collection."""
 
 import argparse
 from dataclasses import dataclass, replace
@@ -17,8 +17,8 @@ import time
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from bench.m3 import clone_workspace, grade_workspace, load_manifest, prepare_manifest
-from bench.replay_m3 import replay_task_results
+from bench.workspaces import clone_workspace, grade_workspace, load_manifest, prepare_manifest
+from bench.replay_c_traces import replay_task_results
 from bench.report import build_report
 from bench.restore_check import CheckResult, RestoreSummary, check_result_saves
 from bench.metrics import (
@@ -287,12 +287,12 @@ def run_task(workspace, config, results_root, *, grade_runner=None, clock=time.m
         environment = os.environ.copy()
         environment.update({
             "DS4PY_HOME": str(home),
-            "M3_ATTEMPT_ROOT": str(attempt_root),
-            "M3_EVENTS_PATH": str(events_path),
-            "M3_AGENT_NAME": config.agent,
-            "M3_ATTEMPT": str(attempt),
-            "M3_INVOCATIONS": str(results_root.parent / "invocations.jsonl"),
-            "M3_LOCK_PATH": str(results_root.parent / "agent.lock"),
+            "BAKEOFF_ATTEMPT_ROOT": str(attempt_root),
+            "BAKEOFF_EVENTS_PATH": str(events_path),
+            "BAKEOFF_AGENT_NAME": config.agent,
+            "BAKEOFF_ATTEMPT": str(attempt),
+            "BAKEOFF_INVOCATIONS": str(results_root.parent / "invocations.jsonl"),
+            "BAKEOFF_LOCK_PATH": str(results_root.parent / "agent.lock"),
         })
         started = clock()
         completed = subprocess.run(
@@ -424,7 +424,7 @@ def run_bakeoff(manifest_path, benchmark, repo_root, configs, results_root, *, g
     restore = RestoreSummary(restore_runs, interruption, approval)
     replay = replay_task_results(task_results, ds4_config)
     report = build_report(task_results, restore, replay)
-    report.write_json(results_root / "m3.json")
+    report.write_json(results_root / "bakeoff.json")
     (results_root / "report.txt").write_text(report.compact_table())
     return report
 
@@ -432,7 +432,7 @@ def run_bakeoff(manifest_path, benchmark, repo_root, configs, results_root, *, g
 def _parser():
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", type=Path, default=Path(__file__).with_name("m3.yaml"))
+    parser.add_argument("--manifest", type=Path, default=Path(__file__).with_name("bakeoff.yaml"))
     parser.add_argument("--benchmark", type=Path, default=root.parent / "benchmark")
     parser.add_argument("--repo-root", type=Path, default=root)
     parser.add_argument("--results", type=Path, required=True)

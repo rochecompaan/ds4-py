@@ -1,4 +1,4 @@
-"""Six-gate M3 report with per-task diagnostics and no log dumping."""
+"""Six-gate bakeoff report with per-task diagnostics and no log dumping."""
 
 from dataclasses import asdict, dataclass, is_dataclass
 import json

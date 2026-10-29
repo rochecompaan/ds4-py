@@ -51,7 +51,7 @@ and storage.
 
 ## Acceptance
 
-Read [the M3 bake-off guide](bench/README.md) for the fixed inputs, machine
+Read [the agent bake-off guide](bench/README.md) for the fixed inputs, machine
 requirements, and live commands. The normal test suite does not load a model:
 
 ```bash

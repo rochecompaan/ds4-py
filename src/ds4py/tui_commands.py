@@ -1,4 +1,4 @@
-"""Slash-command registration and the built-in M3 commands."""
+"""Slash-command registration and the built-in interactive commands."""
 
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ def _record(action, record):
 
 
 def install_builtin_commands(registry, runtime, *, request_exit):
-    """Install exactly the commands supported by the M3 interactive shell."""
+    """Install exactly the commands supported by the interactive shell."""
 
     def no_args(args, usage):
         if args:

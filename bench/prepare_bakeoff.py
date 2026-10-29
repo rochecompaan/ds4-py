@@ -1,4 +1,4 @@
-"""Prepare the twelve pinned M3 tasks from existing local checkouts."""
+"""Prepare the twelve pinned bakeoff tasks from existing local checkouts."""
 
 import argparse
 import os
@@ -8,7 +8,7 @@ import sys
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from bench.m3 import (  # noqa: E402
+from bench.workspaces import (  # noqa: E402
     BenchError,
     load_manifest,
     prepare_manifest,
@@ -28,7 +28,7 @@ def benchmark_checkout(argument=None):
 def main(argv=None):
     script = Path(__file__).resolve()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", type=Path, default=script.with_name("m3.yaml"))
+    parser.add_argument("--manifest", type=Path, default=script.with_name("bakeoff.yaml"))
     parser.add_argument("--benchmark", help="defaults to POLYGLOT_BENCHMARK")
     parser.add_argument(
         "--output", type=Path, default=script.parent / "results" / "workspaces",
