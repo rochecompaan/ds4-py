@@ -1,13 +1,16 @@
 """Deterministic, thread-confined native handles for model-free tests."""
+import ctypes as C
 import struct
 import threading
-from typing import Callable, Iterable, Mapping, Sequence
+from typing import Any, BinaryIO, Callable, Iterable, Mapping, Sequence, cast
 import zlib
 
 from ds4py.errors import EmptyPromptError, EngineError, MissingBinding
 from . import fake_chat
 from .bindings import all_bindings
-from .protocol import EngineConfig, EngineInfo, SyncStatus, ThinkMode
+from .protocol import (
+    CancelFn, EngineConfig, EngineInfo, ProgressFn, Snapshot, SyncStatus, ThinkMode,
+)
 
 FAKE_EOS = 0
 PAYLOAD_MAGIC = b"DFKP"
@@ -59,19 +62,19 @@ def decode_payload(data: bytes, payload_bytes: int) -> list[int]:
 
 
 def reply(text: bytes) -> Script:
-    def next_token(prompt, generated):
+    def next_token(prompt: Sequence[int], generated: Sequence[int]) -> int:
         return text[len(generated)] + 1 if len(generated) < len(text) else FAKE_EOS
     return next_token
 
 
 class FakeClock:
-    def __init__(self):
+    def __init__(self) -> None:
         self._time = 0.0
 
     def __call__(self) -> float:
         return self._time
 
-    def advance(self, seconds):
+    def advance(self, seconds: float) -> None:
         self._time += seconds
 
 
@@ -80,8 +83,8 @@ class FakeNative:
 
     def __init__(self, *, script: Script = reply(b"ok"), chunk: int = 4,
                  clock: FakeClock | None = None, chunk_seconds: float = 0.0,
-                 bindings: Mapping[str, Callable] = {}, absent: Iterable[str] = (),
-                 restore_enabled: bool = True, info: EngineInfo | None = None):
+                 bindings: Mapping[str, Callable[..., Any]] = {}, absent: Iterable[str] = (),
+                 restore_enabled: bool = True, info: EngineInfo | None = None) -> None:
         if chunk <= 0:
             raise ValueError("chunk must be positive")
         self.script, self.chunk = script, chunk
@@ -98,14 +101,14 @@ class FakeNative:
     def open_engine(self, config: EngineConfig) -> "FakeEngine":
         return FakeEngine(self)
 
-    def bind(self, name):
+    def bind(self, name: str) -> Callable[..., Any]:
         if name not in {binding.name for binding in all_bindings()}:
             raise MissingBinding(f"ds4py does not declare {name}")
         if name in self.absent:
             raise MissingBinding(f"{name} is absent from this library")
         return self.bindings[name]
 
-    def parse_think_level(self, text):
+    def parse_think_level(self, text: str) -> int | None:
         level = 0
         if not text:
             return None
@@ -115,76 +118,76 @@ class FakeNative:
             level = level * 10 + ord(char) - ord("0")
         return 1000 + level if level <= 100 else None
 
-    def think_mode_for_context(self, mode, ctx):
+    def think_mode_for_context(self, mode: int, ctx: int) -> int:
         return ThinkMode.HIGH if mode == ThinkMode.MAX and ctx < 393216 else mode
 
 
 class _Handle:
-    def __init__(self):
+    def __init__(self) -> None:
         self.raw = id(self)
         self._thread = threading.get_ident()
 
-    def _assert_thread(self):
+    def _assert_thread(self) -> None:
         assert threading.get_ident() == self._thread, "fake handle used on another thread"
 
-    def _check(self):
+    def _check(self) -> None:
         self._assert_thread()
         if not self.raw:
             raise EngineError("fake handle is closed")
 
 
 class FakeEngine(_Handle):
-    def __init__(self, native):
+    def __init__(self, native: FakeNative) -> None:
         super().__init__()
         self._native = native
-        self._sessions = set()
+        self._sessions: set[FakeSession] = set()
 
-    def info(self):
+    def info(self) -> EngineInfo:
         self._check()
         return self._native._info
 
-    def tokenize(self, text, *, rendered=False):
+    def tokenize(self, text: str, *, rendered: bool = False) -> list[int]:
         self._check()
         if rendered:
             return fake_chat.tokenize_rendered(text)
         return [byte + 1 for byte in text.encode()]
 
-    def token_text(self, token):
+    def token_text(self, token: int) -> bytes:
         self._check()
         if token == FAKE_EOS:
             return b"</s>"
         special = fake_chat.special_token_text(token)
         return special if special is not None else bytes([token - 1])
 
-    def chat_begin(self):
+    def chat_begin(self) -> list[int]:
         self._check()
         return fake_chat.chat_begin(self)
 
-    def think_prefix(self, prefix, mode):
+    def think_prefix(self, prefix: Sequence[int], mode: int) -> list[int]:
         self._check()
         return fake_chat.think_prefix(self, prefix, mode)
 
-    def render_message(self, prefix, role, content):
+    def render_message(self, prefix: Sequence[int], role: str, content: str) -> list[int]:
         self._check()
         return fake_chat.render_message(self, prefix, role, content)
 
-    def assistant_prefix(self, prefix, mode):
+    def assistant_prefix(self, prefix: Sequence[int], mode: int) -> list[int]:
         self._check()
         return fake_chat.assistant_prefix(self, prefix, mode)
 
-    def qwen_reasoning_effort(self, mode):
+    def qwen_reasoning_effort(self, mode: int) -> str | None:
         self._check()
         return fake_chat.qwen_reasoning_effort(mode)
 
-    def eos(self):
+    def eos(self) -> int:
         self._check()
         return FAKE_EOS
 
-    def is_stop(self, token):
+    def is_stop(self, token: int) -> bool:
         self._check()
         return token == FAKE_EOS
 
-    def is_stop_for_think_mode(self, token, mode):
+    def is_stop_for_think_mode(self, token: int, mode: int) -> bool:
         self._check()
         enabled = mode in (1, 2, 3, 4) or 1001 <= mode <= 1100
         return self.is_stop(token) or (
@@ -193,13 +196,13 @@ class FakeEngine(_Handle):
             )
         )
 
-    def create_session(self, ctx):
+    def create_session(self, ctx: int) -> FakeSession:
         self._check()
         session = FakeSession(self, ctx)
         self._sessions.add(session)
         return session
 
-    def close(self):
+    def close(self) -> None:
         self._assert_thread()
         for session in list(self._sessions):
             session.close()
@@ -207,46 +210,52 @@ class FakeEngine(_Handle):
 
 
 class FakeStagedPayload:
-    def __init__(self, tokens):
+    def __init__(self, tokens: Sequence[int]) -> None:
         self.tokens = list(tokens)
         self.bytes = PAYLOAD_STRIDE * len(self.tokens)
         self._data = encode_payload(self.tokens)
         self.closed = False
 
-    def write(self, file):
+    def write(self, file: BinaryIO) -> None:
         if self.closed:
             raise EngineError("staged payload is closed")
         file.write(self._data)
         file.flush()
 
-    def close(self):
+    def close(self) -> None:
         self.closed = True
 
 
 class FakeSnapshot:
-    def __init__(self, tokens, prompt_length):
+    def __init__(self, tokens: Sequence[int], prompt_length: int) -> None:
         self.tokens = list(tokens)
         self.prompt_length = prompt_length
         self.nbytes = 1024 * len(tokens)
         self.closed = False
 
-    def close(self):
+    def close(self) -> None:
         self.closed = True
 
 
 class FakeSession(_Handle):
-    def __init__(self, engine, ctx):
+    def __init__(self, engine: FakeEngine, ctx: int) -> None:
         super().__init__()
         self._engine, self._native, self._ctx = engine, engine._native, ctx
-        self._tokens = []
+        self._tokens: list[int] = []
         self._logits: list[float] | None = None
         self.logit_copies = self.logit_sets = 0
         self._prompt_length = 0
         self._valid = False
-        self.calls: list[tuple] = []
-        self.samples: list[tuple] = []
+        self.calls: list[tuple[Any, ...]] = []
+        self.samples: list[tuple[float, int, float, float]] = []
 
-    def sync(self, tokens, *, progress=None, cancel=None):
+    def sync(
+        self,
+        tokens: Sequence[int],
+        *,
+        progress: ProgressFn | None = None,
+        cancel: CancelFn | None = None,
+    ) -> SyncStatus:
         self._check()
         self._logits = None
         if not tokens:
@@ -275,7 +284,7 @@ class FakeSession(_Handle):
         self.calls.append(("sync", len(self._tokens) - start))
         return status
 
-    def _distribution(self):
+    def _distribution(self) -> list[float] | None:
         self._check()
         if not self._valid:
             return None
@@ -288,7 +297,7 @@ class FakeSession(_Handle):
             self._logits = distribution
         return self._logits
 
-    def copy_logits(self, out):
+    def copy_logits(self, out: Any) -> None:
         self._check()
         size = self._engine.info().vocab_size
         if len(out) != size:
@@ -300,7 +309,7 @@ class FakeSession(_Handle):
             out[index] = value
         self.logit_copies += 1
 
-    def set_logits(self, values):
+    def set_logits(self, values: Sequence[float]) -> None:
         self._check()
         size = self._engine.info().vocab_size
         if len(values) != size:
@@ -310,7 +319,9 @@ class FakeSession(_Handle):
         self._logits = [float(value) for value in values]
         self.logit_sets += 1
 
-    def sample(self, temperature, top_k, top_p, min_p, rng):
+    def sample(
+        self, temperature: float, top_k: int, top_p: float, min_p: float, rng: C.c_uint64,
+    ) -> int:
         self._check()
         if not self._valid:
             return -1
@@ -326,13 +337,13 @@ class FakeSession(_Handle):
             return -1
         return max(range(len(distribution)), key=distribution.__getitem__)
 
-    def argmax(self):
+    def argmax(self) -> int:
         distribution = self._distribution()
         if distribution is None:
             return -1
         return max(range(len(distribution)), key=distribution.__getitem__)
 
-    def eval(self, token):
+    def eval(self, token: int) -> None:
         self._check()
         if not self._valid:
             raise EngineError("session checkpoint is invalid")
@@ -342,7 +353,7 @@ class FakeSession(_Handle):
         self._logits = None
         self.calls.append(("eval", token))
 
-    def rewind(self, pos):
+    def rewind(self, pos: int) -> None:
         self._check()
         if pos < len(self._tokens):
             del self._tokens[max(0, pos):]
@@ -350,19 +361,19 @@ class FakeSession(_Handle):
             self.calls.append(("rewind", pos))
         self._logits = None
 
-    def pos(self):
+    def pos(self) -> int:
         self._check()
         return len(self._tokens)
 
-    def ctx(self):
+    def ctx(self) -> int:
         self._check()
         return self._ctx
 
-    def tokens(self):
+    def tokens(self) -> list[int]:
         self._check()
         return list(self._tokens)
 
-    def common_prefix(self, tokens):
+    def common_prefix(self, tokens: Sequence[int]) -> int:
         self._check()
         if not self._valid:
             return 0
@@ -373,26 +384,26 @@ class FakeSession(_Handle):
             count += 1
         return count
 
-    def checkpoint_valid(self):
+    def checkpoint_valid(self) -> bool:
         self._check()
         return self._valid
 
-    def invalidate(self):
+    def invalidate(self) -> None:
         self._check()
         self._valid = False
         self._logits = None
 
-    def payload_bytes(self):
+    def payload_bytes(self) -> int:
         self._check()
         return PAYLOAD_STRIDE * len(self._tokens)
 
-    def stage_payload(self):
+    def stage_payload(self) -> FakeStagedPayload:
         self._check()
         if not self._valid:
             raise EngineError("session checkpoint is invalid")
         return FakeStagedPayload(self._tokens)
 
-    def load_payload(self, file, payload_bytes):
+    def load_payload(self, file: BinaryIO, payload_bytes: int) -> None:
         self._check()
         data = file.read(payload_bytes)
         tokens = decode_payload(data, payload_bytes)
@@ -402,22 +413,23 @@ class FakeSession(_Handle):
         self._logits = None
         self.calls.append(("load_payload", len(tokens)))
 
-    def save_snapshot(self):
+    def save_snapshot(self) -> FakeSnapshot:
         self._check()
         if not self._valid:
             raise EngineError("session checkpoint is invalid")
         return FakeSnapshot(self._tokens, self._prompt_length)
 
-    def load_snapshot(self, snap):
+    def load_snapshot(self, snap: Snapshot) -> None:
         self._check()
-        if snap.closed:
+        fake_snap = cast(FakeSnapshot, snap)
+        if fake_snap.closed:
             raise EngineError("snapshot is closed")
-        self._tokens = list(snap.tokens)
-        self._prompt_length = snap.prompt_length
+        self._tokens = list(fake_snap.tokens)
+        self._prompt_length = fake_snap.prompt_length
         self._valid = True
         self._logits = None
 
-    def close(self):
+    def close(self) -> None:
         self._assert_thread()
         self.raw = 0
         self._engine._sessions.discard(self)

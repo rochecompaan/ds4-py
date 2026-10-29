@@ -6,6 +6,7 @@ from ctypes import (
     c_uint8, c_uint32, c_uint64, c_void_p,
 )
 from dataclasses import dataclass
+from typing import Any
 
 
 PROGRESS_FN = CFUNCTYPE(None, c_void_p, c_char_p, c_int, c_int)
@@ -163,7 +164,7 @@ def struct_layout(cls: type[ctypes.Structure]) -> StructLayout:
     """Record offsets, including nested fields relative to the outer struct."""
     fields = {}
 
-    def walk(current, prefix, base):
+    def walk(current: Any, prefix: str, base: int) -> None:
         for name, field_type in current._fields_:
             offset = base + getattr(current, name).offset
             path = prefix + name

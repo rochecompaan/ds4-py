@@ -7,7 +7,9 @@ only that stream is closed.
 
 import ctypes
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import BinaryIO
 
 _libc = ctypes.CDLL(None, use_errno=True)
 _fdopen = _libc.fdopen
@@ -27,7 +29,7 @@ def _os_error() -> OSError:
 
 
 @contextmanager
-def native_stream(file, mode):
+def native_stream(file: BinaryIO, mode: str) -> Iterator[int]:
     """Yield a libc stream for ``file``; close only the duplicated descriptor.
 
     The Python object is flushed and its logical position is made authoritative

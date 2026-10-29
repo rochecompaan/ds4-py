@@ -40,7 +40,7 @@ _CALLBACKS = {
     "ds4_session_progress_fn": PROGRESS_FN,
     "ds4_session_cancel_fn": CANCEL_FN,
 }
-_TYPE_WORDS = set("void int unsigned short long bool float double char const".split())
+_TYPE_WORDS: set[str] = set("void int unsigned short long bool float double char const".split())
 _TYPE_WORDS.update(_SCALARS)
 _TYPE_WORDS.update(_CALLBACKS)
 _TYPE_WORDS.update(_ALL_STRUCTS)
@@ -111,7 +111,7 @@ def normalize_prototype(text: str) -> str:
     return str(parse_prototype(text))
 
 
-def _ctypes_type(ctype: CType, function: str, *, returning: bool = False):
+def _ctypes_type(ctype: CType, function: str, *, returning: bool = False) -> object | None:
     base, pointers = ctype.base, ctype.pointers
     if base == "void" and pointers == 0 and returning:
         return None
@@ -137,7 +137,7 @@ def _ctypes_type(ctype: CType, function: str, *, returning: bool = False):
         f"unknown C type '{ctype}' in {function}; add it to ds4py/_native/typemap.py")
 
 
-def ctypes_signature(proto: CPrototype) -> tuple[object, list[object]]:
+def ctypes_signature(proto: CPrototype) -> tuple[object | None, list[object]]:
     return (
         _ctypes_type(proto.restype, proto.name, returning=True),
         [_ctypes_type(param, proto.name) for param in proto.params],

@@ -15,7 +15,7 @@ class Binding:
     required: bool = True
     source: str = "core"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         parsed = parse_prototype(self.prototype)
         if parsed.name != self.name:
             raise ValueError(f"binding {self.name} has prototype for {parsed.name}")

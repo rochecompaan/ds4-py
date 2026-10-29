@@ -5,17 +5,19 @@ import os
 from pathlib import Path
 import sys
 import threading
+from collections.abc import Callable, Iterable
+from typing import Any
 
-from ds4py.abi.manifest import Manifest, file_sha256, manifest_path, validate
+from ds4py.abi.manifest import Manifest, Validation, file_sha256, manifest_path, validate
 from ds4py.abi.shaders import metal_source_env
 from ds4py.errors import AbiMismatch, LibraryAlreadyLoaded, LibraryNotFound, MissingBinding
-from .bindings import all_bindings
+from .bindings import Binding, all_bindings
 from .structs import STRUCTS, struct_layout
 from .typemap import ctypes_signature, parse_prototype
 
 LIB_NAME = "libds4.dylib" if sys.platform == "darwin" else "libds4.so"
 _REBUILD = " Run `ds4py build` to rebuild the library and its manifest. "
-_loaded = None
+_loaded: Library | None = None
 _load_lock = threading.Lock()
 
 
@@ -37,12 +39,19 @@ def _dlopen(path: Path) -> ctypes.CDLL:
 
 
 class Library:
-    def __init__(self, path, manifest, validation, handle, bindings):
+    def __init__(
+        self,
+        path: Path,
+        manifest: Manifest,
+        validation: Validation,
+        handle: ctypes.CDLL,
+        bindings: Iterable[Binding],
+    ) -> None:
         self.path = path
         self.manifest = manifest
         self.validation = validation
         self._handle = handle
-        self._functions = {}
+        self._functions: dict[str, Callable[..., Any]] = {}
         for binding in bindings:
             if binding.name not in validation.available:
                 continue
@@ -59,17 +68,17 @@ class Library:
         self._free.argtypes = [ctypes.c_void_p]
         self._free.restype = None
 
-    def fn(self, name):
+    def fn(self, name: str) -> Callable[..., Any]:
         if name in self.validation.absent:
             raise MissingBinding(f"{name} is absent from this library")
         if name not in self._functions:
             raise MissingBinding(f"ds4py does not declare {name}")
         return self._functions[name]
 
-    def has(self, name) -> bool:
+    def has(self, name: str) -> bool:
         return name in self._functions
 
-    def free(self, ptr) -> None:
+    def free(self, ptr: int | ctypes.c_void_p | None) -> None:
         self._free(ptr)
 
 

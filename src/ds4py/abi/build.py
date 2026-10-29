@@ -1,6 +1,7 @@
 """Build a source mirror and publish immutable library/manifest generations."""
 
 from collections import deque
+from collections.abc import Mapping, Sequence
 import fcntl
 import hashlib
 from importlib.resources import files
@@ -12,7 +13,7 @@ import sys
 import tempfile
 from typing import TextIO
 
-from ds4py._native.bindings import all_bindings
+from ds4py._native.bindings import Binding, all_bindings
 from ds4py._native.loader import LIB_NAME
 from ds4py._native.structs import STRUCTS, struct_layout
 from ds4py._native.typemap import TYPE_MAP_VERSION
@@ -75,6 +76,7 @@ def _run_make(farm: Path, backend: str, cc: str, jobs: int | None, log: TextIO) 
     tail: deque[str] = deque(maxlen=40)
     with subprocess.Popen(command, cwd=farm, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, text=True) as process:
+        assert process.stdout is not None
         for line in process.stdout:
             log.write(line)
             log.flush()
@@ -133,7 +135,17 @@ def install(
                 shutil.rmtree(staged_dir)
 
 
-def _build_manifest(src, lib, backend, cc, work, bindings, signatures, log, metal_sources):
+def _build_manifest(
+    src: Path,
+    lib: Path,
+    backend: str,
+    cc: str,
+    work: Path,
+    bindings: Sequence[Binding],
+    signatures: Mapping[str, probe.ProbeResult],
+    log: TextIO,
+    metal_sources: dict[str, str],
+) -> Manifest:
     layouts = probe.probe_layouts(src, cc, work / "layouts")
     hashes = probe.header_hashes(src)
     known = probe.headers_known(hashes)

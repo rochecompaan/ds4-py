@@ -1,11 +1,18 @@
 """ctypes adapters for the pinned native chat-rendering calls."""
 import ctypes as C
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 from ds4py.errors import EngineError
 from . import structs
 
+if TYPE_CHECKING:
+    from .api import NativeEngine
 
-def append_delta(handle, prefix, function: str, *args) -> list[int]:
+
+def append_delta(
+    handle: NativeEngine, prefix: Sequence[int], function: str, *args: Any,
+) -> list[int]:
     """Call a native append function with C-owned storage and return its delta."""
     original = tuple(prefix)
     tokens = structs.Tokens()
@@ -28,7 +35,7 @@ def append_delta(handle, prefix, function: str, *args) -> list[int]:
         handle._lib.fn("ds4_tokens_free")(C.byref(tokens))
 
 
-def qwen_reasoning_effort(handle, mode) -> str | None:
+def qwen_reasoning_effort(handle: NativeEngine, mode: int) -> str | None:
     """Borrow ds4's static effort string; a null result is a borrowed success."""
     handle._assert_thread()
     if not handle.raw:
