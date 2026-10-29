@@ -4,6 +4,9 @@ This directory contains the 12-task, two-agent M3 comparison and its six gates.
 The normal test suite uses fakes. Only the explicit commands below load the live
 model or run the agents.
 
+See [Workspace isolation and hidden grading](isolation.md) for details on task
+isolation and grader visibility.
+
 ## Fixed inputs and machine requirements
 
 - Model: the same absolute `ds4f-q2` GGUF for C, ds4-py, restore checks, and C
