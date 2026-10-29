@@ -10,7 +10,7 @@ from typing import Callable, Iterator, Sequence, TypeVar
 from ds4py._native.protocol import (
     EngineConfig, EngineHandle, EngineInfo, Native, SessionHandle, Snapshot, SyncStatus,
 )
-from ds4py.errors import CheckpointError, EngineError
+from ds4py.errors import CheckpointError, EmptyPromptError, EngineError
 from .decode import GenerateJob, generate
 from .events import Checkpointed, Dropped, Event, Interrupted, Loaded, Prefill, Saved, Stopped, Synced
 from .plan import Plan, plan_sync
@@ -47,8 +47,8 @@ class SavePayloadJob:
     file: object
 
     def __post_init__(self):
-        if not isinstance(self.header, bytes) or len(self.header) != 20:
-            raise ValueError("a payload header must be exactly 20 bytes (a 20-byte header)")
+        if not isinstance(self.header, bytes):
+            raise ValueError("payload header must be bytes")
 
 
 @dataclass(frozen=True)
@@ -58,14 +58,6 @@ class LoadPayloadJob:
     file: object
     payload_bytes: int
     transcript: Transcript
-
-
-# The only sync rejection a reset may absorb: both libds4 and FakeSession
-# refuse an empty prompt before touching native state.
-EMPTY_PROMPT_REJECTIONS = frozenset({
-    "empty prompt",
-    "prompt must be nonempty and shorter than context",
-})
 
 
 @dataclass(frozen=True)
@@ -328,10 +320,8 @@ class EngineWorker:
     def _reset(self, session):
         try:
             status = session.sync(())
-        except EngineError as error:
-            if str(error) not in EMPTY_PROMPT_REJECTIONS:
-                raise
-            # This native build rejects an empty prompt. Rewind to the same
+        except EmptyPromptError:
+            # The native contract rejects an empty prompt. Rewind to the same
             # empty prefix; the next sync then rebuilds from position zero.
             session.invalidate()
             session.rewind(0)

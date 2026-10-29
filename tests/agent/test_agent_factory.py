@@ -4,7 +4,6 @@ from ds4py.agent import build_agent_components
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai_harness import AskUser
-from pydantic_ai_harness.step_persistence import FileStepStore
 
 
 class MockSession:
@@ -52,10 +51,7 @@ def test_build_agent_components_behavior(tmp_path):
 
     base_model = FunctionModel(scripted, stream_function=stream_function)
     base_model.session = MockSession()
-    store = FileStepStore(tmp_path / ".steps")
-    components = build_agent_components(
-        base_model, tmp_path, interactive=False, step_store=store,
-    )
+    components = build_agent_components(base_model, tmp_path, interactive=False)
 
     result = asyncio.run(components.agent.run("read hello"))
 
@@ -68,13 +64,11 @@ def test_build_agent_components_behavior(tmp_path):
     events_file = tmp_path / "events.jsonl"
     assert events_file.exists()
     assert len(events_file.read_text().strip().splitlines()) > 0
-    snapshots = asyncio.run(store.list_snapshots(run_id=result.run_id))
-    assert snapshots
-    assert asyncio.run(store.latest_snapshot(run_id=result.run_id)) is not None
 
 
 def test_factory_wires_yolo_and_persistent_instructions(tmp_path):
     from ds4py.capabilities.approvals import DS4Approvals
+    from pydantic_ai_harness import StepPersistence
 
     def scripted(messages, info):
         return ModelResponse(parts=[TextPart("done")])
@@ -89,6 +83,7 @@ def test_factory_wires_yolo_and_persistent_instructions(tmp_path):
     )
 
     approvals = next(c for c in components.components if isinstance(c, DS4Approvals))
+    assert not any(isinstance(c, StepPersistence) for c in components.components)
     result = asyncio.run(components.agent.run("hello"))
 
     assert approvals.yolo is True

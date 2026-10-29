@@ -408,6 +408,7 @@ def test_canonical_snapshot_write_failure_preserves_the_model_error(
     ]
     assert terminal[-1]["payload"]["status"] == "error"
     assert "scripted model failure" in terminal[-1]["payload"]["error"]
+    assert terminal[-1]["payload"]["persistence_error"] == "canonical snapshot write failed"
 
 
 class BlockingModel(DS4Model):

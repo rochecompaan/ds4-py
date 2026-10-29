@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from bench.m3 import clone_workspace, prepare_exercise
-from bench.metrics import ToolAccounting
+from bench.metrics import EventSummary, ToolAccounting
 from bench.replay_m3 import ReplayResult
 from bench.report import build_report
 from bench.restore_check import CheckResult, RestoreResult, RestoreSummary
@@ -39,17 +39,54 @@ def config(tmp_path, agent="ds4py"):
 
 def result(task_id="task", agent="ds4py", **changes):
     save = Path("/saves") / task_id / agent
+    trace = Path("/traces") / task_id / agent
+    metric_values = dict(
+        wall_seconds=10, progress_events=3, tokens=20, tool_calls=1,
+        avg_prefill_reuse=0.8, non_extend_rounds=0,
+        tool_accounting=ToolAccounting(1, 1) if agent == "ds4py" else None,
+    )
+    for name in EventSummary.__dataclass_fields__:
+        if name in changes:
+            metric_values[name] = changes.pop(name)
     values = dict(
-        task_id=task_id, agent=agent, passed=True, attempts=1, wall_seconds=10,
-        progress_events=3, tokens=20, tool_calls=1, avg_prefill_reuse=0.8,
-        non_extend_rounds=0, save_dir=save if agent == "ds4py" else None,
-        trace_path=Path("/traces") / task_id / agent,
+        task_id=task_id, agent=agent, passed=True, attempts=1,
+        summary=EventSummary(**metric_values),
         attempt_save_dirs=(save,) if agent == "ds4py" else (),
-        tool_accounting=ToolAccounting(1, 1),
-        grader_outputs=("grader secret output",),
+        attempt_trace_paths=(trace,), grader_outputs=("grader secret output",),
     )
     values.update(changes)
     return TaskRunResult(**values)
+
+
+def with_summary(item, **changes):
+    return replace(item, summary=replace(item.summary, **changes))
+
+
+def test_task_result_preserves_summary_evidence_and_derives_last_attempt_paths():
+    summary = EventSummary(
+        wall_seconds=2, progress_events=3, tokens=4, tool_calls=1,
+        avg_prefill_reuse=0.625, non_extend_rounds=1,
+        allowed_non_extend_rounds=1, non_extension_reasons=("compaction",),
+        reuse_ratios=(0.5, 0.75),
+    )
+    first_save = Path("/saves/first")
+    last_save = Path("/saves/last")
+    first_trace = Path("/traces/first")
+    last_trace = Path("/traces/last")
+    run = TaskRunResult(
+        task_id="task", agent="ds4py", passed=True, attempts=2, summary=summary,
+        attempt_save_dirs=(first_save, last_save),
+        attempt_trace_paths=(first_trace, last_trace),
+    )
+
+    assert run.summary is summary
+    assert run.non_extension_reasons == ("compaction",)
+    assert run.reuse_ratios == (0.5, 0.75)
+    assert run.save_dir == last_save
+    assert run.trace_path == last_trace
+    data = build_report([run], RestoreSummary()).to_dict()
+    assert data["tasks"][0]["summary"]["non_extension_reasons"] == ["compaction"]
+    assert data["tasks"][0]["summary"]["reuse_ratios"] == [0.5, 0.75]
 
 
 def healthy_restore(results):
@@ -121,14 +158,33 @@ def test_c_and_python_run_sequentially_on_equivalent_tasks(tmp_path):
     assert all(item.passed for item in results)
     invocations = read_invocations(tmp_path)
     assert [item["agent"] for item in invocations] == ["c", "ds4py"]
+    assert results[0].tool_accounting is None
     assert not (tmp_path / "concurrency-violation").exists()
     assert not (results[0].save_dir or Path("missing")).exists() if results[0].save_dir else True
+
+
+def test_c_metrics_failure_leaves_tool_accounting_unavailable(tmp_path):
+    source = make_exercise(tmp_path)
+    workspace = prepare_exercise(source, tmp_path / "staged")
+    executable = tmp_path / "c-without-evidence.py"
+    executable.write_text("")
+    c_config = replace(
+        config(tmp_path, "c"), executable=(sys.executable, str(executable)),
+    )
+
+    completed = run_task(
+        workspace, c_config, tmp_path / "results",
+        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(command, 0, "pass", ""),
+    )
+
+    assert completed.errors
+    assert completed.tool_accounting is None
 
 
 def test_gates_one_to_five_pass_with_complete_evidence():
     c = result(agent="c", wall_seconds=10)
     python = result(wall_seconds=15, non_extend_rounds=2)
-    python = replace(python, allowed_non_extend_rounds=2)
+    python = with_summary(python, allowed_non_extend_rounds=2)
     report = build_report([c, python], healthy_restore([c, python]))
 
     assert all(report.gates[f"gate-{number}"].passed for number in range(1, 6))
@@ -148,12 +204,12 @@ def test_gate_one_allows_exactly_one_task_of_pass_slack():
 
 def test_gate_two_allows_bad_argument_retry_but_not_parser_error_or_missing_outcome():
     c = result(agent="c")
-    python = replace(result(), tool_accounting=ToolAccounting(2, 1, 0, 1))
+    python = with_summary(result(), tool_accounting=ToolAccounting(2, 1, 0, 1))
     assert build_report([c, python], healthy_restore([c, python])).gates["gate-2"].passed
 
-    parser_error = replace(python, parser_errors=1)
+    parser_error = with_summary(python, parser_errors=1)
     assert not build_report([c, parser_error], healthy_restore([c, parser_error])).gates["gate-2"].passed
-    missing = replace(python, tool_accounting=ToolAccounting(2, 1, 0, 0))
+    missing = with_summary(python, tool_accounting=ToolAccounting(2, 1, 0, 0))
     assert not build_report([c, missing], healthy_restore([c, missing])).gates["gate-2"].passed
 
 
@@ -162,7 +218,9 @@ def test_gate_three_enforces_time_and_only_unexplained_non_extensions():
     python = result(wall_seconds=15.01)
     assert not build_report([c, python], healthy_restore([c, python])).gates["gate-3"].passed
 
-    on_time = replace(python, wall_seconds=15, invalid_non_extend_rounds=1, non_extend_rounds=1)
+    on_time = with_summary(
+        python, wall_seconds=15, invalid_non_extend_rounds=1, non_extend_rounds=1,
+    )
     assert not build_report([c, on_time], healthy_restore([c, on_time])).gates["gate-3"].passed
 
 
@@ -178,7 +236,7 @@ def test_gate_four_requires_interrupt_resume_and_explicit_approval():
 def test_gate_five_requires_restore_for_every_attempt():
     python = replace(result(attempts=2), attempts=2)
     saves = (Path("/saves/first"), Path("/saves/second"))
-    python = replace(python, attempts=2, attempt_save_dirs=saves, save_dir=saves[-1])
+    python = replace(python, attempts=2, attempt_save_dirs=saves)
     c = result(agent="c")
     restore = healthy_restore([c, python])
     restore = replace(restore, runs=restore.runs[:1])
@@ -189,7 +247,7 @@ def test_gate_five_requires_restore_for_every_attempt():
 def test_gate_five_rejects_an_attempt_with_no_save_directory():
     c = result(agent="c")
     save = Path("/saves/only-one")
-    python = replace(result(), attempts=2, save_dir=save, attempt_save_dirs=(save,))
+    python = replace(result(), attempts=2, attempt_save_dirs=(save,))
     restore = healthy_restore([c, python])
 
     report = build_report([c, python], restore)

@@ -4,7 +4,7 @@ import threading
 from typing import Callable, Iterable, Mapping, Sequence
 import zlib
 
-from ds4py.errors import EngineError, MissingBinding
+from ds4py.errors import EmptyPromptError, EngineError, MissingBinding
 from . import fake_chat
 from .bindings import all_bindings
 from .protocol import EngineConfig, EngineInfo, SyncStatus, ThinkMode
@@ -249,7 +249,9 @@ class FakeSession(_Handle):
     def sync(self, tokens, *, progress=None, cancel=None):
         self._check()
         self._logits = None
-        if not tokens or len(tokens) >= self._ctx:
+        if not tokens:
+            raise EmptyPromptError("prompt must be nonempty and shorter than context")
+        if len(tokens) >= self._ctx:
             raise EngineError("prompt must be nonempty and shorter than context")
         target = list(tokens)
         start = len(self._tokens)

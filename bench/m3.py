@@ -231,20 +231,37 @@ def grade_workspace(workspace, *, runner=None):
     """Mount hidden tests, capture one grading result, then unmount them."""
     if not workspace.test_paths:
         raise PreparationError(f"{workspace.task_id}: no grading tests configured")
+    grader_config = workspace.grader_dir / "pytest.ini"
+    grader_config.write_text("[pytest]\naddopts =\n")
+    # Import pytest before adding the workspace package path. In particular,
+    # Python must not import an agent-provided sitecustomize during startup.
+    bootstrap = (
+        "import sys; import pytest; "
+        "sys.path.insert(0, sys.argv.pop(1)); "
+        "raise SystemExit(pytest.main(sys.argv[1:]))"
+    )
     command = [
-        sys.executable, "-m", "pytest", "-q",
-        f"--confcutdir={workspace.agent_dir}", *workspace.test_paths,
+        sys.executable, "-c", bootstrap, str(workspace.agent_dir / "src"),
+        "-q", "-c", str(grader_config),
+        f"--rootdir={workspace.grader_dir}", "--noconftest",
+        "-p", "no:cacheprovider",
+        *(str(workspace.agent_dir / name) for name in workspace.test_paths),
     ]
     environment = os.environ.copy()
-    pythonpath = str(workspace.agent_dir / "src")
-    if environment.get("PYTHONPATH"):
-        pythonpath += os.pathsep + environment["PYTHONPATH"]
-    environment["PYTHONPATH"] = pythonpath
+    agent_src = (workspace.agent_dir / "src").resolve()
+    pythonpath = [
+        entry for entry in environment.get("PYTHONPATH", "").split(os.pathsep)
+        if entry and Path(entry).resolve() != agent_src
+    ]
+    if pythonpath:
+        environment["PYTHONPATH"] = os.pathsep.join(pythonpath)
+    else:
+        environment.pop("PYTHONPATH", None)
     if runner is None:
         def runner(command, cwd, env):
             return subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
     with _mounted_tests(workspace):
-        completed = runner(command, workspace.agent_dir, environment)
+        completed = runner(command, workspace.grader_dir, environment)
     return GradeResult(completed.returncode == 0, _combined_output(completed))
 
 
@@ -283,6 +300,8 @@ def load_manifest(path):
 
     path = Path(path)
     data = yaml.safe_load(path.read_text())
+    if not isinstance(data, dict):
+        raise PreparationError(f"{path}: manifest must contain a mapping")
     required = {
         "repository", "commit", "selection_seed", "model", "ctx", "temperature",
         "seed", "max_attempts", "exercises", "repository_tasks",

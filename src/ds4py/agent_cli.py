@@ -2,7 +2,7 @@
 
 import argparse
 import asyncio
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import sys
 
@@ -71,18 +71,23 @@ def _think_mode(args) -> int:
     return ThinkMode.HIGH
 
 
-def command(args) -> int:
+def _approval_answerer(request):
+    detail = request.command or request.path or request.tool_name
+    print(f"Approve {request.tool_name}: {detail}? [y/N]", file=sys.stderr, flush=True)
+    answer = sys.stdin.readline()
+    if answer == "":
+        raise EOFError("approval input reached EOF")
+    return answer
+
+
+@contextmanager
+def open_runtime(args, project_dir, *, read_only=False):
+    """Open the canonical agent stack with an explicit CLI interaction policy."""
     from ds4py import open as open_engine
-    from ds4py.engine.prefix import load_prefix
     from ds4py.engine.sampling import SamplingPolicy
     from ds4py.model import DS4Model
-    from ds4py.noninteractive import run_noninteractive
-    from ds4py.prefill_trace import PrefillTraceWriter
     from ds4py.runtime import AgentRuntime
 
-    prompt = args.prompt
-    if args.prompt_file is not None:
-        prompt = args.prompt_file.read_bytes().decode("utf-8")
     with open_engine(
         args.model, ctx=args.ctx, backend=args.backend, think=_think_mode(args),
         seed=args.seed, threads=args.threads, lib=args.lib,
@@ -94,20 +99,38 @@ def command(args) -> int:
         )
         model = DS4Model(session, sampling=sampling, max_tokens=args.tokens)
         runtime = AgentRuntime(
-            model, Path.cwd(), read_only=args.read_only, yolo=args.yolo,
-            system=args.system,
+            model, project_dir, read_only=read_only, yolo=args.yolo,
+            system=args.system, interactive=not args.non_interactive,
+            answerer=None if args.yolo else _approval_answerer,
         )
         try:
-            if args.prefix_file is not None:
-                runtime.load_prefix(load_prefix(args.prefix_file))
-            trace = (PrefillTraceWriter(session, args.trace, think=engine.think)
-                     if args.trace is not None else nullcontext())
-            with trace:
-                if args.non_interactive:
-                    return asyncio.run(run_noninteractive(runtime, prompt))
-                return asyncio.run(_run_tui(runtime, prompt))
+            yield runtime
         finally:
             asyncio.run(runtime.close())
+
+
+def command(args) -> int:
+    from ds4py.engine.prefix import load_prefix
+    from ds4py.noninteractive import run_noninteractive
+    from ds4py.prefill_trace import PrefillTraceWriter
+
+    prompt = args.prompt
+    if args.prompt_file is not None:
+        prompt = args.prompt_file.read_bytes().decode("utf-8")
+    with open_runtime(args, Path.cwd(), read_only=args.read_only) as runtime:
+        if args.prefix_file is not None:
+            runtime.load_prefix(load_prefix(args.prefix_file))
+        trace = (
+            PrefillTraceWriter(
+                runtime.model.session, args.trace,
+                think=runtime.model.session.engine.think,
+            )
+            if args.trace is not None else nullcontext()
+        )
+        with trace:
+            if args.non_interactive:
+                return asyncio.run(run_noninteractive(runtime, prompt))
+            return asyncio.run(_run_tui(runtime, prompt))
 
 
 async def _run_tui(runtime, prompt):
@@ -126,6 +149,6 @@ def main(argv: list[str]) -> int:
         arg_parser.error("--non-interactive requires --prompt or --prompt-file")
     try:
         return command(args)
-    except (Ds4pyError, OSError, UnicodeError) as exc:
+    except (Ds4pyError, OSError, UnicodeError, ValueError) as exc:
         print(f"ds4py: {exc}", file=sys.stderr)
         return 1

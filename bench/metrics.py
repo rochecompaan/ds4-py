@@ -36,7 +36,7 @@ class EventSummary:
     allowed_non_extend_rounds: int = 0
     non_extension_reasons: tuple[str, ...] = ()
     parser_errors: int = 0
-    tool_accounting: ToolAccounting = ToolAccounting()
+    tool_accounting: ToolAccounting | None = ToolAccounting()
     reuse_ratios: tuple[float, ...] = ()
 
 
@@ -79,7 +79,7 @@ def _reuse(plan):
     return kind, reused, denominator
 
 
-def summarize_events(events, *, wall_seconds, require_tool_accounting=True):
+def summarize_events(events, *, wall_seconds):
     """Summarize one attempt's JSONL records without inventing missing values."""
     records = list(events)
     if not records or any(not isinstance(record, dict) for record in records):
@@ -161,7 +161,7 @@ def summarize_events(events, *, wall_seconds, require_tool_accounting=True):
         allowed_non_extend_rounds=allowed_non_extend,
         non_extension_reasons=tuple(reasons),
         parser_errors=parser_errors,
-        tool_accounting=accounting if require_tool_accounting else ToolAccounting(parsed, parsed),
+        tool_accounting=accounting,
         reuse_ratios=tuple(ratios),
     )
 
@@ -196,7 +196,7 @@ def metrics_from_trace(trace, *, wall_seconds, progress_events, tool_calls):
         tool_calls=calls,
         avg_prefill_reuse=sum(ratios) / len(ratios),
         non_extend_rounds=non_extend,
-        tool_accounting=ToolAccounting(calls, calls),
+        tool_accounting=None,
         reuse_ratios=tuple(ratios),
     )
 
@@ -207,10 +207,12 @@ def combine_summaries(summaries):
     if not values:
         raise MetricError("cannot combine zero attempts")
     ratios = tuple(ratio for value in values for ratio in value.reuse_ratios)
-    accounting = ToolAccounting(*(
-        sum(value.tool_accounting.__dict__[field] for value in values)
-        for field in ("parsed", "executed", "refused", "retried")
-    ))
+    accounting = None
+    if all(value.tool_accounting is not None for value in values):
+        accounting = ToolAccounting(*(
+            sum(value.tool_accounting.__dict__[field] for value in values)
+            for field in ("parsed", "executed", "refused", "retried")
+        ))
     reasons = tuple(dict.fromkeys(
         reason for value in values for reason in value.non_extension_reasons
     ))

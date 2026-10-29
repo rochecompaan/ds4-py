@@ -151,7 +151,9 @@ def build_report(task_results, restore_results, replay_results=None):
         reasons = []
         if item.parser_errors:
             reasons.append(f"parser_error stops={item.parser_errors}")
-        if not accounting.complete:
+        if accounting is None:
+            reasons.append("tool outcome accounting unavailable")
+        elif not accounting.complete:
             reasons.append(
                 f"tool outcomes {accounting.accounted}/{accounting.parsed} accounted"
             )
@@ -193,10 +195,7 @@ def build_report(task_results, restore_results, replay_results=None):
         f"interruption: {interruption.detail}; approval: {approval.detail}",
     ))
 
-    expected = [
-        save for item in python
-        for save in (item.attempt_save_dirs or ((item.save_dir,) if item.save_dir else ()))
-    ]
+    expected = [save for item in python for save in item.attempt_save_dirs]
     restored = _restore_runs(restore_results)
     missing = [str(save) for save in expected if save not in restored or not restored[save].passed]
     missing.extend(

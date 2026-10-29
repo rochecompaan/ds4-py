@@ -203,7 +203,18 @@ class Session:
             self._lifecycle.emit("switching", old=old, new=new_id)
             self._lifecycle.emit("session_end", old=old)
             self._lifecycle.close_states()
-            restored = restore() if restore is not None else None
+            try:
+                restored = restore() if restore is not None else None
+            except BaseException as error:
+                # Restore can reject a snapshot after old scoped state is closed.
+                # Balance the lifecycle and adopt the target identity, then
+                # preserve the original failure for the caller.
+                self._lifecycle.set_id(new_id)
+                self._lifecycle.emit(
+                    "session_start", old=old, new=new_id,
+                    status="error", error=str(error),
+                )
+                raise
             self._lifecycle.set_id(new_id)
             self._lifecycle.emit("session_start", old=old, new=new_id)
             self._lifecycle.emit(

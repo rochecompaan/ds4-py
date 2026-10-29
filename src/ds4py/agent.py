@@ -11,10 +11,8 @@ from pydantic_ai_harness import (
     RepoContext,
     Shell,
     Skills,
-    StepPersistence,
     ToolOutputLimits,
 )
-from pydantic_ai_harness.step_persistence import FileStepStore
 
 from ds4py.capabilities.approvals import DS4Approvals
 from ds4py.capabilities.run_record import DS4RunRecord
@@ -37,13 +35,10 @@ def build_agent_components(
     system=None,
     interactive=False,
     answerer=None,
-    step_store=None,
     session_dir=None,
 ):
     """Build the default capability list and the harness agent."""
     project_dir = Path(project_dir)
-    if step_store is None:
-        step_store = FileStepStore(session_dir or (project_dir / ".steps"))
 
     notes = DS4SystemNotes(model.session)
     model.note_provider = notes
@@ -64,7 +59,6 @@ def build_agent_components(
         ),
         ToolOutputLimits(),
         DS4RunRecord(model.session, (session_dir or project_dir) / "events.jsonl"),
-        StepPersistence(store=step_store),
         Instrumentation(),
         notes,
         DS4Approvals(answerer, yolo=yolo, project_dir=project_dir),

@@ -57,14 +57,19 @@ def test_save_syncs_the_trailing_eos_before_writing_header_and_payload(
         assert len(data) == len(HEADER) + saved.payload_bytes
 
 
-def test_save_refuses_a_header_that_is_not_the_fixed_twenty_bytes(tmp_path):
+def test_save_accepts_a_caller_header_without_a_store_length_policy(tmp_path):
+    header = b"short"
+    path = tmp_path / "session.kv"
     with fake_engine() as engine:
         session = engine.session()
         session.append_tokens([5, 6], "user")
-        with (tmp_path / "session.kv").open("w+b") as file:
-            with pytest.raises(ValueError, match="20-byte"):
-                session.save_payload(file, header=b"short")
-            assert file.tell() == 0 and not file.closed
+        with path.open("w+b") as file:
+            saved = session.save_payload(file, header=header)
+            assert file.tell() == len(header) + saved.payload_bytes
+
+    data = path.read_bytes()
+    assert data[:len(header)] == header
+    assert len(data) == len(header) + saved.payload_bytes
 
 
 def test_save_closes_the_staged_payload_on_success_and_write_failure(

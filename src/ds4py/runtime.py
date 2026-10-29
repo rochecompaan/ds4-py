@@ -148,7 +148,6 @@ class AgentRuntime:
             system=system,
             interactive=interactive,
             answerer=answerer,
-            step_store=FileStepStore(self._session_dir / "steps"),
             session_dir=self._session_dir,
         )
         self._agent = self.components.agent
@@ -260,6 +259,7 @@ class AgentRuntime:
 
     async def _fail(self, run_id: str, status: str, error, *, persist=True) -> None:
         self._status = status
+        persistence_error = None
         if persist:
             try:
                 snapshot = await self._latest(run_id)
@@ -268,14 +268,18 @@ class AgentRuntime:
                         run_id, _bindable(list(snapshot.messages)), snapshot=snapshot,
                     )
                     self._note_title()
-            except Exception as persistence_error:  # noqa: BLE001 - preserve the run error
+            except Exception as caught:  # noqa: BLE001 - preserve and report both failures
+                persistence_error = caught
                 if error is None:
-                    error = persistence_error
+                    error = caught
         self._session.emit(
             "run_end",
             run_id=run_id,
             status=status,
             error=None if error is None else str(error),
+            persistence_error=(
+                None if persistence_error is None else str(persistence_error)
+            ),
         )
 
     async def run(self, prompt: str):

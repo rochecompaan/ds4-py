@@ -1,7 +1,7 @@
 """Sequential M3 agent runner and per-task evidence collection."""
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import math
 import os
@@ -24,7 +24,6 @@ from bench.restore_check import CheckResult, RestoreSummary, check_result_saves
 from bench.metrics import (
     EventSummary,
     MetricError,
-    ToolAccounting,
     combine_summaries,
     metrics_from_trace,
     summarize_events,
@@ -49,24 +48,16 @@ class AgentConfig:
         object.__setattr__(self, "executable", tuple(str(item) for item in self.executable))
 
 
+_SUMMARY_FIELDS = frozenset(EventSummary.__dataclass_fields__)
+
+
 @dataclass(frozen=True)
 class TaskRunResult:
     task_id: str
     agent: str
     passed: bool
     attempts: int
-    wall_seconds: float
-    progress_events: int
-    tokens: int
-    tool_calls: int
-    avg_prefill_reuse: float | None
-    non_extend_rounds: int
-    save_dir: Path | None
-    trace_path: Path | None
-    invalid_non_extend_rounds: int = 0
-    allowed_non_extend_rounds: int = 0
-    parser_errors: int = 0
-    tool_accounting: ToolAccounting = ToolAccounting()
+    summary: EventSummary
     grader_outputs: tuple[str, ...] = ()
     attempt_save_dirs: tuple[Path, ...] = ()
     attempt_trace_paths: tuple[Path, ...] = ()
@@ -76,13 +67,27 @@ class TaskRunResult:
         if self.attempts not in {1, 2}:
             raise ValueError("attempts must be one or two")
         for name in ("progress_events", "tokens", "tool_calls", "non_extend_rounds"):
-            value = getattr(self, name)
+            value = getattr(self.summary, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"{name} must be nonnegative")
-        if not math.isfinite(self.wall_seconds) or self.wall_seconds < 0:
+        if not math.isfinite(self.summary.wall_seconds) or self.summary.wall_seconds < 0:
             raise ValueError("wall_seconds must be finite and nonnegative")
-        if self.avg_prefill_reuse is not None and not 0 <= self.avg_prefill_reuse <= 1:
+        reuse = self.summary.avg_prefill_reuse
+        if reuse is not None and not 0 <= reuse <= 1:
             raise ValueError("avg_prefill_reuse must be in [0,1]")
+
+    def __getattr__(self, name):
+        if name in _SUMMARY_FIELDS:
+            return getattr(self.summary, name)
+        raise AttributeError(f"{type(self).__name__} has no attribute {name!r}")
+
+    @property
+    def save_dir(self):
+        return self.attempt_save_dirs[-1] if self.attempt_save_dirs else None
+
+    @property
+    def trace_path(self):
+        return self.attempt_trace_paths[-1] if self.attempt_trace_paths else None
 
 
 def _option_number(value):
@@ -213,7 +218,7 @@ def load_events(path):
 
 
 def _empty_summary(wall_seconds):
-    return EventSummary(wall_seconds, 0, 0, 0, None, 0)
+    return EventSummary(wall_seconds, 0, 0, 0, None, 0, tool_accounting=None)
 
 
 def _trace_tokens(path):
@@ -230,10 +235,9 @@ def _c_tool_calls(log_text):
 
 def _attempt_summary(config, events_path, trace_path, log_text, wall_seconds):
     if events_path.is_file():
-        summary = summarize_events(
-            load_events(events_path), wall_seconds=wall_seconds,
-            require_tool_accounting=config.agent == "ds4py",
-        )
+        summary = summarize_events(load_events(events_path), wall_seconds=wall_seconds)
+        if config.agent == "c":
+            summary = replace(summary, tool_accounting=None)
         _trace, tokens = _trace_tokens(trace_path)
         if tokens != summary.tokens:
             raise MetricError(
@@ -328,18 +332,7 @@ def run_task(workspace, config, results_root, *, grade_runner=None, clock=time.m
         agent=config.agent,
         passed=grades[-1].passed,
         attempts=len(grades),
-        wall_seconds=summary.wall_seconds,
-        progress_events=summary.progress_events,
-        tokens=summary.tokens,
-        tool_calls=summary.tool_calls,
-        avg_prefill_reuse=summary.avg_prefill_reuse,
-        non_extend_rounds=summary.non_extend_rounds,
-        save_dir=save_dirs[-1] if save_dirs else None,
-        trace_path=trace_paths[-1],
-        invalid_non_extend_rounds=summary.invalid_non_extend_rounds,
-        allowed_non_extend_rounds=summary.allowed_non_extend_rounds,
-        parser_errors=summary.parser_errors,
-        tool_accounting=summary.tool_accounting,
+        summary=summary,
         grader_outputs=tuple(grade.output for grade in grades),
         attempt_save_dirs=tuple(save_dirs),
         attempt_trace_paths=tuple(trace_paths),

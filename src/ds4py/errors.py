@@ -37,6 +37,10 @@ class EngineError(Ds4pyError):
     """Engine failure."""
 
 
+class EmptyPromptError(EngineError):
+    """The native session contract rejects an empty prompt."""
+
+
 class ModelFileError(EngineError):
     """ModelFile failure."""
 

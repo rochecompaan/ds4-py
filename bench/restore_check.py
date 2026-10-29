@@ -230,42 +230,12 @@ async def switch_via_command(runtime, session_id):
     return await registry.execute(f"/switch {session_id}")
 
 
-def _approval_answerer(request):
-    detail = request.command or request.path or request.tool_name
-    print(f"Approve {request.tool_name}: {detail}? [y/N]", file=sys.stderr, flush=True)
-    answer = sys.stdin.readline()
-    if answer == "":
-        raise EOFError("approval input reached EOF")
-    return answer
-
-
 @contextmanager
 def _runtime(args, *, read_only=False):
-    from ds4py import open as open_engine
-    from ds4py.agent_cli import _think_mode
-    from ds4py.engine.sampling import SamplingPolicy
-    from ds4py.model import DS4Model
-    from ds4py.runtime import AgentRuntime
+    from ds4py.agent_cli import open_runtime
 
-    with open_engine(
-        args.model, ctx=args.ctx, backend=args.backend, think=_think_mode(args),
-        seed=args.seed, threads=args.threads, lib=args.lib,
-    ) as engine:
-        session = engine.session()
-        sampling = SamplingPolicy.for_engine(
-            engine.info, temperature=args.temp, top_p=args.top_p,
-            min_p=args.min_p, seed=args.seed,
-        )
-        runtime = AgentRuntime(
-            DS4Model(session, sampling=sampling, max_tokens=args.tokens), Path.cwd(),
-            read_only=read_only, yolo=args.yolo,
-            interactive=not args.non_interactive,
-            answerer=None if args.yolo else _approval_answerer,
-        )
-        try:
-            yield runtime
-        finally:
-            asyncio.run(runtime.close())
+    with open_runtime(args, Path.cwd(), read_only=read_only) as runtime:
+        yield runtime
 
 
 @contextmanager

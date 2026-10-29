@@ -65,8 +65,10 @@ class DS4Approvals(AbstractCapability):
         pattern = None
         if tool_name in _COMMAND_TOOLS:
             command = args.get("command", "")
-            if not command:
-                return args
+            if not isinstance(command, str) or not command:
+                raise SkipToolExecution(
+                    ToolDenied(f"Tool {tool_name} denied: unrecognized arguments.")
+                )
             try:
                 parts = shlex.split(command)
             except ValueError:
@@ -75,7 +77,9 @@ class DS4Approvals(AbstractCapability):
         else:
             path_value = args.get("path") or args.get("file_path")
             if not path_value:
-                return args
+                raise SkipToolExecution(
+                    ToolDenied(f"Tool {tool_name} denied: unrecognized arguments.")
+                )
             candidate = Path(path_value)
             if not candidate.is_absolute():
                 candidate = self.project_dir / candidate

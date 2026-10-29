@@ -10,7 +10,7 @@ from ds4py._native.fake import FakeEngine, FakeNative, FakeSession, reply
 from ds4py._native.protocol import SyncStatus
 from ds4py.engine.events import Stopped, Synced
 from ds4py.engine.lifecycle import SessionEvent
-from ds4py.errors import EngineError
+from ds4py.errors import EmptyPromptError, EngineError
 
 
 class EmptySyncSession(FakeSession):
@@ -194,7 +194,7 @@ def test_new_publishes_end_then_closes_state_then_resets_then_starts():
 
 @pytest.mark.parametrize("message", EMPTY_PROMPT_REJECTIONS)
 def test_new_rewinds_when_the_native_rejects_the_empty_reset_prompt(message):
-    engine, native = rejecting_engine(EngineError(message))
+    engine, native = rejecting_engine(EmptyPromptError(message))
     with engine:
         session = engine.session()
         session.append_user("hello")
@@ -221,8 +221,11 @@ def test_new_rewinds_when_the_native_rejects_the_empty_reset_prompt(message):
         assert list(session.run_round(max_tokens=1))[-1] == Stopped("max_tokens")
 
 
-def test_new_propagates_an_unrelated_native_sync_error_without_starting_a_session():
-    failure = EngineError("native device failure during sync")
+@pytest.mark.parametrize("failure", [
+    EngineError("native device failure during sync"),
+    EngineError("empty prompt"),
+])
+def test_new_propagates_an_unrelated_native_sync_error_without_starting_a_session(failure):
     engine, native = rejecting_engine(failure)
     with engine:
         session = engine.session()
@@ -297,6 +300,38 @@ def test_switch_publishes_exact_order_and_runs_restore_while_idle():
         assert record[5].session_id == target
         assert state.closes == 1
         assert session.transcript.tokens == tokens
+        assert session.state("jobs", lambda: CloseCounter()) is not state
+
+
+def test_switch_restore_failure_still_starts_the_target_session():
+    engine, _ = reset_engine(script=reply(b"ok"))
+    with engine:
+        session = engine.session()
+        record = []
+        state = CloseCounter(record)
+        session.state("jobs", lambda: state)
+        old = session.id
+        target = "b" * 32
+        session.on_event(lambda event: record.append(event))
+        failure = EngineError("restore rejected")
+
+        def restore():
+            record.append("restore")
+            raise failure
+
+        with pytest.raises(EngineError) as caught:
+            session.switch(target, restore)
+
+        assert caught.value is failure
+        assert session.id == target
+        assert kinds(record) == [
+            "switching", "session_end", "close", "restore", "session_start",
+        ]
+        assert record[-1].session_id == target
+        assert record[-1].payload == {
+            "old": old, "new": target, "status": "error", "error": "restore rejected",
+        }
+        assert state.closes == 1
         assert session.state("jobs", lambda: CloseCounter()) is not state
 
 

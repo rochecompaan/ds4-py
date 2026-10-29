@@ -4,7 +4,7 @@ import os
 import re
 from pathlib import Path
 import pytest
-from ds4py.errors import AbiMismatch, EngineError, EngineLockedError, ModelFileError
+from ds4py.errors import AbiMismatch, EmptyPromptError, EngineError, EngineLockedError, ModelFileError
 from ds4py._native.api import InstanceLock, LibNative, lock_path, engine_lock_path, engine_options
 from ds4py._native.protocol import EngineConfig, ThinkMode
 from ds4py._native.modelcheck import exit_error, NATIVE_REFUSED, PYTHON_ERROR
@@ -177,7 +177,7 @@ def test_callbacks_errors_and_thread_confinement(stub_engine):
         assert caught.value is error
     assert c.stub_clears() == 6
     assert session.sync([1], cancel=lambda: True) is SyncStatus.INTERRUPTED
-    with pytest.raises(EngineError, match="empty prompt"):
+    with pytest.raises(EmptyPromptError, match="empty prompt"):
         session.sync([])
     with pytest.raises(EngineError, match="eval rejected"):
         session.eval(8)

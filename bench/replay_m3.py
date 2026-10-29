@@ -42,10 +42,6 @@ class ReplayResult:
     trace_path: Path | None = None
 
 
-def forbid_tool_execution(*_args):
-    raise ReplayMismatch("C replay requested tool execution")
-
-
 def select_c_traces(task_results, *, expected_tasks=12):
     """Select every C attempt in manifest order; ds4-py self-replay is forbidden."""
     tasks = [item for item in task_results if item.agent == "c"]
@@ -56,7 +52,7 @@ def select_c_traces(task_results, *, expected_tasks=12):
         )
     selected = []
     for item in tasks:
-        paths = item.attempt_trace_paths or ((item.trace_path,) if item.trace_path else ())
+        paths = item.attempt_trace_paths
         if len(paths) != item.attempts or any(path is None for path in paths):
             raise ReplaySelectionError(
                 f"{item.task_id}: {len(paths)}/{item.attempts} C attempt traces are present"
@@ -143,8 +139,7 @@ def _check_round(engine, task_id, ordinal, round_, events, transcript):
                 raise ReplayMismatch(
                     f"{task_id} trace round {ordinal}: tool stanza differs at byte split {split}"
                 )
-    # Parsing a call is the terminal boundary. The empty toolset has no
-    # executable path, and tool_executor is a tripwire for future changes.
+    # Parsing a call is the terminal boundary; replay never executes it.
     return tool_call, stopped.reason
 
 
@@ -162,7 +157,7 @@ def generation_limit(engine, round_):
     return len(round_.sampled) if round_.prefix_only or round_.context_limited else len(round_.sampled) + 1
 
 
-def replay_round(engine, policy, rng, task_id, ordinal, round_, *, tool_executor=forbid_tool_execution):
+def replay_round(engine, policy, rng, task_id, ordinal, round_):
     """Replay one C-owned prompt without preflight, translation, or tool calls."""
     transcript = Transcript()
     if round_.prompt:
@@ -184,14 +179,13 @@ def replay_round(engine, policy, rng, task_id, ordinal, round_, *, tool_executor
     )
 
 
-def replay_trace(engine, trace, *, task_id="trace", tool_executor=forbid_tool_execution):
+def replay_trace(engine, trace, *, task_id="trace"):
     """Reuse one C-capture RNG across rounds, resetting it for each C attempt."""
     policy = SamplingPolicy.for_engine(engine.info, temperature=0.0, seed=1)
     rng = Rng(1)
     return tuple(
         replay_round(
             engine, policy, rng, task_id, ordinal, round_,
-            tool_executor=tool_executor,
         )
         for ordinal, round_ in enumerate(trace.rounds)
     )
@@ -205,8 +199,7 @@ def _validate_selection(selected):
         )
 
 
-def replay_with_engine(engine, selected, *, require_full_set=True,
-                       tool_executor=forbid_tool_execution):
+def replay_with_engine(engine, selected, *, require_full_set=True):
     """Replay selected C files sequentially on one already-open engine."""
     if require_full_set:
         _validate_selection(selected)
@@ -237,7 +230,6 @@ def replay_with_engine(engine, selected, *, require_full_set=True,
             try:
                 result = replay_round(
                     engine, policy, rng, task_id, ordinal, round_,
-                    tool_executor=tool_executor,
                 )
             except (Ds4pyError, ReplayMismatch) as error:
                 result = ReplayResult(

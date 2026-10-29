@@ -141,6 +141,7 @@ def test_trace_metrics_use_committed_samples_and_prefix_extension():
     assert summary.avg_prefill_reuse == pytest.approx((0.8 + 0.25) / 3)
     assert summary.non_extend_rounds == 1
     assert summary.invalid_non_extend_rounds == 0
+    assert summary.tool_accounting is None
 
 
 def test_trace_reuse_rejects_inconsistent_cached_prefix():

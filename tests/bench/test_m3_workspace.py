@@ -10,8 +10,10 @@ sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from bench.m3 import (
     BenchmarkError,
+    PreparationError,
     clone_workspace,
     grade_workspace,
+    load_manifest,
     prepare_exercise,
     prepare_repository_task,
     run_attempts,
@@ -102,7 +104,8 @@ def test_attempts_stop_at_two_and_cleanup_survives_failures(tmp_path):
         calls.append((attempt, feedback))
 
     def fail(command, cwd, env):
-        assert (cwd / HIDDEN_TEST).is_file()
+        assert cwd == workspace.grader_dir
+        assert (workspace.agent_dir / HIDDEN_TEST).is_file()
         return subprocess.CompletedProcess(command, 1, stdout="still failing", stderr="")
 
     grades = run_attempts(workspace, agent, runner=fail)
@@ -189,3 +192,39 @@ def test_glm_patch_fails_focused_test_and_clean_tree_passes(tmp_path):
     assert clean_result.passed, clean_result.output
     assert not patched_result.passed
     assert "test_glm" in patched_result.output
+
+
+def test_workspace_cannot_bypass_grading_with_startup_or_pytest_configuration(tmp_path):
+    source = make_exercise(tmp_path, initial="bad")
+    workspace = prepare_exercise(source, tmp_path / "staged")
+    agent_dir = workspace.agent_dir
+    (agent_dir / "conftest.py").write_text(
+        "import solution\nsolution.value = lambda: 'good'\n"
+    )
+    (agent_dir / "workspace_bypass.py").write_text(
+        "import solution\nsolution.value = lambda: 'good'\n"
+    )
+    (agent_dir / "pytest.ini").write_text("[pytest]\naddopts = -p workspace_bypass\n")
+    (agent_dir / "src").mkdir()
+    (agent_dir / "src" / "sitecustomize.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(agent_dir / 'solution.py')!r}).write_text("
+        '"def value():\\n    return \'good\'\\n")\n'
+    )
+
+    result = grade_workspace(workspace)
+
+    assert not result.passed
+    assert "return 'bad'" in (agent_dir / "solution.py").read_text()
+
+
+@pytest.mark.parametrize("content", ["", "---\n", "- not\n- a\n- mapping\n", "scalar\n"])
+def test_empty_or_non_mapping_manifest_is_a_path_aware_preparation_error(tmp_path, content):
+    path = tmp_path / "manifest.yaml"
+    path.write_text(content)
+
+    with pytest.raises(PreparationError) as caught:
+        load_manifest(path)
+
+    assert str(path) in str(caught.value)
+    assert "mapping" in str(caught.value)

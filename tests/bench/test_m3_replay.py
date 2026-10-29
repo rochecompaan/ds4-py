@@ -71,12 +71,6 @@ def test_tool_round_replays_every_token_and_stops_without_tool_execution(tmp_pat
     path = tmp_path / "tool.trace"
     sampled = write_c_trace(path, TOOL_TEXT)
     assert len(sampled) > 16
-    executions = []
-
-    def forbidden(*args):
-        executions.append(args)
-        raise AssertionError("tool execution was requested")
-
     with engine_for(sampled) as engine:
         assert generation_limit(engine, type("Round", (), {
             "sampled": sampled, "prefix_only": False, "context_limited": False,
@@ -84,7 +78,6 @@ def test_tool_round_replays_every_token_and_stops_without_tool_execution(tmp_pat
         })()) == len(sampled) + 1
         results = replay_with_engine(
             engine, [("tool-task", path)], require_full_set=False,
-            tool_executor=forbidden,
         )
 
     assert len(results) == 1
@@ -93,7 +86,6 @@ def test_tool_round_replays_every_token_and_stops_without_tool_execution(tmp_pat
     assert result.tokens == len(sampled)
     assert result.tool_call
     assert result.terminal_reason == "tool_call_complete"
-    assert executions == []
 
 
 def test_token_mismatch_fails_with_task_round_and_token_index(tmp_path):

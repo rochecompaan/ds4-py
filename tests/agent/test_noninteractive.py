@@ -95,6 +95,18 @@ def test_agent_cli_validates_noninteractive_prompt_and_supported_flags(argv):
         cli.main(argv)
 
 
+def test_agent_cli_reports_value_errors_without_a_traceback(monkeypatch, capsys):
+    import ds4py.agent_cli as agent_cli
+
+    def fail(_args):
+        raise ValueError("invalid prefix")
+
+    monkeypatch.setattr(agent_cli, "command", fail)
+
+    assert cli.main([]) == 1
+    assert capsys.readouterr().err == "ds4py: invalid prefix\n"
+
+
 def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(monkeypatch, tmp_path):
     import ds4py.model as model_module
     import ds4py.noninteractive as noninteractive_module
@@ -176,6 +188,7 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(monkeypatch
     runtime = next(item for item in created if isinstance(item, Runtime))
     assert runtime.kwargs == {
         "read_only": True, "yolo": True, "system": "persistent rules",
+        "interactive": False, "answerer": None,
     }
     assert [(turn.role, turn.content) for turn in runtime.loaded] == [
         ("user", "earlier"), ("assistant", "answer"),
@@ -207,6 +220,7 @@ def test_agent_cli_interactive_constructs_and_runs_tui(monkeypatch):
 
     class Runtime:
         def __init__(self, model, project_dir, **kwargs):
+            self.kwargs = kwargs
             created.append(self)
 
         async def close(self):
@@ -230,6 +244,8 @@ def test_agent_cli_interactive_constructs_and_runs_tui(monkeypatch):
     runtime = next(item for item in created if isinstance(item, Runtime))
     tui = next(item for item in created if isinstance(item, FakeTUI))
     assert tui.runtime is runtime
+    assert runtime.kwargs["interactive"] is True
+    assert callable(runtime.kwargs["answerer"])
     assert "tui-ran" in created
     assert created[-2:] == ["runtime-closed", "engine-closed"]
 

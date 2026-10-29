@@ -1,9 +1,11 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
 from ds4py.capabilities.approvals import DS4Approvals, ApprovalDecision, _MENU
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
@@ -135,6 +137,30 @@ def test_menu_mapping():
     assert _MENU["t"] == ApprovalDecision.TOOL
     assert _MENU["a"] == ApprovalDecision.PATTERN
     assert _MENU["s"] == ApprovalDecision.STOP
+
+
+@pytest.mark.parametrize(("tool_name", "args"), [
+    ("run_command", {}),
+    ("start_command", {"command": ""}),
+    ("write_file", {"content": "x"}),
+    ("edit_file", {"path": "", "file_path": ""}),
+    ("create_directory", {}),
+])
+def test_unrecognized_tool_arguments_fail_closed(tmp_path, tool_name, args):
+    def answerer(_request):
+        raise AssertionError("unrecognized arguments must not reach the answerer")
+
+    approvals = DS4Approvals(answerer, project_dir=tmp_path)
+
+    with pytest.raises(SkipToolExecution) as caught:
+        asyncio.run(approvals.before_tool_execute(
+            None,
+            call=SimpleNamespace(tool_name=tool_name),
+            tool_def=None,
+            args=args,
+        ))
+
+    assert "unrecognized arguments" in caught.value.result.message
 
 
 def test_eof_denies(tmp_path):

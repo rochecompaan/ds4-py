@@ -9,7 +9,7 @@ import threading
 import weakref
 
 from ds4py.abi.shaders import metal_source_env
-from ds4py.errors import EngineError, EngineLockedError
+from ds4py.errors import EmptyPromptError, EngineError, EngineLockedError
 from . import chat, payload, structs
 from .loader import Library
 from .modelcheck import inspect_model
@@ -332,6 +332,8 @@ class NativeSession(_Handle):
             self._call("ds4_session_set_progress", self._progress_fn, None)
             self._call("ds4_session_set_display_progress", self._progress_fn, None)
             self._call("ds4_session_set_cancel", self._cancel_fn, None)
+            if not tokens:
+                raise EmptyPromptError("empty prompt")
             error = C.create_string_buffer(512)
             status = self._call("ds4_session_sync", C.byref(_tokens(tokens)), error, len(error))
             if self._callback_error is not None:
