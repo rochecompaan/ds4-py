@@ -47,9 +47,9 @@ uv run --extra agent python bench/prepare_bakeoff.py \
 ## Run all six gates
 
 `bench/results` must not already exist. The runner refuses to replace an old
-report. Normal ds4-py attempts use `--yolo`; gate 4 uses a separate PTY approval
-path. Tasks run first, then interruption/approval checks, every attempt restore,
-and finally C replay. No later phase starts while an earlier engine is open.
+report. Tasks run first, then the interruption/resume check, every attempt
+restore, and finally C replay. No later phase starts while an earlier engine is
+open.
 
 ```bash
 uv run --extra agent python bench/run_bakeoff.py \

@@ -94,13 +94,11 @@ def _option_number(value):
     return str(int(value)) if isinstance(value, int) or value.is_integer() else str(value)
 
 
-def build_agent_command(config, prompt, trace_path, *, approval=False):
+def build_agent_command(config, prompt, trace_path):
     """Build equivalent C and ds4-py sampling/task invocations."""
     command = [*config.executable]
     if config.agent == "ds4py":
         command.append("--non-interactive")
-        if not approval:
-            command.append("--yolo")
     command.extend([
         "--model", config.model,
         "--backend", config.backend,
@@ -365,7 +363,7 @@ def interruption_acceptance(config, workspace, results_root):
     root = Path(results_root) / "gate-4" / "interruption"
     root.mkdir(parents=True, exist_ok=True)
     prompt = (workspace.agent_dir / "TASK.md").read_text()
-    command = build_agent_command(config, prompt, root / "trace.jsonl", approval=True)
+    command = build_agent_command(config, prompt, root / "trace.jsonl")
     command.remove("--non-interactive")
     result = drive_pty(
         command, cwd=workspace.agent_dir,
@@ -379,24 +377,6 @@ def interruption_acceptance(config, workspace, results_root):
     )
     (root / "interactive.log").write_text(result.detail)
     return CheckResult(result.passed and "interrupted" in result.detail.lower(), result.detail)
-
-
-def approval_acceptance(config, workspace, results_root, *, grade_runner=None):
-    """Approve one noninteractive tool request and independently grade the result."""
-    root = Path(results_root) / "gate-4" / "approval"
-    root.mkdir(parents=True, exist_ok=True)
-    prompt = (workspace.agent_dir / "TASK.md").read_text()
-    command = build_agent_command(config, prompt, root / "trace.jsonl", approval=True)
-    result = drive_pty(
-        command, cwd=workspace.agent_dir,
-        env=_acceptance_environment(root / "home"),
-        steps=[(r"approve .*\[y/N\]", "y\n")], timeout=180,
-    )
-    (root / "approval.log").write_text(result.detail)
-    grade = grade_workspace(workspace, runner=grade_runner)
-    (root / "grade.log").write_text(grade.output)
-    passed = result.passed and grade.passed
-    return CheckResult(passed, result.detail + "\nGrading: " + grade.output)
 
 
 def run_bakeoff(manifest_path, benchmark, repo_root, configs, results_root, *, grade_runner=None):
@@ -414,14 +394,7 @@ def run_bakeoff(manifest_path, benchmark, repo_root, configs, results_root, *, g
         staged[0], results_root / "acceptance" / "interruption",
     )
     interruption = interruption_acceptance(ds4_config, interruption_workspace, results_root)
-    approval_source = next(item for item in staged if item.task_id == "repo-glm-close")
-    approval_workspace = clone_workspace(
-        approval_source, results_root / "acceptance" / "approval",
-    )
-    approval = approval_acceptance(
-        ds4_config, approval_workspace, results_root, grade_runner=grade_runner,
-    )
-    restore = RestoreSummary(restore_runs, interruption, approval)
+    restore = RestoreSummary(restore_runs, interruption)
     replay = replay_task_results(task_results, ds4_config)
     report = build_report(task_results, restore, replay)
     report.write_json(results_root / "bakeoff.json")

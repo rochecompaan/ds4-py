@@ -61,7 +61,6 @@ class RestoreResult:
 class RestoreSummary:
     runs: tuple[RestoreResult, ...] = ()
     interruption: CheckResult = CheckResult(False, "not run")
-    approval: CheckResult = CheckResult(False, "not run")
 
 
 def _events(path):

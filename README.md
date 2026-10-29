@@ -46,8 +46,8 @@ uv run --extra agent ds4py \
   --trace /tmp/ds4py-prefill.jsonl
 ```
 
-Read [the agent guide](docs/agent.md) for approvals, sessions, restore paths,
-and storage.
+Read [the agent guide](docs/agent.md) for workspace access, sessions, restore
+paths, and storage.
 
 ## Acceptance
 

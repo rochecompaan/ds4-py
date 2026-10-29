@@ -4,7 +4,7 @@
 | --- | --- |
 | Date | 2026-10-21 |
 | Status | Draft for review |
-| Revised | 2026-10-23: ds4-py no longer shares session files with `ds4-agent` ([ADR 0001](../adr/0001-no-session-compatibility-with-ds4-agent.md)). Section 27 lists what changed |
+| Revised | 2026-10-29: the base agent has no built-in approval policy or `--yolo` flag; extensions own optional tool policy. Section 27 lists what changed |
 | Replaces | [`archive/2026-10-21-ds4-py-first-draft.md`](archive/2026-10-21-ds4-py-first-draft.md), the first draft, kept for its framework comparison |
 | Upstream ds4 | antirez/ds4 `5379c1c` (2026-10-19). Line numbers below refer to this commit |
 | Harness | `pydantic-ai-harness==0.59.0`, whose package metadata pins `pydantic-ai-slim[cli]==2.59.0`. Both were released 2026-10-21 |
@@ -158,7 +158,7 @@ There is no inference server, no socket and no second process holding model weig
 | Tools prompt text | Python, generated from the tool definitions | `ds4py.engine.prompt` |
 | Tool-call parsing | Python | `ds4py.engine.toolsyntax` |
 | Tool execution | The harness | `FileSystem` and `Shell` on a `LocalWorkspace` (section 12) |
-| Policy and approvals | Python | `DS4Approvals` capability |
+| Optional tool policy | Extensions or plugins | Capability hooks such as `before_tool_execute` (section 14) |
 | Context management | Python | `DS4Compaction` (default) or another strategy |
 | Session-lifetime state of capabilities (paging cuts, bookmark tables, the background commands to stop when the session ends) | Python | `session.state()` in `ds4py.engine.session` (section 13) |
 | System notes and reminders | Python | `DS4SystemNotes` capability |
@@ -510,7 +510,6 @@ agent = Agent(
         ToolOutputLimits(),                           # spills large results and truncates; never calls the model
         AskUser(answerer=tui_menu),                   # interactive mode only; nobody can answer in non-interactive mode
         DS4SystemNotes(),                             # date note, hints, 50,000-token reminder
-        DS4Approvals(),                               # section 14
         DS4Compaction(soft=0.85),                     # a context strategy; swap for RollingWindow(...) or Bookmarks(...)
         DS4RunRecord(path),                           # events.jsonl, telemetry only (section 15)
         StepPersistence(store=FileStepStore(session_dir / 'steps')),  # canonical history; each run gets conversation_id=session.id
@@ -526,7 +525,8 @@ The following are left out of the default:
 - `SubAgents`: subagents are a non-goal (sections 2 and 24).
 - `RepairToolArguments`: arguments arrive as strings from the native parser, not as JSON.
 - `ToolSearch` and deferred tool loading: a change in the tool set costs a full prefill (item 4 above).
-- `ToolCallJudge`, `ApprovalReviewer` and `ToolOutputLimits`' `Summarize` band: a second model call on the live session would destroy the cached prefix. Policy here is rules, not a judge model.
+- `ToolCallJudge` and `ToolOutputLimits`' `Summarize` band: a second model call on the live session would destroy the cached prefix.
+- Approval capabilities, including `ApprovalReviewer`: the base agent has no approval policy. An extension or plugin can add one (section 14).
 
 ### Other tool sets
 
@@ -632,19 +632,15 @@ ds4-py keeps this state in the session:
 - A capability keeps no session state on `self`. Its `for_run` returns an instance that refers to `session.state(...)`. So the paging cut, the bookmark table, the reminder's growth counter and the list of background commands last from one prompt to the next.
 - The session drives the state's lifecycle through the event bus (section 22). `/new`, `/switch` and exit all send `session_end`. On it, the session calls `close()` on every state object and drops them all, so background commands stop and nothing leaks into the next session. On `forked`, the state is kept, because a fork keeps the transcript and the message keys. On `compacted`, a strategy that does not own the trigger resets its own state.
 
-## 14. Policy: `DS4Approvals`
+## 14. Policy: owned by extensions
 
-`before_tool_execute` applies a small rule table:
+The base agent installs no approval capability and asks for no tool confirmation in either interactive or non-interactive mode ([ADR 0002](../adr/0002-no-built-in-tool-approval-policies.md)). Tools run without a policy prompt. There is no `--yolo` flag because there is no built-in policy to bypass.
 
-| Tool | Rule |
-| --- | --- |
-| `run_command`, `start_command` | Ask, unless `--yolo` |
-| `write_file`, `edit_file`, `create_directory` | Ask when the path is outside the project directory, unless `--yolo` |
-| any write or command with `--read-only` | Refused by `LocalWorkspace(read_only=True)`, whose `ReadOnlyWorkspace` refuses file changes and commands |
+`LocalWorkspace(read_only=True)` remains the workspace enforcement boundary for `--read-only`: its `ReadOnlyWorkspace` refuses file changes and commands. This is separate from an approval workflow.
 
-`check_command`, `stop_command` and the read tools never ask. A denied call returns `Tool error:` text, and the tool result carries `outcome='denied'` for the records.
+An extension or plugin can install a capability with hooks such as `before_tool_execute` to add its own approval policy. The extension owns its request and decision types, interaction, denial results, and persistence. The base package provides no approval answerer API and no `DS4Approvals` capability.
 
-`ds4-agent` asks only before it starts Chrome for its web tools, which ds4-py does not have. These prompts come from the first draft and are ds4-py additions. Replay parity starts each round from C's tokens, so ds4-py's approvals cannot affect it.
+Replay parity starts each round from C's tokens. An extension that changes tool execution must account for that boundary in its own replay testing.
 
 ## 15. History, save records and run records
 
@@ -820,7 +816,7 @@ Each round starts from C's tokens, including C's own tool calls and results, so 
 
 ## 21. M3 exit test: the 12-task bake-off
 
-M3 is done when ds4-py passes the gates below on 12 tasks that both agents run, with the same model (DeepSeek V4 Flash Q2, the `ds4f-q2` download, about 81 GB; section 25 explains why not V4.1), on the same machine, with `--temp 0 --seed 1`. A script drives both agents in non-interactive mode, unattended, and grades with hidden tests. ds4-py runs with `--yolo`, except for the approval run in gate 4. `ds4-agent` runs with `--trace`, so the same 12 runs also give gate 6 its replay data.
+M3 is done when ds4-py passes the gates below on 12 tasks that both agents run, with the same model (DeepSeek V4 Flash Q2, the `ds4f-q2` download, about 81 GB; section 25 explains why not V4.1), on the same machine, with `--temp 0 --seed 1`. A script drives both agents in non-interactive mode, unattended, and grades with hidden tests. `ds4-agent` runs with `--trace`, so the same 12 runs also give gate 6 its replay data.
 
 | Tasks | Source | Grading |
 | --- | --- | --- |
@@ -830,9 +826,9 @@ M3 is done when ds4-py passes the gates below on 12 tasks that both agents run, 
 Gates, all required:
 
 1. **Pass rate** at least `ds4-agent`'s on the same run, with one task of slack. This is a minimum bar for the harness tools and the generated tools prompt (decision 3), not a search for bugs: gate 6 catches bugs in the token loop.
-2. **No parser failures.** Zero `parser_error` stops across the 12 runs. Every tool call the model wrote was parsed, then executed, refused by policy, or sent back to the model as a retry. Retries for bad arguments are the model's mistakes, not ds4-py's. The report counts them, and they do not fail the gate.
+2. **No parser failures.** Zero `parser_error` stops across the 12 runs. Every tool call the model wrote was parsed, then executed, refused by workspace enforcement, or sent back to the model as a retry. Retries for bad arguments are the model's mistakes, not ds4-py's. The report counts them, and they do not fail the gate.
 3. **Speed and KV reuse.** Wall time at most 1.5× `ds4-agent`'s per task. In every round, ds4-py prefills only the tokens appended since the last sync; the run record shows an `extend` plan for each round, except rounds after compaction or a strategy move. This replaces the first draft's "prefilled tokens per round equal within 1% of `ds4-agent`", which cannot hold once the two runs see different process ids, timings and tools.
-4. **Interrupt and approval.** One run is interrupted with Ctrl+C during prefill and resumed from the next prompt. One run triggers an approval prompt for `run_command` and continues after `y`.
+4. **Interrupt and resume.** One run is interrupted with Ctrl+C during prefill and resumed from the next prompt.
 5. **Records and files.** Every run leaves a complete `events.jsonl`, the session's snapshots, and a saved KV file with its save record. A new ds4-py process `/switch`es into each save without a prefill (case 1 of section 17). For a fixed follow-up prompt, the first 256 tokens it generates at `--temp 0` equal those from a stripped copy of the same save, which rebuilds the KV by prefill (case 2).
 6. **Replay parity.** For every round of `ds4-agent`'s 12 runs, ds4-py produces the same tokens from the same prefix (section 20).
 
@@ -921,7 +917,7 @@ Done when:
 
 ### M3: harness, coding tools, TUI and bake-off
 
-Scope: `DS4Model` and the binding; the default capability list with the harness's coding tools, and `DS4ShellJobs`; `DS4Approvals`; `DS4SystemNotes` for the date note and hints; `DS4RunRecord`; `StepPersistence`; `ds4py.store`; `/save` with its KV file, snapshot and save record; `/switch`, which gate 5 needs; the session event bus and `session.state`; the `clai` smoke test; the TUI with its registries; non-interactive mode; the bake-off script.
+Scope: `DS4Model` and the binding; the default capability list with the harness's coding tools, and `DS4ShellJobs`; `DS4SystemNotes` for the date note and hints; `DS4RunRecord`; `StepPersistence`; `ds4py.store`; `/save` with its KV file, snapshot and save record; `/switch`, which gate 5 needs; the session event bus and `session.state`; the `clai` smoke test; the TUI with its registries; non-interactive mode; the bake-off script.
 
 Done when:
 
@@ -973,7 +969,6 @@ These are my decisions, not the user's. Each can be changed.
 
 - The parity test replays rounds instead of comparing whole runs, and bake-off gate 3 measures KV reuse within ds4-py instead of comparing prefill counts with `ds4-agent` (sections 20 and 21). The first draft's version of both cannot pass.
 - A sixth bake-off gate, replay parity, takes over the reasoning gate 1 used to carry.
-- The approval prompts for `run_command`, `start_command` and writes outside the project stay as the first draft had them, although `ds4-agent` never asks.
 - `--read-only` uses `LocalWorkspace(read_only=True)`, which refuses commands as well as file changes (section 14).
 - `AskUser` is in the default list only in interactive mode, because nobody can answer it in non-interactive mode (section 11).
 - The guardrail classes are not in the default list. `ToolOutputLimits` keeps its default bands, which never call the model (section 11).
@@ -1021,7 +1016,7 @@ The 2026-10-21 version of this spec required session files that both agents coul
 
 - Goal 4, session files compatible both ways, which is now a non-goal.
 - `DS4AgentTools`, `ds4py.prompts`, the vendored C prompt text and the port of `ds4_web.c`. The harness's coding tools are the default again, and the tools prompt is generated (sections 11 and 12).
-- `--edit-upto` and the Chrome consent rule in `DS4Approvals` (section 14).
+- `--edit-upto` and the Chrome consent rule from the first draft's approval policy.
 - The byte-for-byte checks: the prompt fixtures from the C prompt printer, the golden tool tests and the recorded `bash` and web output (section 20).
 - The C file format: the 48-byte header, the title trailer, the file names from C's sha1 formula, the shared `sysprompt.kv`, and the two `/switch` cases that read `ds4-agent`'s files (section 17).
 - KV file I/O in M2. Replay parity reads `ds4-agent --trace` logs instead of saved sessions, so it works with `--non-interactive` and needs no saved session (section 20).
@@ -1033,6 +1028,12 @@ Other changes in this revision:
 - Gate 5 is a round trip within ds4-py (section 21).
 - The module map shrinks from about 6,400 lines to about 4,450 (section 8).
 - GLM and Qwen tool markup goes through the rendered tokenizer, as DSML's does (sections 6 and 12). This matches upstream for GLM and deviates from upstream for Qwen, which tokenizes the same markup as plain text; it follows the downstream fork, which renders it as special tokens in C.
+
+### In the 2026-10-29 revision
+
+- The base agent no longer implements approval prompts, denial decisions, or an approval answerer API. Optional tool policy belongs to extensions and plugins (section 14).
+- `--yolo` is removed rather than defaulted, because there is no built-in policy to bypass. Read-only workspace enforcement remains available through `--read-only`.
+- Bake-off gate 4 covers interruption and resume only; it no longer has an approval-run requirement.
 
 ## 28. Sources
 

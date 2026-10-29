@@ -6,7 +6,7 @@
 
 **Base:** `main` and this worktree at the verified M2 squash merge (`f3d21d2`). Work in this existing worktree: `/home/roche/projects/satyrn/ds4-py/.worktrees/m3-harness-agent`. Do not create a nested worktree.
 
-**Current interfaces:** Extend `ds4py.engine.Session`, `PromptBuilder`, `Transcript`, `Plan`, `SamplingPolicy`, `FakeNative`, and `ds4py.engine.replay`. Do not add a second conversation history, token loop, tool parser, workspace implementation, approval mechanism inside the TUI, or C-tool port.
+**Current interfaces:** Extend `ds4py.engine.Session`, `PromptBuilder`, `Transcript`, `Plan`, `SamplingPolicy`, `FakeNative`, and `ds4py.engine.replay`. Do not add a second conversation history, token loop, tool parser, workspace implementation, tool policy inside the TUI, or C-tool port.
 
 **Harness pin:** `pydantic-ai-harness[cli]==0.59.0`, whose package metadata selects `pydantic-ai-slim[cli]==2.59.0`. Direct resolver and installed-API inspection found that the spec's `pydantic-ai 1.84.0` statement and several capability names are stale; Task 1 amends those facts without changing the approved behavior. The inspected adapter surface is `Model.request`, `Model.request_stream`, `Model.prepare_request`, `StreamedResponse._get_event_iterator`, `StreamedResponse.get`, `_parts_manager`, `RequestUsage`, `Agent`, `StepPersistence`, `FileStepStore`, `LocalWorkspace`, `FileSystem`, `Shell`, `RepoContext`, `Skills`, `Instrumentation`, and `AskUser`. `LocalWorkspace` and `Instrumentation` come from `pydantic_ai.capabilities`; the other capabilities come from the harness modules.
 
@@ -62,11 +62,11 @@ class AgentRuntime:
 
 `src/ds4py/agent.py` builds the default `Agent` with:
 
-`LocalWorkspace`, `FileSystem`, `Shell`, `DS4ShellJobs`, `RepoContext`, `Skills`, `ToolOutputLimits`, `DS4RunRecord`, `StepPersistence`, `Instrumentation`, `DS4SystemNotes`, `DS4Approvals`, then `AskUser` only in interactive mode.
+`LocalWorkspace`, `FileSystem`, `Shell`, `DS4ShellJobs`, `RepoContext`, `Skills`, `ToolOutputLimits`, `DS4RunRecord`, `StepPersistence`, `Instrumentation`, `DS4SystemNotes`, then `AskUser` only in interactive mode. The base list has no approval capability; an extension can add one.
 
-The verified `0.59.0` API has no `WorkspaceToolset`, `SkillDiscovery`, or `FileChangeTracker`; `FileSystem`/`Shell` provide the workspace tools, `Skills` provides skill discovery, and file/tool change evidence goes through `FileSystem` events, `StepPersistence`, and `DS4RunRecord`. Do not write local replacements for those filesystem, shell, or skill implementations. `DS4ShellJobs` records background-command IDs in session state and stops live jobs on `session_end`; `ToolOutputLimits` handles large results without another model call. `StepPersistence` receives `store=FileStepStore(...)` directly. Interactive `AskUser` receives `answerer=...`; it has no `approvals=` argument in this API, so `DS4Approvals` remains a separate capability.
+The verified `0.59.0` API has no `WorkspaceToolset`, `SkillDiscovery`, or `FileChangeTracker`; `FileSystem`/`Shell` provide the workspace tools, `Skills` provides skill discovery, and file/tool change evidence goes through `FileSystem` events, `StepPersistence`, and `DS4RunRecord`. Do not write local replacements for those filesystem, shell, or skill implementations. `DS4ShellJobs` records background-command IDs in session state and stops live jobs on `session_end`; `ToolOutputLimits` handles large results without another model call. `StepPersistence` receives `store=FileStepStore(...)` directly. Interactive `AskUser` receives `answerer=...` and handles only typed questions.
 
-M3 deliberately does **not** install `DS4Compaction`. `DS4SystemNotes` exposes the compaction/reset hook and is tested with a stub compaction subject; real compaction and the 50,000-token system-prompt reminder are M4. Interactive `/think` is M5, although the engine retains its think-mode primitive for command-line configuration and binding invalidation tests. Denials use `SkipToolExecution(ToolDenied(...))` so history contains `ToolReturnPart(outcome='denied')` and the tool body never runs. `LocalWorkspace(read_only=True)` wraps the backend used by `FileSystem` and `Shell`, so workspace writes and commands remain forbidden even when approvals are bypassed.
+M3 deliberately does **not** install `DS4Compaction`. `DS4SystemNotes` exposes the compaction/reset hook and is tested with a stub compaction subject; real compaction and the 50,000-token system-prompt reminder are M4. Interactive `/think` is M5, although the engine retains its think-mode primitive for command-line configuration and binding invalidation tests. `LocalWorkspace(read_only=True)` wraps the backend used by `FileSystem` and `Shell`, so workspace writes and commands remain forbidden without an approval workflow.
 
 ### 5. Persistence has one canonical history and one atomic record order
 
@@ -123,7 +123,7 @@ The two repository tasks are `repo-glm-close` and `repo-ctx-command`. Agents run
 
 - [x] **Step 1: Add the dependency pin without adding a version-only test**
 
-First correct the inspected harness facts in the spec: the pin selects `pydantic-ai-slim[cli]==2.59.0`, not the `1.84.0` distributions; `LocalWorkspace` and `Instrumentation` live in `pydantic_ai.capabilities`; `FileSystem`, `Shell`, and `Skills` replace the stale `WorkspaceToolset`, `FileChangeTracker`, and `SkillDiscovery` names; `StepPersistence(store=...)` receives its store directly; and `AskUser(answerer=...)` has no approvals parameter. Also correct the profile's two `supports_json_*` fields and the computed `RequestUsage.requests`/`total_tokens` properties described in Task 3. Keep the behavioral requirements, harness pin, and no-local-tool-port decision unchanged.
+First correct the inspected harness facts in the spec: the pin selects `pydantic-ai-slim[cli]==2.59.0`, not the `1.84.0` distributions; `LocalWorkspace` and `Instrumentation` live in `pydantic_ai.capabilities`; `FileSystem`, `Shell`, and `Skills` replace the stale `WorkspaceToolset`, `FileChangeTracker`, and `SkillDiscovery` names; and `StepPersistence(store=...)` receives its store directly. Also correct the profile's two `supports_json_*` fields and the computed `RequestUsage.requests`/`total_tokens` properties described in Task 3. Keep the behavioral requirements, harness pin, and no-local-tool-port decision unchanged.
 
 Add:
 
@@ -557,12 +557,11 @@ git commit -m "feat(store): add atomic ds4-py save records"
 
 ---
 
-## Task 8: Add system notes, reminders, approvals, and agent assembly
+## Task 8: Add system notes and agent assembly
 
 **Files:**
 - Create: `src/ds4py/capabilities/__init__.py`
 - Create: `src/ds4py/capabilities/system_notes.py`
-- Create: `src/ds4py/capabilities/approvals.py`
 - Create: `src/ds4py/capabilities/run_record.py`
 - Create: `src/ds4py/capabilities/shell_jobs.py`
 - Create: `src/ds4py/agent.py`
@@ -570,15 +569,12 @@ git commit -m "feat(store): add atomic ds4-py save records"
 - Modify: `src/ds4py/engine/prompt.py`
 - Modify: `src/ds4py/engine/chat.py`
 - Create: `tests/agent/test_system_notes.py`
-- Create: `tests/agent/test_approvals.py`
 - Create: `tests/agent/test_shell_jobs.py`
 - Create: `tests/agent/test_agent_factory.py`
 
 **Interfaces:**
 - `DS4SystemNotes(session, *, clock=None, hints=False)` implements the note-provider protocol used by `MessageBinder` plus `before_model_request` for compaction-subject discovery. `restore_from_segments(segments)` restores date/hints/reminder state after a valid KV load.
 - `Session.append_system_note` accepts an optional note subtype. Save provenance uses kinds such as `system_note:date`, `system_note:hints_full`, `system_note:hints_on`, `system_note:hints_off`, and `system_note:reminder`; the default remains `system_note` for existing callers.
-- `DS4Approvals(answerer, *, yolo=False, project_dir)` is a capability, not a TUI policy class. `answerer` may be sync or async.
-- `ApprovalRequest(tool_name, args, command=None, path=None)` and `ApprovalDecision` (`ONCE`, `DENY`, `TOOL`, `PATTERN`, `STOP`) define the callback boundary.
 - `DS4RunRecord(session, path)` subscribes to engine events and implements harness run/tool hooks.
 - `DS4ShellJobs(session, workspace)` records `start_command` job IDs in scoped state and stops running jobs when that state closes.
 - `build_agent_components(...) -> AgentComponents` constructs the default capabilities/toolset and returns the agent plus references needed by runtime/TUI.
@@ -602,19 +598,9 @@ The binder asks the note provider before a new user request and before an assist
 
 On case-1 restore, scan the saved note subtypes so the next request does not emit a second date note or lose the hints setting. On case-2 fresh rendering, emit the normal first-request notes once. A compaction reset starts the hint lifecycle again. Actual `DS4Compaction` and the system-prompt reminder remain M4.
 
-- [x] **Step 3: Write failing approval tests with real harness normalization**
+- [x] **Step 3: Write failing unrestricted-execution tests with a real harness agent**
 
-Use a `FunctionModel` or equivalent scripted harness model plus a real `Agent` and toolset. Test:
-
-- `run_command` and `start_command` ask unless `yolo`;
-- `write_file`, `edit_file`, and `create_directory` ask only for resolved paths outside `project_dir`, unless `yolo`;
-- `yolo` bypasses approval but `LocalWorkspace(read_only=True)` still refuses writes and commands;
-- `DENY` raises `SkipToolExecution(ToolDenied(...))`, the tool body is never entered, and history contains `ToolReturnPart(outcome='denied')`;
-- `ONCE`, per-`TOOL`, and per-`PATTERN` decisions have distinct scope;
-- `STOP` denies and cancels the active session;
-- a scripted answer sequence `y, n, t, a, s` exercises all five menu inputs.
-
-Map menu keys as `y=ONCE`, `n=DENY`, `t=TOOL`, `a=PATTERN`, `s=STOP`. A command pattern is its first `shlex.split` word; a file pattern is the resolved parent directory. Noninteractive EOF denies safely with an actionable message.
+Use a `FunctionModel` or equivalent scripted harness model plus a real `Agent` and toolset. Prove the default agent executes `run_command` without an answerer or confirmation prompt. Keep `LocalWorkspace(read_only=True)` as the separate enforcement boundary for writes and commands. Optional approval policies belong to extensions, which own their callback and denial contracts.
 
 - [x] **Step 4: Write failing shell-job lifecycle tests, then implement cleanup**
 
@@ -622,20 +608,18 @@ In `tests/agent/test_shell_jobs.py`, use the real harness shell/workspace seam a
 
 Implement `DS4ShellJobs` as a small capability that records job IDs from tool hooks in `session.state`. Stop jobs through the pinned harness's supported `stop_command`/workspace interface, or through the process group recorded in its handle file as section 12 permits; do not depend on its private `Job` objects or touch the engine. Run the focused tests red before implementation and green afterward.
 
-- [x] **Step 5: Implement approvals and agent assembly**
+- [x] **Step 5: Implement default agent assembly**
 
-`before_tool_execute` returns validated args unchanged on approval. On denial it raises `SkipToolExecution` with `ToolDenied`; do not convert denial into `ModelRetry`, a successful string result, or a TUI-only retry part. Resolve paths with `Path.resolve()` and test `is_relative_to(project_dir)`; do not approve by string prefix.
-
-Construct `LocalWorkspace(project_dir, read_only=read_only)` from `pydantic_ai.capabilities`, `FileSystem(root_dir=project_dir, cwd=project_dir, content_hashes=True)`, `Shell(cwd=project_dir)`, `DS4ShellJobs(...)`, `RepoContext(workspace_dir=project_dir)`, `Skills(directories=<standard project/user skill directories>, missing_directories='skip')`, `ToolOutputLimits(...)`, `StepPersistence(store=step_store)`, `Instrumentation()`, notes, and approvals. Keep `FileSystem.read_only` false so write tools remain visible; the `LocalWorkspace` read-only backend is the enforcement boundary for both file writes and shell commands. `ToolOutputLimits` must not call the model. Add interactive-only `AskUser(answerer=tui_answerer)` with no approvals argument. Record filesystem/tool changes through `StepPersistence` and `DS4RunRecord`; there is no separate `FileChangeTracker` in this API. Keep `DS4Compaction` out. Verify a tiny agent run can read the workspace and writes events/snapshots; do not write a test that merely compares the static capability list.
+Construct `LocalWorkspace(project_dir, read_only=read_only)` from `pydantic_ai.capabilities`, `FileSystem(root_dir=project_dir, cwd=project_dir, content_hashes=True)`, `Shell(cwd=project_dir)`, `DS4ShellJobs(...)`, `RepoContext(workspace_dir=project_dir)`, `Skills(directories=<standard project/user skill directories>, missing_directories='skip')`, `ToolOutputLimits(...)`, `StepPersistence(store=step_store)`, `Instrumentation()`, and notes. Install no approval capability or answerer API. Keep `FileSystem.read_only` false so write tools remain visible; the `LocalWorkspace` read-only backend is the enforcement boundary for both file writes and shell commands. `ToolOutputLimits` must not call the model. Add interactive-only `AskUser(answerer=tui_answerer)` for typed questions. Record filesystem/tool changes through `StepPersistence` and `DS4RunRecord`; there is no separate `FileChangeTracker` in this API. Keep `DS4Compaction` out. Verify a tiny agent run can read the workspace and writes events/snapshots; do not write a test that merely compares the static capability list.
 
 - [x] **Step 6: Verify and commit**
 
 ```bash
-uv run --extra agent pytest tests/agent/test_system_notes.py tests/agent/test_approvals.py tests/agent/test_shell_jobs.py tests/agent/test_agent_factory.py -q
+uv run --extra agent pytest tests/agent/test_system_notes.py tests/agent/test_shell_jobs.py tests/agent/test_agent_factory.py -q
 uv run --extra agent pytest tests/agent tests/engine -m "not live and not build" -q
 uv run --extra agent clai --help  # CLI entry-point smoke only; Task 3 covers real DS4Model behavior
 git add src/ds4py/capabilities src/ds4py/agent.py src/ds4py/model.py src/ds4py/engine tests/agent
-git commit -m "feat(agent): add notes approvals and default capabilities"
+git commit -m "feat(agent): add notes and default capabilities"
 ```
 
 ---
@@ -736,10 +720,10 @@ Use a fake runtime/engine; do not open a model. Verify:
 - save is attempted on success, interruption, and error;
 - `--temp 0 --seed 1 --ctx 100000 --tokens ...` maps to `SamplingPolicy` and runtime settings;
 - `--system` and `--prefix-file` become persistent instructions/history;
-- `--read-only` and `--yolo` reach the workspace/approval components;
+- `--read-only` reaches the workspace, and removed `--yolo` is rejected;
 - raw/build/check commands still route to their existing implementations without importing the harness.
 
-Accept the section-6 agent flags: `--prompt`, `--prompt-file`, `--system`, `--prefix-file`, `--non-interactive`, `--raw` as the raw-mode alias, `--temp`, `--top-p`, `--min-p`, `--seed`, `--think`, `--think-level`, `--think-max`, `--nothink`, `--trace`, `--tokens`, and `--ctx`, plus existing M1 engine options and M3 `--yolo`/`--read-only`. `--edit-upto` stays absent. Vision/steering/distributed engine options remain with their later milestones rather than gaining no-op flags.
+Accept the section-6 agent flags: `--prompt`, `--prompt-file`, `--system`, `--prefix-file`, `--non-interactive`, `--raw` as the raw-mode alias, `--temp`, `--top-p`, `--min-p`, `--seed`, `--think`, `--think-level`, `--think-max`, `--nothink`, `--trace`, `--tokens`, and `--ctx`, plus existing M1 engine options and M3 `--read-only`. `--yolo` and `--edit-upto` stay absent. Vision/steering/distributed engine options remain with their later milestones rather than gaining no-op flags.
 
 For traces, run one text round and one tool round. Read the JSONL back through the replay reader and compare prompt tokens, cached count, prefill suffix, sampled IDs, round index, and think mode. Verify two runs append rather than overwrite and a tool trace never executes a tool.
 
@@ -960,24 +944,22 @@ Use fake agent scripts and temporary tasks; no GPU/model. Prove:
 
 - C and ds4-py never run concurrently;
 - both receive the same model/backend/ctx/temp/seed/task parameters;
-- ds4-py uses `--yolo` except for the approval run;
+- ds4-py runs without an approval flag or prompt;
 - a failed first attempt is followed by exactly one second attempt containing the grader output;
 - every ds4-py attempt saves in `finally` and leaves events/snapshots/KV/record paths in the result;
 - gate 1 requires ds4-py's pass count to meet C's with one task of slack, and reports pass/attempt evidence separately from timing;
-- gate 2 requires zero `parser_error` stops and accounts for every parsed tool call as executed, refused by policy, or sent back as a retry; bad-argument retries are counted but do not fail the gate;
+- gate 2 requires zero `parser_error` stops and accounts for every parsed tool call as executed, refused by workspace enforcement, or sent back as a retry; bad-argument retries are counted but do not fail the gate;
 - gate 3 enforces both the spec's per-task `1.5x` C wall-time limit and extension-only KV reuse, allowing only a recorded compaction/strategy exception for a non-extension round;
-- gate 4 interrupts one run during prefill and resumes it with the next prompt, and drives one approval run that continues after `y`;
+- gate 4 interrupts one run during prefill and resumes it with the next prompt;
 - gate 5 requires complete records/files and passing case-1/case-2 restore checks for every ds4-py run.
 
 The report also prints absolute and delta values for all six comparison metrics on every common task. These are diagnostics, not gate 2: the spec defines no numeric tolerance for different harness/C tool histories, so do not invent an equality threshold. Missing or inconsistent metric data still fails the relevant evidence check rather than becoming a plausible zero.
 
-- [x] **Step 3: Implement the sequential runner, interrupt/resume driver, and approval PTY**
+- [x] **Step 3: Implement the sequential runner and interrupt/resume driver**
 
 Run tasks sequentially and close each agent process before starting the next. Set `DS4PY_HOME` per attempt so records cannot overwrite one another. Use the same absolute model and backend for both agents. C receives a fresh `--trace` path per attempt. ds4-py receives `--trace`, `--temp 0`, `--seed 1`, `--ctx 100000`, and the same token limit.
 
 For gate 4's interruption case, drive Ctrl+C through a stdlib `pty`/`select` helper while one ds4-py run is prefilling, then submit the next prompt and require the run to resume successfully. Record the interruption and resumed terminal status as evidence.
-
-For gate 4's approval case, use the `repo-glm-close` task: run ds4-py without `--yolo`, drive the noninteractive approval prompt through the PTY helper, answer `y` to the first command approval, and require the tool/run to continue and the hidden grader to pass. EOF before approval denies and fails the gate; never auto-approve merely because the driver is unattended.
 
 - [x] **Step 4: Implement restore checks**
 
@@ -1046,7 +1028,7 @@ uv run --extra agent python bench/prepare_m3.py --manifest bench/m3.yaml --check
 uv run --extra agent pytest tests/live/test_m3_bakeoff.py -m live -vv -s
 ```
 
-The runner uses `--yolo` for all normal ds4-py runs and the PTY approval path for gate 4. It writes `bench/results/m3.json` and per-task logs/traces/saves under `bench/results/`.
+The runner uses no approval flag or prompt. It writes `bench/results/m3.json` and per-task logs/traces/saves under `bench/results/`.
 
 - [x] **Step 4: Verify non-live logic, then run live evidence when assets are available**
 
@@ -1074,7 +1056,7 @@ Do not mark the live completion item done from a guarded skip. If assets are una
 
 - [x] **Step 1: Document installation and behavior**
 
-Document `uv sync --extra agent`, interactive and noninteractive examples, `DS4PY_HOME`, approvals/read-only behavior, save/switch restore cases, trace files, and the live bake-off command. State clearly that core/raw/build/check do not require the harness extra and that M4 owns compaction and the remaining persistence commands.
+Document `uv sync --extra agent`, interactive and noninteractive examples, `DS4PY_HOME`, unrestricted tool execution, extension-owned policy, read-only behavior, save/switch restore cases, trace files, and the live bake-off command. State clearly that core/raw/build/check do not require the harness extra and that M4 owns compaction and the remaining persistence commands.
 
 - [x] **Step 2: Run non-live verification**
 
@@ -1122,7 +1104,7 @@ git commit -m "docs(agent): document M3 usage and acceptance"
 - [x] Cancellation and speculative rewind leave native tokens and transcript aligned; M3 reserve failure is explicit and facade resume still works.
 - [x] Required payload bindings pass ABI probing; save syncs before staging; load takes token IDs from the native session.
 - [x] Save order is KV → complete named snapshot → save record; case 1 does no prefill and case 2 renders fresh; corrupt/missing records fail clearly.
-- [x] Approvals produce real denied tool results without executing denied tools; read-only remains effective under `--yolo`.
+- [x] The base agent executes tools without approval prompts or an answerer API; `--yolo` is absent and read-only workspace enforcement remains effective.
 - [x] Date/hints notes match C behavior; the 50,000-token reminder and real compaction remain M4, and interactive `/think` remains M5.
 - [x] Background commands persist across prompts and stop on new/switch/exit; `ToolOutputLimits` handles large results without another model call.
 - [x] StepPersistence and events.jsonl retain success/interrupted/error evidence; new/switch close state, fork preserves it, and old files remain.
@@ -1144,8 +1126,8 @@ This section is the single plan-level review pass; it is not a substitute for co
 1. **Worker/cancellation/rewind:** Tasks 3–6 keep all native calls on the worker. Tests cancel during prefill and a speculative block, require uncommitted drafts to stay invisible, and compare native tokens to transcript after interruption. Context reserve cannot silently hang while compaction is deferred.
 2. **Save/restore integrity:** Tasks 6–9 test trailing-EOS sync, exact payload lengths, resource cleanup, atomic replacement, record-last ordering, native token hashing, exact snapshot/step selection, and keyed segment matching. Case 1 and stripped case 2 are distinct tests and distinct live gate-5 paths.
 3. **Binding correctness:** Tasks 1–2 and 12 use reserialized objects, same-key content changes, tool/think changes, checkpoint cuts, and provenance coverage. Ordinary sampled responses bind existing token ranges rather than re-rendering text.
-4. **Approval semantics:** Task 8 uses a real harness `Agent` to prove `SkipToolExecution(ToolDenied(...))` becomes `ToolReturnPart(outcome='denied')`, with no tool-body execution. Yolo and read-only are tested independently.
+4. **Tool policy boundary:** Task 8 uses a real harness `Agent` to prove the base executes commands without confirmation. Read-only remains a separate workspace boundary, and extensions own any approval behavior.
 5. **TUI and corrupted input:** Task 11 uses long-cwd/narrow-width tests. Tasks 7 and 9 cover malformed JSON, bad headers, truncated/extra payloads, mismatched hashes, and missing snapshots/keys. No path or stream is silently treated as a successful empty session.
 6. **Bake-off meaning:** Tasks 13–15 pin all tasks and source values, hide graders, test second attempts and sequential execution with fake agents, define every metric, and write six explicit gate results. Gate 2 reports comparisons without inventing an unspecified tolerance. Only the guarded live run can satisfy the final acceptance item.
 
-Plan coverage checked against the spec's M3 Interface, Done-when gates, conformance items, and section-18 exclusions. Resolver metadata and installed signatures establish one required factual spec amendment: harness `0.59.0` uses slim `2.59.0` and the current capability/profile/usage APIs; Task 1 records that amendment before code while preserving the approved behavior. Intentional builder decisions fixed in this plan are the 20-byte KV header, big-endian uint32 token hashing, approval key meanings/pattern scopes, 80-character titles, the gate-4 repository task, and gate-2 comparability semantics. These are implementation details left open by the spec, not deferred requirements or new open questions.
+Plan coverage checked against the spec's M3 Interface, Done-when gates, conformance items, and section-18 exclusions. Resolver metadata and installed signatures establish one required factual spec amendment: harness `0.59.0` uses slim `2.59.0` and the current capability/profile/usage APIs; Task 1 records that amendment before code while preserving the approved behavior. Intentional builder decisions fixed in this plan are the 20-byte KV header, big-endian uint32 token hashing, 80-character titles, and gate-2 comparability semantics. These are implementation details left open by the spec, not deferred requirements or new open questions.

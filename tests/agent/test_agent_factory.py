@@ -73,8 +73,35 @@ def test_build_agent_components_behavior(tmp_path):
     assert len(events_file.read_text().strip().splitlines()) > 0
 
 
-def test_factory_wires_yolo_and_persistent_instructions(tmp_path):
-    from ds4py.capabilities.approvals import DS4Approvals
+def test_factory_runs_shell_commands_without_an_approval_policy(tmp_path):
+    def scripted(messages, info):
+        if _has_tool_return(messages):
+            return ModelResponse(parts=[TextPart("done")])
+        return ModelResponse(parts=[ToolCallPart(
+            "run_command",
+            {"command": "printf unblocked > command-ran.txt"},
+            tool_call_id="call-1",
+        )])
+
+    async def stream_function(messages, info):
+        if _has_tool_return(messages):
+            yield "done"
+        else:
+            yield {0: DeltaToolCall(
+                name="run_command",
+                json_args='{"command": "printf unblocked > command-ran.txt"}',
+            )}
+
+    model = FunctionModel(scripted, stream_function=stream_function)
+    model.session = MockSession()
+    components = build_agent_components(model, tmp_path)
+
+    asyncio.run(components.agent.run("run it"))
+
+    assert (tmp_path / "command-ran.txt").read_text() == "unblocked"
+
+
+def test_factory_applies_persistent_instructions(tmp_path):
     from pydantic_ai_harness import StepPersistence
 
     def scripted(messages, info):
@@ -86,14 +113,12 @@ def test_factory_wires_yolo_and_persistent_instructions(tmp_path):
     model = FunctionModel(scripted, stream_function=stream_function)
     model.session = MockSession()
     components = build_agent_components(
-        model, tmp_path, yolo=True, system="persistent rules",
+        model, tmp_path, system="persistent rules",
     )
 
-    approvals = next(c for c in components.components if isinstance(c, DS4Approvals))
     assert not any(isinstance(c, StepPersistence) for c in components.components)
     result = asyncio.run(components.agent.run("hello"))
 
-    assert approvals.yolo is True
     assert result.all_messages()[0].instructions == "persistent rules"
 
 
@@ -123,7 +148,7 @@ def test_no_ask_user_unless_interactive(tmp_path):
     assert any(isinstance(c, AskUser) for c in components2.components)
 
 
-def test_approval_and_question_callbacks_have_separate_typed_contracts(tmp_path):
+def test_question_callback_has_a_typed_contract(tmp_path):
     def scripted(messages, info):
         return ModelResponse(parts=[TextPart("done")])
 
@@ -133,10 +158,6 @@ def test_approval_and_question_callbacks_have_separate_typed_contracts(tmp_path)
     model = FunctionModel(scripted, stream_function=stream_function)
     model.session = MockSession()
 
-    def approval_answerer(request):
-        assert hasattr(request, "command")
-        return "y"
-
     async def question_answerer(request):
         assert isinstance(request, AskUserRequest)
         return AskUserResponse(answers=tuple(
@@ -145,12 +166,8 @@ def test_approval_and_question_callbacks_have_separate_typed_contracts(tmp_path)
         ))
 
     components = build_agent_components(
-        model, tmp_path, interactive=True,
-        approval_answerer=approval_answerer, question_answerer=question_answerer,
+        model, tmp_path, interactive=True, question_answerer=question_answerer,
     )
-    from ds4py.capabilities.approvals import DS4Approvals
-
-    approvals = next(c for c in components.components if isinstance(c, DS4Approvals))
     questions = next(c for c in components.components if isinstance(c, AskUser))
     request = AskUserRequest(questions=(Question(
         header="next", question="What next?",
@@ -159,7 +176,6 @@ def test_approval_and_question_callbacks_have_separate_typed_contracts(tmp_path)
 
     response = asyncio.run(questions.answerer(request))
 
-    assert approvals.answerer is approval_answerer
     assert questions.answerer is question_answerer
     assert isinstance(response, AskUserResponse)
     assert response.answers[0].selected == ("one",)

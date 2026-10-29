@@ -35,7 +35,7 @@ from pydantic_ai_harness.step_persistence import (
     RunRecord as StepRunRecord,
 )
 
-from ds4py.agent import ApprovalAnswerer, QuestionAnswerer, build_agent_components
+from ds4py.agent import QuestionAnswerer, build_agent_components
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.engine.lifecycle import Listener, SessionEvent
@@ -145,10 +145,8 @@ class AgentRuntime:
         store: SessionStore | None = None,
         clock: Callable[[], datetime | str] | None = None,
         read_only: bool = False,
-        yolo: bool = False,
         system: str | None = None,
         interactive: bool = False,
-        approval_answerer: ApprovalAnswerer | None = None,
         question_answerer: QuestionAnswerer | None = None,
     ) -> None:
         self.model = model
@@ -169,10 +167,8 @@ class AgentRuntime:
             model,
             self.project_dir,
             read_only=read_only,
-            yolo=yolo,
             system=system,
             interactive=interactive,
-            approval_answerer=approval_answerer,
             question_answerer=question_answerer,
             session_dir=self._session_dir,
         )

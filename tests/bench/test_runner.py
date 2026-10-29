@@ -98,7 +98,6 @@ def healthy_restore(results):
     return RestoreSummary(
         runs=runs,
         interruption=CheckResult(True, "resumed"),
-        approval=CheckResult(True, "approved"),
     )
 
 
@@ -107,9 +106,8 @@ def test_agent_commands_share_model_sampling_and_task_prompt(tmp_path):
     trace = tmp_path / "trace.jsonl"
     c_command = build_agent_command(config(tmp_path, "c"), prompt, trace)
     python = build_agent_command(config(tmp_path), prompt, trace)
-    approval = build_agent_command(config(tmp_path), prompt, trace, approval=True)
 
-    for command in (c_command, python, approval):
+    for command in (c_command, python):
         for flag, value in (
             ("--model", "/model.gguf"), ("--backend", "cpu"),
             ("--ctx", "100000"), ("--temp", "0"), ("--seed", "1"),
@@ -117,8 +115,7 @@ def test_agent_commands_share_model_sampling_and_task_prompt(tmp_path):
         ):
             assert command[command.index(flag) + 1] == value
     assert "--yolo" not in c_command
-    assert "--non-interactive" in python and "--yolo" in python
-    assert "--yolo" not in approval
+    assert "--non-interactive" in python and "--yolo" not in python
 
 
 def test_failed_first_attempt_feeds_grader_output_to_exactly_one_retry(tmp_path):
@@ -224,13 +221,13 @@ def test_gate_three_enforces_time_and_only_unexplained_non_extensions():
     assert not build_report([c, on_time], healthy_restore([c, on_time])).gates["gate-3"].passed
 
 
-def test_gate_four_requires_interrupt_resume_and_explicit_approval():
+def test_gate_four_requires_interrupt_resume():
     results = [result(agent="c"), result()]
     restore = healthy_restore(results)
-    restore = replace(restore, approval=CheckResult(False, "EOF denied"))
+    restore = replace(restore, interruption=CheckResult(False, "no resume"))
     report = build_report(results, restore)
     assert not report.gates["gate-4"].passed
-    assert "EOF denied" in report.gates["gate-4"].detail
+    assert "no resume" in report.gates["gate-4"].detail
 
 
 def test_gate_five_requires_restore_for_every_attempt():
@@ -361,10 +358,6 @@ def test_complete_runner_writes_gate_six_after_acceptance(tmp_path, monkeypatch)
         runner, "interruption_acceptance",
         lambda *args: order.append("interruption") or CheckResult(True, "ok"),
     )
-    monkeypatch.setattr(
-        runner, "approval_acceptance",
-        lambda *args, **kwargs: order.append("approval") or CheckResult(True, "ok"),
-    )
     replay = ReplayResult("task", 0, True, "tool replay", tool_call=True)
     monkeypatch.setattr(
         runner, "replay_task_results",
@@ -376,7 +369,7 @@ def test_complete_runner_writes_gate_six_after_acceptance(tmp_path, monkeypatch)
         (config(tmp_path),), tmp_path / "results",
     )
 
-    assert order == ["tasks", "restores", "interruption", "approval", "replay"]
+    assert order == ["tasks", "restores", "interruption", "replay"]
     assert report.gates["gate-6"].passed
     assert (tmp_path / "results/bakeoff.json").is_file()
     assert "gate-6: PASS" in (tmp_path / "results/report.txt").read_text()

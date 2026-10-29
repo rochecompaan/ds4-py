@@ -188,11 +188,9 @@ def build_report(task_results, restore_results, replay_results=None):
     ))
 
     interruption = restore_results.interruption
-    approval = restore_results.approval
-    gate4 = interruption.passed and approval.passed
     gates.append(_gate(
-        "gate-4", gate4,
-        f"interruption: {interruption.detail}; approval: {approval.detail}",
+        "gate-4", interruption.passed,
+        f"interruption: {interruption.detail}",
     ))
 
     expected = [save for item in python for save in item.attempt_save_dirs]

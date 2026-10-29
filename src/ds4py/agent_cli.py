@@ -36,7 +36,6 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--prefix-file", type=Path)
     result.add_argument("--trace", type=Path)
     result.add_argument("--read-only", action="store_true")
-    result.add_argument("--yolo", action="store_true")
     result.add_argument("-m", "--model", default="ds4flash.gguf")
     result.add_argument("-c", "--ctx", type=int, default=100_000)
     result.add_argument("-n", "--tokens", type=int, default=50_000)
@@ -71,17 +70,8 @@ def _think_mode(args) -> int:
     return ThinkMode.HIGH
 
 
-def _approval_answerer(request):
-    detail = request.command or request.path or request.tool_name
-    print(f"Approve {request.tool_name}: {detail}? [y/N]", file=sys.stderr, flush=True)
-    answer = sys.stdin.readline()
-    if answer == "":
-        raise EOFError("approval input reached EOF")
-    return answer
-
-
 async def _question_answerer(request):
-    """Read AskUser choices and return its typed response, never an approval string."""
+    """Read AskUser choices and return its typed response."""
     from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserResponse
 
     answers = []
@@ -116,7 +106,7 @@ async def _question_answerer(request):
 
 @contextmanager
 def open_runtime(args, project_dir, *, read_only=False):
-    """Open the canonical agent stack with an explicit CLI interaction policy."""
+    """Open the canonical agent stack with its CLI interaction services."""
     from ds4py import open as open_engine
     from ds4py.engine.sampling import SamplingPolicy
     from ds4py.model import DS4Model
@@ -133,9 +123,8 @@ def open_runtime(args, project_dir, *, read_only=False):
         )
         model = DS4Model(session, sampling=sampling, max_tokens=args.tokens)
         runtime = AgentRuntime(
-            model, project_dir, read_only=read_only, yolo=args.yolo,
+            model, project_dir, read_only=read_only,
             system=args.system, interactive=not args.non_interactive,
-            approval_answerer=None if args.yolo else _approval_answerer,
             question_answerer=_question_answerer if not args.non_interactive else None,
         )
         try:

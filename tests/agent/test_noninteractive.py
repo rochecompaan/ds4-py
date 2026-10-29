@@ -172,7 +172,7 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(monkeypatch
         "--ctx", "100000", "--tokens", "123", "--temp", "0", "--top-p", "0.8",
         "--min-p", "0", "--seed", "1", "--think-level", "25", "--cpu",
         "--threads", "2", "--system", "persistent rules", "--prefix-file", str(prefix),
-        "--read-only", "--yolo",
+        "--read-only",
     ]) == 0
 
     opened = next(item for item in created if item.kind == "open")
@@ -188,8 +188,8 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(monkeypatch
     }
     runtime = next(item for item in created if isinstance(item, Runtime))
     assert runtime.kwargs == {
-        "read_only": True, "yolo": True, "system": "persistent rules",
-        "interactive": False, "approval_answerer": None, "question_answerer": None,
+        "read_only": True, "system": "persistent rules",
+        "interactive": False, "question_answerer": None,
     }
     assert [(turn.role, turn.content) for turn in runtime.loaded] == [
         ("user", "earlier"), ("assistant", "answer"),
@@ -246,10 +246,18 @@ def test_agent_cli_interactive_constructs_and_runs_tui(monkeypatch):
     tui = next(item for item in created if isinstance(item, FakeTUI))
     assert tui.runtime is runtime
     assert runtime.kwargs["interactive"] is True
-    assert callable(runtime.kwargs["approval_answerer"])
+    assert "yolo" not in runtime.kwargs
+    assert "approval_answerer" not in runtime.kwargs
     assert callable(runtime.kwargs["question_answerer"])
     assert "tui-ran" in created
     assert created[-2:] == ["runtime-closed", "engine-closed"]
+
+
+def test_agent_cli_rejects_removed_yolo_flag():
+    from ds4py import agent_cli
+
+    with pytest.raises(SystemExit):
+        agent_cli.parser().parse_args(["--yolo"])
 
 
 def test_agent_cli_question_answerer_returns_a_typed_response(monkeypatch):

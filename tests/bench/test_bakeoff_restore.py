@@ -294,57 +294,27 @@ def test_attempt_saves_in_finally_even_when_prompt_fails():
 def interactive_script(root):
     path = root / "interactive.py"
     path.write_text('''\
-import sys
-
-if sys.argv[1] == "interrupt":
-    print("PREFILL", flush=True)
-    while True:
-        try:
-            line = input("> ")
-        except KeyboardInterrupt:
-            print("\\nINTERRUPTED", flush=True)
-            continue
-        if line == "continue":
-            print("RESUMED", flush=True)
-            break
-else:
+print("PREFILL", flush=True)
+while True:
     try:
-        answer = input("approval? [y/N] ")
-    except EOFError:
-        print("DENIED", flush=True)
-        raise SystemExit(2)
-    if answer != "y":
-        print("DENIED", flush=True)
-        raise SystemExit(2)
-    print("CONTINUED", flush=True)
+        line = input("> ")
+    except KeyboardInterrupt:
+        print("\\nINTERRUPTED", flush=True)
+        continue
+    if line == "continue":
+        print("RESUMED", flush=True)
+        break
 ''')
     return path
 
 
-def test_pty_interrupt_resumes_and_approval_continues(tmp_path):
+def test_pty_interrupt_resumes(tmp_path):
     script = interactive_script(tmp_path)
     interrupted = drive_pty(
-        [sys.executable, str(script), "interrupt"],
+        [sys.executable, str(script)],
         steps=[("PREFILL", "\x03"), ("INTERRUPTED", "continue\n"), ("RESUMED", None)],
         timeout=5,
-    )
-    approved = drive_pty(
-        [sys.executable, str(script), "approval"],
-        steps=[("approval", "y\n"), ("CONTINUED", None)], timeout=5,
     )
 
     assert interrupted.passed, interrupted.detail
     assert "RESUMED" in interrupted.detail
-    assert approved.passed, approved.detail
-    assert "CONTINUED" in approved.detail
-
-
-def test_pty_eof_denies_approval_instead_of_auto_approving(tmp_path):
-    script = interactive_script(tmp_path)
-    denied = drive_pty(
-        [sys.executable, str(script), "approval"],
-        steps=[("approval", "\x04")], timeout=5,
-    )
-
-    assert not denied.passed
-    assert "DENIED" in denied.detail

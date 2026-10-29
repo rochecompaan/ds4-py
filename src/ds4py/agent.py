@@ -1,7 +1,6 @@
 """Default ds4-py agent composition."""
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
@@ -18,16 +17,10 @@ from pydantic_ai_harness import (
 )
 from pydantic_ai_harness.ask_user import Answerer as QuestionAnswerer
 
-from ds4py.capabilities.approvals import ApprovalDecision, ApprovalRequest, DS4Approvals
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.shell_jobs import DS4ShellJobs
 from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.model import DS4Model
-
-ApprovalResult = ApprovalDecision | str
-ApprovalAnswerer = Callable[
-    [ApprovalRequest], ApprovalResult | Awaitable[ApprovalResult]
-]
 
 
 class AgentOptions(TypedDict, total=False):
@@ -46,10 +39,8 @@ def build_agent_components(
     project_dir: str | Path,
     *,
     read_only: bool = False,
-    yolo: bool = False,
     system: str | None = None,
     interactive: bool = False,
-    approval_answerer: ApprovalAnswerer | None = None,
     question_answerer: QuestionAnswerer | None = None,
     session_dir: str | Path | None = None,
 ) -> AgentComponents:
@@ -77,7 +68,6 @@ def build_agent_components(
         DS4RunRecord(model.session, Path(session_dir or project_dir) / "events.jsonl"),
         Instrumentation(),
         notes,
-        DS4Approvals(approval_answerer, yolo=yolo, project_dir=project_dir),
     ]
     if interactive:
         components.append(AskUser(answerer=question_answerer))

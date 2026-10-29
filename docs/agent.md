@@ -1,8 +1,8 @@
 # Agent guide
 
 The agent interface connects ds4py to the Pydantic AI harness. It provides
-workspace tools, approvals, saved sessions, an interactive shell, and token
-traces.
+workspace tools, extension capabilities, saved sessions, an interactive shell,
+and token traces.
 
 ## Install the dependencies
 
@@ -59,44 +59,20 @@ and returns a nonzero status when the run fails.
 
 ## Control workspace access
 
-The default approval policy asks before every shell command. It also asks
-before a file mutation outside the workspace. File mutations inside the
-workspace do not need approval.
+The base agent runs tools without approval prompts in interactive and
+noninteractive modes. There is no `--yolo` flag. An extension or plugin can add
+its own approval capability and define its prompts and denial behavior.
 
-The interactive prompt accepts these answers:
-
-- `y`: Approve one request.
-- `n`: Deny one request.
-- `t`: Approve later requests for the same tool.
-- `a`: Approve later requests for the same command or parent path.
-- `s`: Deny the request and stop the session.
-
-A denied tool returns a denied tool result to the model. The tool body does not
-run.
-
-Noninteractive runs have no approval prompt. They deny a request that needs
-approval unless you pass `--yolo`:
+If the agent must not mutate files or run commands, pass `--read-only`:
 
 ```bash
 uv run --extra agent ds4py \
   --model /absolute/path/ds4f-q2.gguf \
-  --non-interactive \
-  --prompt "Run the unit tests" \
-  --yolo
+  --read-only
 ```
 
-`--yolo` bypasses approval prompts. It does not bypass workspace read-only
-rules. If the agent must not mutate files, pass `--read-only`:
-
-```bash
-uv run --extra agent ds4py \
-  --model /absolute/path/ds4f-q2.gguf \
-  --read-only \
-  --yolo
-```
-
-Read-only file rules stay active with `--yolo`. Shell commands can have side
-effects, so use a sandbox when you cannot allow them.
+Without `--read-only`, shell commands can have side effects. Use a sandbox when
+needed.
 
 ## Store and restore sessions
 
