@@ -1,8 +1,17 @@
 """Six-gate bakeoff report with per-task diagnostics and no log dumping."""
 
+from __future__ import annotations
+
 from dataclasses import asdict, dataclass, is_dataclass
 import json
 from pathlib import Path
+from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from bench.replay_c_traces import ReplayResult
+    from bench.restore_check import RestoreResult, RestoreSummary
+    from bench.run_bakeoff import TaskRunResult
 
 
 METRICS = (
@@ -19,16 +28,16 @@ class GateResult:
 
 @dataclass(frozen=True)
 class BakeoffReport:
-    tasks: tuple
-    restore: object
+    tasks: tuple[TaskRunResult, ...]
+    restore: RestoreSummary
     gates: dict[str, GateResult]
-    replay: object = None
+    replay: tuple[ReplayResult, ...] | None = None
 
     @property
-    def passed(self):
+    def passed(self) -> bool:
         return all(gate.passed for gate in self.gates.values())
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         return _json({
             "tasks": self.tasks,
             "restore": self.restore,
@@ -36,13 +45,13 @@ class BakeoffReport:
             "replay": self.replay,
         })
 
-    def write_json(self, path):
+    def write_json(self, path: str | Path) -> Path:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n")
         return path
 
-    def compact_table(self):
+    def compact_table(self) -> str:
         lines = ["GATES"]
         lines.extend(
             f"{name}: {'PASS' if gate.passed else 'FAIL'} — {gate.detail}"
@@ -66,8 +75,8 @@ class BakeoffReport:
 RunReport = BakeoffReport
 
 
-def _json(value):
-    if is_dataclass(value):
+def _json(value: Any) -> Any:
+    if is_dataclass(value) and not isinstance(value, type):
         return _json(asdict(value))
     if isinstance(value, dict):
         return {str(key): _json(item) for key, item in value.items()}
@@ -78,7 +87,7 @@ def _json(value):
     return value
 
 
-def _number(value):
+def _number(value: int | float | None) -> str:
     if value is None:
         return "n/a"
     if isinstance(value, float):
@@ -86,21 +95,25 @@ def _number(value):
     return str(value)
 
 
-def _task(tasks, task_id, agent):
+def _task(
+    tasks: Sequence[TaskRunResult], task_id: str, agent: str,
+) -> TaskRunResult:
     return next(item for item in tasks if item.task_id == task_id and item.agent == agent)
 
 
-def _common_tasks(tasks):
+def _common_tasks(
+    tasks: Sequence[TaskRunResult],
+) -> tuple[list[str], set[str], set[str]]:
     c_ids = {item.task_id for item in tasks if item.agent == "c"}
     python_ids = {item.task_id for item in tasks if item.agent == "ds4py"}
     return sorted(c_ids & python_ids), c_ids, python_ids
 
 
-def _gate(name, passed, detail):
+def _gate(name: str, passed: bool, detail: str) -> tuple[str, GateResult]:
     return name, GateResult(bool(passed), detail)
 
 
-def replay_gate(replay_results):
+def replay_gate(replay_results: Iterable[ReplayResult] | None) -> GateResult:
     """Gate 6 requires complete per-round evidence and a real tool-call round."""
     values = None if replay_results is None else tuple(replay_results)
     coverage = any(item.tool_call for item in values or ())
@@ -112,7 +125,9 @@ def replay_gate(replay_results):
     return GateResult(passed, detail)
 
 
-def update_replay_report(path, replay_results):
+def update_replay_report(
+    path: str | Path, replay_results: Iterable[ReplayResult],
+) -> GateResult:
     """Replace only replay evidence and gate 6 in an existing six-gate report."""
     path = Path(path)
     data = json.loads(path.read_text())
@@ -124,11 +139,14 @@ def update_replay_report(path, replay_results):
     return gate
 
 
-def _restore_runs(restore):
+def _restore_runs(restore: RestoreSummary) -> dict[Path, RestoreResult]:
     return {Path(item.save_dir): item for item in restore.runs}
 
 
-def build_report(task_results, restore_results, replay_results=None):
+def build_report(
+    task_results: Iterable[TaskRunResult], restore_results: RestoreSummary,
+    replay_results: Iterable[ReplayResult] | None = None,
+) -> BakeoffReport:
     """Build gates 1–5 and reserve gate 6 for the C replay phase."""
     tasks = tuple(task_results)
     common, c_ids, python_ids = _common_tasks(tasks)
@@ -208,4 +226,4 @@ def build_report(task_results, restore_results, replay_results=None):
 
     replay_values = None if replay_results is None else tuple(replay_results)
     gates.append(("gate-6", replay_gate(replay_values)))
-    return BakeoffReport(tasks, restore_results, dict(gates), replay_results)
+    return BakeoffReport(tasks, restore_results, dict(gates), replay_values)

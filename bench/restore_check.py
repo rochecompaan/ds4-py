@@ -1,5 +1,7 @@
 """Save validation, deterministic restore checks, and fresh-process drivers."""
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 from contextlib import contextmanager, nullcontext
@@ -10,11 +12,18 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
+if TYPE_CHECKING:
+    from bench.run_bakeoff import TaskRunResult
+
+from ds4py.engine.lifecycle import SessionEvent
 from ds4py.engine.replay import read_replay
 from ds4py.errors import Ds4pyError
-from ds4py.store import SessionStore
+from ds4py.runtime import AgentRuntime
+from ds4py.store import SaveRecord, SessionStore
 
 
 FOLLOWUP = "Continue the previous task: state the next concrete action, then stop."
@@ -41,7 +50,7 @@ class RestoreRun:
 
 @dataclass(frozen=True)
 class SaveEvidence:
-    record: object
+    record: SaveRecord
     events_path: Path
     snapshot_path: Path
 
@@ -63,7 +72,30 @@ class RestoreSummary:
     interruption: CheckResult = CheckResult(False, "not run")
 
 
-def _events(path):
+RestoreRunner = Callable[[Path, str, int, Path], RestoreRun]
+
+
+class RestoreConfig(Protocol):
+    @property
+    def executable(self) -> tuple[str, ...]: ...
+
+    @property
+    def model(self) -> str: ...
+
+    @property
+    def backend(self) -> str: ...
+
+    @property
+    def ctx(self) -> int: ...
+
+    @property
+    def temperature(self) -> float: ...
+
+    @property
+    def seed(self) -> int: ...
+
+
+def _events(path: Path) -> Path:
     if not path.is_file():
         raise RestoreError(f"missing event stream: {path}")
     kinds = []
@@ -82,7 +114,7 @@ def _events(path):
     return path
 
 
-def validate_save(save_dir):
+def validate_save(save_dir: str | Path) -> SaveEvidence:
     """Validate one record, exact KV payload, events, and named complete snapshot."""
     save_dir = Path(save_dir)
     try:
@@ -120,7 +152,7 @@ def validate_save(save_dir):
         raise RestoreError(f"{save_dir}: invalid save evidence: {error}") from error
 
 
-def make_stripped_copy(save_dir, home):
+def make_stripped_copy(save_dir: str | Path, home: str | Path) -> Path:
     """Copy a save into a fresh home and replace only its KV payload with zero bytes."""
     save_dir = Path(save_dir)
     record = SessionStore().read_record(save_dir / "save.json")
@@ -133,13 +165,15 @@ def make_stripped_copy(save_dir, home):
     return destination
 
 
-def _samples(trace_path):
+def _samples(trace_path: str | Path) -> tuple[int, ...]:
     trace = read_replay(trace_path)
     return tuple(token for round_ in trace.rounds for token in round_.sampled)
 
 
-def _compare_restore(case1, case2):
-    problems = []
+def _compare_restore(
+    case1: RestoreRun, case2: RestoreRun,
+) -> tuple[list[str], tuple[int, ...], tuple[int, ...]]:
+    problems: list[str] = []
     if case1.switch_prefill != 0:
         problems.append(f"case 1 prefilled {case1.switch_prefill} tokens during switch")
     if case2.switch_prefill != 0:
@@ -168,13 +202,15 @@ def _compare_restore(case1, case2):
     return problems, first, second
 
 
-def check_restore(save_dir, work_dir, *, runner):
+def check_restore(
+    save_dir: str | Path, work_dir: str | Path, *, runner: RestoreRunner,
+) -> RestoreResult:
     """Run original and stripped saves through two new driver processes/calls."""
     save_dir = Path(save_dir)
     work_dir = Path(work_dir)
     case1 = case2 = None
     stripped = None
-    trace_paths = []
+    trace_paths: list[Path] = []
     try:
         evidence = validate_save(save_dir)
         if work_dir.exists():
@@ -208,7 +244,10 @@ def check_restore(save_dir, work_dir, *, runner):
                              trace_paths=tuple(trace_paths))
 
 
-async def run_attempt_with_save(runtime, prompt, *, operation=None):
+async def run_attempt_with_save(
+    runtime: AgentRuntime, prompt: str, *,
+    operation: Callable[[], Awaitable[int]] | None = None,
+) -> int:
     """Save exactly once; the standard noninteractive operation owns its finally."""
     if operation is None:
         from ds4py.noninteractive import run_noninteractive
@@ -220,7 +259,9 @@ async def run_attempt_with_save(runtime, prompt, *, operation=None):
         await runtime.save()
 
 
-async def switch_via_command(runtime, session_id):
+async def switch_via_command(
+    runtime: AgentRuntime, session_id: str,
+) -> object | None:
     """Use the public interactive slash-command path, not a direct runtime switch."""
     from ds4py.tui_commands import SlashCommandRegistry, install_builtin_commands
 
@@ -230,7 +271,9 @@ async def switch_via_command(runtime, session_id):
 
 
 @contextmanager
-def _runtime(args, *, read_only=False):
+def _runtime(
+    args: argparse.Namespace, *, read_only: bool = False,
+) -> Iterator[AgentRuntime]:
     from ds4py.agent_cli import open_runtime
 
     with open_runtime(args, Path.cwd(), read_only=read_only) as runtime:
@@ -238,7 +281,9 @@ def _runtime(args, *, read_only=False):
 
 
 @contextmanager
-def _trace(runtime, args):
+def _trace(
+    runtime: AgentRuntime, args: argparse.Namespace,
+) -> Iterator[None]:
     from ds4py.prefill_trace import PrefillTraceWriter
 
     trace = (
@@ -249,13 +294,13 @@ def _trace(runtime, args):
         yield
 
 
-def _prompt(args):
+def _prompt(args: argparse.Namespace) -> str | None:
     if args.prompt_file is not None:
         return args.prompt_file.read_bytes().decode("utf-8")
     return args.prompt
 
 
-def attempt_command(argv):
+def attempt_command(argv: Sequence[str]) -> int:
     from ds4py.agent_cli import parser
 
     args = parser().parse_args(argv)
@@ -274,7 +319,7 @@ def attempt_command(argv):
                 if args.non_interactive:
                     status = asyncio.run(run_attempt_with_save(runtime, prompt))
                 else:
-                    async def interactive():
+                    async def interactive() -> int:
                         from ds4py.agent_cli import _run_tui
 
                         return await _run_tui(runtime, prompt)
@@ -290,13 +335,15 @@ def attempt_command(argv):
     return status
 
 
-async def _restore_operation(runtime, session_id):
+async def _restore_operation(
+    runtime: AgentRuntime, session_id: str,
+) -> dict[str, Any]:
     state = {
         "followup": False, "switch_prefill": 0, "followup_prefill": 0,
         "plan": None, "reason": None,
     }
 
-    def listener(event):
+    def listener(event: SessionEvent) -> None:
         if event.kind == "Synced":
             plan = event.payload["event"].plan
             if state["followup"]:
@@ -315,7 +362,7 @@ async def _restore_operation(runtime, session_id):
     return state
 
 
-def restore_command(argv):
+def restore_command(argv: Sequence[str]) -> int:
     from ds4py.agent_cli import parser
 
     custom = argparse.ArgumentParser()
@@ -337,9 +384,11 @@ def restore_command(argv):
     return 0
 
 
-def process_restore_runner(config):
+def process_restore_runner(config: RestoreConfig) -> RestoreRunner:
     """Return a runner that starts a new process for each restore case."""
-    def run(home, session_id, case, trace_path):
+    def run(
+        home: Path, session_id: str, case: int, trace_path: Path,
+    ) -> RestoreRun:
         metadata = trace_path.with_suffix(".json")
         executable = config.executable[:-1] if config.executable[-1] == "attempt" else config.executable
         command = [
@@ -366,9 +415,11 @@ def process_restore_runner(config):
     return run
 
 
-def check_result_saves(task_results, config, results_root):
+def check_result_saves(
+    task_results: Sequence[TaskRunResult], config: RestoreConfig, results_root: str | Path,
+) -> tuple[RestoreResult, ...]:
     """Restore every ds4-py attempt save in a fresh process pair."""
-    results = []
+    results: list[RestoreResult] = []
     for item in task_results:
         if item.agent != "ds4py":
             continue
@@ -381,7 +432,7 @@ def check_result_saves(task_results, config, results_root):
     return tuple(results)
 
 
-def check_command(argv):
+def check_command(argv: Sequence[str]) -> int:
     """Recheck every ds4-py save referenced by a written bakeoff report."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path, required=True)
@@ -394,12 +445,15 @@ def check_command(argv):
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     data = json.loads(args.report.read_text())
-    tasks = [SimpleNamespace(**item) for item in data.get("tasks", [])]
-    config = SimpleNamespace(
+    tasks = cast(
+        list[TaskRunResult],
+        [SimpleNamespace(**item) for item in data.get("tasks", [])],
+    )
+    config = cast(RestoreConfig, SimpleNamespace(
         executable=(sys.executable, str(Path(__file__).resolve()), "attempt"),
         model=args.model, backend=args.backend, ctx=args.ctx,
         temperature=args.temp, seed=args.seed,
-    )
+    ))
     results = check_result_saves(
         tasks, config, args.results or args.report.parent / "restores",
     )
@@ -415,7 +469,7 @@ def check_command(argv):
     return 0 if passed else 1
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] not in {"attempt", "restore", "check"}:
         raise SystemExit("usage: restore_check.py attempt|restore|check [options]")

@@ -4,6 +4,7 @@ import argparse
 import os
 from pathlib import Path
 import sys
+from collections.abc import Sequence
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -16,7 +17,7 @@ from bench.workspaces import (  # noqa: E402
 )
 
 
-def benchmark_checkout(argument=None):
+def benchmark_checkout(argument: str | None = None) -> Path:
     value = argument or os.environ.get("POLYGLOT_BENCHMARK")
     if not value:
         raise BenchError(
@@ -25,7 +26,7 @@ def benchmark_checkout(argument=None):
     return Path(value).expanduser().resolve()
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> int:
     script = Path(__file__).resolve()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=script.with_name("bakeoff.yaml"))

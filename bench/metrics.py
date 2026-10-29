@@ -1,7 +1,11 @@
 """Strict comparison metrics extracted from bakeoff event and trace evidence."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 import math
+from typing import Any
+
+from ds4py.engine.replay_types import ReplayTrace
 
 
 class MetricError(ValueError):
@@ -16,11 +20,11 @@ class ToolAccounting:
     retried: int = 0
 
     @property
-    def accounted(self):
+    def accounted(self) -> int:
         return self.executed + self.refused + self.retried
 
     @property
-    def complete(self):
+    def complete(self) -> bool:
         return self.accounted == self.parsed
 
 
@@ -40,13 +44,13 @@ class EventSummary:
     reuse_ratios: tuple[float, ...] = ()
 
 
-def _count(value, name):
+def _count(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise MetricError(f"{name} must be a nonnegative integer")
     return value
 
 
-def _wall(value):
+def _wall(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise MetricError("wall seconds must be numeric")
     value = float(value)
@@ -55,7 +59,9 @@ def _wall(value):
     return value
 
 
-def _payload(record):
+def _payload(
+    record: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
     payload = record.get("payload")
     if not isinstance(payload, dict):
         raise MetricError("event payload must be an object")
@@ -65,7 +71,7 @@ def _payload(record):
     return payload, nested
 
 
-def _reuse(plan):
+def _reuse(plan: object) -> tuple[str, int, int]:
     if not isinstance(plan, dict):
         raise MetricError("Synced event is missing its plan")
     kind = plan.get("kind")
@@ -79,7 +85,9 @@ def _reuse(plan):
     return kind, reused, denominator
 
 
-def summarize_events(events, *, wall_seconds):
+def summarize_events(
+    events: Iterable[dict[str, Any]], *, wall_seconds: float,
+) -> EventSummary:
     """Summarize one attempt's JSONL records without inventing missing values."""
     records = list(events)
     if not records or any(not isinstance(record, dict) for record in records):
@@ -90,9 +98,9 @@ def summarize_events(events, *, wall_seconds):
         raise MetricError(f"unbalanced run events: {starts} starts and {ends} ends")
     progress = tokens = parsed = executed = refused = retried = 0
     parser_errors = non_extend = invalid_non_extend = allowed_non_extend = 0
-    ratios = []
-    reasons = []
-    seen_runs = set()
+    ratios: list[float] = []
+    reasons: list[str] = []
+    seen_runs: set[str] = set()
     for record in records:
         kind = record.get("kind")
         if not isinstance(kind, str):
@@ -166,7 +174,9 @@ def summarize_events(events, *, wall_seconds):
     )
 
 
-def metrics_from_trace(trace, *, wall_seconds, progress_events, tool_calls):
+def metrics_from_trace(
+    trace: ReplayTrace, *, wall_seconds: float, progress_events: int, tool_calls: int,
+) -> EventSummary:
     """Extract C metrics when no JSONL harness event stream is available."""
     rounds = list(trace.rounds)
     if not rounds:
@@ -201,7 +211,7 @@ def metrics_from_trace(trace, *, wall_seconds, progress_events, tool_calls):
     )
 
 
-def combine_summaries(summaries):
+def combine_summaries(summaries: Iterable[EventSummary]) -> EventSummary:
     """Sum attempt metrics and weight reuse by plans, not by attempt averages."""
     values = list(summaries)
     if not values:

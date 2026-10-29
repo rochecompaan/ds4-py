@@ -4,6 +4,7 @@ Agents see only ``Workspace.agent_dir``. Test files live in the separate
 ``grader_dir`` and are mounted only for the duration of one grading call.
 """
 
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from io import BytesIO
@@ -13,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+from typing import Any
 
 
 class BenchError(RuntimeError):
@@ -45,7 +47,7 @@ class Manifest:
     seed: int
     max_attempts: int
     exercises: tuple[str, ...]
-    repository_tasks: tuple[dict, ...]
+    repository_tasks: tuple[dict[str, Any], ...]
 
 
 @dataclass(frozen=True)
@@ -57,31 +59,38 @@ class Workspace:
     hidden_tests: tuple[str, ...] = ()
     max_attempts: int = 2
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.max_attempts not in {1, 2}:
             raise ValueError("Bakeoff workspaces allow one or two attempts")
 
 
-def _reset_directory(path):
+CommandRunner = Callable[
+    [Sequence[str], Path, Mapping[str, str]], subprocess.CompletedProcess[Any]
+]
+
+
+def _reset_directory(path: str | Path) -> None:
     path = Path(path)
     if path.exists():
         shutil.rmtree(path)
     path.mkdir(parents=True)
 
 
-def _is_test_file(path):
+def _is_test_file(path: Path) -> bool:
     name = path.name
     return path.suffix == ".py" and (
         name.endswith("_test.py") or name.startswith("test_") or name == "tests.py"
     )
 
 
-def _copy_file(source, destination):
+def _copy_file(source: str | Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
 
 
-def prepare_exercise(source, destination, *, max_attempts=2):
+def prepare_exercise(
+    source: str | Path, destination: str | Path, *, max_attempts: int = 2,
+) -> Workspace:
     """Stage one Exercism task with its tests held outside the agent view."""
     source = Path(source)
     destination = Path(destination)
@@ -93,7 +102,7 @@ def prepare_exercise(source, destination, *, max_attempts=2):
     grader_dir = destination / "grader"
     agent_dir.mkdir()
     grader_dir.mkdir()
-    hidden = []
+    hidden: list[str] = []
     for path in sorted(source.rglob("*")):
         if not path.is_file() or ".git" in path.parts:
             continue
@@ -111,7 +120,7 @@ def prepare_exercise(source, destination, *, max_attempts=2):
     )
 
 
-def archive_repository(repo_root, destination):
+def archive_repository(repo_root: str | Path, destination: str | Path) -> None:
     """Copy the current committed repository state without its ``.git`` directory."""
     result = subprocess.run(
         ["git", "archive", "HEAD"], cwd=repo_root,
@@ -128,9 +137,10 @@ def archive_repository(repo_root, destination):
 
 
 def prepare_repository_task(
-    repo_root, destination, *, task_id, prompt, patch=None, visible_test=None,
-    grader=None, max_attempts=2,
-):
+    repo_root: str | Path, destination: str | Path, *, task_id: str, prompt: str,
+    patch: str | Path | None = None, visible_test: str | None = None,
+    grader: str | Path | None = None, max_attempts: int = 2,
+) -> Workspace:
     """Stage a repository task from ``HEAD`` and optionally plant one patch."""
     destination = Path(destination)
     _reset_directory(destination)
@@ -169,7 +179,7 @@ def prepare_repository_task(
     )
 
 
-def clone_workspace(workspace, destination):
+def clone_workspace(workspace: Workspace, destination: str | Path) -> Workspace:
     """Make an independent agent/grader copy from one pristine staged task."""
     destination = Path(destination)
     if destination.exists():
@@ -183,9 +193,9 @@ def clone_workspace(workspace, destination):
 
 
 @contextmanager
-def _mounted_tests(workspace):
-    backups = {}
-    mounted = []
+def _mounted_tests(workspace: Workspace) -> Iterator[None]:
+    backups: dict[Path, bytes | None] = {}
+    mounted: list[Path] = []
     try:
         for name in workspace.hidden_tests:
             source = workspace.grader_dir / name
@@ -216,7 +226,7 @@ def _mounted_tests(workspace):
                 parent = parent.parent
 
 
-def _combined_output(completed):
+def _combined_output(completed: subprocess.CompletedProcess[Any]) -> str:
     stdout = completed.stdout or ""
     stderr = completed.stderr or ""
     if isinstance(stdout, bytes):
@@ -227,7 +237,9 @@ def _combined_output(completed):
     return stdout + separator + stderr
 
 
-def grade_workspace(workspace, *, runner=None):
+def grade_workspace(
+    workspace: Workspace, *, runner: CommandRunner | None = None,
+) -> GradeResult:
     """Mount hidden tests, capture one grading result, then unmount them."""
     if not workspace.test_paths:
         raise PreparationError(f"{workspace.task_id}: no grading tests configured")
@@ -257,17 +269,24 @@ def grade_workspace(workspace, *, runner=None):
         environment["PYTHONPATH"] = os.pathsep.join(pythonpath)
     else:
         environment.pop("PYTHONPATH", None)
-    if runner is None:
-        def runner(command, cwd, env):
+    command_runner = runner
+    if command_runner is None:
+        def default_runner(
+            command: Sequence[str], cwd: Path, env: Mapping[str, str],
+        ) -> subprocess.CompletedProcess[Any]:
             return subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
+        command_runner = default_runner
     with _mounted_tests(workspace):
-        completed = runner(command, workspace.grader_dir, environment)
+        completed = command_runner(command, workspace.grader_dir, environment)
     return GradeResult(completed.returncode == 0, _combined_output(completed))
 
 
-def run_attempts(workspace, agent, *, runner=None):
+def run_attempts(
+    workspace: Workspace, agent: Callable[[Path, int, str], None], *,
+    runner: CommandRunner | None = None,
+) -> list[GradeResult]:
     """Run at most two agent/grade rounds, feeding failure output to the next call."""
-    grades = []
+    grades: list[GradeResult] = []
     feedback = ""
     for attempt in range(1, workspace.max_attempts + 1):
         agent(workspace.agent_dir, attempt, feedback)
@@ -279,7 +298,7 @@ def run_attempts(workspace, agent, *, runner=None):
     return grades
 
 
-def verify_benchmark(benchmark, expected_commit):
+def verify_benchmark(benchmark: str | Path, expected_commit: str) -> str:
     """Require the existing external checkout to be at the pinned commit."""
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=benchmark, capture_output=True, text=True,
@@ -294,7 +313,7 @@ def verify_benchmark(benchmark, expected_commit):
     return actual
 
 
-def load_manifest(path):
+def load_manifest(path: str | Path) -> Manifest:
     """Load the fixed task list; preparation performs behavioral validation."""
     import yaml
 
@@ -326,7 +345,7 @@ def load_manifest(path):
     )
 
 
-def validate_manifest_sources(manifest, benchmark):
+def validate_manifest_sources(manifest: Manifest, benchmark: str | Path) -> None:
     """Check the pinned checkout and required exercise inputs without staging."""
     benchmark = Path(benchmark)
     verify_benchmark(benchmark, manifest.commit)
@@ -338,7 +357,9 @@ def validate_manifest_sources(manifest, benchmark):
             raise PreparationError(f"{source}: no Python exercise tests found")
 
 
-def prepare_manifest(manifest, output, benchmark, repo_root):
+def prepare_manifest(
+    manifest: Manifest, output: str | Path, benchmark: str | Path, repo_root: str | Path,
+) -> list[Workspace]:
     """Materialize all twelve pinned tasks in manifest order."""
     validate_manifest_sources(manifest, benchmark)
     output = Path(output)

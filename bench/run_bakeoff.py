@@ -13,13 +13,18 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from typing import Any
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from bench.workspaces import clone_workspace, grade_workspace, load_manifest, prepare_manifest
+from bench.workspaces import (
+    CommandRunner, GradeResult, Workspace, clone_workspace, grade_workspace,
+    load_manifest, prepare_manifest,
+)
 from bench.replay_c_traces import replay_task_results
-from bench.report import build_report
+from bench.report import BakeoffReport, build_report
 from bench.restore_check import CheckResult, RestoreSummary, check_result_saves
 from bench.metrics import (
     EventSummary,
@@ -29,6 +34,7 @@ from bench.metrics import (
     summarize_events,
 )
 from ds4py.engine.replay import read_replay
+from ds4py.engine.replay_types import ReplayTrace
 
 
 @dataclass(frozen=True)
@@ -42,7 +48,7 @@ class AgentConfig:
     seed: int
     tokens: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.agent not in {"c", "ds4py"}:
             raise ValueError("agent must be 'c' or 'ds4py'")
         object.__setattr__(self, "executable", tuple(str(item) for item in self.executable))
@@ -63,7 +69,7 @@ class TaskRunResult:
     attempt_trace_paths: tuple[Path, ...] = ()
     errors: tuple[str, ...] = ()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.attempts not in {1, 2}:
             raise ValueError("attempts must be one or two")
         for name in ("progress_events", "tokens", "tool_calls", "non_extend_rounds"):
@@ -76,25 +82,27 @@ class TaskRunResult:
         if reuse is not None and not 0 <= reuse <= 1:
             raise ValueError("avg_prefill_reuse must be in [0,1]")
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         if name in _SUMMARY_FIELDS:
             return getattr(self.summary, name)
         raise AttributeError(f"{type(self).__name__} has no attribute {name!r}")
 
     @property
-    def save_dir(self):
+    def save_dir(self) -> Path | None:
         return self.attempt_save_dirs[-1] if self.attempt_save_dirs else None
 
     @property
-    def trace_path(self):
+    def trace_path(self) -> Path | None:
         return self.attempt_trace_paths[-1] if self.attempt_trace_paths else None
 
 
-def _option_number(value):
+def _option_number(value: int | float) -> str:
     return str(int(value)) if isinstance(value, int) or value.is_integer() else str(value)
 
 
-def build_agent_command(config, prompt, trace_path):
+def build_agent_command(
+    config: AgentConfig, prompt: str, trace_path: str | Path,
+) -> list[str]:
     """Build equivalent C and ds4-py sampling/task invocations."""
     command = [*config.executable]
     if config.agent == "ds4py":
@@ -112,7 +120,11 @@ def build_agent_command(config, prompt, trace_path):
     return command
 
 
-def drive_pty(command, *, steps, cwd=None, env=None, timeout=30):
+def drive_pty(
+    command: Sequence[str], *, steps: Iterable[tuple[str, str | None]],
+    cwd: str | Path | None = None, env: Mapping[str, str] | None = None,
+    timeout: float = 30,
+) -> CheckResult:
     """Drive timed expect/send steps through a controlling pseudo-terminal."""
     deadline = time.monotonic() + timeout
     output = bytearray()
@@ -127,13 +139,13 @@ def drive_pty(command, *, steps, cwd=None, env=None, timeout=30):
             os._exit(127)
     wait_status = None
 
-    def remaining():
+    def remaining() -> float:
         left = deadline - time.monotonic()
         if left <= 0:
             raise TimeoutError("PTY timed out")
         return left
 
-    def read_available(wait):
+    def read_available(wait: float) -> bool:
         ready, _, _ = select.select([master], [], [], min(wait, 0.1))
         if not ready:
             return True
@@ -195,7 +207,7 @@ def drive_pty(command, *, steps, cwd=None, env=None, timeout=30):
     return CheckResult(passed, detail)
 
 
-def load_events(path):
+def load_events(path: str | Path) -> list[dict[str, Any]]:
     path = Path(path)
     if not path.is_file():
         raise MetricError(f"missing event stream: {path}")
@@ -215,23 +227,26 @@ def load_events(path):
     return records
 
 
-def _empty_summary(wall_seconds):
+def _empty_summary(wall_seconds: float) -> EventSummary:
     return EventSummary(wall_seconds, 0, 0, 0, None, 0, tool_accounting=None)
 
 
-def _trace_tokens(path):
+def _trace_tokens(path: str | Path) -> tuple[ReplayTrace, int]:
     trace = read_replay(path)
     return trace, sum(len(round_.sampled) for round_ in trace.rounds)
 
 
-def _c_tool_calls(log_text):
+def _c_tool_calls(log_text: str) -> int:
     return sum(
         bool(re.search(r"\btool[_ -]call(?:ed|s)?\b", line, re.IGNORECASE))
         for line in log_text.splitlines()
     )
 
 
-def _attempt_summary(config, events_path, trace_path, log_text, wall_seconds):
+def _attempt_summary(
+    config: AgentConfig, events_path: Path, trace_path: Path,
+    log_text: str, wall_seconds: float,
+) -> EventSummary:
     if events_path.is_file():
         summary = summarize_events(load_events(events_path), wall_seconds=wall_seconds)
         if config.agent == "c":
@@ -251,7 +266,7 @@ def _attempt_summary(config, events_path, trace_path, log_text, wall_seconds):
     )
 
 
-def _save_dir(home):
+def _save_dir(home: Path) -> Path:
     sessions = home / "sessions"
     saves = sorted(path.parent for path in sessions.glob("*/save.json")) if sessions.is_dir() else []
     if len(saves) != 1:
@@ -259,15 +274,19 @@ def _save_dir(home):
     return saves[0]
 
 
-def run_task(workspace, config, results_root, *, grade_runner=None, clock=time.monotonic):
+def run_task(
+    workspace: Workspace, config: AgentConfig, results_root: str | Path, *,
+    grade_runner: CommandRunner | None = None,
+    clock: Callable[[], float] = time.monotonic,
+) -> TaskRunResult:
     """Run one agent on one staged task, with at most two sequential attempts."""
     results_root = Path(results_root)
     base_prompt = (workspace.agent_dir / "TASK.md").read_text()
-    summaries = []
-    grades = []
-    save_dirs = []
-    trace_paths = []
-    errors = []
+    summaries: list[EventSummary] = []
+    grades: list[GradeResult] = []
+    save_dirs: list[Path] = []
+    trace_paths: list[Path] = []
+    errors: list[str] = []
     feedback = ""
     for attempt in range(1, workspace.max_attempts + 1):
         attempt_root = results_root / workspace.task_id / config.agent / f"attempt-{attempt}"
@@ -338,9 +357,12 @@ def run_task(workspace, config, results_root, *, grade_runner=None, clock=time.m
     )
 
 
-def run_tasks_sequentially(workspaces, configs, results_root, *, grade_runner=None):
+def run_tasks_sequentially(
+    workspaces: Sequence[Workspace], configs: Sequence[AgentConfig],
+    results_root: str | Path, *, grade_runner: CommandRunner | None = None,
+) -> list[TaskRunResult]:
     """Close every agent process before cloning or starting the next run."""
-    results = []
+    results: list[TaskRunResult] = []
     for config in configs:
         for staged in workspaces:
             workspace = clone_workspace(
@@ -352,13 +374,15 @@ def run_tasks_sequentially(workspaces, configs, results_root, *, grade_runner=No
     return results
 
 
-def _acceptance_environment(home):
+def _acceptance_environment(home: Path) -> dict[str, str]:
     environment = os.environ.copy()
     environment["DS4PY_HOME"] = str(home)
     return environment
 
 
-def interruption_acceptance(config, workspace, results_root):
+def interruption_acceptance(
+    config: AgentConfig, workspace: Workspace, results_root: str | Path,
+) -> CheckResult:
     """Interrupt visible generation, submit a next prompt, then exit cleanly."""
     root = Path(results_root) / "gate-4" / "interruption"
     root.mkdir(parents=True, exist_ok=True)
@@ -379,7 +403,11 @@ def interruption_acceptance(config, workspace, results_root):
     return CheckResult(result.passed and "interrupted" in result.detail.lower(), result.detail)
 
 
-def run_bakeoff(manifest_path, benchmark, repo_root, configs, results_root, *, grade_runner=None):
+def run_bakeoff(
+    manifest_path: str | Path, benchmark: str | Path, repo_root: str | Path,
+    configs: Sequence[AgentConfig], results_root: str | Path, *,
+    grade_runner: CommandRunner | None = None,
+) -> BakeoffReport:
     """Run all tasks and acceptance checks, then write all six gate results."""
     results_root = Path(results_root)
     results_root.mkdir(parents=True, exist_ok=False)
@@ -402,7 +430,7 @@ def run_bakeoff(manifest_path, benchmark, repo_root, configs, results_root, *, g
     return report
 
 
-def _parser():
+def _parser() -> argparse.ArgumentParser:
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=Path(__file__).with_name("bakeoff.yaml"))
@@ -416,7 +444,7 @@ def _parser():
     return parser
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     manifest = load_manifest(args.manifest)
     common = dict(
