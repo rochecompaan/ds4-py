@@ -1,8 +1,11 @@
 """Session save/load jobs over the single native worker."""
+from typing import Any
+from pathlib import Path
 
 import pytest
 
 import ds4py
+from ds4py.engine.session import Engine
 from ds4py._native.fake import FakeNative, FakeSession, reply
 from ds4py.engine.events import Loaded, Saved, Stopped, Synced
 from ds4py.engine.plan import Plan
@@ -11,11 +14,11 @@ from ds4py.errors import CheckpointError, EngineError
 HEADER = b"DS4PYKV\0" + bytes(12)
 
 
-def fake_engine(**kwargs):
+def fake_engine(**kwargs: Any) -> Engine:
     return ds4py.open("f.gguf", ctx=4096, native=FakeNative(**kwargs))
 
 
-def chat_session(engine):
+def chat_session(engine: Any) -> Any:
     session = engine.session()
     session.append_user("hi")
     list(session.run_round(max_tokens=1))
@@ -23,7 +26,7 @@ def chat_session(engine):
     return session
 
 
-def save_to(path, session):
+def save_to(path: Any, session: Any) -> Any:
     with path.open("w+b") as file:
         saved = session.save_payload(file, header=HEADER)
         assert not file.closed
@@ -31,12 +34,12 @@ def save_to(path, session):
 
 
 def test_save_syncs_the_trailing_eos_before_writing_header_and_payload(
-    tmp_path, monkeypatch,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     synced = []
     original = FakeSession.sync
 
-    def tracking_sync(self, tokens, **kwargs):
+    def tracking_sync(self: Any, tokens: Any, **kwargs: Any) -> Any:
         synced.append(tuple(tokens))
         return original(self, tokens, **kwargs)
 
@@ -57,7 +60,7 @@ def test_save_syncs_the_trailing_eos_before_writing_header_and_payload(
         assert len(data) == len(HEADER) + saved.payload_bytes
 
 
-def test_save_accepts_a_caller_header_without_a_store_length_policy(tmp_path):
+def test_save_accepts_a_caller_header_without_a_store_length_policy(tmp_path: Path) -> None:
     header = b"short"
     path = tmp_path / "session.kv"
     with fake_engine() as engine:
@@ -73,29 +76,29 @@ def test_save_accepts_a_caller_header_without_a_store_length_policy(tmp_path):
 
 
 def test_save_closes_the_staged_payload_on_success_and_write_failure(
-    tmp_path, monkeypatch,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     staged_objects = []
     original = FakeSession.stage_payload
 
     class Tracked:
-        def __init__(self, inner):
+        def __init__(self, inner: Any) -> None:
             self.inner, self.closes = inner, 0
 
         @property
-        def bytes(self):
+        def bytes(self) -> Any:
             return self.inner.bytes
 
-        def write(self, file):
+        def write(self, file: Any) -> Any:
             if fail:
                 raise EngineError("staged write failed")
             return self.inner.write(file)
 
-        def close(self):
+        def close(self) -> None:
             self.closes += 1
             self.inner.close()
 
-    def stage(self):
+    def stage(self: Any) -> Any:
         tracked = Tracked(original(self))
         staged_objects.append(tracked)
         return tracked
@@ -117,7 +120,7 @@ def test_save_closes_the_staged_payload_on_success_and_write_failure(
     assert [tracked.closes for tracked in staged_objects] == [1, 1]
 
 
-def test_load_adopts_native_tokens_restores_chat_and_permits_extension(tmp_path):
+def test_load_adopts_native_tokens_restores_chat_and_permits_extension(tmp_path: Path) -> None:
     with fake_engine(script=reply(b"ok")) as engine:
         session = chat_session(engine)
         saved_tokens = session.transcript.tokens
@@ -154,7 +157,7 @@ def test_load_adopts_native_tokens_restores_chat_and_permits_extension(tmp_path)
         assert events[-1] == Stopped("max_tokens")
 
 
-def test_load_clears_checkpoints_that_point_at_the_previous_transcript(tmp_path):
+def test_load_clears_checkpoints_that_point_at_the_previous_transcript(tmp_path: Path) -> None:
     with fake_engine() as engine:
         session = engine.session()
         session.append_tokens([5, 6, 7], "user")
@@ -170,7 +173,7 @@ def test_load_clears_checkpoints_that_point_at_the_previous_transcript(tmp_path)
             session.drop_checkpoint("old")
 
 
-def test_load_failure_keeps_the_existing_transcript_and_file_usable(tmp_path):
+def test_load_failure_keeps_the_existing_transcript_and_file_usable(tmp_path: Path) -> None:
     with fake_engine() as engine:
         session = engine.session()
         session.append_tokens([5, 6], "user")

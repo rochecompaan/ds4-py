@@ -1,3 +1,4 @@
+from typing import Any
 import threading
 from dataclasses import replace
 from pathlib import Path
@@ -5,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import ds4py
+from ds4py.engine.session import Engine
 from ds4py import ThinkMode, open
 from ds4py._native.fake import FakeNative, FakeSession, reply
 from ds4py._native.protocol import EngineConfig
@@ -17,13 +19,14 @@ from ds4py.engine.session import Engine, Session
 from ds4py.engine.transcript import Transcript
 from ds4py.engine.worker import EngineWorker, SYSTEM
 from ds4py.errors import CheckpointError, EngineError
+from typing import Never
 
 
-def fake_engine(*, ctx=64, cancel=None, **fake):
+def fake_engine(*, ctx: Any=64, cancel: Any=None, **fake: Any) -> Engine:
     return ds4py.open("f.gguf", ctx=ctx, cancel=cancel, native=FakeNative(**fake))
 
 
-def test_open_checks_backend_and_think_mode():
+def test_open_checks_backend_and_think_mode() -> None:
     with fake_engine() as e:
         assert e.info.name == "fake" and e.config.backend == "cpu" and e.think == ThinkMode.HIGH
     with pytest.raises(EngineError, match="built for cpu"):
@@ -33,16 +36,16 @@ def test_open_checks_backend_and_think_mode():
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_think_helper_runs_on_owner_and_failure_closes_worker(fail):
+def test_think_helper_runs_on_owner_and_failure_closes_worker(fail: Any) -> None:
     handles, calls = [], []
 
     class TrackingNative(FakeNative):
-        def open_engine(self, config):
+        def open_engine(self, config: Any) -> Any:
             engine = super().open_engine(config)
             handles.append(engine)
             create = engine.create_session
 
-            def create_session(ctx):
+            def create_session(ctx: Any) -> Any:
                 session = create(ctx)
                 handles.append(session)
                 return session
@@ -50,7 +53,7 @@ def test_think_helper_runs_on_owner_and_failure_closes_worker(fail):
             engine.create_session = create_session
             return engine
 
-        def think_mode_for_context(self, mode, ctx):
+        def think_mode_for_context(self, mode: Any, ctx: Any) -> Any:
             calls.append(threading.current_thread())
             if fail:
                 raise EngineError("think helper failed")
@@ -69,7 +72,7 @@ def test_think_helper_runs_on_owner_and_failure_closes_worker(fail):
     assert not calls[0].is_alive()
 
 
-def test_sampling_defaults_follow_the_engine():
+def test_sampling_defaults_follow_the_engine() -> None:
     native = FakeNative()
     handle = native.open_engine(EngineConfig(Path("f")))
     glm = replace(handle.info(), family="glm", is_glm_dsa=True)
@@ -78,7 +81,7 @@ def test_sampling_defaults_follow_the_engine():
         assert e.sampling_defaults == SamplingPolicy(top_p=0.95, min_p=0.0, seed=5)
 
 
-def test_a_round_syncs_generates_and_extends_the_transcript():
+def test_a_round_syncs_generates_and_extends_the_transcript() -> None:
     with fake_engine(script=reply(b"ok")) as e:
         s = e.session()
         assert isinstance(e, Engine) and isinstance(s, Session)
@@ -92,7 +95,7 @@ def test_a_round_syncs_generates_and_extends_the_transcript():
             e.session()
 
 
-def test_malformed_dsml_raw_utf8_finishes_as_parser_error():
+def test_malformed_dsml_raw_utf8_finishes_as_parser_error() -> None:
     payload = (
         '<｜DSML｜tool_calls><｜DSML｜invoke name="read" extra="'.encode()
         + b"\xff"
@@ -111,12 +114,12 @@ def test_malformed_dsml_raw_utf8_finishes_as_parser_error():
     assert not any(isinstance(event, ToolCalls) for event in events)
 
 
-def test_public_round_forwards_stop_sequences(monkeypatch):
+def test_public_round_forwards_stop_sequences(monkeypatch: pytest.MonkeyPatch) -> None:
     from ds4py.engine import session as session_module
     original = session_module.GenerateJob
     captured = []
 
-    def capture_job(*args, **kwargs):
+    def capture_job(*args: Any, **kwargs: Any) -> Any:
         captured.append(kwargs)
         return original(*args, **kwargs)
 
@@ -131,7 +134,7 @@ def test_public_round_forwards_stop_sequences(monkeypatch):
 
 
 @pytest.mark.parametrize("pause_at", [Synced, Token])
-def test_overlapping_round_is_refused_without_releasing_the_first(pause_at, monkeypatch):
+def test_overlapping_round_is_refused_without_releasing_the_first(pause_at: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     with fake_engine(script=reply(b"ok")) as e:
         s = e.session()
         s.append_tokens([5, 6], "user")
@@ -161,11 +164,11 @@ def test_overlapping_round_is_refused_without_releasing_the_first(pause_at, monk
 
 
 @pytest.mark.parametrize("method", ["sync", "eval"])
-def test_worker_error_releases_the_round(method, monkeypatch):
+def test_worker_error_releases_the_round(method: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     original = getattr(FakeSession, method)
     failed = False
 
-    def fail_once(self, *args, **kwargs):
+    def fail_once(self: Any, *args: Any, **kwargs: Any) -> Any:
         nonlocal failed
         if not failed:
             failed = True
@@ -183,7 +186,7 @@ def test_worker_error_releases_the_round(method, monkeypatch):
         assert s.ctx_used == len(s.transcript)
 
 
-def test_ctrl_c_during_sync_keeps_the_transcript():
+def test_ctrl_c_during_sync_keeps_the_transcript() -> None:
     with fake_engine() as e:
         s = e.session()
         s.append_tokens(e.tokenize("hello"), "user")
@@ -193,7 +196,7 @@ def test_ctrl_c_during_sync_keeps_the_transcript():
         assert isinstance(list(s.run_round())[-1], Stopped)
 
 
-def test_closing_a_round_early_keeps_what_was_evaluated():
+def test_closing_a_round_early_keeps_what_was_evaluated() -> None:
     cancel = threading.Event()
     with fake_engine(script=reply(b"abcdefgh"), cancel=cancel) as e:
         s = e.session()
@@ -210,7 +213,7 @@ def test_closing_a_round_early_keeps_what_was_evaluated():
         assert isinstance(list(s.run_round(max_tokens=0))[-1], Stopped)
 
 
-def test_checkpoints_through_the_session():
+def test_checkpoints_through_the_session() -> None:
     with fake_engine() as e:
         s = e.session()
         s.append_tokens(list(range(1, 9)), "system")
@@ -221,7 +224,7 @@ def test_checkpoints_through_the_session():
             s.drop_checkpoint(SYSTEM)
 
 
-def test_extension_binding_runs_on_the_worker(ext_site):
+def test_extension_binding_runs_on_the_worker(ext_site: Any) -> None:
     native = FakeNative(bindings={"ds4_engine_layer_count": lambda engine_ptr: 43})
     with ds4py.open("f.gguf", ctx=64, native=native) as e:
         layer_count = e.native.bind("ds4_engine_layer_count")
@@ -234,12 +237,12 @@ def test_extension_binding_runs_on_the_worker(ext_site):
 
 
 @pytest.mark.parametrize("failure", ["capture", "submit"])
-def test_failure_before_submission_releases_ownership(failure, monkeypatch):
+def test_failure_before_submission_releases_ownership(failure: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     with open("f.gguf", ctx=64, native=FakeNative()) as e:
         s = e.session()
         s.append_tokens([5, 6], "user")
         with monkeypatch.context() as mp:
-            def fail(*args):
+            def fail(*args: Any) -> Never:
                 raise EngineError("admission failed")
             if failure == "capture":
                 mp.setattr(Transcript, "tokens", property(fail))
@@ -252,11 +255,11 @@ def test_failure_before_submission_releases_ownership(failure, monkeypatch):
 
 
 @pytest.mark.parametrize("fail_eval", [False, True])
-def test_close_drains_inflight_commits_before_releasing_ownership(fail_eval, monkeypatch):
+def test_close_drains_inflight_commits_before_releasing_ownership(fail_eval: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     cancel, evaluating, release = threading.Event(), threading.Event(), threading.Event()
     original = FakeSession.eval
 
-    def blocked_eval(self, token):
+    def blocked_eval(self: Any, token: Any) -> Any:
         if token == ord("b") + 1:
             evaluating.set()
             assert release.wait(5), "test failed to release eval"
@@ -273,7 +276,7 @@ def test_close_drains_inflight_commits_before_releasing_ownership(fail_eval, mon
         assert evaluating.wait(5)
         errors = []
 
-        def close():
+        def close() -> None:
             try:
                 rnd.close()
             except EngineError as error:
@@ -298,11 +301,11 @@ def test_close_drains_inflight_commits_before_releasing_ownership(fail_eval, mon
         assert list(s.run_round(max_tokens=0))[-1] == Stopped("max_tokens")
 
 
-def test_round_uses_current_sampling_defaults_but_keeps_one_rng(monkeypatch):
+def test_round_uses_current_sampling_defaults_but_keeps_one_rng(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = []
     original = FakeSession.sample
 
-    def record(self, temperature, top_k, top_p, min_p, rng):
+    def record(self: Any, temperature: Any, top_k: Any, top_p: Any, min_p: Any, rng: Any) -> Any:
         calls.append((temperature, top_k, top_p, min_p, rng, rng.value))
         return original(self, temperature, top_k, top_p, min_p, rng)
 
@@ -320,7 +323,7 @@ def test_round_uses_current_sampling_defaults_but_keeps_one_rng(monkeypatch):
         assert e.token_text(98) == b"a"
 
 
-def test_cancel_after_sync_interrupts_generation_and_clears_flag():
+def test_cancel_after_sync_interrupts_generation_and_clears_flag() -> None:
     with open("f.gguf", ctx=64, native=FakeNative()) as e:
         s = e.session()
         s.append_tokens([5, 6], "user")
@@ -332,7 +335,7 @@ def test_cancel_after_sync_interrupts_generation_and_clears_flag():
         assert list(s.run_round(max_tokens=1))[-1] == Stopped("max_tokens")
 
 
-def test_negative_round_budget_does_not_generate():
+def test_negative_round_budget_does_not_generate() -> None:
     with fake_engine(script=reply(b"ok")) as engine:
         session = engine.session()
         session.append_tokens([5, 6], "user")
@@ -344,7 +347,7 @@ def test_negative_round_budget_does_not_generate():
         assert session.transcript.tokens == (5, 6, 112)
 
 
-def test_context_reserve_passes_through():
+def test_context_reserve_passes_through() -> None:
     with open("f.gguf", ctx=4, native=FakeNative()) as e:
         s = e.session()
         s.append_tokens([5, 6], "user")

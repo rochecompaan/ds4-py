@@ -1,4 +1,6 @@
 """DS4RunRecord telemetry encoding and failure semantics (Task 9)."""
+from typing import Any
+from pathlib import Path
 
 import asyncio
 from dataclasses import replace
@@ -8,31 +10,32 @@ import json
 import pytest
 
 import ds4py
+from ds4py.engine.session import Engine
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.capabilities.run_record import DS4RunRecord
 
 
-def fake_engine(*, script=None):
+def fake_engine(*, script: Any=None) -> Engine:
     info = replace(FakeNative()._info, name="fake-ds4", is_deepseek41=False,
                    is_glm_dsa=False, is_qwen4=True, family="qwen")
     native = FakeNative(info=info) if script is None else FakeNative(info=info, script=script)
     return ds4py.open("f.gguf", ctx=65536, think=ThinkMode.NONE, native=native)
 
 
-def scripted_text(text):
+def scripted_text(text: Any) -> Any:
     tokens = tuple(tokenize_rendered(text))
     return lambda prompt, generated: (
         tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
     )
 
 
-def read_lines(path):
+def read_lines(path: Any) -> Any:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
-def test_engine_events_are_one_flushed_json_line_each(tmp_path):
+def test_engine_events_are_one_flushed_json_line_each(tmp_path: Path) -> None:
     path = tmp_path / "events.jsonl"
     with fake_engine(script=scripted_text("ok")) as engine:
         session = engine.session()
@@ -70,7 +73,7 @@ def test_engine_events_are_one_flushed_json_line_each(tmp_path):
     assert "b'" not in path.read_text()
 
 
-def test_record_write_failure_is_reported_and_never_hidden(tmp_path):
+def test_record_write_failure_is_reported_and_never_hidden(tmp_path: Path) -> None:
     path = tmp_path / "events.jsonl"
     path.mkdir(parents=True)
     with fake_engine(script=scripted_text("ok")) as engine:
@@ -89,7 +92,7 @@ def test_record_write_failure_is_reported_and_never_hidden(tmp_path):
         assert record.failure is not None
 
 
-def test_relocate_sends_later_lines_to_the_current_session_directory(tmp_path):
+def test_relocate_sends_later_lines_to_the_current_session_directory(tmp_path: Path) -> None:
     first = tmp_path / "first" / "events.jsonl"
     second = tmp_path / "second" / "events.jsonl"
     with fake_engine(script=scripted_text("ok")) as engine:

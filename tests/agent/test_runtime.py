@@ -1,4 +1,7 @@
 """AgentRuntime runs, step snapshots, and run-record execution (Task 9)."""
+from typing import Any, cast
+from collections.abc import Iterator
+from collections.abc import AsyncIterator
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -15,6 +18,7 @@ from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.engine.prefix import PrefixTurn
 from ds4py.engine.sampling import SamplingPolicy
+from ds4py.engine.session import Engine
 from ds4py.errors import EngineError
 from ds4py.model import DS4Model
 from ds4py.prefill_trace import PrefillTraceWriter
@@ -36,11 +40,11 @@ READ_CALL = (
 )
 
 
-def fixed_clock():
+def fixed_clock() -> datetime:
     return datetime(2026, 10, 21, 9, 30, 0, tzinfo=timezone.utc)
 
 
-def fake_engine(*, script=None, family="qwen", model_id=7):
+def fake_engine(*, script: Any=None, family: str="qwen", model_id: int=7) -> Engine:
     info = replace(
         FakeNative()._info,
         name="fake-ds4",
@@ -54,12 +58,12 @@ def fake_engine(*, script=None, family="qwen", model_id=7):
     return ds4py.open("f.gguf", ctx=65536, think=ThinkMode.NONE, native=native)
 
 
-def scripted_rounds(*texts):
+def scripted_rounds(*texts: Any) -> Any:
     """One chat round per scripted text, then the last text repeats."""
     rounds = [tuple(tokenize_rendered(text)) for text in texts]
     state = {"round": -1}
 
-    def next_token(prompt, generated):
+    def next_token(prompt: Any, generated: Any) -> Any:
         if not generated:
             state["round"] += 1
         sequence = rounds[min(state["round"], len(rounds) - 1)]
@@ -68,47 +72,47 @@ def scripted_rounds(*texts):
     return next_token
 
 
-def project_dir(tmp_path):
+def project_dir(tmp_path: Path) -> Path:
     project = tmp_path / "project"
     project.mkdir()
     (project / "hello.txt").write_text("world")
     return project
 
 
-def make_model(engine, **kwargs):
+def make_model(engine: Any, **kwargs: Any) -> DS4Model:
     return DS4Model(engine.session(), sampling=SamplingPolicy(seed=1), **kwargs)
 
 
-def read_events(path):
+def read_events(path: Any) -> Any:
     assert path.is_file(), f"missing run record {path}"
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
-def dump(messages):
+def dump(messages: Any) -> str:
     return ModelMessagesTypeAdapter.dump_json(list(messages)).decode()
 
 
-def test_runtime_exposes_context_and_updates_hint_notes(tmp_path):
+def test_runtime_exposes_context_and_updates_hint_notes(tmp_path: Path) -> None:
     with fake_engine() as engine:
         runtime = AgentRuntime(make_model(engine), project_dir(tmp_path))
         try:
             assert runtime.context_size == 65536
             runtime.set_hints(True)
-            assert runtime._notes.hints_enabled is True
+            assert cast(Any, runtime._notes).hints_enabled is True
             runtime.set_hints(False)
-            assert runtime._notes.hints_enabled is False
+            assert cast(Any, runtime._notes).hints_enabled is False
         finally:
             asyncio.run(runtime.close())
 
 
-def test_two_prompts_and_a_tool_round_persist_exact_snapshots(tmp_path):
+def test_two_prompts_and_a_tool_round_persist_exact_snapshots(tmp_path: Path) -> None:
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
     with fake_engine(script=scripted_rounds(READ_CALL, "first answer", "second answer")) as engine:
         model = make_model(engine)
         runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
 
-        async def scenario():
+        async def scenario() -> Any:
             first = await runtime.run("read hello")
             first_messages = runtime.messages
             second = await runtime.run("and again")
@@ -137,7 +141,7 @@ def test_two_prompts_and_a_tool_round_persist_exact_snapshots(tmp_path):
 
     steps = store.session_dir(session_id) / "steps"
 
-    async def inspect():
+    async def inspect() -> Any:
         store_ = runtime_steps(steps)
         return {
             run_id: await store_.latest_snapshot(run_id=run_id)
@@ -164,7 +168,7 @@ def test_two_prompts_and_a_tool_round_persist_exact_snapshots(tmp_path):
     responses = [m for m in second_snapshot.messages if isinstance(m, ModelResponse)]
     assert responses
     assert all(
-        m.metadata["ds4.key"] and m.metadata["ds4.source"] == "sampled" for m in responses
+        cast(Any, m.metadata)["ds4.key"] and cast(Any, m.metadata)["ds4.source"] == "sampled" for m in responses
     )
 
     # Usage comes from the real engine round; the tool effect ledger is settled.
@@ -178,7 +182,7 @@ def test_two_prompts_and_a_tool_round_persist_exact_snapshots(tmp_path):
         if isinstance(part, ToolCallPart)
     )
 
-    async def effect():
+    async def effect() -> Any:
         return await runtime_steps(steps).get_tool_effect(
             run_id=first.run_id, tool_call_id=call_id,
         )
@@ -191,13 +195,13 @@ def test_two_prompts_and_a_tool_round_persist_exact_snapshots(tmp_path):
     )
 
 
-def runtime_steps(directory):
+def runtime_steps(directory: Any) -> Any:
     from pydantic_ai_harness.step_persistence import FileStepStore
 
     return FileStepStore(Path(directory))
 
 
-def test_prefill_trace_uses_persistence_step_indices(tmp_path):
+def test_prefill_trace_uses_persistence_step_indices(tmp_path: Path) -> None:
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
     trace_path = tmp_path / "prefill.jsonl"
@@ -205,7 +209,7 @@ def test_prefill_trace_uses_persistence_step_indices(tmp_path):
         model = make_model(engine)
         runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
 
-        async def scenario():
+        async def scenario() -> Any:
             with PrefillTraceWriter(model.session, trace_path, think=engine.think):
                 result = await runtime.run("read hello")
             snapshots = await runtime_steps(
@@ -225,7 +229,7 @@ def test_prefill_trace_uses_persistence_step_indices(tmp_path):
     assert trace_steps == snapshot_steps
 
 
-def test_run_record_is_valid_jsonl_with_ids_and_hex_token_bytes(tmp_path):
+def test_run_record_is_valid_jsonl_with_ids_and_hex_token_bytes(tmp_path: Path) -> None:
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
     with fake_engine(script=scripted_rounds(READ_CALL, "first answer")) as engine:
@@ -271,7 +275,7 @@ def test_run_record_is_valid_jsonl_with_ids_and_hex_token_bytes(tmp_path):
     assert "b'" not in (store.session_dir(session_id) / "events.jsonl").read_text()
 
 
-def _find_token_bytes(value):
+def _find_token_bytes(value: Any) -> Iterator[Any]:
     if isinstance(value, dict):
         for key, item in value.items():
             if key == "text_bytes" and isinstance(item, str):
@@ -286,14 +290,14 @@ def _find_token_bytes(value):
 class FailingModel(DS4Model):
     """Fail the second model request, after a tool call was already committed."""
 
-    def __init__(self, *args, fail_from_request=2, **kwargs):
+    def __init__(self, *args: Any, fail_from_request: Any=2, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.fail_from_request = fail_from_request
         self.requests_seen = 0
 
     @asynccontextmanager
-    async def request_stream(self, messages, model_settings, model_request_parameters,
-                             run_context=None):
+    async def request_stream(self, messages: Any, model_settings: Any, model_request_parameters: Any,
+                             run_context: Any=None) -> AsyncIterator[Any]:
         self.requests_seen += 1
         if self.requests_seen >= self.fail_from_request:
             raise RuntimeError("scripted model failure")
@@ -303,7 +307,7 @@ class FailingModel(DS4Model):
             yield stream
 
 
-def test_failed_run_reports_error_and_keeps_a_loadable_snapshot(tmp_path):
+def test_failed_run_reports_error_and_keeps_a_loadable_snapshot(tmp_path: Path) -> None:
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
     with fake_engine(script=scripted_rounds(READ_CALL, "never reached")) as engine:
@@ -348,15 +352,15 @@ def test_failed_run_reports_error_and_keeps_a_loadable_snapshot(tmp_path):
 
 
 def test_canonical_snapshot_write_failure_ends_a_successful_run_as_error(
-    tmp_path, monkeypatch,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
     with fake_engine(script=scripted_rounds("answer")) as engine:
         runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
         original_save = runtime._holder().current.save_snapshot
 
-        async def fail_canonical_save(snapshot):
+        async def fail_canonical_save(snapshot: Any) -> Any:
             if snapshot.idempotency_key is None:
                 raise OSError("canonical snapshot write failed")
             return await original_save(snapshot)
@@ -379,8 +383,8 @@ def test_canonical_snapshot_write_failure_ends_a_successful_run_as_error(
 
 
 def test_canonical_snapshot_write_failure_preserves_the_model_error(
-    tmp_path, monkeypatch,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
     with fake_engine(script=scripted_rounds(READ_CALL, "never reached")) as engine:
@@ -388,7 +392,7 @@ def test_canonical_snapshot_write_failure_preserves_the_model_error(
         runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
         original_save = runtime._holder().current.save_snapshot
 
-        async def fail_canonical_save(snapshot):
+        async def fail_canonical_save(snapshot: Any) -> Any:
             if snapshot.idempotency_key is None:
                 raise OSError("canonical snapshot write failed")
             return await original_save(snapshot)
@@ -414,34 +418,36 @@ def test_canonical_snapshot_write_failure_preserves_the_model_error(
 class BlockingModel(DS4Model):
     """Hold the first model request until the test cancels the run."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self.entered = None
-        self.release = None
+        self.entered: asyncio.Event | None = None
+        self.release: asyncio.Event | None = None
 
     @asynccontextmanager
-    async def request_stream(self, messages, model_settings, model_request_parameters,
-                             run_context=None):
-        self.entered.set()
-        await self.release.wait()
+    async def request_stream(self, messages: Any, model_settings: Any, model_request_parameters: Any,
+                             run_context: Any=None) -> AsyncIterator[Any]:
+        cast(Any, self.entered).set()
+        await cast(Any, self.release).wait()
         async with super().request_stream(
             messages, model_settings, model_request_parameters, run_context,
         ) as stream:
             yield stream
 
 
-def test_cancelled_run_reports_interrupted_status(tmp_path):
+def test_cancelled_run_reports_interrupted_status(tmp_path: Path) -> None:
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
     with fake_engine(script=scripted_rounds("answer")) as engine:
         model = BlockingModel(engine.session(), sampling=SamplingPolicy(seed=1))
         runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
 
-        async def scenario():
-            model.entered = asyncio.Event()
-            model.release = asyncio.Event()
+        async def scenario() -> Any:
+            entered = asyncio.Event()
+            release = asyncio.Event()
+            model.entered = entered
+            model.release = release
             task = asyncio.create_task(runtime.run("hello"))
-            await asyncio.wait_for(model.entered.wait(), timeout=10)
+            await asyncio.wait_for(entered.wait(), timeout=10)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
@@ -458,7 +464,7 @@ def test_cancelled_run_reports_interrupted_status(tmp_path):
     assert terminal and terminal[-1]["payload"]["status"] == "interrupted"
 
 
-def test_load_prefix_seeds_history_the_next_run_renders(tmp_path):
+def test_load_prefix_seeds_history_the_next_run_renders(tmp_path: Path) -> None:
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
     with fake_engine(script=scripted_rounds("continued")) as engine:
@@ -472,7 +478,7 @@ def test_load_prefix_seeds_history_the_next_run_renders(tmp_path):
             messages = runtime.load_prefix(prefix)
 
             assert [type(message) for message in messages] == [ModelRequest, ModelResponse]
-            assert [part.content for m in messages for part in m.parts] == [
+            assert [cast(Any, part).content for m in messages for part in m.parts] == [
                 "start the story", "The door opened",
             ]
             assert runtime.messages == messages
@@ -485,14 +491,14 @@ def test_load_prefix_seeds_history_the_next_run_renders(tmp_path):
             rendered = [segment.kind for segment in model.session.transcript.segments]
             assert rendered.index("user") < rendered.index("assistant")
             assert model.session.transcript.chat
-            assert [m.parts[0].content for m in runtime.messages[:2]] == [
+            assert [cast(Any, m.parts[0]).content for m in runtime.messages[:2]] == [
                 "start the story", "The door opened",
             ]
         finally:
             asyncio.run(runtime.close())
 
 
-def test_terminal_success_record_failure_is_an_error(tmp_path, monkeypatch):
+def test_terminal_success_record_failure_is_an_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
     with fake_engine(script=scripted_rounds("answer")) as engine:
@@ -500,21 +506,21 @@ def test_terminal_success_record_failure_is_an_error(tmp_path, monkeypatch):
         runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
         terminal_events = []
         runtime.on_event(terminal_events.append, kinds={"run_end"})
-        original_write = runtime._record._write
+        original_write = cast(Any, runtime._record)._write
         blocked = tmp_path / "terminal-events"
         blocked.mkdir()
 
-        def fail_terminal_success(record):
+        def fail_terminal_success(record: Any) -> Any:
             if record["kind"] == "run_end" and record["payload"].get("status") == "success":
-                path = runtime._record.path
-                runtime._record.path = blocked
+                path = cast(Any, runtime._record).path
+                cast(Any, runtime._record).path = blocked
                 try:
                     return original_write(record)
                 finally:
-                    runtime._record.path = path
+                    cast(Any, runtime._record).path = path
             return original_write(record)
 
-        monkeypatch.setattr(runtime._record, "_write", fail_terminal_success)
+        monkeypatch.setattr(cast(Any, runtime._record), "_write", fail_terminal_success)
         try:
             with pytest.raises(EngineError, match="run record failed"):
                 asyncio.run(runtime.run("hello"))
@@ -524,7 +530,7 @@ def test_terminal_success_record_failure_is_an_error(tmp_path, monkeypatch):
             assert terminal[-1]["payload"]["status"] == "error"
             assert [event.payload["status"] for event in terminal_events] == ["error"]
 
-            monkeypatch.setattr(runtime._record, "_write", original_write)
+            monkeypatch.setattr(cast(Any, runtime._record), "_write", original_write)
             asyncio.run(runtime.run("again"))
             assert runtime.status == "success"
             events = read_events(store.session_dir(runtime.session_id) / "events.jsonl")
@@ -536,24 +542,24 @@ def test_terminal_success_record_failure_is_an_error(tmp_path, monkeypatch):
             asyncio.run(runtime.close())
 
 
-def test_terminal_success_close_failure_rolls_back_before_error(tmp_path, monkeypatch):
+def test_terminal_success_close_failure_rolls_back_before_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
     with fake_engine(script=scripted_rounds("answer")) as engine:
         runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
         terminal_events = []
         runtime.on_event(terminal_events.append, kinds={"run_end"})
-        original_write = runtime._record._write
+        original_write = cast(Any, runtime._record)._write
 
-        def fail_terminal_close(record):
+        def fail_terminal_close(record: Any) -> Any:
             if record["kind"] == "run_end" and record["payload"].get("status") == "success":
                 original_write(record)
                 error = OSError("terminal close failed")
-                runtime._record.failure = error
+                cast(Any, runtime._record).failure = error
                 raise error
             return original_write(record)
 
-        monkeypatch.setattr(runtime._record, "_write", fail_terminal_close)
+        monkeypatch.setattr(cast(Any, runtime._record), "_write", fail_terminal_close)
         try:
             with pytest.raises(EngineError, match="run record failed"):
                 asyncio.run(runtime.run("hello"))
@@ -567,7 +573,7 @@ def test_terminal_success_close_failure_rolls_back_before_error(tmp_path, monkey
             asyncio.run(runtime.close())
 
 
-def test_run_record_failure_fails_the_run_instead_of_reporting_success(tmp_path):
+def test_run_record_failure_fails_the_run_instead_of_reporting_success(tmp_path: Path) -> None:
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
     with fake_engine(script=scripted_rounds("answer")) as engine:

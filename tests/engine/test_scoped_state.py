@@ -1,15 +1,17 @@
 """Session-scoped state identity and lifecycle across prompts, new, switch, fork, exit."""
+from typing import Any, cast
 import ds4py
+from ds4py.engine.session import Engine
 from ds4py import ThinkMode
 from ds4py._native.fake import FakeEngine, FakeNative, FakeSession, reply
 from ds4py._native.protocol import SyncStatus
 
 
 class EmptySyncSession(FakeSession):
-    def __init__(self, engine, ctx):
+    def __init__(self, engine: Any, ctx: Any) -> None:
         super().__init__(engine, ctx)
 
-    def sync(self, tokens, *, progress=None, cancel=None):
+    def sync(self, tokens: Any, *, progress: Any=None, cancel: Any=None) -> Any:
         if not tokens:
             self._tokens = []
             self._prompt_length = 0
@@ -20,10 +22,10 @@ class EmptySyncSession(FakeSession):
 
 
 class ResetNative(FakeNative):
-    def open_engine(self, config):
+    def open_engine(self, config: Any) -> Any:
         engine = FakeEngine(self)
 
-        def create_session(ctx):
+        def create_session(ctx: Any) -> Any:
             session = EmptySyncSession(engine, ctx)
             engine._sessions.add(session)
             return session
@@ -32,24 +34,24 @@ class ResetNative(FakeNative):
         return engine
 
 
-def reset_engine(*, ctx=1024, script=None):
+def reset_engine(*, ctx: Any=1024, script: Any=None) -> Engine:
     native = ResetNative(script=script or reply(b"ok"))
     return ds4py.open("f.gguf", ctx=ctx, think=ThinkMode.NONE, native=native)
 
 
 class State:
-    def __init__(self):
+    def __init__(self) -> None:
         self.closes = 0
 
-    def close(self):
+    def close(self) -> None:
         self.closes += 1
 
 
-def test_state_is_created_once_and_survives_two_prompts():
+def test_state_is_created_once_and_survives_two_prompts() -> None:
     calls = []
     state = State()
 
-    def factory():
+    def factory() -> Any:
         calls.append("created")
         return state
 
@@ -57,15 +59,15 @@ def test_state_is_created_once_and_survives_two_prompts():
         session = engine.session()
         assert session.state("jobs", factory) is state
         session.append_user("one")
-        assert list(session.run_round(max_tokens=2))[-1].reason == "max_tokens"
+        assert cast(Any, list(session.run_round(max_tokens=2))[-1]).reason == "max_tokens"
         assert session.state("jobs", lambda: (_ for _ in ()).throw(AssertionError("recreated"))) is state
         session.append_user("two")
-        assert list(session.run_round(max_tokens=2))[-1].reason == "max_tokens"
+        assert cast(Any, list(session.run_round(max_tokens=2))[-1]).reason == "max_tokens"
         assert session.state("jobs", lambda: State()) is state
         assert calls == ["created"]
 
 
-def test_new_closes_all_state_and_a_new_factory_creates_a_new_object():
+def test_new_closes_all_state_and_a_new_factory_creates_a_new_object() -> None:
     with reset_engine() as engine:
         session = engine.session()
         first, second = State(), State()
@@ -79,14 +81,14 @@ def test_new_closes_all_state_and_a_new_factory_creates_a_new_object():
         assert session.state("b", lambda: State()) is not second
 
 
-def test_switch_closes_state_before_restore_and_fork_keeps_it():
+def test_switch_closes_state_before_restore_and_fork_keeps_it() -> None:
     with reset_engine() as engine:
         session = engine.session()
         state = State()
         session.state("jobs", lambda: state)
         order = []
 
-        def restore():
+        def restore() -> None:
             order.append(("restore", state.closes))
 
         session.on_event(lambda event: order.append(event.kind))
@@ -105,7 +107,7 @@ def test_switch_closes_state_before_restore_and_fork_keeps_it():
         assert session.state("jobs", lambda: State()) is kept
 
 
-def test_exit_closes_state_exactly_once():
+def test_exit_closes_state_exactly_once() -> None:
     engine = reset_engine()
     session = engine.session()
     state = State()
@@ -117,7 +119,7 @@ def test_exit_closes_state_exactly_once():
     assert state.closes == 1
 
 
-def test_state_objects_are_independent_per_key_and_close_in_creation_order():
+def test_state_objects_are_independent_per_key_and_close_in_creation_order() -> None:
     with reset_engine() as engine:
         session = engine.session()
         closed = []

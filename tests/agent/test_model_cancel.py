@@ -1,4 +1,5 @@
 """Adapter cancellation, reserve failure, and speculative alignment regressions."""
+from typing import Any, cast
 import asyncio
 from dataclasses import replace
 from pathlib import Path
@@ -8,6 +9,7 @@ import threading
 import pytest
 
 import ds4py
+from ds4py.engine.session import Engine
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative, FakeSession
 from ds4py._native.fake_chat import tokenize_rendered
@@ -22,43 +24,43 @@ from pydantic_ai.messages import ModelRequest, PartStartEvent, TextPart, UserPro
 from pydantic_ai.models import ModelRequestParameters
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "engine"))
-from fake_steps import FakeMultiTokenStep  # noqa: E402
+from fake_steps import FakeMultiTokenStep  # type: ignore[import-not-found]  # noqa: E402
 
 
-def fake_engine(*, script=None, think=ThinkMode.NONE, cancel=None):
+def fake_engine(*, script: Any=None, think: Any=ThinkMode.NONE, cancel: Any=None) -> Engine:
     native = FakeNative(script=script) if script is not None else FakeNative()
     native._info = replace(native._info, name="fake-ds4")
     return ds4py.open("f.gguf", ctx=8192, think=think, native=native, cancel=cancel)
 
 
-def user(text="hello"):
+def user(text: Any="hello") -> ModelRequest:
     return ModelRequest([UserPromptPart(text)])
 
 
-def make_model(session, **kwargs):
+def make_model(session: Any, **kwargs: Any) -> DS4Model:
     return DS4Model(session, sampling=SamplingPolicy(seed=1), **kwargs)
 
 
-def native_tokens(session):
+def native_tokens(session: Any) -> tuple[int, ...]:
     return tuple(session._worker.call(lambda engine, native: native.tokens()).result())
 
 
-def native_calls(session):
+def native_calls(session: Any) -> list[Any]:
     return session._worker.call(lambda engine, native: list(native.calls)).result()
 
 
-def scripted_text(text):
+def scripted_text(text: Any) -> Any:
     tokens = tuple(tokenize_rendered(text))
     return lambda prompt, generated: (
         tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
     )
 
 
-def response_text(response):
+def response_text(response: Any) -> str:
     return "".join(part.content for part in response.parts if isinstance(part, TextPart))
 
 
-def test_asyncio_cancellation_cancels_facade_and_preserves_partial_response():
+def test_asyncio_cancellation_cancels_facade_and_preserves_partial_response() -> None:
     # Cancel while next() is waiting on an in-flight sample. The third token is
     # already being sampled, so it is committed before the facade stops; no
     # further token may be sampled.
@@ -66,14 +68,14 @@ def test_asyncio_cancellation_cancels_facade_and_preserves_partial_response():
     tokens = tuple(tokenize_rendered("abc"))
     calls = []
 
-    def script(prompt, generated):
+    def script(prompt: Any, generated: Any) -> Any:
         calls.append(len(generated))
         if len(generated) == 2:
             reached.set()
             assert gate.wait(5), "cancellation gate timed out"
         return tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
-    async def scenario():
+    async def scenario() -> None:
         cancel = threading.Event()
         with fake_engine(script=script, cancel=cancel) as engine:
             session = engine.session()
@@ -81,14 +83,14 @@ def test_asyncio_cancellation_cancels_facade_and_preserves_partial_response():
             async with model.request_stream(
                 [user()], None, ModelRequestParameters(),
             ) as stream:
-                pull = asyncio.create_task(anext(stream.__aiter__()))
+                pull = asyncio.create_task(cast(Any, anext(stream.__aiter__())))
                 await asyncio.wait_for(asyncio.to_thread(reached.wait, 5), 10)
                 pull.cancel()
                 await asyncio.wait_for(asyncio.to_thread(cancel.wait, 5), 10)
                 gate.set()
                 with pytest.raises(asyncio.CancelledError):
                     await asyncio.wait_for(pull, 10)
-                response = stream.get()
+                response = cast(Any, stream).get()
 
             assert response.state == "interrupted"
             assert response_text(response) == "abc"
@@ -100,7 +102,7 @@ def test_asyncio_cancellation_cancels_facade_and_preserves_partial_response():
     asyncio.run(scenario())
 
 
-def test_close_stream_cancels_without_waiting_for_another_token():
+def test_close_stream_cancels_without_waiting_for_another_token() -> None:
     # The consumer has a committed delta, then closes the stream while the next
     # sample is in flight. Closing cancels the facade and drains only that
     # in-flight sample: it must not ask the script for a further token.
@@ -109,7 +111,7 @@ def test_close_stream_cancels_without_waiting_for_another_token():
     calls = []
     tokens = tuple(tokenize_rendered("ab"))
 
-    def script(prompt, generated):
+    def script(prompt: Any, generated: Any) -> Any:
         calls.append(len(generated))
         if len(generated) == 1:
             reached.set()
@@ -117,7 +119,7 @@ def test_close_stream_cancels_without_waiting_for_another_token():
             return FAKE_EOS
         return tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
-    async def scenario():
+    async def scenario() -> None:
         with fake_engine(script=script, cancel=cancel) as engine:
             session = engine.session()
             model = make_model(session)
@@ -126,10 +128,10 @@ def test_close_stream_cancels_without_waiting_for_another_token():
             ) as stream:
                 iterator = stream.__aiter__()
                 first = await asyncio.wait_for(anext(iterator), 10)
-                assert first.part == TextPart("a")
+                assert cast(Any, first).part == TextPart("a")
                 await asyncio.wait_for(asyncio.to_thread(reached.wait, 5), 10)
                 await asyncio.wait_for(stream.cancel(), 10)
-                response = stream.get()
+                response = cast(Any, stream).get()
 
                 assert response.state == "interrupted"
                 assert response_text(response) == "a"
@@ -141,18 +143,18 @@ def test_close_stream_cancels_without_waiting_for_another_token():
     asyncio.run(scenario())
 
 
-def test_cancel_during_prefill_leaves_transcript_intact(monkeypatch):
+def test_cancel_during_prefill_leaves_transcript_intact(monkeypatch: pytest.MonkeyPatch) -> None:
     waiting, release = threading.Event(), threading.Event()
     original_sync = FakeSession.sync
 
-    def blocking_sync(self, tokens, *, progress=None, cancel=None):
+    def blocking_sync(self: Any, tokens: Any, *, progress: Any=None, cancel: Any=None) -> Any:
         waiting.set()
         assert release.wait(5), "prefill release timed out"
         return original_sync(self, tokens, progress=progress, cancel=cancel)
 
     monkeypatch.setattr(FakeSession, "sync", blocking_sync)
 
-    async def scenario():
+    async def scenario() -> None:
         with fake_engine(script=scripted_text("abc")) as engine:
             session = engine.session()
             model = make_model(session)
@@ -161,14 +163,14 @@ def test_cancel_during_prefill_leaves_transcript_intact(monkeypatch):
             ) as stream:
                 prompt = session.transcript.tokens
                 cancel = session._worker.cancel_event
-                pull = asyncio.create_task(anext(stream.__aiter__()))
+                pull = asyncio.create_task(cast(Any, anext(stream.__aiter__())))
                 await asyncio.wait_for(asyncio.to_thread(waiting.wait, 5), 10)
                 pull.cancel()
                 await asyncio.wait_for(asyncio.to_thread(cancel.wait, 5), 10)
                 release.set()
                 with pytest.raises(asyncio.CancelledError):
                     await asyncio.wait_for(pull, 10)
-                response = stream.get()
+                response = cast(Any, stream).get()
 
             assert response.state == "interrupted"
             assert response.parts == []
@@ -182,13 +184,13 @@ def test_cancel_during_prefill_leaves_transcript_intact(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_cancel_during_speculative_block_rewinds_uncommitted_drafts(monkeypatch):
+def test_cancel_during_speculative_block_rewinds_uncommitted_drafts(monkeypatch: pytest.MonkeyPatch) -> None:
     tokens = tuple(tokenize_rendered("abcdefgh"))
     target = tokens[4]
     reached, gate = threading.Event(), threading.Event()
     original_eval = FakeSession.eval
 
-    def blocking_eval(self, token):
+    def blocking_eval(self: Any, token: Any) -> Any:
         if token == target:
             reached.set()
             assert gate.wait(5), "draft gate timed out"
@@ -202,14 +204,14 @@ def test_cancel_during_speculative_block_rewinds_uncommitted_drafts(monkeypatch)
         decode_module, "PlainStep", lambda: FakeMultiTokenStep(blocks),
     )
 
-    async def scenario():
+    async def scenario() -> None:
         with fake_engine(script=scripted_text("abcdefgh")) as engine:
             session = engine.session()
             model = make_model(session)
             async with model.request_stream(
                 [user()], None, ModelRequestParameters(),
             ) as stream:
-                async def consume():
+                async def consume() -> None:
                     async for _ in stream:
                         pass
 
@@ -221,7 +223,7 @@ def test_cancel_during_speculative_block_rewinds_uncommitted_drafts(monkeypatch)
                 gate.set()
                 with pytest.raises(asyncio.CancelledError):
                     await asyncio.wait_for(consumer, 10)
-                response = stream.get()
+                response = cast(Any, stream).get()
 
             assert response.state == "interrupted"
             assert response_text(response) == "ab"
@@ -240,8 +242,8 @@ def test_cancel_during_speculative_block_rewinds_uncommitted_drafts(monkeypatch)
     asyncio.run(scenario())
 
 
-def test_context_reserve_default_fails_clearly_without_compaction():
-    async def scenario():
+def test_context_reserve_default_fails_clearly_without_compaction() -> None:
+    async def scenario() -> None:
         with fake_engine(script=scripted_text("abc")) as engine:
             session = engine.session()
             model = make_model(session)
@@ -260,7 +262,7 @@ def test_context_reserve_default_fails_clearly_without_compaction():
                 with pytest.raises(ContextReserveError) as raised:
                     async for _ in stream:
                         pass
-                response = stream.get()
+                response = cast(Any, stream).get()
 
             message = str(raised.value)
             assert "context reserve" in message
@@ -272,11 +274,11 @@ def test_context_reserve_default_fails_clearly_without_compaction():
     asyncio.run(scenario())
 
 
-def sequential_text(text):
+def sequential_text(text: Any) -> Any:
     tokens = tuple(tokenize_rendered(text))
     index = 0
 
-    def script(prompt, generated):
+    def script(prompt: Any, generated: Any) -> Any:
         nonlocal index
         token = tokens[index] if index < len(tokens) else FAKE_EOS
         index += 1
@@ -285,8 +287,8 @@ def sequential_text(text):
     return script
 
 
-def test_paused_round_can_resume_without_second_assistant_prefix():
-    async def baseline():
+def test_paused_round_can_resume_without_second_assistant_prefix() -> None:
+    async def baseline() -> Any:
         with fake_engine(script=sequential_text("abc")) as engine:
             session = engine.session()
             model = make_model(session)
@@ -301,12 +303,12 @@ def test_paused_round_can_resume_without_second_assistant_prefix():
 
     expected_tokens, expected_kinds = asyncio.run(baseline())
 
-    async def scenario():
+    async def scenario() -> None:
         with fake_engine(script=sequential_text("abc")) as engine:
             session = engine.session()
             decisions = []
 
-            def make_room(needed):
+            def make_room(needed: Any) -> int:
                 decisions.append(needed)
                 session._worker.call(
                     lambda engine, native: setattr(native, "_ctx", 4096)
@@ -328,7 +330,7 @@ def test_paused_round_can_resume_without_second_assistant_prefix():
                 ).result()
                 async for _ in stream:
                     pass
-                response = stream.get()
+                response = cast(Any, stream).get()
 
             assert decisions == [1]
             assert response_text(response) == "abc"
@@ -339,7 +341,7 @@ def test_paused_round_can_resume_without_second_assistant_prefix():
             assert kinds.count("assistant") == 1
             expected_prefill = prompt_length + prefix
             assert response.usage.input_tokens == expected_prefill
-            assert response.usage.details == {"prefill_tokens": expected_prefill}
+            assert cast(Any, response.usage.details) == {"prefill_tokens": expected_prefill}
             assert response.usage.output_tokens == 3
             assert response.usage.requests == 1
             assert response.usage.total_tokens == expected_prefill + 3
@@ -347,19 +349,19 @@ def test_paused_round_can_resume_without_second_assistant_prefix():
     asyncio.run(scenario())
 
 
-def test_public_request_timeout_cleans_up_round_and_preserves_partial_response():
+def test_public_request_timeout_cleans_up_round_and_preserves_partial_response() -> None:
     cancel = threading.Event()
     reached = threading.Event()
     tokens = tuple(tokenize_rendered("ab"))
 
-    def script(prompt, generated):
+    def script(prompt: Any, generated: Any) -> Any:
         if len(generated) == 1:
             reached.set()
             assert cancel.wait(5), "request timeout did not cancel the sample"
             return FAKE_EOS
         return tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
-    async def scenario():
+    async def scenario() -> None:
         with fake_engine(script=script, cancel=cancel) as engine:
             session = engine.session()
             binder = MessageBinder(session)
@@ -367,7 +369,7 @@ def test_public_request_timeout_cleans_up_round_and_preserves_partial_response()
             bindings = 0
             original_bind = binder.bind_response
 
-            def counted_bind(response, **kwargs):
+            def counted_bind(response: Any, **kwargs: Any) -> None:
                 nonlocal bindings
                 bindings += 1
                 original_bind(response, **kwargs)
@@ -386,33 +388,33 @@ def test_public_request_timeout_cleans_up_round_and_preserves_partial_response()
             assert [event.part for event in events if isinstance(event, PartStartEvent)] == [
                 TextPart("a")
             ]
-            response = stream.get()
+            response = cast(Any, stream).get()
             assert response.state == "interrupted"
             assert response_text(response) == "a"
             assert response.usage.input_tokens > 0
-            assert response.usage.details == {
+            assert cast(Any, response.usage.details) == {
                 "prefill_tokens": response.usage.input_tokens,
             }
             assert response.usage.output_tokens == 1
             assert response.usage.requests == 1
             assert bindings == 1
-            assert stream._bound and stream._round_exhausted
+            assert cast(Any, stream)._bound and cast(Any, stream)._round_exhausted
             assert session._active_round is False
             assert session.transcript.tokens == native_tokens(session)
             sampled = [p for p in binder.export_segments() if p.source == "sampled"]
             assert [p.kind for p in sampled] == ["assistant"]
-            assert sampled[0].key == response.metadata["ds4.key"]
+            assert sampled[0].key == cast(Any, response.metadata)["ds4.key"]
             assert not cancel.is_set()
 
     asyncio.run(scenario())
 
 
-def test_second_round_prefill_cancel_preserves_prior_provenance(monkeypatch):
+def test_second_round_prefill_cancel_preserves_prior_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
     waiting, release = threading.Event(), threading.Event()
     original_sync = FakeSession.sync
     syncs = []
 
-    def blocking_sync(self, tokens, *, progress=None, cancel=None):
+    def blocking_sync(self: Any, tokens: Any, *, progress: Any=None, cancel: Any=None) -> Any:
         syncs.append(len(tokens))
         if len(syncs) == 2:
             waiting.set()
@@ -422,13 +424,13 @@ def test_second_round_prefill_cancel_preserves_prior_provenance(monkeypatch):
     monkeypatch.setattr(FakeSession, "sync", blocking_sync)
     outputs = [tuple(tokenize_rendered("abc")), tuple(tokenize_rendered("xy"))]
 
-    def script(prompt, generated):
+    def script(prompt: Any, generated: Any) -> Any:
         if not generated:
-            script.current = outputs.pop(0)
-        tokens = script.current
+            cast(Any, script).current = outputs.pop(0)
+        tokens = cast(Any, script).current
         return tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
-    async def scenario():
+    async def scenario() -> None:
         with fake_engine(script=script) as engine:
             session = engine.session()
             binder = MessageBinder(session)
@@ -452,7 +454,7 @@ def test_second_round_prefill_cancel_preserves_prior_provenance(monkeypatch):
             async with model.request_stream(
                 messages, None, ModelRequestParameters(),
             ) as stream:
-                pull = asyncio.create_task(anext(stream.__aiter__()))
+                pull = asyncio.create_task(cast(Any, anext(stream.__aiter__())))
                 await asyncio.wait_for(asyncio.to_thread(waiting.wait, 5), 10)
                 cancel = session._worker.cancel_event
                 pull.cancel()
@@ -473,7 +475,7 @@ def test_second_round_prefill_cancel_preserves_prior_provenance(monkeypatch):
             records = tuple(binder._records)
             assert len(records) == len(before_records) + 1
             assert all(left.end <= right.start for left, right in zip(records, records[1:]))
-            assert records[-1].key == second_user.metadata["ds4.key"]
+            assert records[-1].key == cast(Any, second_user.metadata)["ds4.key"]
             assert records[-1].end == len(session.transcript)
             # The interrupted prefill kept the previous committed KV and added no
             # assistant prefix or draft: the new user message is transcript-only

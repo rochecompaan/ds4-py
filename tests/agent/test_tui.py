@@ -1,3 +1,4 @@
+from typing import Any, cast
 import asyncio
 from types import SimpleNamespace
 
@@ -19,8 +20,8 @@ from ds4py.tui import TUI
 from ds4py.tui_render import StreamRenderer, markdown_fragments
 
 
-def test_dispatch_runs_one_prompt_and_preserves_pasted_newlines():
-    runtime = FakeRuntime()
+def test_dispatch_runs_one_prompt_and_preserves_pasted_newlines() -> None:
+    runtime: Any = FakeRuntime()
     tui = make_tui(runtime)
 
     asyncio.run(tui.dispatch("first line\nsecond line"))
@@ -28,13 +29,13 @@ def test_dispatch_runs_one_prompt_and_preserves_pasted_newlines():
     assert runtime.calls == [("run", "first line\nsecond line")]
 
 
-def test_command_error_is_reported_and_loop_remains_usable():
-    runtime = FakeRuntime()
+def test_command_error_is_reported_and_loop_remains_usable() -> None:
+    runtime: Any = FakeRuntime()
     tui = make_tui(runtime)
     messages = []
-    tui.show_message = messages.append
+    cast(Any, tui).show_message = messages.append
 
-    async def scenario():
+    async def scenario() -> None:
         await tui.dispatch("/switch bad")
         await tui.dispatch("/new")
 
@@ -44,8 +45,8 @@ def test_command_error_is_reported_and_loop_remains_usable():
     assert not tui.exiting
 
 
-def test_prompt_loop_accepts_pipe_input_and_exit():
-    runtime = FakeRuntime()
+def test_prompt_loop_accepts_pipe_input_and_exit() -> None:
+    runtime: Any = FakeRuntime()
     with create_pipe_input() as input_:
         input_.send_text("hello\n/exit\n")
         tui = TUI(runtime, input=input_, output=DummyOutput())
@@ -55,8 +56,8 @@ def test_prompt_loop_accepts_pipe_input_and_exit():
     assert tui.exiting
 
 
-def test_prompt_loop_can_run_an_initial_prompt_inside_the_event_loop():
-    runtime = FakeRuntime()
+def test_prompt_loop_can_run_an_initial_prompt_inside_the_event_loop() -> None:
+    runtime: Any = FakeRuntime()
     with create_pipe_input() as input_:
         input_.send_text("/exit\n")
         tui = TUI(runtime, input=input_, output=DummyOutput())
@@ -66,16 +67,16 @@ def test_prompt_loop_can_run_an_initial_prompt_inside_the_event_loop():
     assert tui.exiting
 
 
-def test_enter_submits_and_alt_enter_inserts_newline():
+def test_enter_submits_and_alt_enter_inserts_newline() -> None:
     tui = make_tui()
     enter = tui.key_bindings.get_bindings_for_keys((Keys.Enter,))[0]
     alt_enter = tui.key_bindings.get_bindings_for_keys((Keys.Escape, Keys.Enter))[0]
     submitted = []
     inserted = []
-    enter.handler(SimpleNamespace(current_buffer=SimpleNamespace(
+    cast(Any, enter.handler)(SimpleNamespace(current_buffer=SimpleNamespace(
         validate_and_handle=lambda: submitted.append(True),
     )))
-    alt_enter.handler(SimpleNamespace(current_buffer=SimpleNamespace(
+    cast(Any, alt_enter.handler)(SimpleNamespace(current_buffer=SimpleNamespace(
         insert_text=inserted.append,
     )))
 
@@ -83,27 +84,27 @@ def test_enter_submits_and_alt_enter_inserts_newline():
     assert inserted == ["\n"]
 
 
-def test_ctrl_c_cancels_without_touching_partial_text_and_ctrl_d_exits():
-    runtime = FakeRuntime()
+def test_ctrl_c_cancels_without_touching_partial_text_and_ctrl_d_exits() -> None:
+    runtime: Any = FakeRuntime()
     tui = make_tui(runtime)
     cancel = tui.key_bindings.get_bindings_for_keys((Keys.ControlC,))[0]
-    assert cancel.handler(SimpleNamespace()) is None
+    assert cast(Any, cancel.handler)(SimpleNamespace()) is None
     assert runtime.calls == [("cancel",)]
 
     exits = []
     ctrl_d = tui.key_bindings.get_bindings_for_keys((Keys.ControlD,))[0]
-    ctrl_d.handler(SimpleNamespace(app=SimpleNamespace(
+    cast(Any, ctrl_d.handler)(SimpleNamespace(app=SimpleNamespace(
         exit=lambda exception: exits.append(exception),
     )))
     assert len(exits) == 1
     assert isinstance(exits[0], EOFError)
 
 
-def fragment_text(fragments):
+def fragment_text(fragments: Any) -> str:
     return "".join(text for _style, text in fragments)
 
 
-def test_text_and_thinking_deltas_have_distinct_styles():
+def test_text_and_thinking_deltas_have_distinct_styles() -> None:
     renderer = StreamRenderer(DummyOutput())
     text = renderer.handle_event(PartDeltaEvent(
         index=0, delta=TextPartDelta("visible"),
@@ -118,7 +119,7 @@ def test_text_and_thinking_deltas_have_distinct_styles():
     assert "dim" in thinking[0][0]
 
 
-def test_tool_previews_are_one_line_and_ellipsized():
+def test_tool_previews_are_one_line_and_ellipsized() -> None:
     renderer = StreamRenderer(DummyOutput())
     long_value = "alpha\nbeta " * 40
     events = [
@@ -138,9 +139,9 @@ def test_tool_previews_are_one_line_and_ellipsized():
         assert "write_file" in text
 
 
-def test_stream_renderer_applies_markdown_to_text_deltas():
+def test_stream_renderer_applies_markdown_to_text_deltas() -> None:
     renderer = StreamRenderer(DummyOutput())
-    fragments = renderer.handle_event(PartDeltaEvent(
+    fragments: Any = renderer.handle_event(PartDeltaEvent(
         index=0, delta=TextPartDelta("**bold** and `code`"),
     ))
 
@@ -149,8 +150,8 @@ def test_stream_renderer_applies_markdown_to_text_deltas():
     assert any("code" in style for style, _text in fragments)
 
 
-def test_markdown_becomes_styled_prompt_toolkit_fragments():
-    fragments = markdown_fragments("# Heading\n**bold** and *emphasis* with `code`")
+def test_markdown_becomes_styled_prompt_toolkit_fragments() -> None:
+    fragments: Any = markdown_fragments("# Heading\n**bold** and *emphasis* with `code`")
     styles = [style for style, _text in fragments]
     text = fragment_text(fragments)
 

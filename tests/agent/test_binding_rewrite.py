@@ -1,3 +1,4 @@
+from typing import Any, cast
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -5,6 +6,7 @@ from datetime import datetime, timezone
 import pytest
 
 import ds4py
+from ds4py.engine.session import Engine
 from ds4py import ThinkMode
 from ds4py._native.fake import FakeNative
 from ds4py.binding import MessageBinder
@@ -15,15 +17,15 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
-    RequestUsage,
     TextPart,
     ToolCallPart,
     UserPromptPart,
 )
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RequestUsage
 
 
-def fake_engine(family="deepseek4", *, think=ThinkMode.NONE, **fake):
+def fake_engine(family: Any="deepseek4", *, think: Any=ThinkMode.NONE, **fake: Any) -> Engine:
     info = replace(
         FakeNative()._info,
         family=family,
@@ -37,11 +39,11 @@ def fake_engine(family="deepseek4", *, think=ThinkMode.NONE, **fake):
     )
 
 
-def user(text):
+def user(text: Any) -> ModelRequest:
     return ModelRequest([UserPromptPart(text)])
 
 
-def tool(name):
+def tool(name: Any) -> ToolDefinition:
     return ToolDefinition(
         name=name,
         description=f"Run {name}.",
@@ -49,17 +51,17 @@ def tool(name):
     )
 
 
-def reserialize(messages):
+def reserialize(messages: Any) -> list[Any]:
     return ModelMessagesTypeAdapter.validate_json(
         ModelMessagesTypeAdapter.dump_json(messages)
     )
 
 
-def native_calls(session):
+def native_calls(session: Any) -> list[Any]:
     return session._worker.call(lambda engine, native: list(native.calls)).result()
 
 
-def test_identical_reserialized_messages_keep_bound_prefix():
+def test_identical_reserialized_messages_keep_bound_prefix() -> None:
     messages = [user("first"), ModelResponse([TextPart("answer")]), user("second")]
     with fake_engine() as engine:
         session = engine.session()
@@ -78,7 +80,7 @@ def test_identical_reserialized_messages_keep_bound_prefix():
         assert binder.export_segments() == provenance
 
 
-def test_changed_message_renders_only_from_its_segment_start():
+def test_changed_message_renders_only_from_its_segment_start() -> None:
     original = [user("short"), ModelResponse([TextPart("same answer")]), user("same later")]
     with fake_engine() as engine:
         session = engine.session()
@@ -91,7 +93,7 @@ def test_changed_message_renders_only_from_its_segment_start():
         old_later_start = next(p.start for p in old_provenance if p.key == later_key)
 
         changed = deepcopy(original)
-        changed[0].parts[0].content = "a considerably longer first message"
+        cast(UserPromptPart, changed[0].parts[0]).content = "a considerably longer first message"
         change = binder.prepare(changed)
 
         assert change.kind == "rewrite"
@@ -103,16 +105,16 @@ def test_changed_message_renders_only_from_its_segment_start():
         assert new_later_start > old_later_start
 
 
-def test_same_key_with_changed_hash_does_not_reuse_old_segment():
+def test_same_key_with_changed_hash_does_not_reuse_old_segment() -> None:
     original = [user("original")]
     with fake_engine() as engine:
         session = engine.session()
         binder = MessageBinder(session)
         binder.prepare(original)
-        key = original[0].metadata["ds4.key"]
+        key = cast(Any, original[0].metadata)["ds4.key"]
         changed = deepcopy(original)
-        changed[0].parts[0].content = "changed"
-        assert changed[0].metadata["ds4.key"] == key
+        cast(UserPromptPart, changed[0].parts[0]).content = "changed"
+        assert cast(Any, changed[0].metadata)["ds4.key"] == key
 
         change = binder.prepare(changed)
 
@@ -122,7 +124,7 @@ def test_same_key_with_changed_hash_does_not_reuse_old_segment():
         )
 
 
-def test_runtime_ids_and_timestamps_do_not_invalidate_unchanged_rendered_content():
+def test_runtime_ids_and_timestamps_do_not_invalidate_unchanged_rendered_content() -> None:
     original = [user("same"), ModelResponse([TextPart("answer")])]
     with fake_engine() as engine:
         session = engine.session()
@@ -146,7 +148,7 @@ def test_runtime_ids_and_timestamps_do_not_invalidate_unchanged_rendered_content
         assert session.transcript.tokens == before
 
 
-def test_tool_definition_change_rebuilds_from_tool_prefix():
+def test_tool_definition_change_rebuilds_from_tool_prefix() -> None:
     messages = [user("same")]
     with fake_engine() as engine:
         session = engine.session()
@@ -161,7 +163,7 @@ def test_tool_definition_change_rebuilds_from_tool_prefix():
         assert b"second" in text and b"first" not in text
 
 
-def test_think_change_rebuilds_system_prefix():
+def test_think_change_rebuilds_system_prefix() -> None:
     messages = [user("same")]
     with fake_engine() as engine:
         session = engine.session()
@@ -178,7 +180,7 @@ def test_think_change_rebuilds_system_prefix():
         )
 
 
-def test_count_tokens_does_not_mutate_or_sync():
+def test_count_tokens_does_not_mutate_or_sync() -> None:
     messages = [user("first")]
     with fake_engine() as engine:
         session = engine.session()
@@ -201,7 +203,7 @@ def test_count_tokens_does_not_mutate_or_sync():
         assert native_calls(session) == before_calls == []
 
 
-def test_provenance_covers_every_token_and_marks_sampled_response():
+def test_provenance_covers_every_token_and_marks_sampled_response() -> None:
     with fake_engine() as engine:
         session = engine.session()
         binder = MessageBinder(session)
@@ -222,15 +224,15 @@ def test_provenance_covers_every_token_and_marks_sampled_response():
         assert all(left.end == right.start for left, right in zip(provenance, provenance[1:]))
         sampled = [p for p in provenance if p.source == "sampled"]
         assert [p.kind for p in sampled] == ["assistant", "eos"]
-        assert {p.key for p in sampled} == {response.metadata["ds4.key"]}
+        assert {p.key for p in sampled} == {cast(Any, response.metadata)["ds4.key"]}
         assert len({p.content_hash for p in sampled}) == 1
         assert any(p.kind == "assistant_prefix" and not p.key for p in provenance)
 
 
-def test_unchanged_messages_leave_paused_sampled_response_resumable():
+def test_unchanged_messages_leave_paused_sampled_response_resumable() -> None:
     stop = tuple(byte + 1 for byte in b"stop")
 
-    def script(prompt, generated):
+    def script(prompt: Any, generated: Any) -> Any:
         text = b"next" if any(
             tuple(prompt[index:index + len(stop)]) == stop
             for index in range(len(prompt) - len(stop) + 1)
@@ -260,10 +262,10 @@ def test_unchanged_messages_leave_paused_sampled_response_resumable():
         assert session.transcript.segments[-1].kind == "eos"
 
 
-def test_completed_pause_resume_refreshes_eos_provenance_and_bound_end():
+def test_completed_pause_resume_refreshes_eos_provenance_and_bound_end() -> None:
     stop = tuple(byte + 1 for byte in b"stop")
 
-    def script(prompt, generated):
+    def script(prompt: Any, generated: Any) -> Any:
         text = b"next" if any(
             tuple(prompt[index:index + len(stop)]) == stop
             for index in range(len(prompt) - len(stop) + 1)
@@ -280,7 +282,7 @@ def test_completed_pause_resume_refreshes_eos_provenance_and_bound_end():
         binder.bind_response(response)
         binder.prepare([request, response])
         list(session.run_round(max_tokens=10, stop_sequences=[b"stop"]))
-        response.parts[0].content = "stopnext"
+        cast(TextPart, response.parts[0]).content = "stopnext"
 
         binder.bind_response(response)
         later = user("later")
@@ -288,7 +290,7 @@ def test_completed_pause_resume_refreshes_eos_provenance_and_bound_end():
 
         provenance = binder.export_segments()
         eos = next(p for p in provenance if p.kind == "eos")
-        assert eos.key == response.metadata["ds4.key"]
+        assert eos.key == cast(Any, response.metadata)["ds4.key"]
         assert eos.content_hash
         assert eos.source == "sampled"
         assert binder._records[1].end == eos.end
@@ -297,7 +299,7 @@ def test_completed_pause_resume_refreshes_eos_provenance_and_bound_end():
         assert provenance[-1].end == len(session.transcript)
         assert all(left.end == right.start for left, right in zip(provenance, provenance[1:]))
         old_tokens = session.transcript.tokens
-        later_start = next(p.start for p in provenance if p.key == later.metadata["ds4.key"])
+        later_start = next(p.start for p in provenance if p.key == cast(Any, later.metadata)["ds4.key"])
 
         change = binder.prepare([request, response, user("replacement")])
 
@@ -305,11 +307,11 @@ def test_completed_pause_resume_refreshes_eos_provenance_and_bound_end():
         assert change.start == later_start
         assert session.transcript.tokens[:later_start] == old_tokens[:later_start]
         restored_eos = next(p for p in binder.export_segments() if p.kind == "eos")
-        assert restored_eos.key == response.metadata["ds4.key"]
+        assert restored_eos.key == cast(Any, response.metadata)["ds4.key"]
         assert restored_eos.source == "sampled"
 
 
-def test_append_suffix_retires_paused_response_with_sampled_eos_provenance():
+def test_append_suffix_retires_paused_response_with_sampled_eos_provenance() -> None:
     with fake_engine() as engine:
         session = engine.session()
         binder = MessageBinder(session)
@@ -328,7 +330,7 @@ def test_append_suffix_retires_paused_response_with_sampled_eos_provenance():
         ]
         provenance = binder.export_segments()
         eos = next(p for p in provenance if p.kind == "eos")
-        assert eos.key == response.metadata["ds4.key"]
+        assert eos.key == cast(Any, response.metadata)["ds4.key"]
         assert eos.content_hash
         assert eos.source == "sampled"
         assert provenance[0].start == 0
@@ -341,7 +343,7 @@ def test_append_suffix_retires_paused_response_with_sampled_eos_provenance():
         assert [s.kind for s in session.transcript.segments].count("assistant_prefix") == 2
 
 
-def test_truncate_drops_only_checkpoints_beyond_the_cut():
+def test_truncate_drops_only_checkpoints_beyond_the_cut() -> None:
     with fake_engine() as engine:
         session = engine.session()
         session.append_tokens([1, 2, 3, 4], "user")
@@ -376,7 +378,7 @@ def test_truncate_drops_only_checkpoints_beyond_the_cut():
       for family in ("deepseek4", "deepseek41", "glm", "qwen")
       for value in ({"nested": ("not", "JSON")}, {"nested": {1: "non-string key"}})],
 ])
-def test_rejected_replacement_is_atomic(family, parts):
+def test_rejected_replacement_is_atomic(family: Any, parts: Any) -> None:
     with fake_engine(family) as engine:
         session = engine.session()
         binder = MessageBinder(session)
@@ -402,7 +404,7 @@ def test_rejected_replacement_is_atomic(family, parts):
         session.drop_checkpoint("kept")
 
 
-def test_rewriting_sampled_response_rebuilds_native_prefix():
+def test_rewriting_sampled_response_rebuilds_native_prefix() -> None:
     with fake_engine() as engine:
         session = engine.session()
         binder = MessageBinder(session)
@@ -417,7 +419,7 @@ def test_rewriting_sampled_response_rebuilds_native_prefix():
         old_prefix_tokens = session.transcript.tokens[old_prefix.start:old_prefix.end]
 
         changed = deepcopy(response)
-        changed.parts[0].content = "replacement"
+        cast(TextPart, changed.parts[0]).content = "replacement"
         change = binder.prepare([request, changed])
 
         assert change.kind == "rewrite"
@@ -430,7 +432,7 @@ def test_rewriting_sampled_response_rebuilds_native_prefix():
         assert b"replacement" in decoded
 
 
-def test_invalid_truncate_preserves_checkpoints():
+def test_invalid_truncate_preserves_checkpoints() -> None:
     with fake_engine() as engine:
         session = engine.session()
         session.append_tokens([1, 2, 3, 4], "user")
@@ -444,7 +446,7 @@ def test_invalid_truncate_preserves_checkpoints():
         session.drop_checkpoint("kept")
 
 
-def test_truncate_refuses_an_active_round():
+def test_truncate_refuses_an_active_round() -> None:
     with fake_engine() as engine:
         session = engine.session()
         session.append_tokens([1, 2], "user")

@@ -1,4 +1,5 @@
 """Behavior of the stdlib save record and KV store primitives."""
+from typing import Any
 
 from pathlib import Path
 
@@ -19,8 +20,8 @@ from ds4py.store import (
 DIGEST_123 = "7b0b5ea3ff36958c8e32ccf24b71da9ac68e51d0881bf75e62b837ec9ea6f3a5"
 
 
-def record(**overrides):
-    fields = dict(
+def record(**overrides: Any) -> SaveRecord:
+    fields: dict[str, Any] = dict(
         session_id="session-1",
         conversation_id="conversation-1",
         run_id="session-1.save-2",
@@ -43,8 +44,8 @@ def record(**overrides):
     return SaveRecord(**fields)
 
 
-def engine_info(**overrides):
-    fields = dict(
+def engine_info(**overrides: Any) -> EngineInfo:
+    fields: dict[str, Any] = dict(
         name="fake-model",
         model_id=41,
         family="deepseek41",
@@ -60,7 +61,7 @@ def engine_info(**overrides):
     return EngineInfo(**fields)
 
 
-def test_kv_payload_round_trips_through_the_declared_header(tmp_path):
+def test_kv_payload_round_trips_through_the_declared_header(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("session-1") / "session.kv"
     payload = b"payload\x00bytes"
@@ -73,7 +74,7 @@ def test_kv_payload_round_trips_through_the_declared_header(tmp_path):
     assert store.read_kv(path) == payload
 
 
-def test_zero_length_payload_round_trips_without_looking_missing(tmp_path):
+def test_zero_length_payload_round_trips_without_looking_missing(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("empty") / "session.kv"
 
@@ -84,7 +85,7 @@ def test_zero_length_payload_round_trips_without_looking_missing(tmp_path):
     assert (magic, version, declared) == (KV_MAGIC, KV_VERSION, 0)
 
 
-def test_save_record_round_trip_preserves_every_field(tmp_path):
+def test_save_record_round_trip_preserves_every_field(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("session-1") / "save.json"
     original = record()
@@ -94,7 +95,7 @@ def test_save_record_round_trip_preserves_every_field(tmp_path):
     assert store.read_record(path) == original
 
 
-def test_save_record_from_dict_preserves_all_segment_provenance():
+def test_save_record_from_dict_preserves_all_segment_provenance() -> None:
     original = record()
 
     restored = SaveRecord.from_dict(original.to_dict())
@@ -117,11 +118,11 @@ def test_save_record_from_dict_preserves_all_segment_provenance():
         ),
     ],
 )
-def test_token_digest_is_sha256_over_fixed_big_endian_uint32(tokens, expected):
+def test_token_digest_is_sha256_over_fixed_big_endian_uint32(tokens: Any, expected: Any) -> None:
     assert token_digest(tokens) == expected
 
 
-def test_default_root_reads_ds4py_home_at_call_time(tmp_path, monkeypatch):
+def test_default_root_reads_ds4py_home_at_call_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     first = tmp_path / "first"
     second = tmp_path / "second"
     monkeypatch.setenv("DS4PY_HOME", str(first))
@@ -135,7 +136,7 @@ def test_default_root_reads_ds4py_home_at_call_time(tmp_path, monkeypatch):
     assert not second.exists()
 
 
-def test_default_root_expands_a_home_redirect(tmp_path, monkeypatch):
+def test_default_root_expands_a_home_redirect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("DS4PY_HOME", "~/state")
 
@@ -146,7 +147,7 @@ def test_default_root_expands_a_home_redirect(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("value", [None, ""])
-def test_default_root_falls_back_to_dot_ds4py(tmp_path, monkeypatch, value):
+def test_default_root_falls_back_to_dot_ds4py(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: Any) -> None:
     if value is None:
         monkeypatch.delenv("DS4PY_HOME", raising=False)
     else:
@@ -156,7 +157,7 @@ def test_default_root_falls_back_to_dot_ds4py(tmp_path, monkeypatch, value):
     assert SessionStore().root == tmp_path / "home" / ".ds4py"
 
 
-def test_find_resolves_a_unique_session_id_prefix(tmp_path):
+def test_find_resolves_a_unique_session_id_prefix(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
     for session_id in ("aaaa1111", "aaaa2222", "bbbb3333"):
         store.write_record_atomic(
@@ -170,7 +171,7 @@ def test_find_resolves_a_unique_session_id_prefix(tmp_path):
     assert path == store.session_dir("bbbb3333") / "save.json"
 
 
-def test_find_rejects_a_prefix_matching_an_exact_id_and_a_longer_id(tmp_path):
+def test_find_rejects_a_prefix_matching_an_exact_id_and_a_longer_id(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
     for session_id in ("abc", "abcdef"):
         store.write_record_atomic(
@@ -186,7 +187,7 @@ def test_find_rejects_a_prefix_matching_an_exact_id_and_a_longer_id(tmp_path):
     assert "abcdef" in str(caught.value)
 
 
-def test_validate_for_engine_accepts_the_matching_model_and_quant(tmp_path):
+def test_validate_for_engine_accepts_the_matching_model_and_quant(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
 
     store.validate_for_engine(record(), engine_info())

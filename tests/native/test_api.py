@@ -1,3 +1,5 @@
+from typing import Any, cast
+from collections.abc import Iterator
 import fcntl
 import hashlib
 import os
@@ -10,8 +12,9 @@ from ds4py._native.protocol import EngineConfig, ThinkMode
 from ds4py._native.modelcheck import exit_error, NATIVE_REFUSED, PYTHON_ERROR
 from ds4py._native.loader import load_library
 from contract import CONTRACT, check_snapshot_restore_matches_rebuild
+from typing import Never
 
-def test_instance_lock(tmp_path, monkeypatch):
+def test_instance_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DS4_LOCK_FILE", raising=False)
     assert lock_path() == Path("/tmp/ds4.lock")
     path = tmp_path / "ds4.lock"
@@ -28,7 +31,7 @@ def test_instance_lock(tmp_path, monkeypatch):
             InstanceLock.acquire(path)
     InstanceLock.acquire(path).close()                      # closing released it
 
-def test_exit_error():
+def test_exit_error() -> None:
     m, lk = Path("/m.gguf"), Path("/tmp/ds4.lock.engine")
     assert exit_error(0, "", m, lk) is None
     e = exit_error(1, "ds4: loading\nds4: only GGUF v3 is supported\n", m, lk)
@@ -41,7 +44,7 @@ def test_exit_error():
         e = exit_error(status, tb, m, lk)
         assert type(e) is EngineError and "ImportError" in str(e)
 
-def test_engine_options(tmp_path, monkeypatch):
+def test_engine_options(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     o = engine_options(EngineConfig(Path("/m.gguf"), ctx=4096, backend="rocm", threads=3))
     assert (o.model_path, o.backend, o.context_size, o.placement_ctx_hint, o.n_threads) == (b"/m.gguf", 1, 4096, 4096, 3)
     assert (o.mtp_draft_tokens, o.mtp_margin, o.inspect_only) == (1, 3.0, False)
@@ -51,7 +54,7 @@ def test_engine_options(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="vulkan"): engine_options(EngineConfig(Path("/m"), backend="vulkan"))
 
 @pytest.mark.build
-def test_open_failures_become_exceptions(built_upstream, fresh_loader, tmp_path, monkeypatch):
+def test_open_failures_become_exceptions(built_upstream: Any, fresh_loader: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     lock = tmp_path / "ds4.lock"
     monkeypatch.setenv("DS4_LOCK_FILE", str(lock))
     native = LibNative(load_library(built_upstream[0]))
@@ -71,39 +74,39 @@ def test_open_failures_become_exceptions(built_upstream, fresh_loader, tmp_path,
 
 @pytest.mark.live
 @pytest.mark.parametrize("check", CONTRACT, ids=lambda f: f.__name__)
-def test_contract_live(live_engine, check):
+def test_contract_live(live_engine: Any, check: Any) -> None:
     if check is check_snapshot_restore_matches_rebuild and not live_engine._test_native.restore_enabled:
         pytest.skip("snapshot restore disabled by live checks")
     check(live_engine, live_engine.tokenize("The quick brown fox jumps over the lazy dog. " * 2))
 
 
 @pytest.fixture(scope="module")
-def live_engine():
+def live_engine() -> Iterator[Any]:
     model = os.environ.get("DS4_TEST_MODEL")
     if not model:
         pytest.skip("DS4_TEST_MODEL is not set")
     native = LibNative(load_library())
     previous = os.environ.get("DS4_LOCK_FILE")
     engine = native.open_engine(EngineConfig(Path(model), ctx=4096, backend=native.backend))
-    engine._test_native = native
-    engine._test_lock_env = previous
+    cast(Any, engine)._test_native = native
+    cast(Any, engine)._test_lock_env = previous
     yield engine
     engine.close()
 
 
 @pytest.mark.live
-def test_token_text_live(live_engine):
+def test_token_text_live(live_engine: Any) -> None:
     assert b"".join(live_engine.token_text(t) for t in live_engine.tokenize("Hello world")) == b"Hello world"
 
 
 @pytest.mark.live
-def test_lock_lifetime_live(live_engine):
+def test_lock_lifetime_live(live_engine: Any) -> None:
     assert os.environ.get("DS4_LOCK_FILE") == live_engine._test_lock_env
     with pytest.raises(EngineLockedError):
         InstanceLock.acquire(lock_path())
 
 
-def test_session_abi_and_ownership(stub_engine):
+def test_session_abi_and_ownership(stub_engine: Any) -> None:
     import ctypes
     from ds4py._native.protocol import SyncStatus
     engine, c = stub_engine
@@ -163,14 +166,14 @@ def test_session_abi_and_ownership(stub_engine):
         session.tokens()
 
 
-def test_callbacks_errors_and_thread_confinement(stub_engine):
+def test_callbacks_errors_and_thread_confinement(stub_engine: Any) -> None:
     from concurrent.futures import ThreadPoolExecutor
     from ds4py._native.protocol import SyncStatus
     engine, c = stub_engine
     session = engine.create_session(64)
     for kind in ("progress", "cancel"):
         error = RuntimeError(kind)
-        def fail(*args):
+        def fail(*args: Any) -> Never:
             raise error
         with pytest.raises(RuntimeError) as caught:
             session.sync([1], **{kind: fail})
@@ -191,7 +194,7 @@ def test_callbacks_errors_and_thread_confinement(stub_engine):
     assert c.stub_frees() == 1
 
 
-def test_session_finalizer_frees(stub_engine):
+def test_session_finalizer_frees(stub_engine: Any) -> None:
     import gc
     engine, c = stub_engine
     session = engine.create_session(64)
@@ -201,7 +204,7 @@ def test_session_finalizer_frees(stub_engine):
 
 
 @pytest.mark.parametrize("backend", ["cpu", "metal"])
-def test_open_environment_and_failure_cleanup(stub_engine, tmp_path, monkeypatch, backend):
+def test_open_environment_and_failure_cleanup(stub_engine: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: Any) -> None:
     import ctypes
     from types import SimpleNamespace
     import ds4py._native.api as api
@@ -218,7 +221,7 @@ def test_open_environment_and_failure_cleanup(stub_engine, tmp_path, monkeypatch
     )
     seen = []
     original_open = lib.fn("ds4_engine_open")
-    def observe(*args):
+    def observe(*args: Any) -> Any:
         seen.append({k: os.environ.get(k) for k in ("DS4_METAL_MOE_SOURCE", "DS4_METAL_FLASH_ATTN_SOURCE")})
         return original_open(*args)
     monkeypatch.setitem(lib._functions, "ds4_engine_open", observe)
@@ -256,7 +259,7 @@ def test_open_environment_and_failure_cleanup(stub_engine, tmp_path, monkeypatch
 
 
 @pytest.fixture
-def metal_native(stub_engine, tmp_path, monkeypatch):
+def metal_native(stub_engine: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     from types import SimpleNamespace
     import ds4py._native.api as api
     engine, _ = stub_engine
@@ -274,10 +277,10 @@ def metal_native(stub_engine, tmp_path, monkeypatch):
     return LibNative(lib), shader
 
 
-def test_metal_environment_restored_on_python_exception(metal_native, tmp_path, monkeypatch):
+def test_metal_environment_restored_on_python_exception(metal_native: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     native, _ = metal_native
     before = dict(os.environ)
-    def fail(*args):
+    def fail(*args: Any) -> Never:
         assert os.environ["DS4_METAL_DENSE_SOURCE"] == str(tmp_path.resolve() / "metal/dense.metal")
         raise RuntimeError("open raised")
     monkeypatch.setitem(native.lib._functions, "ds4_engine_open", fail)
@@ -287,11 +290,11 @@ def test_metal_environment_restored_on_python_exception(metal_native, tmp_path, 
     InstanceLock.acquire(tmp_path / "native.lock").close()
 
 
-def test_later_metal_open_uses_another_bundle(metal_native, tmp_path, monkeypatch):
+def test_later_metal_open_uses_another_bundle(metal_native: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     native, shader = metal_native
     original_open = native.lib.fn("ds4_engine_open")
     seen = []
-    def observe(*args):
+    def observe(*args: Any) -> Any:
         seen.append(os.environ["DS4_METAL_DENSE_SOURCE"])
         return original_open(*args)
     monkeypatch.setitem(native.lib._functions, "ds4_engine_open", observe)
@@ -307,7 +310,7 @@ def test_later_metal_open_uses_another_bundle(metal_native, tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize("change", ["bundle", "override"])
-def test_open_rechecks_shader_files_after_library_load(metal_native, tmp_path, monkeypatch, change):
+def test_open_rechecks_shader_files_after_library_load(metal_native: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: Any) -> None:
     native, shader = metal_native
     target = shader
     if change == "override":
@@ -323,7 +326,7 @@ def test_open_rechecks_shader_files_after_library_load(metal_native, tmp_path, m
     InstanceLock.acquire(tmp_path / "native.lock").close()
 
 
-def test_info_captured_once_on_open(stub_engine):
+def test_info_captured_once_on_open(stub_engine: Any) -> None:
     engine, c = stub_engine
     assert c.stub_info_reads() == 1
     first, second = engine.info(), engine.info()
@@ -333,7 +336,7 @@ def test_info_captured_once_on_open(stub_engine):
 
 
 @pytest.mark.parametrize("already_closed", [False, True])
-def test_off_owner_gc_preserves_session_cleanup(stub_engine, monkeypatch, already_closed):
+def test_off_owner_gc_preserves_session_cleanup(stub_engine: Any, monkeypatch: pytest.MonkeyPatch, already_closed: Any) -> None:
     import gc
     import sys
     import threading
@@ -368,7 +371,7 @@ def test_off_owner_gc_preserves_session_cleanup(stub_engine, monkeypatch, alread
             gc.enable()
 
 
-def test_failed_snapshot_save_frees_partial_allocation(stub_engine):
+def test_failed_snapshot_save_frees_partial_allocation(stub_engine: Any) -> None:
     engine, c = stub_engine
     session = engine.create_session(64)
     c.stub_fail_snapshot(1)
@@ -385,7 +388,7 @@ def test_failed_snapshot_save_frees_partial_allocation(stub_engine):
     assert c.stub_snapshots() == 2
 
 
-def test_weakref_engine_close_before_session_finalizer_frees_once(stub_engine, monkeypatch):
+def test_weakref_engine_close_before_session_finalizer_frees_once(stub_engine: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     import gc
     import sys
     import weakref
@@ -396,7 +399,7 @@ def test_weakref_engine_close_before_session_finalizer_frees_once(stub_engine, m
     native_close = engine._lib.fn("ds4_engine_close")
     freed = set()
 
-    def guarded_free(raw):
+    def guarded_free(raw: Any) -> None:
         calls.append(("session_free", raw))
         # Still perform the real C free, but intercept any duplicate attempt so
         # a regression reports an assertion instead of crashing pytest.
@@ -404,7 +407,7 @@ def test_weakref_engine_close_before_session_finalizer_frees_once(stub_engine, m
             freed.add(raw)
             native_free(raw)
 
-    def recorded_close(raw):
+    def recorded_close(raw: Any) -> None:
         calls.append(("engine_close", raw))
         native_close(raw)
 

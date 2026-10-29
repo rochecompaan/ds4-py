@@ -1,9 +1,10 @@
 """Scripted speculative decode blocks for engine tests."""
+from typing import Any
 from ds4py.engine.decode import Verdict
 from ds4py.errors import EngineError
 
 
-def block_chunks(tokens):
+def block_chunks(tokens: Any) -> Any:
     tokens = list(tokens)
     return [tokens[start + 1:start + 17] for start in range(0, len(tokens), 17)]
 
@@ -11,19 +12,19 @@ def block_chunks(tokens):
 class FakeMultiTokenStep:
     hooks_every_sample = True
 
-    def __init__(self, blocks=()):
+    def __init__(self, blocks: Any=()) -> None:
         self.blocks = iter(blocks)
         self.block_sizes = []
 
-    def _drafts(self, sampled):
-        provider = next(self.blocks, ())
+    def _drafts(self, sampled: Any) -> Any:
+        provider: Any = next(self.blocks, ())
         if callable(provider):
             provider = provider(sampled)
         if provider is None:
             return None
         return tuple(provider)[:16]
 
-    def run(self, session, ctx):
+    def run(self, session: Any, ctx: Any) -> None:
         while not ctx.cancelled():
             ctx.before_sample()
             policy = ctx.sampling()
@@ -69,7 +70,7 @@ class FakeMultiTokenStep:
                     return
             ctx.flush_events()
 
-    def _verify_hooked(self, session, ctx, sampled, drafts):
+    def _verify_hooked(self, session: Any, ctx: Any, sampled: Any, drafts: Any) -> bool:
         # Verify each draft against a fresh sample with the current committed
         # parser/history and logits. A mismatch keeps the replacement token,
         # cuts this run, and returns to the next block without stale drafts.

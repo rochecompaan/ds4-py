@@ -1,3 +1,4 @@
+from typing import Any, cast
 import asyncio
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from ds4py.tui import TUI
 from ds4py.tui_commands import CommandError, SlashCommandRegistry
 
 
-def save_record(session_id="saved-session", title="Saved title"):
+def save_record(session_id: Any="saved-session", title: Any="Saved title") -> SaveRecord:
     return SaveRecord(
         session_id=session_id,
         conversation_id=session_id,
@@ -33,28 +34,28 @@ class FakeRuntime:
     project_dir = Path("/project")
     context_size = 1000
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.calls = []
         self.current = "old-session"
         self.closed = []
         self.hints = False
         self.listeners = []
 
-    def on_event(self, listener, *, kinds=None):
+    def on_event(self, listener: Any, *, kinds: Any=None) -> Any:
         self.listeners.append((listener, kinds))
         return lambda: self.listeners.remove((listener, kinds))
 
-    async def new(self):
+    async def new(self) -> Any:
         self.calls.append(("new",))
         self.closed.append(self.current)
         self.current = "new-session"
         return self.current
 
-    async def save(self):
+    async def save(self) -> Any:
         self.calls.append(("save",))
         return save_record(self.current)
 
-    async def switch(self, prefix):
+    async def switch(self, prefix: Any) -> Any:
         self.calls.append(("switch", prefix))
         if prefix == "bad":
             raise EngineError("unknown save")
@@ -63,35 +64,35 @@ class FakeRuntime:
         self.current = record.session_id
         return record
 
-    def set_hints(self, enabled):
+    def set_hints(self, enabled: Any) -> None:
         self.hints = enabled
         self.calls.append(("hints", enabled))
 
-    def cancel(self):
+    def cancel(self) -> None:
         self.calls.append(("cancel",))
 
-    async def run(self, prompt):
+    async def run(self, prompt: Any) -> None:
         self.calls.append(("run", prompt))
 
 
-def make_tui(runtime=None):
-    return TUI(runtime or FakeRuntime(), output=DummyOutput())
+def make_tui(runtime: Any=None) -> TUI:
+    return TUI(cast(Any, runtime or FakeRuntime()), output=DummyOutput())
 
 
-def test_builtin_commands_execute_runtime_lifecycle():
+def test_builtin_commands_execute_runtime_lifecycle() -> None:
     runtime = FakeRuntime()
     tui = make_tui(runtime)
 
-    async def scenario():
+    async def scenario() -> None:
         assert await tui.commands.execute("/new") == "new session new-session"
         assert runtime.closed == ["old-session"]
 
-        switched = await tui.commands.execute("/switch abc")
+        switched = cast(Any, await tui.commands.execute("/switch abc"))
         assert "abc-session" in switched
         assert "Restored title" in switched
         assert runtime.closed[-1] == "new-session"
 
-        saved = await tui.commands.execute("/save")
+        saved = cast(Any, await tui.commands.execute("/save"))
         assert "abc-session" in saved
         assert "Saved title" in saved
 
@@ -104,10 +105,10 @@ def test_builtin_commands_execute_runtime_lifecycle():
     asyncio.run(scenario())
 
 
-def test_command_errors_name_the_problem_and_usage():
+def test_command_errors_name_the_problem_and_usage() -> None:
     tui = make_tui()
 
-    async def scenario():
+    async def scenario() -> None:
         with pytest.raises(CommandError, match="unknown command"):
             await tui.commands.execute("/list")
         with pytest.raises(CommandError, match="/switch <prefix>"):
@@ -118,7 +119,7 @@ def test_command_errors_name_the_problem_and_usage():
     asyncio.run(scenario())
 
 
-def test_slash_completion_covers_only_builtin_commands_and_extensions():
+def test_slash_completion_covers_only_builtin_commands_and_extensions() -> None:
     tui = make_tui()
     names = {item.text.strip() for item in tui.commands.completions("/")}
     assert names == {"/exit", "/new", "/save", "/switch", "/hints"}
@@ -128,7 +129,7 @@ def test_slash_completion_covers_only_builtin_commands_and_extensions():
     assert "/custom" in {item.text.strip() for item in tui.commands.completions("/")}
 
 
-def test_extension_command_uses_the_same_execution_path():
+def test_extension_command_uses_the_same_execution_path() -> None:
     registry = SlashCommandRegistry()
     registry.register(
         "hello", lambda name: f"hello {name}",

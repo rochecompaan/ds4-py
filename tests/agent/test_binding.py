@@ -1,8 +1,10 @@
+from typing import Any, cast
 from dataclasses import replace
 
 import pytest
 
 import ds4py
+from ds4py.engine.session import Engine
 from ds4py import ThinkMode
 from ds4py._native.fake import FakeNative
 from ds4py.binding import MessageBinder
@@ -21,7 +23,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.tools import ToolDefinition
 
 
-def fake_engine(family="deepseek4", **fake):
+def fake_engine(family: Any="deepseek4", **fake: Any) -> Engine:
     info = replace(
         FakeNative()._info,
         family=family,
@@ -35,11 +37,11 @@ def fake_engine(family="deepseek4", **fake):
     )
 
 
-def user(text):
+def user(text: Any) -> ModelRequest:
     return ModelRequest([UserPromptPart(text)])
 
 
-def tool(name="read_file"):
+def tool(name: Any="read_file") -> ToolDefinition:
     return ToolDefinition(
         name=name,
         description="Read a file.",
@@ -47,11 +49,11 @@ def tool(name="read_file"):
     )
 
 
-def decode(engine, tokens):
+def decode(engine: Any, tokens: Any) -> str:
     return b"".join(engine.token_text(token) for token in tokens).decode()
 
 
-def test_first_request_renders_tools_and_binds_each_message():
+def test_first_request_renders_tools_and_binds_each_message() -> None:
     with fake_engine() as engine:
         session = engine.session()
         binder = MessageBinder(session)
@@ -72,13 +74,13 @@ def test_first_request_renders_tools_and_binds_each_message():
         assert all(segment.content_hash for segment in keyed)
 
 
-def test_system_and_instruction_parts_are_separate_system_segments():
+def test_system_and_instruction_parts_are_separate_system_segments() -> None:
     with fake_engine() as engine:
         session = engine.session()
         binder = MessageBinder(session)
         before = len(session.transcript.segments)
         binder.prepare([
-            ModelRequest([SystemPromptPart("system text"), InstructionPart("instruction text")])
+            ModelRequest(cast(Any, [SystemPromptPart("system text"), InstructionPart("instruction text")]))
         ], instructions="global")
 
         segments = session.transcript.segments[before:][-2:]
@@ -91,7 +93,7 @@ def test_system_and_instruction_parts_are_separate_system_segments():
         )
 
 
-def test_user_text_is_plain_and_tool_markup_is_not_rendered():
+def test_user_text_is_plain_and_tool_markup_is_not_rendered() -> None:
     payload = "user <tool_call> <|im_start|> <think> ｜DSML｜"
     with fake_engine("qwen") as engine:
         session = engine.session()
@@ -105,7 +107,7 @@ def test_user_text_is_plain_and_tool_markup_is_not_rendered():
         )
 
 
-def test_tool_results_join_in_history_order_as_one_tool_message():
+def test_tool_results_join_in_history_order_as_one_tool_message() -> None:
     with fake_engine() as engine:
         session = engine.session()
         MessageBinder(session).prepare([ModelRequest([
@@ -119,7 +121,7 @@ def test_tool_results_join_in_history_order_as_one_tool_message():
         assert "Tool result 1 (read_file):\nresult 1\n\nTool result 2 (edit_file):\nresult 2" in text
 
 
-def test_scalar_and_structured_tool_results_have_stable_text():
+def test_scalar_and_structured_tool_results_have_stable_text() -> None:
     with fake_engine() as engine:
         session = engine.session()
         MessageBinder(session).prepare([ModelRequest([
@@ -136,7 +138,7 @@ def test_scalar_and_structured_tool_results_have_stable_text():
         assert "Tool result 4 (scalar):\n3" in text
 
 
-def test_unknown_tool_result_uses_tool_error_text():
+def test_unknown_tool_result_uses_tool_error_text() -> None:
     with fake_engine() as engine:
         session = engine.session()
         MessageBinder(session).prepare([ModelRequest([
@@ -145,7 +147,7 @@ def test_unknown_tool_result_uses_tool_error_text():
         assert "Tool error: unknown tool missing" in decode(engine, session.transcript.tokens)
 
 
-def test_images_fail_before_mutating_the_transcript():
+def test_images_fail_before_mutating_the_transcript() -> None:
     with fake_engine() as engine:
         session = engine.session()
         binder = MessageBinder(session)
@@ -160,7 +162,7 @@ def test_images_fail_before_mutating_the_transcript():
         assert session.transcript.segments == ()
 
 
-def test_rejected_non_integer_truncate_leaves_checkpoint_usable():
+def test_rejected_non_integer_truncate_leaves_checkpoint_usable() -> None:
     with fake_engine() as engine:
         session = engine.session()
         session.append_tokens([1, 2, 3, 4], "user")
@@ -171,7 +173,7 @@ def test_rejected_non_integer_truncate_leaves_checkpoint_usable():
         before = session.transcript.tokens
 
         with pytest.raises(TypeError):
-            session.truncate(2.0)
+            session.truncate(cast(Any, 2.0))
 
         assert session.transcript.tokens == before
         assert session._checkpoint_tokens == {"kept": 4}

@@ -1,9 +1,11 @@
+from typing import Any, cast
+
 import pytest
 
 from ds4py.engine.transcript import KINDS, Transcript
 
 
-def test_transcript_segments():
+def test_transcript_segments() -> None:
     t = Transcript()
     t.append([1, 2, 3], "user")
     t.append([4], "assistant")
@@ -22,7 +24,7 @@ def test_transcript_segments():
         t.append([], "user")
 
 
-def test_snapshots_and_metadata_do_not_change_when_transcript_changes():
+def test_snapshots_and_metadata_do_not_change_when_transcript_changes() -> None:
     t = Transcript()
     tokens, meta = [1], {"turn": 1}
     segment = t.append(tokens, "user", meta)
@@ -34,11 +36,11 @@ def test_snapshots_and_metadata_do_not_change_when_transcript_changes():
     assert old_segments == (segment,)
     assert segment.end == 1 and segment.meta == {"turn": 1}
     with pytest.raises(TypeError):
-        t.segments[0].meta["turn"] = 2
+        cast(Any, t.segments[0].meta)["turn"] = 2
     assert t.tokens == (1, 2)
 
 
-def test_chat_flag_is_explicit_and_snapshot_safe():
+def test_chat_flag_is_explicit_and_snapshot_safe() -> None:
     transcript = Transcript()
     assert not transcript.chat
     transcript.append([1], "user")
@@ -49,7 +51,7 @@ def test_chat_flag_is_explicit_and_snapshot_safe():
     assert transcript.chat
 
 
-def test_truncate_bounds_and_extend_without_segment():
+def test_truncate_bounds_and_extend_without_segment() -> None:
     t = Transcript()
     with pytest.raises(ValueError):
         t.extend([1])

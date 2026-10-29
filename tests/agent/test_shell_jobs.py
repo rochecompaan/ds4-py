@@ -1,3 +1,5 @@
+from typing import Any, cast
+from pathlib import Path
 import asyncio
 import time
 
@@ -10,33 +12,33 @@ from pydantic_ai_harness import Shell
 
 
 class MockSession:
-    def __init__(self):
+    def __init__(self) -> None:
         self.states = {}
 
-    def state(self, key, factory):
+    def state(self, key: Any, factory: Any) -> Any:
         if key not in self.states:
             self.states[key] = factory()
         return self.states[key]
 
-    def close_states(self):
+    def close_states(self) -> None:
         for state in self.states.values():
             if hasattr(state, "close"):
                 state.close()
         self.states.clear()
 
 
-def _has_tool_return(messages):
+def _has_tool_return(messages: Any) -> bool:
     return any(
         isinstance(p, ToolReturnPart)
         for m in messages for p in getattr(m, "parts", [])
     )
 
 
-def test_start_command_tracked_and_stopped(tmp_path):
-    session = MockSession()
+def test_start_command_tracked_and_stopped(tmp_path: Path) -> None:
+    session: Any = MockSession()
     jobs = DS4ShellJobs(session, tmp_path)
 
-    def scripted(messages, info):
+    def scripted(messages: Any, info: Any) -> ModelResponse:
         if _has_tool_return(messages):
             return ModelResponse(parts=[TextPart("done")])
         return ModelResponse(parts=[
@@ -62,12 +64,12 @@ def test_start_command_tracked_and_stopped(tmp_path):
         assert '"exit_code": null' not in status.read_text()
 
 
-def test_cross_prompt_job_visible(tmp_path):
-    session = MockSession()
+def test_cross_prompt_job_visible(tmp_path: Path) -> None:
+    session: Any = MockSession()
     jobs = DS4ShellJobs(session, tmp_path)
     run_count = [0]
 
-    def scripted(messages, info):
+    def scripted(messages: Any, info: Any) -> ModelResponse:
         if _has_tool_return(messages):
             return ModelResponse(parts=[TextPart("done")])
         if run_count[0] == 0:
@@ -90,14 +92,14 @@ def test_cross_prompt_job_visible(tmp_path):
     session.close_states()
 
 
-def test_close_kills_a_term_ignoring_process_group(tmp_path):
+def test_close_kills_a_term_ignoring_process_group(tmp_path: Path) -> None:
     import os
     import signal
 
-    session = MockSession()
+    session: Any = MockSession()
     jobs = DS4ShellJobs(session, tmp_path)
 
-    def scripted(messages, info):
+    def scripted(messages: Any, info: Any) -> ModelResponse:
         if _has_tool_return(messages):
             return ModelResponse(parts=[TextPart("done")])
         return ModelResponse(parts=[
@@ -148,7 +150,7 @@ def test_close_kills_a_term_ignoring_process_group(tmp_path):
             pass
 
 
-def test_switch_and_exit_stop_a_term_ignoring_job(tmp_path):
+def test_switch_and_exit_stop_a_term_ignoring_job(tmp_path: Path) -> None:
     import os
     import signal
     from dataclasses import replace
@@ -170,26 +172,27 @@ def test_switch_and_exit_stop_a_term_ignoring_job(tmp_path):
     jobs = DS4ShellJobs(session, tmp_path)
     command = "trap '' TERM; : > ready; while :; do sleep 1; done"
 
-    def scripted(messages, info):
+    def scripted(messages: Any, info: Any) -> ModelResponse:
         if _has_tool_return(messages):
             return ModelResponse(parts=[TextPart("done")])
         return ModelResponse(parts=[
             ToolCallPart("start_command", {"command": command}, tool_call_id="call-1"),
         ])
 
-    def start():
+    def start() -> Any:
         agent = Agent(
             FunctionModel(scripted),
             capabilities=[LocalWorkspace(tmp_path), Shell(), jobs],
         )
         asyncio.run(agent.run("start"))
         assert _wait_ready(tmp_path)
-        job_id = next(iter(session.state("shell_jobs", lambda: None).job_ids))
+        state = cast(Any, session.state("shell_jobs", lambda: None))
+        job_id = next(iter(state.job_ids))
         handle = tmp_path / ".pydantic-ai-harness" / "shell" / job_id / "handle"
         pid_text, group_text = handle.read_text().split()
         return int(pid_text), int(group_text)
 
-    def wait_gone(pid, group):
+    def wait_gone(pid: Any, group: Any) -> None:
         deadline = time.monotonic() + 8.0
         while time.monotonic() < deadline:
             try:
@@ -219,7 +222,7 @@ def test_switch_and_exit_stop_a_term_ignoring_job(tmp_path):
         engine.close()
 
 
-def _wait_ready(workspace, timeout=5.0):
+def _wait_ready(workspace: Any, timeout: Any=5.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if (workspace / "ready").exists():
@@ -228,19 +231,19 @@ def _wait_ready(workspace, timeout=5.0):
     return False
 
 
-def test_close_kills_background_child_after_wrapper_publishes_exit(tmp_path):
+def test_close_kills_background_child_after_wrapper_publishes_exit(tmp_path: Path) -> None:
     import json
     import os
     import signal
 
-    session = MockSession()
+    session: Any = MockSession()
     jobs = DS4ShellJobs(session, tmp_path)
     command = (
         "(trap '' TERM; : > child-ready; while :; do sleep 1; done) & "
         "trap 'exit 0' TERM; : > ready; while :; do sleep 1; done"
     )
 
-    def scripted(messages, info):
+    def scripted(messages: Any, info: Any) -> ModelResponse:
         if _has_tool_return(messages):
             return ModelResponse(parts=[TextPart("done")])
         return ModelResponse(parts=[

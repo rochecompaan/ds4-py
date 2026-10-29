@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from typing import Any, cast
 
 import pytest
 
@@ -16,7 +17,7 @@ from bench.run_bakeoff import AgentConfig, run_bakeoff
 pytestmark = pytest.mark.live
 
 
-def test_complete_bakeoff_passes_all_six_gates():
+def test_complete_bakeoff_passes_all_six_gates() -> None:
     required = {
         name: os.environ.get(name)
         for name in ("DS4_TEST_MODEL", "DS4_AGENT", "POLYGLOT_BENCHMARK")
@@ -28,10 +29,10 @@ def test_complete_bakeoff_passes_all_six_gates():
         )
 
     root = Path(__file__).resolve().parents[2]
-    model = Path(required["DS4_TEST_MODEL"]).expanduser().resolve()
-    cli = Path(required["DS4_AGENT"]).expanduser().resolve()
+    model = Path(cast(str, required["DS4_TEST_MODEL"])).expanduser().resolve()
+    cli = Path(cast(str, required["DS4_AGENT"])).expanduser().resolve()
     manifest = load_manifest(root / "bench/bakeoff.yaml")
-    common = dict(
+    common: dict[str, Any] = dict(
         model=str(model), backend="cpu", ctx=manifest.ctx,
         temperature=manifest.temperature, seed=manifest.seed, tokens=512,
     )
@@ -44,7 +45,7 @@ def test_complete_bakeoff_passes_all_six_gates():
     )
     report = run_bakeoff(
         root / "bench/bakeoff.yaml",
-        Path(required["POLYGLOT_BENCHMARK"]).expanduser().resolve(),
+        Path(cast(str, required["POLYGLOT_BENCHMARK"])).expanduser().resolve(),
         root,
         configs,
         root / "bench/results",

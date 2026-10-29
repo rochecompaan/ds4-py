@@ -1,4 +1,5 @@
 """Workspace isolation, hidden grading, and retry behavior for the agent bake-off."""
+from typing import Any
 
 from pathlib import Path
 import subprocess
@@ -25,7 +26,7 @@ EXERCISE = Path("python/exercises/practice/tiny")
 HIDDEN_TEST = EXERCISE.name + "_test.py"
 
 
-def make_exercise(root, initial="good"):
+def make_exercise(root: Any, initial: Any="good") -> Any:
     source = root / "benchmark" / EXERCISE
     (source / ".docs").mkdir(parents=True)
     (source / ".docs" / "instructions.md").write_text(
@@ -40,13 +41,13 @@ def make_exercise(root, initial="good"):
     return source
 
 
-def git(cwd, *args):
+def git(cwd: Any, *args: Any) -> str:
     return subprocess.run(
         ["git", *args], cwd=cwd, check=True, capture_output=True, text=True,
     ).stdout.strip()
 
 
-def commit_repo(root):
+def commit_repo(root: Any) -> Any:
     root.mkdir(parents=True, exist_ok=True)
     git(root, "init", "-q")
     git(root, "config", "user.email", "bakeoff@example.invalid")
@@ -56,7 +57,7 @@ def commit_repo(root):
     return git(root, "rev-parse", "HEAD")
 
 
-def test_exercise_has_visible_starter_and_temporarily_mounted_hidden_tests(tmp_path):
+def test_exercise_has_visible_starter_and_temporarily_mounted_hidden_tests(tmp_path: Path) -> None:
     source = make_exercise(tmp_path)
     workspace = prepare_exercise(source, tmp_path / "staged")
 
@@ -74,12 +75,12 @@ def test_exercise_has_visible_starter_and_temporarily_mounted_hidden_tests(tmp_p
     assert not (workspace.agent_dir / HIDDEN_TEST).exists()
 
 
-def test_first_failure_output_is_feedback_for_attempt_two(tmp_path):
+def test_first_failure_output_is_feedback_for_attempt_two(tmp_path: Path) -> None:
     source = make_exercise(tmp_path, initial="bad")
     workspace = prepare_exercise(source, tmp_path / "staged")
     calls = []
 
-    def agent(agent_dir, attempt, feedback):
+    def agent(agent_dir: Any, attempt: Any, feedback: Any) -> None:
         calls.append((attempt, feedback))
         assert not (agent_dir / HIDDEN_TEST).exists()
         value = "bad" if attempt == 1 else "good"
@@ -95,15 +96,15 @@ def test_first_failure_output_is_feedback_for_attempt_two(tmp_path):
     assert not (workspace.agent_dir / HIDDEN_TEST).exists()
 
 
-def test_attempts_stop_at_two_and_cleanup_survives_failures(tmp_path):
+def test_attempts_stop_at_two_and_cleanup_survives_failures(tmp_path: Path) -> None:
     source = make_exercise(tmp_path, initial="bad")
     workspace = prepare_exercise(source, tmp_path / "staged")
     calls = []
 
-    def agent(agent_dir, attempt, feedback):
+    def agent(agent_dir: Any, attempt: Any, feedback: Any) -> None:
         calls.append((attempt, feedback))
 
-    def fail(command, cwd, env):
+    def fail(command: Any, cwd: Any, env: Any) -> Any:
         assert cwd == workspace.grader_dir
         assert (workspace.agent_dir / HIDDEN_TEST).is_file()
         return subprocess.CompletedProcess(command, 1, stdout="still failing", stderr="")
@@ -116,13 +117,13 @@ def test_attempts_stop_at_two_and_cleanup_survives_failures(tmp_path):
     assert not (workspace.agent_dir / HIDDEN_TEST).exists()
 
 
-def test_agents_receive_separate_but_equivalent_workspace_copies(tmp_path):
+def test_agents_receive_separate_but_equivalent_workspace_copies(tmp_path: Path) -> None:
     source = make_exercise(tmp_path)
     staged = prepare_exercise(source, tmp_path / "staged")
     c_workspace = clone_workspace(staged, tmp_path / "c")
     python_workspace = clone_workspace(staged, tmp_path / "ds4py")
 
-    def files(root):
+    def files(root: Any) -> Any:
         return {
             str(path.relative_to(root)): path.read_bytes()
             for path in root.rglob("*") if path.is_file()
@@ -134,7 +135,7 @@ def test_agents_receive_separate_but_equivalent_workspace_copies(tmp_path):
     assert "return 'good'" in (python_workspace.agent_dir / "solution.py").read_text()
 
 
-def test_wrong_benchmark_commit_fails_clearly(tmp_path):
+def test_wrong_benchmark_commit_fails_clearly(tmp_path: Path) -> None:
     source = make_exercise(tmp_path)
     benchmark = source.parents[3]
     actual = commit_repo(benchmark)
@@ -147,7 +148,7 @@ def test_wrong_benchmark_commit_fails_clearly(tmp_path):
     assert expected in message and actual in message
 
 
-def test_ctx_repository_copy_keeps_hidden_grader_outside(tmp_path):
+def test_ctx_repository_copy_keeps_hidden_grader_outside(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     (repo / "src" / "ds4py").mkdir(parents=True)
     (repo / "src" / "ds4py" / "__init__.py").write_text("")
@@ -172,9 +173,9 @@ def test_ctx_repository_copy_keeps_hidden_grader_outside(tmp_path):
     assert (workspace.agent_dir / "tests" / "engine" / "tool_syntax" / "test_glm.py").is_file()
 
 
-def test_glm_patch_fails_focused_test_and_clean_tree_passes(tmp_path):
+def test_glm_patch_fails_focused_test_and_clean_tree_passes(tmp_path: Path) -> None:
     repo = Path(__file__).parents[2]
-    common = dict(
+    common: dict[str, Any] = dict(
         prompt="Fix the GLM close boundary without editing tests.",
         visible_test="tests/engine/tool_syntax/test_glm.py",
     )
@@ -194,7 +195,7 @@ def test_glm_patch_fails_focused_test_and_clean_tree_passes(tmp_path):
     assert "test_glm" in patched_result.output
 
 
-def test_workspace_cannot_bypass_grading_with_startup_or_pytest_configuration(tmp_path):
+def test_workspace_cannot_bypass_grading_with_startup_or_pytest_configuration(tmp_path: Path) -> None:
     source = make_exercise(tmp_path, initial="bad")
     workspace = prepare_exercise(source, tmp_path / "staged")
     agent_dir = workspace.agent_dir
@@ -219,7 +220,7 @@ def test_workspace_cannot_bypass_grading_with_startup_or_pytest_configuration(tm
 
 
 @pytest.mark.parametrize("content", ["", "---\n", "- not\n- a\n- mapping\n", "scalar\n"])
-def test_empty_or_non_mapping_manifest_is_a_path_aware_preparation_error(tmp_path, content):
+def test_empty_or_non_mapping_manifest_is_a_path_aware_preparation_error(tmp_path: Path, content: Any) -> None:
     path = tmp_path / "manifest.yaml"
     path.write_text(content)
 

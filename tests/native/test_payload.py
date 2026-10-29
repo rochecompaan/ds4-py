@@ -1,4 +1,5 @@
 """Native payload round trips, corruption handling, and Python-owned files."""
+from typing import Any
 
 import ctypes
 from pathlib import Path
@@ -9,15 +10,16 @@ from ds4py._native import payload
 from ds4py._native.fake import FakeEngine, FakeNative
 from ds4py._native.protocol import EngineConfig
 from ds4py.errors import EngineError
+from typing import Never
 
 HEADER = b"DS4PYKV\0" + bytes(12)
 
 
-def engine(**kwargs):
+def engine(**kwargs: Any) -> Any:
     return FakeNative(**kwargs).open_engine(EngineConfig(Path("fake.gguf")))
 
 
-def staged(engine, tokens):
+def staged(engine: Any, tokens: Any) -> Any:
     session = engine.create_session(64)
     session.sync(tokens)
     payload = session.stage_payload()
@@ -25,7 +27,7 @@ def staged(engine, tokens):
     return session, payload
 
 
-def write_staged(path, payload):
+def write_staged(path: Any, payload: Any) -> None:
     with path.open("w+b") as file:
         file.write(HEADER)
         payload.write(file)
@@ -34,14 +36,14 @@ def write_staged(path, payload):
 
 
 def test_staged_payload_round_trips_tokens_and_position_without_tokenizing(
-    tmp_path, monkeypatch,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     first = engine()
     source, payload = staged(first, [5, 6, 7, 8])
     path = tmp_path / "session.kv"
     write_staged(path, payload)
 
-    def fail_tokenize(*args, **kwargs):
+    def fail_tokenize(*args: Any, **kwargs: Any) -> Never:
         raise AssertionError("payload load must not tokenize")
 
     monkeypatch.setattr(FakeEngine, "tokenize", fail_tokenize)
@@ -54,7 +56,7 @@ def test_staged_payload_round_trips_tokens_and_position_without_tokenizing(
     assert target.pos() == 4
 
 
-def test_zero_length_payload_is_distinct_from_missing_or_truncated(tmp_path):
+def test_zero_length_payload_is_distinct_from_missing_or_truncated(tmp_path: Path) -> None:
     session = engine().create_session(64)
     empty = tmp_path / "empty"
     empty.write_bytes(b"")
@@ -75,7 +77,7 @@ def test_zero_length_payload_is_distinct_from_missing_or_truncated(tmp_path):
 @pytest.mark.parametrize(
     "damage", ["magic", "version", "count", "checksum", "padding", "truncate"],
 )
-def test_corrupt_payloads_raise_and_do_not_replace_existing_tokens(damage, tmp_path):
+def test_corrupt_payloads_raise_and_do_not_replace_existing_tokens(damage: Any, tmp_path: Path) -> None:
     _, payload = staged(engine(), [5, 6])
     path = tmp_path / f"{damage}.kv"
     write_staged(path, payload)
@@ -103,7 +105,7 @@ def test_corrupt_payloads_raise_and_do_not_replace_existing_tokens(damage, tmp_p
     assert target.tokens() == [9, 9] and target.pos() == 2
 
 
-def test_staged_payload_closes_once_and_refuses_later_writes(tmp_path):
+def test_staged_payload_closes_once_and_refuses_later_writes(tmp_path: Path) -> None:
     session, payload = staged(engine(), [5, 6])
     path = tmp_path / "session.kv"
     with path.open("w+b") as file:
@@ -114,7 +116,7 @@ def test_staged_payload_closes_once_and_refuses_later_writes(tmp_path):
     assert session.payload_bytes() == payload.bytes
 
 
-def test_native_stream_rewinds_a_read_ahead_buffer_before_reading(tmp_path):
+def test_native_stream_rewinds_a_read_ahead_buffer_before_reading(tmp_path: Path) -> None:
     path = tmp_path / "stream.bin"
     path.write_bytes(b"headerpayloadtail")
     libc = ctypes.CDLL(None)
@@ -133,7 +135,7 @@ def test_native_stream_rewinds_a_read_ahead_buffer_before_reading(tmp_path):
         assert file.read() == b""
 
 
-def test_native_stream_releases_only_the_duplicate_and_syncs_positions(tmp_path):
+def test_native_stream_releases_only_the_duplicate_and_syncs_positions(tmp_path: Path) -> None:
     path = tmp_path / "stream.bin"
     path.write_bytes(b"abcdef")
     libc = ctypes.CDLL(None)
@@ -161,8 +163,8 @@ def test_native_stream_releases_only_the_duplicate_and_syncs_positions(tmp_path)
 
 
 def test_native_stage_and_write_release_only_the_duplicate_descriptor(
-    stub_engine, tmp_path,
-):
+    stub_engine: Any, tmp_path: Path,
+) -> None:
     engine, c = stub_engine
     session = engine.create_session(64)
     session.sync([5, 6, 7])
@@ -187,7 +189,7 @@ def test_native_stage_and_write_release_only_the_duplicate_descriptor(
     assert len(data) == len(HEADER) + staged.bytes + len(b"trailer")
 
 
-def test_native_load_consumes_only_the_declared_bytes(stub_engine, tmp_path):
+def test_native_load_consumes_only_the_declared_bytes(stub_engine: Any, tmp_path: Path) -> None:
     engine, _ = stub_engine
     source = engine.create_session(64)
     source.sync([5, 6, 7, 8])
@@ -209,7 +211,7 @@ def test_native_load_consumes_only_the_declared_bytes(stub_engine, tmp_path):
     assert target.tokens() == [5, 6, 7, 8]
 
 
-def test_native_stage_error_uses_the_buffer_and_frees_the_partial(stub_engine):
+def test_native_stage_error_uses_the_buffer_and_frees_the_partial(stub_engine: Any) -> None:
     engine, c = stub_engine
     session = engine.create_session(64)
     session.sync([1])
@@ -221,8 +223,8 @@ def test_native_stage_error_uses_the_buffer_and_frees_the_partial(stub_engine):
 
 
 def test_native_write_error_uses_the_buffer_and_keeps_the_file_usable(
-    stub_engine, tmp_path,
-):
+    stub_engine: Any, tmp_path: Path,
+) -> None:
     engine, c = stub_engine
     session = engine.create_session(64)
     session.sync([1, 2])
@@ -245,8 +247,8 @@ def test_native_write_error_uses_the_buffer_and_keeps_the_file_usable(
 
 
 def test_native_load_error_uses_the_buffer_and_leaves_state_unchanged(
-    stub_engine, tmp_path,
-):
+    stub_engine: Any, tmp_path: Path,
+) -> None:
     engine, c = stub_engine
     source = engine.create_session(64)
     source.sync([5, 6])

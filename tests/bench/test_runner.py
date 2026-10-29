@@ -1,4 +1,5 @@
 """Sequential bakeoff runner and gates 1–5 with fake executables."""
+from typing import Any
 
 from dataclasses import replace
 import json
@@ -27,7 +28,7 @@ from bench.run_bakeoff import (
 )
 
 
-def config(tmp_path, agent="ds4py"):
+def config(tmp_path: Path, agent: Any="ds4py") -> Any:
     executable = tmp_path / f"{agent}-fake.py"
     if not executable.exists():
         executable.write_text(FAKE_AGENT)
@@ -37,10 +38,10 @@ def config(tmp_path, agent="ds4py"):
     )
 
 
-def result(task_id="task", agent="ds4py", **changes):
+def result(task_id: Any="task", agent: Any="ds4py", **changes: Any) -> Any:
     save = Path("/saves") / task_id / agent
     trace = Path("/traces") / task_id / agent
-    metric_values = dict(
+    metric_values: dict[str, Any] = dict(
         wall_seconds=10, progress_events=3, tokens=20, tool_calls=1,
         avg_prefill_reuse=0.8, non_extend_rounds=0,
         tool_accounting=ToolAccounting(1, 1) if agent == "ds4py" else None,
@@ -58,11 +59,11 @@ def result(task_id="task", agent="ds4py", **changes):
     return TaskRunResult(**values)
 
 
-def with_summary(item, **changes):
+def with_summary(item: Any, **changes: Any) -> Any:
     return replace(item, summary=replace(item.summary, **changes))
 
 
-def test_task_result_preserves_summary_evidence_and_derives_last_attempt_paths():
+def test_task_result_preserves_summary_evidence_and_derives_last_attempt_paths() -> None:
     summary = EventSummary(
         wall_seconds=2, progress_events=3, tokens=4, tool_calls=1,
         avg_prefill_reuse=0.625, non_extend_rounds=1,
@@ -89,7 +90,7 @@ def test_task_result_preserves_summary_evidence_and_derives_last_attempt_paths()
     assert data["tasks"][0]["summary"]["reuse_ratios"] == [0.5, 0.75]
 
 
-def healthy_restore(results):
+def healthy_restore(results: Any) -> Any:
     runs = tuple(
         RestoreResult(save_dir=save, passed=True)
         for item in results if item.agent == "ds4py"
@@ -101,7 +102,7 @@ def healthy_restore(results):
     )
 
 
-def test_agent_commands_share_model_sampling_and_task_prompt(tmp_path):
+def test_agent_commands_share_model_sampling_and_task_prompt(tmp_path: Path) -> None:
     prompt = "solve this exact task"
     trace = tmp_path / "trace.jsonl"
     c_command = build_agent_command(config(tmp_path, "c"), prompt, trace)
@@ -118,7 +119,7 @@ def test_agent_commands_share_model_sampling_and_task_prompt(tmp_path):
     assert "--non-interactive" in python and "--yolo" not in python
 
 
-def test_failed_first_attempt_feeds_grader_output_to_exactly_one_retry(tmp_path):
+def test_failed_first_attempt_feeds_grader_output_to_exactly_one_retry(tmp_path: Path) -> None:
     source = make_exercise(tmp_path)
     workspace = prepare_exercise(source, tmp_path / "staged")
     outcomes = iter([
@@ -142,7 +143,7 @@ def test_failed_first_attempt_feeds_grader_output_to_exactly_one_retry(tmp_path)
     assert "hidden failure" in invocations[1]["prompt"]
 
 
-def test_c_and_python_run_sequentially_on_equivalent_tasks(tmp_path):
+def test_c_and_python_run_sequentially_on_equivalent_tasks(tmp_path: Path) -> None:
     source = make_exercise(tmp_path)
     staged = prepare_exercise(source, tmp_path / "staged")
 
@@ -160,7 +161,7 @@ def test_c_and_python_run_sequentially_on_equivalent_tasks(tmp_path):
     assert not (results[0].save_dir or Path("missing")).exists() if results[0].save_dir else True
 
 
-def test_c_metrics_failure_leaves_tool_accounting_unavailable(tmp_path):
+def test_c_metrics_failure_leaves_tool_accounting_unavailable(tmp_path: Path) -> None:
     source = make_exercise(tmp_path)
     workspace = prepare_exercise(source, tmp_path / "staged")
     executable = tmp_path / "c-without-evidence.py"
@@ -178,7 +179,7 @@ def test_c_metrics_failure_leaves_tool_accounting_unavailable(tmp_path):
     assert completed.tool_accounting is None
 
 
-def test_gates_one_to_five_pass_with_complete_evidence():
+def test_gates_one_to_five_pass_with_complete_evidence() -> None:
     c = result(agent="c", wall_seconds=10)
     python = result(wall_seconds=15, non_extend_rounds=2)
     python = with_summary(python, allowed_non_extend_rounds=2)
@@ -189,7 +190,7 @@ def test_gates_one_to_five_pass_with_complete_evidence():
     assert "not run" in report.gates["gate-6"].detail
 
 
-def test_gate_one_allows_exactly_one_task_of_pass_slack():
+def test_gate_one_allows_exactly_one_task_of_pass_slack() -> None:
     c = [result(f"task-{index}", "c") for index in range(3)]
     python = [result(f"task-{index}", passed=index != 0) for index in range(3)]
     assert build_report(c + python, healthy_restore(c + python)).gates["gate-1"].passed
@@ -199,7 +200,7 @@ def test_gate_one_allows_exactly_one_task_of_pass_slack():
     assert "attempt" in report.gates["gate-1"].detail
 
 
-def test_gate_two_allows_bad_argument_retry_but_not_parser_error_or_missing_outcome():
+def test_gate_two_allows_bad_argument_retry_but_not_parser_error_or_missing_outcome() -> None:
     c = result(agent="c")
     python = with_summary(result(), tool_accounting=ToolAccounting(2, 1, 0, 1))
     assert build_report([c, python], healthy_restore([c, python])).gates["gate-2"].passed
@@ -210,7 +211,7 @@ def test_gate_two_allows_bad_argument_retry_but_not_parser_error_or_missing_outc
     assert not build_report([c, missing], healthy_restore([c, missing])).gates["gate-2"].passed
 
 
-def test_gate_three_enforces_time_and_only_unexplained_non_extensions():
+def test_gate_three_enforces_time_and_only_unexplained_non_extensions() -> None:
     c = result(agent="c", wall_seconds=10)
     python = result(wall_seconds=15.01)
     assert not build_report([c, python], healthy_restore([c, python])).gates["gate-3"].passed
@@ -221,7 +222,7 @@ def test_gate_three_enforces_time_and_only_unexplained_non_extensions():
     assert not build_report([c, on_time], healthy_restore([c, on_time])).gates["gate-3"].passed
 
 
-def test_gate_four_requires_interrupt_resume():
+def test_gate_four_requires_interrupt_resume() -> None:
     results = [result(agent="c"), result()]
     restore = healthy_restore(results)
     restore = replace(restore, interruption=CheckResult(False, "no resume"))
@@ -230,7 +231,7 @@ def test_gate_four_requires_interrupt_resume():
     assert "no resume" in report.gates["gate-4"].detail
 
 
-def test_gate_five_requires_restore_for_every_attempt():
+def test_gate_five_requires_restore_for_every_attempt() -> None:
     python = replace(result(attempts=2), attempts=2)
     saves = (Path("/saves/first"), Path("/saves/second"))
     python = replace(python, attempts=2, attempt_save_dirs=saves)
@@ -241,7 +242,7 @@ def test_gate_five_requires_restore_for_every_attempt():
     assert not build_report([c, python], restore).gates["gate-5"].passed
 
 
-def test_gate_five_rejects_an_attempt_with_no_save_directory():
+def test_gate_five_rejects_an_attempt_with_no_save_directory() -> None:
     c = result(agent="c")
     save = Path("/saves/only-one")
     python = replace(result(), attempts=2, attempt_save_dirs=(save,))
@@ -253,7 +254,7 @@ def test_gate_five_rejects_an_attempt_with_no_save_directory():
     assert "attempt" in report.gates["gate-5"].detail
 
 
-def test_report_json_has_attempt_feedback_and_table_has_six_deltas_not_logs():
+def test_report_json_has_attempt_feedback_and_table_has_six_deltas_not_logs() -> None:
     c = result(agent="c", wall_seconds=10, progress_events=2, tokens=10)
     python = result(wall_seconds=12, progress_events=5, tokens=14)
     report = build_report([c, python], healthy_restore([c, python]))
@@ -270,7 +271,7 @@ def test_report_json_has_attempt_feedback_and_table_has_six_deltas_not_logs():
     assert "delta" in table and "grader secret output" not in table
 
 
-def make_exercise(root):
+def make_exercise(root: Any) -> Any:
     source = root / "benchmark/python/exercises/practice/tiny"
     (source / ".docs").mkdir(parents=True)
     (source / ".docs/instructions.md").write_text("Return good.\n")
@@ -279,7 +280,7 @@ def make_exercise(root):
     return source
 
 
-def read_invocations(root):
+def read_invocations(root: Any) -> Any:
     path = root / "invocations.jsonl"
     return [json.loads(line) for line in path.read_text().splitlines()]
 
@@ -338,7 +339,7 @@ with lock_path.open("w") as lock:
 '''
 
 
-def test_complete_runner_writes_gate_six_after_acceptance(tmp_path, monkeypatch):
+def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import bench.run_bakeoff as runner
 
     order = []

@@ -1,4 +1,5 @@
 """Synthetic event and trace metrics for bakeoff gates."""
+from typing import Any, cast
 
 from pathlib import Path
 import sys
@@ -11,11 +12,11 @@ from bench.metrics import MetricError, metrics_from_trace, summarize_events
 from ds4py.engine.replay_types import ReplayRound, ReplayTrace
 
 
-def event(kind, payload=None, run_id="run-1"):
+def event(kind: Any, payload: Any=None, run_id: Any="run-1") -> dict[str, Any]:
     return {"kind": kind, "run_id": run_id, "payload": payload or {}}
 
 
-def synced(kind="extend", reused=80, to_prefill=20, reason=None):
+def synced(kind: Any="extend", reused: Any=80, to_prefill: Any=20, reason: Any=None) -> Any:
     plan = {"kind": kind, "reused": reused, "to_prefill": to_prefill}
     payload = {"event": {"pos": reused + to_prefill, "plan": plan, "prefilled": to_prefill}}
     if reason is not None:
@@ -23,13 +24,13 @@ def synced(kind="extend", reused=80, to_prefill=20, reason=None):
     return event("Synced", payload)
 
 
-def result_part(part_kind="tool-return", outcome="success"):
+def result_part(part_kind: Any="tool-return", outcome: Any="success") -> dict[str, Any]:
     return event("ToolResultEvent", {
         "part": {"part_kind": part_kind, "outcome": outcome, "tool_call_id": "call-1"},
     })
 
 
-def valid_events():
+def valid_events() -> list[dict[str, Any]]:
     return [
         event("run_start"),
         synced("rebuild", 0, 100),
@@ -49,7 +50,7 @@ def valid_events():
     ]
 
 
-def test_event_metrics_cover_six_comparison_values_and_tool_accounting():
+def test_event_metrics_cover_six_comparison_values_and_tool_accounting() -> None:
     summary = summarize_events(valid_events(), wall_seconds=2.5)
 
     assert summary.wall_seconds == 2.5
@@ -60,13 +61,13 @@ def test_event_metrics_cover_six_comparison_values_and_tool_accounting():
     assert summary.non_extend_rounds == 0
     assert summary.invalid_non_extend_rounds == 0
     assert summary.parser_errors == 0
-    assert summary.tool_accounting.parsed == 2
-    assert summary.tool_accounting.executed == 1
-    assert summary.tool_accounting.retried == 1
-    assert summary.tool_accounting.complete
+    assert cast(Any, summary.tool_accounting).parsed == 2
+    assert cast(Any, summary.tool_accounting).executed == 1
+    assert cast(Any, summary.tool_accounting).retried == 1
+    assert cast(Any, summary.tool_accounting).complete
 
 
-def test_non_extension_rounds_require_recorded_compaction_or_strategy_reason():
+def test_non_extension_rounds_require_recorded_compaction_or_strategy_reason() -> None:
     events = valid_events()
     events.insert(-2, synced("rebuild", 20, 80, "compaction"))
     events.insert(-2, synced("restore", 10, 90, "strategy"))
@@ -80,7 +81,7 @@ def test_non_extension_rounds_require_recorded_compaction_or_strategy_reason():
     assert summary.non_extension_reasons == ("compaction", "strategy")
 
 
-def test_zero_reuse_denominator_is_the_only_excluded_reuse_sample():
+def test_zero_reuse_denominator_is_the_only_excluded_reuse_sample() -> None:
     events = valid_events()
     events.insert(-2, synced(reused=0, to_prefill=0))
     summary = summarize_events(events, wall_seconds=1)
@@ -90,27 +91,27 @@ def test_zero_reuse_denominator_is_the_only_excluded_reuse_sample():
     assert summarize_events(only_zero, wall_seconds=1).avg_prefill_reuse is None
 
 
-def test_parser_error_and_bad_argument_retry_have_distinct_gate_semantics():
+def test_parser_error_and_bad_argument_retry_have_distinct_gate_semantics() -> None:
     events = valid_events()
     events[-2] = event("Stopped", {"event": {"reason": "parser_error"}})
     summary = summarize_events(events, wall_seconds=1)
 
     assert summary.parser_errors == 1
-    assert summary.tool_accounting.retried == 1
-    assert summary.tool_accounting.complete
+    assert cast(Any, summary.tool_accounting).retried == 1
+    assert cast(Any, summary.tool_accounting).complete
 
 
-def test_missing_tool_outcome_is_evidence_failure_not_a_valid_zero():
+def test_missing_tool_outcome_is_evidence_failure_not_a_valid_zero() -> None:
     events = [item for item in valid_events() if item["kind"] != "ToolResultEvent"]
     summary = summarize_events(events, wall_seconds=1)
 
     assert summary.tool_calls == 2
-    assert not summary.tool_accounting.complete
-    assert summary.tool_accounting.accounted == 0
+    assert not cast(Any, summary.tool_accounting).complete
+    assert cast(Any, summary.tool_accounting).accounted == 0
 
 
 @pytest.mark.parametrize("mutation", ["missing_end", "negative_reuse", "bad_token"])
-def test_malformed_or_incomplete_events_raise(mutation):
+def test_malformed_or_incomplete_events_raise(mutation: Any) -> None:
     events = valid_events()
     if mutation == "missing_end":
         events = events[:-1]
@@ -123,7 +124,7 @@ def test_malformed_or_incomplete_events_raise(mutation):
         summarize_events(events, wall_seconds=1)
 
 
-def test_trace_metrics_use_committed_samples_and_prefix_extension():
+def test_trace_metrics_use_committed_samples_and_prefix_extension() -> None:
     trace = ReplayTrace(None, None, (
         ReplayRound(0, tuple(range(10)), (10, 11), 0, 0, False),
         ReplayRound(1, tuple(range(15)), (15, 16, 17), 0, 12, False),
@@ -144,7 +145,7 @@ def test_trace_metrics_use_committed_samples_and_prefix_extension():
     assert summary.tool_accounting is None
 
 
-def test_trace_reuse_rejects_inconsistent_cached_prefix():
+def test_trace_reuse_rejects_inconsistent_cached_prefix() -> None:
     trace = ReplayTrace(None, None, (
         ReplayRound(0, (1, 2), (3,), 0, 3, False),
     ))

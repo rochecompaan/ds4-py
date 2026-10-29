@@ -1,3 +1,4 @@
+from typing import Any
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,19 +15,19 @@ from test_tui_commands import FakeRuntime
 
 
 class EventRuntime(FakeRuntime):
-    def emit(self, kind, **payload):
+    def emit(self, kind: Any, **payload: Any) -> None:
         event = SessionEvent(kind, "session", payload)
         for listener, kinds in tuple(self.listeners):
             if kinds is None or kind in kinds:
                 listener(event)
 
 
-def text(fragments):
+def text(fragments: Any) -> str:
     return "".join(value for _style, value in fragments)
 
 
-def test_footer_tracks_live_plan_prefill_service_and_extension_status():
-    runtime = EventRuntime()
+def test_footer_tracks_live_plan_prefill_service_and_extension_status() -> None:
+    runtime: Any = EventRuntime()
     footer = FooterModel(runtime)
     runtime.emit("run_start", run_id="run")
     runtime.emit("Prefill", event=Prefill(done=7, total=9, cached_prefix=2, tps=12.5))
@@ -52,8 +53,8 @@ def test_footer_tracks_live_plan_prefill_service_and_extension_status():
     assert "7/9" not in idle
 
 
-def test_long_cwd_and_narrow_terminal_keep_one_line():
-    runtime = EventRuntime()
+def test_long_cwd_and_narrow_terminal_keep_one_line() -> None:
+    runtime: Any = EventRuntime()
     runtime.project_dir = Path("/" + "very-long-directory/" * 40)
     footer = FooterModel(runtime)
     runtime.emit("status", key="custom", text="x" * 400)
@@ -69,28 +70,28 @@ def test_long_cwd_and_narrow_terminal_keep_one_line():
 class RecordSession:
     id = "session"
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.listeners = []
 
-    def on_event(self, listener, *, kinds=None):
+    def on_event(self, listener: Any, *, kinds: Any=None) -> Any:
         self.listeners.append((listener, kinds))
         return lambda: self.listeners.remove((listener, kinds))
 
-    def emit(self, kind, **payload):
+    def emit(self, kind: Any, **payload: Any) -> None:
         event = SessionEvent(kind, self.id, payload)
         for listener, allowed in tuple(self.listeners):
             if allowed is None or kind in allowed:
                 listener(event)
 
 
-def test_run_record_republishes_actual_shell_service_events(tmp_path):
-    session = RecordSession()
+def test_run_record_republishes_actual_shell_service_events(tmp_path: Path) -> None:
+    session: Any = RecordSession()
     record = DS4RunRecord(session, tmp_path / "events.jsonl")
     seen = []
     session.on_event(lambda event: seen.append(event))
     ctx = SimpleNamespace(conversation_id="session", run_id="run")
 
-    async def scenario():
+    async def scenario() -> None:
         await record.on_event(ctx, event=CommandStartedEvent(command="sleep 1", pid=321))
         await record.on_event(ctx, event=CommandFinishedEvent(
             pid=321, output_path="out", status_path="status",

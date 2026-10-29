@@ -1,3 +1,4 @@
+from typing import Any
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -22,11 +23,11 @@ TOOL_TEXT = (
 )
 
 
-def scripted_rounds(*texts):
+def scripted_rounds(*texts: Any) -> Any:
     responses = [tuple(tokenize_rendered(text)) for text in texts]
     state = {"round": 0, "generated": 0}
 
-    def script(prompt, generated):
+    def script(prompt: Any, generated: Any) -> Any:
         if not generated and state["generated"]:
             state["round"] += 1
         state["generated"] = len(generated)
@@ -36,7 +37,7 @@ def scripted_rounds(*texts):
     return script
 
 
-def test_text_and_tool_rounds_append_replayable_records(tmp_path, monkeypatch):
+def test_text_and_tool_rounds_append_replayable_records(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "prefill.jsonl"
     info = replace(FakeNative()._info, family="qwen", is_qwen4=True)
     native = FakeNative(info=info, script=scripted_rounds("hello", TOOL_TEXT))
@@ -45,7 +46,7 @@ def test_text_and_tool_rounds_append_replayable_records(tmp_path, monkeypatch):
     with ds4py.open("f.gguf", ctx=8192, think=ThinkMode.NONE, native=native) as engine:
         session = engine.session()
 
-        def observe(event):
+        def observe(event: Any) -> None:
             if event.kind == "Synced":
                 synced = event.payload["event"]
                 observed.append((tuple(session.transcript.tokens), synced.plan.reused))
@@ -92,16 +93,16 @@ def test_text_and_tool_rounds_append_replayable_records(tmp_path, monkeypatch):
 
 
 class TraceSession(SessionLifecycle):
-    def __init__(self, tokens):
+    def __init__(self, tokens: Any) -> None:
         super().__init__()
         self.transcript = SimpleNamespace(tokens=tokens)
 
 
-def synced(pos, reused=0):
+def synced(pos: Any, reused: Any=0) -> Synced:
     return Synced(pos, Plan("extend", reused, pos - reused, True, None), 0)
 
 
-def emit_round(session, run_id, *, fail=False, repeated_sync=False):
+def emit_round(session: Any, run_id: Any, *, fail: Any=False, repeated_sync: Any=False) -> None:
     session.emit("run_start", run_id=run_id)
     session.emit("Synced", event=synced(2, 1))
     session.emit("Token", event=Token(3, b"a"))
@@ -115,9 +116,9 @@ def emit_round(session, run_id, *, fail=False, repeated_sync=False):
         session.emit("run_end", run_id=run_id, status="success")
 
 
-def test_reopening_trace_resumes_file_wide_round_numbering(tmp_path):
+def test_reopening_trace_resumes_file_wide_round_numbering(tmp_path: Path) -> None:
     path = tmp_path / "trace.jsonl"
-    session = TraceSession([1, 2, 3, 4])
+    session: Any = TraceSession([1, 2, 3, 4])
     for run_id in ("first", "second"):
         with PrefillTraceWriter(session, path, think=1):
             emit_round(session, run_id)
@@ -126,10 +127,10 @@ def test_reopening_trace_resumes_file_wide_round_numbering(tmp_path):
     assert [round_.number for round_ in trace.rounds] == [0, 1]
 
 
-def test_reopening_trace_without_final_newline_preserves_jsonl(tmp_path):
+def test_reopening_trace_without_final_newline_preserves_jsonl(tmp_path: Path) -> None:
     path = tmp_path / "trace.jsonl"
     path.write_text(json.dumps(VALID))
-    session = TraceSession([1, 2, 3, 4])
+    session: Any = TraceSession([1, 2, 3, 4])
 
     with PrefillTraceWriter(session, path, think=1):
         emit_round(session, "second")
@@ -138,18 +139,18 @@ def test_reopening_trace_without_final_newline_preserves_jsonl(tmp_path):
     assert [round_.number for round_ in trace.rounds] == [0, 1]
 
 
-def test_writer_rejects_an_existing_c_text_trace(tmp_path):
+def test_writer_rejects_an_existing_c_text_trace(tmp_path: Path) -> None:
     path = tmp_path / "trace.jsonl"
     path.write_bytes(Path("tests/fixtures/replay/basic.trace").read_bytes())
-    session = TraceSession([1, 2, 3, 4])
+    session: Any = TraceSession([1, 2, 3, 4])
 
     with pytest.raises(ReplayError, match="invalid JSON|missing field"):
         PrefillTraceWriter(session, path, think=1)
 
 
-def test_failed_round_keeps_committed_tokens_and_ignores_save_only_sync(tmp_path):
+def test_failed_round_keeps_committed_tokens_and_ignores_save_only_sync(tmp_path: Path) -> None:
     path = tmp_path / "trace.jsonl"
-    session = TraceSession([1, 2, 3, 4])
+    session: Any = TraceSession([1, 2, 3, 4])
     with PrefillTraceWriter(session, path, think=1):
         emit_round(session, "failed", fail=True)
         session.emit("Synced", event=synced(3, 2))
@@ -159,9 +160,9 @@ def test_failed_round_keeps_committed_tokens_and_ignores_save_only_sync(tmp_path
     assert records[0]["sampled"] == [3]
 
 
-def test_repeated_sync_preserves_original_prompt_and_all_samples(tmp_path):
+def test_repeated_sync_preserves_original_prompt_and_all_samples(tmp_path: Path) -> None:
     path = tmp_path / "trace.jsonl"
-    session = TraceSession([1, 2, 3, 4])
+    session: Any = TraceSession([1, 2, 3, 4])
     with PrefillTraceWriter(session, path, think=1):
         emit_round(session, "resumed", repeated_sync=True)
 
@@ -184,7 +185,7 @@ VALID = {
 }
 
 
-def write_record(tmp_path, value):
+def write_record(tmp_path: Path, value: Any) -> Any:
     path = tmp_path / "trace.jsonl"
     path.write_text(json.dumps(value) + "\n")
     return path
@@ -197,7 +198,7 @@ def write_record(tmp_path, value):
     (lambda value: value.update(sampled="4"), "sampled"),
     (lambda value: value.update(round_index=True), "round_index"),
 ])
-def test_ds4py_replay_records_fail_loudly(tmp_path, mutate, fragment):
+def test_ds4py_replay_records_fail_loudly(tmp_path: Path, mutate: Any, fragment: Any) -> None:
     value = dict(VALID)
     mutate(value)
     path = write_record(tmp_path, value)
@@ -206,7 +207,7 @@ def test_ds4py_replay_records_fail_loudly(tmp_path, mutate, fragment):
     assert f"{path}:1:" in str(caught.value)
 
 
-def test_ds4py_replay_rejects_regressing_harness_steps_within_a_run(tmp_path):
+def test_ds4py_replay_rejects_regressing_harness_steps_within_a_run(tmp_path: Path) -> None:
     path = tmp_path / "trace.jsonl"
     first = dict(VALID, step_index=2)
     second = dict(VALID, step_index=1, round_index=1)
@@ -216,7 +217,7 @@ def test_ds4py_replay_rejects_regressing_harness_steps_within_a_run(tmp_path):
         read_replay(path)
 
 
-def test_ds4py_replay_rejects_regressing_steps_in_an_interleaved_run(tmp_path):
+def test_ds4py_replay_rejects_regressing_steps_in_an_interleaved_run(tmp_path: Path) -> None:
     path = tmp_path / "trace.jsonl"
     records = [
         dict(VALID, run_id="A", step_index=2, round_index=0),
@@ -229,7 +230,7 @@ def test_ds4py_replay_rejects_regressing_steps_in_an_interleaved_run(tmp_path):
         read_replay(path)
 
 
-def test_ds4py_replay_rejects_malformed_json_with_its_line(tmp_path):
+def test_ds4py_replay_rejects_malformed_json_with_its_line(tmp_path: Path) -> None:
     path = tmp_path / "trace.jsonl"
     path.write_text(json.dumps(VALID) + "\n{broken}\n")
     with pytest.raises(ReplayError, match="invalid JSON") as caught:

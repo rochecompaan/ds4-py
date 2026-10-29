@@ -1,3 +1,4 @@
+from typing import Any
 import pytest
 
 from ds4py.engine.tool_prompt import ToolDefinition, ToolPromptGenerator
@@ -28,7 +29,7 @@ DEFINITIONS = [
 ]
 
 
-def deepseek_expected(schemas, *, v41=False):
+def deepseek_expected(schemas: Any, *, v41: Any=False) -> str:
     calls = " calls" if v41 else "tool_calls"
     invoke = " invoke" if v41 else "invoke"
     parameter = " parameter" if v41 else "parameter"
@@ -50,7 +51,7 @@ def deepseek_expected(schemas, *, v41=False):
     )
 
 
-def glm_expected(schemas):
+def glm_expected(schemas: Any) -> str:
     return (
         "# Tools\n\n"
         f"<tools>{schemas}</tools>\n\n"
@@ -61,7 +62,7 @@ def glm_expected(schemas):
     )
 
 
-def qwen_expected(schemas):
+def qwen_expected(schemas: Any) -> str:
     return (
         "# Tools\n\n"
         f"<tools>{schemas}</tools>\n\n"
@@ -73,11 +74,11 @@ def qwen_expected(schemas):
     )
 
 
-def test_deepseek_prompt_is_exact():
+def test_deepseek_prompt_is_exact() -> None:
     assert ToolPromptGenerator("deepseek4").generate(DEFINITIONS) == deepseek_expected(SCHEMAS)
 
 
-def test_deepseek41_prompt_uses_spaced_dsml_tag_names():
+def test_deepseek41_prompt_uses_spaced_dsml_tag_names() -> None:
     prompt = ToolPromptGenerator("deepseek41").generate(DEFINITIONS)
     assert prompt == deepseek_expected(SCHEMAS, v41=True)
     assert "</｜DSML｜ calls>" in prompt
@@ -85,12 +86,12 @@ def test_deepseek41_prompt_uses_spaced_dsml_tag_names():
     assert "</｜DSML｜ parameter>" in prompt
 
 
-def test_glm_prompt_is_exact():
+def test_glm_prompt_is_exact() -> None:
     prompt = ToolPromptGenerator("glm").generate(DEFINITIONS)
     assert prompt == glm_expected(SCHEMAS)
 
 
-def test_qwen_prompt_is_exact_and_wraps_each_schema():
+def test_qwen_prompt_is_exact_and_wraps_each_schema() -> None:
     wrapped = (
         '{"type":"function","function":' + READ_SCHEMA + '}\n'
         + '{"type":"function","function":' + EDIT_SCHEMA + '}'
@@ -110,32 +111,32 @@ def test_qwen_prompt_is_exact_and_wraps_each_schema():
         ("qwen", qwen_expected("")),
     ],
 )
-def test_empty_definitions_keep_the_fixed_structure(family, expected):
+def test_empty_definitions_keep_the_fixed_structure(family: Any, expected: Any) -> None:
     prompt = ToolPromptGenerator(family).generate(())
     assert prompt == expected
     assert "<tools></tools>" in prompt
 
 
-def test_nested_schema_insertion_order_is_preserved():
+def test_nested_schema_insertion_order_is_preserved() -> None:
     definition = ToolDefinition("ordered", "Ordered.", {"z": 0, "a": 1})
     prompt = ToolPromptGenerator("qwen").generate([definition])
     assert '"parameters":{"z":0,"a":1}' in prompt
 
 
-def test_generator_does_not_copy_c_tool_contracts_or_edit_upto():
+def test_generator_does_not_copy_c_tool_contracts_or_edit_upto() -> None:
     for family in ("deepseek4", "deepseek41", "glm", "qwen"):
         prompt = ToolPromptGenerator(family).generate(DEFINITIONS)
         for forbidden in ("[upto]", "edit-upto", "bash", "google_search", "visit_page"):
             assert forbidden not in prompt
 
 
-def test_unknown_family_is_an_error():
+def test_unknown_family_is_an_error() -> None:
     with pytest.raises(ValueError, match="unknown tool prompt family: other"):
         ToolPromptGenerator("other").generate(DEFINITIONS)
 
 
 @pytest.mark.parametrize('family', ['deepseek4', 'deepseek41', 'glm', 'qwen'])
-def test_every_generated_example_executes_the_intended_call(family):
+def test_every_generated_example_executes_the_intended_call(family: Any) -> None:
     from ds4py.engine.tool_syntax.dsml import Dsml
     from ds4py.engine.tool_syntax.glm import Glm
     from ds4py.engine.tool_syntax.qwen import Qwen

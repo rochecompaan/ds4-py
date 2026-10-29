@@ -1,4 +1,5 @@
 """Agent extension conformance on the deterministic native test double."""
+from typing import Any, cast
 
 import asyncio
 from dataclasses import replace
@@ -9,6 +10,7 @@ import threading
 import pytest
 
 import ds4py
+from ds4py.engine.session import Engine
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
@@ -33,30 +35,30 @@ from pydantic_ai.messages import (
 from pydantic_ai_harness.step_persistence import FileStepStore
 
 
-def fake_engine(*, script=None, ctx=8192):
+def fake_engine(*, script: Any=None, ctx: Any=8192) -> Engine:
     native = FakeNative() if script is None else FakeNative(script=script)
     return ds4py.open("f.gguf", ctx=ctx, think=ThinkMode.NONE, native=native)
 
 
-def reserialize(messages):
+def reserialize(messages: Any) -> list[Any]:
     return ModelMessagesTypeAdapter.validate_json(
         ModelMessagesTypeAdapter.dump_json(messages)
     )
 
 
-def sync(session):
+def sync(session: Any) -> Any:
     events = list(session._worker.submit(SyncJob(session.transcript.tokens)))
     return next(event for event in events if isinstance(event, Synced))
 
 
-def user(text):
+def user(text: Any) -> ModelRequest:
     return ModelRequest([UserPromptPart(text)])
 
 
-def scripted_rounds(*texts):
+def scripted_rounds(*texts: Any) -> Any:
     rounds = [tuple(tokenize_rendered(text)) for text in texts]
 
-    def script(prompt, generated):
+    def script(prompt: Any, generated: Any) -> Any:
         round_index = sum(token == FAKE_EOS for token in generated)
         tokens = rounds[round_index]
         return tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
@@ -65,18 +67,18 @@ def scripted_rounds(*texts):
 
 
 class CloseState:
-    def __init__(self):
+    def __init__(self) -> None:
         self.close_count = 0
 
     @property
-    def closed(self):
+    def closed(self) -> Any:
         return self.close_count > 0
 
-    def close(self):
+    def close(self) -> None:
         self.close_count += 1
 
 
-def test_binding_rewrite_keeps_prefix_and_checkpoint_boundary():
+def test_binding_rewrite_keeps_prefix_and_checkpoint_boundary() -> None:
     """Conformance 1: reserialized views share content, not object identity."""
     system = ModelRequest([SystemPromptPart("extension rules")])
     original = reserialize([
@@ -120,14 +122,14 @@ def test_binding_rewrite_keeps_prefix_and_checkpoint_boundary():
         )
 
 
-def test_extension_command_and_status_use_existing_registries(tmp_path):
+def test_extension_command_and_status_use_existing_registries(tmp_path: Path) -> None:
     """Conformance 6: an extension adds UI behavior without built-in edits."""
     with fake_engine() as engine:
         session = engine.session()
         commands = SlashCommandRegistry()
         calls = []
 
-        def extension_command(value):
+        def extension_command(value: Any) -> str:
             calls.append(value)
             return f"extension:{value}"
 
@@ -137,7 +139,7 @@ def test_extension_command_and_status_use_existing_registries(tmp_path):
         runtime = SimpleNamespace(
             context_size=1000, project_dir=tmp_path, on_event=session.on_event,
         )
-        footer = FooterModel(runtime)
+        footer = FooterModel(cast(Any, runtime))
         try:
             session.emit("status", key="extension", text="ready")
             result = asyncio.run(commands.execute("/stub value"))
@@ -151,9 +153,10 @@ def test_extension_command_and_status_use_existing_registries(tmp_path):
             footer.close()
 
 
-def test_declared_native_binding_is_called_on_worker(ext_site):
+def test_declared_native_binding_is_called_on_worker(ext_site: Any) -> None:
     """Conformance 7: declarations pass discovery and handles stay on-worker."""
-    import ds4py_test_ext
+    import importlib
+    ds4py_test_ext = importlib.import_module("ds4py_test_ext")
     from ds4py._native.bindings import all_bindings
 
     assert "ds4_engine_layer_count" in {
@@ -174,7 +177,7 @@ def test_declared_native_binding_is_called_on_worker(ext_site):
         assert worker_thread != threading.get_ident()
 
 
-def test_scoped_state_survives_prompts_and_fork_but_not_replacement(tmp_path):
+def test_scoped_state_survives_prompts_and_fork_but_not_replacement(tmp_path: Path) -> None:
     """Conformance 9: state follows the live session, not its saved identity."""
     project = tmp_path / "project"
     project.mkdir()
@@ -206,7 +209,7 @@ def test_scoped_state_survives_prompts_and_fork_but_not_replacement(tmp_path):
             final_state = CloseState()
             session.state("extension", lambda: final_state)
             asyncio.run(runtime.save())
-            holder = session.state("step_store", lambda: None)
+            holder = cast(Any, session.state("step_store", lambda: None))
             assert isinstance(holder.current, FileStepStore)
             old_id = runtime.session_id
             old_tokens = session.transcript.tokens

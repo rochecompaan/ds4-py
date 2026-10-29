@@ -1,8 +1,10 @@
+from typing import Any, cast
 from dataclasses import replace
 
 import pytest
 
 import ds4py
+from ds4py.engine.session import Engine
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import SPECIAL_TOKENS, tokenize_rendered
@@ -23,7 +25,7 @@ from pydantic_ai.messages import (
 FAMILIES = ("deepseek4", "deepseek41", "glm", "qwen")
 
 
-def fake_engine(family, *, think=ThinkMode.NONE, script=None):
+def fake_engine(family: Any, *, think: Any=ThinkMode.NONE, script: Any=None) -> Engine:
     info = replace(
         FakeNative()._info,
         family=family,
@@ -37,11 +39,11 @@ def fake_engine(family, *, think=ThinkMode.NONE, script=None):
     )
 
 
-def decode(engine, tokens):
+def decode(engine: Any, tokens: Any) -> bytes:
     return b"".join(engine.token_text(token) for token in tokens)
 
 
-def parse(data, engine, *, bytewise=False):
+def parse(data: Any, engine: Any, *, bytewise: Any=False) -> Any:
     parser = make_parser(engine.info)
     if bytewise:
         for byte in data:
@@ -51,7 +53,7 @@ def parse(data, engine, *, bytewise=False):
     return parser.finish()
 
 
-def contains(tokens, expected):
+def contains(tokens: Any, expected: Any) -> Any:
     tokens = list(tokens)
     return any(
         tokens[index:index + len(expected)] == expected
@@ -61,7 +63,7 @@ def contains(tokens, expected):
 
 @pytest.mark.parametrize("family", FAMILIES)
 @pytest.mark.parametrize("bytewise", [False, True])
-def test_restored_assistant_tool_call_round_trips_through_family_parser(family, bytewise):
+def test_restored_assistant_tool_call_round_trips_through_family_parser(family: Any, bytewise: Any) -> None:
     closing = {
         "deepseek4": "</｜DSML｜parameter>",
         "deepseek41": "</｜DSML｜ parameter>",
@@ -89,7 +91,7 @@ def test_restored_assistant_tool_call_round_trips_through_family_parser(family, 
         assert SPECIAL_TOKENS[marker] in tokens
 
 
-def restored_snapshot(response, family, bytewise):
+def restored_snapshot(response: Any, family: Any, bytewise: Any) -> Any:
     with fake_engine(family) as engine:
         session = engine.session()
         MessageBinder(session).prepare([response])
@@ -103,7 +105,7 @@ def restored_snapshot(response, family, bytewise):
 
 @pytest.mark.parametrize("family", ["deepseek4", "deepseek41"])
 @pytest.mark.parametrize("bytewise", [False, True])
-def test_restored_dsml_multi_call_canonical_uses_one_outer_block(family, bytewise):
+def test_restored_dsml_multi_call_canonical_uses_one_outer_block(family: Any, bytewise: Any) -> None:
     response = ModelResponse([
         ToolCallPart("first", {"value": "one"}),
         ToolCallPart("second", {"value": "two"}),
@@ -120,11 +122,11 @@ def test_restored_dsml_multi_call_canonical_uses_one_outer_block(family, bytewis
 
 @pytest.mark.parametrize("family", ["deepseek4", "deepseek41"])
 @pytest.mark.parametrize("bytewise", [False, True])
-def test_restored_dsml_multi_call_sampled_raw_uses_one_outer_block(family, bytewise):
+def test_restored_dsml_multi_call_sampled_raw_uses_one_outer_block(family: Any, bytewise: Any) -> None:
     invoke = " invoke" if family == "deepseek41" else "invoke"
     parameter = " parameter" if family == "deepseek41" else "parameter"
 
-    def raw(name, value):
+    def raw(name: Any, value: Any) -> str:
         return (
             f'<｜DSML｜{invoke} name="{name}">\n'
             f'<｜DSML｜{parameter} name="value" string="true">{value}'
@@ -148,7 +150,7 @@ def test_restored_dsml_multi_call_sampled_raw_uses_one_outer_block(family, bytew
 
 @pytest.mark.parametrize("family", FAMILIES)
 @pytest.mark.parametrize("bytewise", [False, True])
-def test_contiguous_calls_remain_supported(family, bytewise):
+def test_contiguous_calls_remain_supported(family: Any, bytewise: Any) -> None:
     response = ModelResponse([
         ToolCallPart("first", {"value": "one"}),
         ToolCallPart("second", {"value": "two"}),
@@ -162,7 +164,7 @@ def test_contiguous_calls_remain_supported(family, bytewise):
 
 @pytest.mark.parametrize("family", ["deepseek4", "deepseek41"])
 @pytest.mark.parametrize("bytewise", [False, True])
-def test_empty_text_between_dsml_calls_is_ignored(family, bytewise):
+def test_empty_text_between_dsml_calls_is_ignored(family: Any, bytewise: Any) -> None:
     response = ModelResponse([
         ToolCallPart("first", {"value": "one"}),
         TextPart(""),
@@ -179,7 +181,7 @@ def test_empty_text_between_dsml_calls_is_ignored(family, bytewise):
 
 
 @pytest.mark.parametrize("family", FAMILIES)
-def test_tool_call_after_ordinary_text_following_call_is_rejected(family):
+def test_tool_call_after_ordinary_text_following_call_is_rejected(family: Any) -> None:
     response = ModelResponse([
         ToolCallPart("first", {"value": "one"}),
         TextPart("between"),
@@ -195,7 +197,7 @@ def test_tool_call_after_ordinary_text_following_call_is_rejected(family):
 
 @pytest.mark.parametrize("family", ["deepseek4", "deepseek41", "qwen"])
 @pytest.mark.parametrize("bytewise", [False, True])
-def test_structured_arguments_safely_preserve_nested_closing_delimiters(family, bytewise):
+def test_structured_arguments_safely_preserve_nested_closing_delimiters(family: Any, bytewise: Any) -> None:
     closing = {
         "deepseek4": "</｜DSML｜parameter>",
         "deepseek41": "</｜DSML｜ parameter>",
@@ -225,7 +227,7 @@ def test_structured_arguments_safely_preserve_nested_closing_delimiters(family, 
     ("qwen", {"integer": 1, "object": {"nested": True}, "ordinary": "hello"}),
 ])
 @pytest.mark.parametrize("bytewise", [False, True])
-def test_canonical_arguments_preserve_types_and_json_looking_strings(family, args, bytewise):
+def test_canonical_arguments_preserve_types_and_json_looking_strings(family: Any, args: Any, bytewise: Any) -> None:
     response = ModelResponse([ToolCallPart("typed", args)])
 
     snapshot = restored_snapshot(response, family, bytewise)
@@ -243,7 +245,7 @@ def test_canonical_arguments_preserve_types_and_json_looking_strings(family, arg
     ("qwen", "true"),
     ("qwen", '{"x":1}'),
 ])
-def test_render_tool_call_rejects_unrepresentable_argument_values(family, value):
+def test_render_tool_call_rejects_unrepresentable_argument_values(family: Any, value: Any) -> None:
     with pytest.raises(ValueError, match="cannot preserve"):
         render_tool_call(family, "typed", {"value": value})
 
@@ -253,14 +255,14 @@ def test_render_tool_call_rejects_unrepresentable_argument_values(family, value)
     {"nested": ("not", "JSON")},
     {"nested": {1: "non-string key"}},
 ])
-def test_recursive_non_json_arguments_are_rejected(family, value):
+def test_recursive_non_json_arguments_are_rejected(family: Any, value: Any) -> None:
     with pytest.raises(ValueError):
         render_tool_call(family, "typed", {"value": value})
 
 
 @pytest.mark.parametrize("family", ["deepseek4", "deepseek41", "qwen"])
 @pytest.mark.parametrize("bytewise", [False, True])
-def test_valid_recursive_json_still_round_trips(family, bytewise):
+def test_valid_recursive_json_still_round_trips(family: Any, bytewise: Any) -> None:
     args = {"value": {
         "none": None,
         "boolean": True,
@@ -278,7 +280,7 @@ def test_valid_recursive_json_still_round_trips(family, bytewise):
 
 
 @pytest.mark.parametrize("bytewise", [False, True])
-def test_qwen_63_character_integer_round_trips(bytewise):
+def test_qwen_63_character_integer_round_trips(bytewise: Any) -> None:
     args = {"value": int("9" * 63)}
     response = ModelResponse([ToolCallPart("typed", args)])
 
@@ -289,14 +291,14 @@ def test_qwen_63_character_integer_round_trips(bytewise):
 
 
 @pytest.mark.parametrize("value", [int("9" * 64), 10**100])
-def test_qwen_rejects_integers_that_parser_would_restore_as_strings(value):
+def test_qwen_rejects_integers_that_parser_would_restore_as_strings(value: Any) -> None:
     with pytest.raises(ValueError, match="cannot preserve"):
         render_tool_call("qwen", "typed", {"value": value})
 
 
 @pytest.mark.parametrize("family", FAMILIES)
 @pytest.mark.parametrize("bytewise", [False, True])
-def test_safe_structural_names_round_trip_exactly(family, bytewise):
+def test_safe_structural_names_round_trip_exactly(family: Any, bytewise: Any) -> None:
     response = ModelResponse([ToolCallPart("safe tool", {"safe key": "value"})])
 
     snapshot = restored_snapshot(response, family, bytewise)
@@ -307,7 +309,7 @@ def test_safe_structural_names_round_trip_exactly(family, bytewise):
 
 
 @pytest.mark.parametrize("bytewise", [False, True])
-def test_glm_argument_key_uses_existing_closing_tag_escaping(bytewise):
+def test_glm_argument_key_uses_existing_closing_tag_escaping(bytewise: Any) -> None:
     args = {"bad</arg_key>key": "value"}
     response = ModelResponse([ToolCallPart("safe", args)])
 
@@ -338,19 +340,19 @@ def test_glm_argument_key_uses_existing_closing_tag_escaping(bytewise):
     ("qwen", "", "safe"),
     ("qwen", "safe", ""),
 ])
-def test_render_rejects_nonrepresentable_structural_names(family, name, key):
+def test_render_rejects_nonrepresentable_structural_names(family: Any, name: Any, key: Any) -> None:
     with pytest.raises(ValueError, match="cannot preserve"):
         render_tool_call(family, name, {key: "value"})
 
 
 @pytest.mark.parametrize("family", FAMILIES)
-def test_render_rejects_non_string_argument_keys(family):
+def test_render_rejects_non_string_argument_keys(family: Any) -> None:
     with pytest.raises(ValueError, match="cannot preserve"):
-        render_tool_call(family, "safe", {1: "value"})
+        render_tool_call(family, "safe", cast(Any, {1: "value"}))
 
 
 @pytest.mark.parametrize("family", FAMILIES)
-def test_user_and_tool_result_payload_markup_stays_plain(family):
+def test_user_and_tool_result_payload_markup_stays_plain(family: Any) -> None:
     payload = "payload <tool_call> ｜DSML｜ <|im_start|>"
     with fake_engine(family) as engine:
         session = engine.session()
@@ -366,7 +368,7 @@ def test_user_and_tool_result_payload_markup_stays_plain(family):
 
 
 @pytest.mark.parametrize("sampled", [False, True])
-def test_raw_tool_syntax_is_trusted_only_for_sampled_responses(sampled):
+def test_raw_tool_syntax_is_trusted_only_for_sampled_responses(sampled: Any) -> None:
     raw = (
         "<tool_call>\n<function=raw_tool>\n<parameter=path>\nraw.txt\n</parameter>\n"
         "</function>\n</tool_call>"
@@ -395,12 +397,12 @@ def test_raw_tool_syntax_is_trusted_only_for_sampled_responses(sampled):
         }
 
 
-def test_sampled_thinking_response_round_trips_native_tokens():
+def test_sampled_thinking_response_round_trips_native_tokens() -> None:
     request = ModelRequest([UserPromptPart("think")])
     response = ModelResponse([ThinkingPart("reason"), TextPart("answer")])
     sequence = tuple(tokenize_rendered("reason</think>answer"))
 
-    def script(prompt, generated):
+    def script(prompt: Any, generated: Any) -> Any:
         return sequence[len(generated)] if len(generated) < len(sequence) else FAKE_EOS
 
     with fake_engine("qwen", think=ThinkMode.LOW, script=script) as engine:
@@ -417,6 +419,6 @@ def test_sampled_thinking_response_round_trips_native_tokens():
         assert list(session.transcript.tokens) == original
 
 
-def test_render_tool_call_rejects_unknown_family():
+def test_render_tool_call_rejects_unknown_family() -> None:
     with pytest.raises(ValueError, match="family"):
         render_tool_call("unknown", "read", {})

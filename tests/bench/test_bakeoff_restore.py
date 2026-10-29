@@ -1,4 +1,5 @@
 """Bakeoff save evidence and fresh-process restore checks."""
+from typing import Any, cast
 
 import asyncio
 from dataclasses import replace
@@ -22,6 +23,7 @@ from bench.restore_check import (
     validate_save,
 )
 import ds4py
+from ds4py.engine.session import Engine
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
@@ -40,9 +42,10 @@ from pydantic_ai_harness.step_persistence import (
     FileStepStore,
     RunRecord as StepRunRecord,
 )
+from typing import Never
 
 
-def restore_fake_engine(script):
+def restore_fake_engine(script: Any) -> Engine:
     info = replace(
         FakeNative()._info,
         name="fake-ds4", model_id=7, family="qwen",
@@ -54,11 +57,11 @@ def restore_fake_engine(script):
     )
 
 
-def restore_script(*texts):
+def restore_script(*texts: Any) -> Any:
     rounds = [tuple(tokenize_rendered(text)) for text in texts]
     state = {"round": -1}
 
-    def next_token(prompt, generated):
+    def next_token(prompt: Any, generated: Any) -> Any:
         if not generated:
             state["round"] += 1
         sequence = rounds[min(state["round"], len(rounds) - 1)]
@@ -67,7 +70,7 @@ def restore_script(*texts):
     return next_token
 
 
-def make_save(root, session_id="session-1"):
+def make_save(root: Any, session_id: Any="session-1") -> Any:
     store = SessionStore(root / "home")
     save_dir = store.session_dir(session_id)
     save_dir.mkdir(parents=True)
@@ -87,7 +90,7 @@ def make_save(root, session_id="session-1"):
         json.dumps({"kind": "run_end", "run_id": "run-1", "payload": {"status": "success"}}) + "\n"
     )
 
-    async def snapshot():
+    async def snapshot() -> None:
         steps = FileStepStore(save_dir / "steps")
         await steps.register_run(StepRunRecord(
             run_id=run_id, conversation_id=session_id, agent_name="ds4py",
@@ -101,7 +104,7 @@ def make_save(root, session_id="session-1"):
     return save_dir
 
 
-def write_trace(path, sampled):
+def write_trace(path: Any, sampled: Any) -> None:
     path.write_text(json.dumps({
         "session_id": "restore", "run_id": "followup", "step_index": 0,
         "round_index": 0, "prompt": [1, 2], "think": 0, "cached": 0,
@@ -109,8 +112,8 @@ def write_trace(path, sampled):
     }) + "\n")
 
 
-def successful_driver(calls, tokens=(1, 2, 3), reason="stop_token"):
-    def drive(home, session_id, case, trace_path):
+def successful_driver(calls: Any, tokens: Any=(1, 2, 3), reason: Any="stop_token") -> Any:
+    def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
         calls.append((home, session_id, case))
         write_trace(trace_path, tokens)
         return RestoreRun(
@@ -121,7 +124,7 @@ def successful_driver(calls, tokens=(1, 2, 3), reason="stop_token"):
     return drive
 
 
-def test_validate_save_accepts_complete_record_snapshot_events_and_kv(tmp_path):
+def test_validate_save_accepts_complete_record_snapshot_events_and_kv(tmp_path: Path) -> None:
     save = make_save(tmp_path)
     evidence = validate_save(save)
 
@@ -132,7 +135,7 @@ def test_validate_save_accepts_complete_record_snapshot_events_and_kv(tmp_path):
 
 
 @pytest.mark.parametrize("missing", ["events", "snapshot", "kv"])
-def test_validate_save_rejects_missing_required_evidence(tmp_path, missing):
+def test_validate_save_rejects_missing_required_evidence(tmp_path: Path, missing: Any) -> None:
     save = make_save(tmp_path)
     if missing == "events":
         (save / "events.jsonl").unlink()
@@ -145,7 +148,7 @@ def test_validate_save_rejects_missing_required_evidence(tmp_path, missing):
         validate_save(save)
 
 
-def test_stripped_copy_has_zero_payload_and_preserves_snapshot_and_record(tmp_path):
+def test_stripped_copy_has_zero_payload_and_preserves_snapshot_and_record(tmp_path: Path) -> None:
     save = make_save(tmp_path)
     stripped = make_stripped_copy(save, tmp_path / "stripped-home")
 
@@ -156,7 +159,7 @@ def test_stripped_copy_has_zero_payload_and_preserves_snapshot_and_record(tmp_pa
     assert (stripped / "session.kv").stat().st_size == KV_HEADER.size
 
 
-def test_restore_cases_compare_tokens_and_enforce_prefill_paths(tmp_path):
+def test_restore_cases_compare_tokens_and_enforce_prefill_paths(tmp_path: Path) -> None:
     save = make_save(tmp_path)
     calls = []
 
@@ -165,14 +168,14 @@ def test_restore_cases_compare_tokens_and_enforce_prefill_paths(tmp_path):
     assert result.passed, result.detail
     assert [call[2] for call in calls] == [1, 2]
     assert all(call[1] == "session-1" for call in calls)
-    stripped = result.stripped_save_dir
+    stripped = cast(Any, result.stripped_save_dir)
     assert SessionStore().read_kv_header(stripped / "session.kv") == 0
 
 
-def test_restore_token_mismatch_fails_with_index(tmp_path):
+def test_restore_token_mismatch_fails_with_index(tmp_path: Path) -> None:
     save = make_save(tmp_path)
 
-    def drive(home, session_id, case, trace_path):
+    def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
         write_trace(trace_path, (1, 2, 3) if case == 1 else (1, 9, 3))
         return RestoreRun(
             trace_path, "stop_token", 0,
@@ -187,11 +190,11 @@ def test_restore_token_mismatch_fails_with_index(tmp_path):
 
 @pytest.mark.parametrize("case1_prefill,case2_prefill", [(1, 12), (0, 0)])
 def test_restore_requires_no_case1_prefill_and_real_case2_prefill(
-    tmp_path, case1_prefill, case2_prefill,
-):
+    tmp_path: Path, case1_prefill: Any, case2_prefill: Any,
+) -> None:
     save = make_save(tmp_path)
 
-    def drive(home, session_id, case, trace_path):
+    def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
         write_trace(trace_path, (1, 2))
         return RestoreRun(
             trace_path, "stop_token", case1_prefill if case == 1 else 0,
@@ -203,10 +206,10 @@ def test_restore_requires_no_case1_prefill_and_real_case2_prefill(
     assert not result.passed
 
 
-def test_short_restore_sequences_must_share_terminal_reason(tmp_path):
+def test_short_restore_sequences_must_share_terminal_reason(tmp_path: Path) -> None:
     save = make_save(tmp_path)
 
-    def drive(home, session_id, case, trace_path):
+    def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
         write_trace(trace_path, (1, 2))
         return RestoreRun(
             trace_path, "stop_token" if case == 1 else "max_tokens", 0,
@@ -218,7 +221,7 @@ def test_short_restore_sequences_must_share_terminal_reason(tmp_path):
     assert "terminal" in result.detail
 
 
-def test_restore_driver_preserves_noninteractive_prompt_composition(tmp_path, monkeypatch):
+def test_restore_driver_preserves_noninteractive_prompt_composition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     project = tmp_path / "project"
     project.mkdir()
     store = SessionStore(tmp_path / "home")
@@ -228,7 +231,7 @@ def test_restore_driver_preserves_noninteractive_prompt_composition(tmp_path, mo
             model, project, store=store, interactive=False, read_only=True,
         )
 
-        async def save_attempt():
+        async def save_attempt() -> Any:
             await runtime.run("question")
             return await runtime.save()
 
@@ -254,17 +257,17 @@ def test_restore_driver_preserves_noninteractive_prompt_composition(tmp_path, mo
     assert json.loads(metadata.read_text())["followup_plan"] == "extend"
 
 
-def test_default_noninteractive_attempt_uses_its_existing_single_save(monkeypatch):
+def test_default_noninteractive_attempt_uses_its_existing_single_save(monkeypatch: pytest.MonkeyPatch) -> None:
     class Runtime:
-        def __init__(self):
+        def __init__(self) -> None:
             self.saved = 0
 
-        async def save(self):
+        async def save(self) -> None:
             self.saved += 1
 
-    runtime = Runtime()
+    runtime: Any = Runtime()
 
-    async def noninteractive(runtime, prompt):
+    async def noninteractive(runtime: Any, prompt: Any) -> int:
         await runtime.save()
         return 0
 
@@ -273,17 +276,17 @@ def test_default_noninteractive_attempt_uses_its_existing_single_save(monkeypatc
     assert runtime.saved == 1
 
 
-def test_attempt_saves_in_finally_even_when_prompt_fails():
+def test_attempt_saves_in_finally_even_when_prompt_fails() -> None:
     class Runtime:
-        def __init__(self):
+        def __init__(self) -> None:
             self.saved = 0
 
-        async def save(self):
+        async def save(self) -> None:
             self.saved += 1
 
-    runtime = Runtime()
+    runtime: Any = Runtime()
 
-    async def fail():
+    async def fail() -> Never:
         raise RuntimeError("generation failed")
 
     with pytest.raises(RuntimeError, match="generation failed"):
@@ -291,7 +294,7 @@ def test_attempt_saves_in_finally_even_when_prompt_fails():
     assert runtime.saved == 1
 
 
-def interactive_script(root):
+def interactive_script(root: Any) -> Any:
     path = root / "interactive.py"
     path.write_text('''\
 print("PREFILL", flush=True)
@@ -308,7 +311,7 @@ while True:
     return path
 
 
-def test_pty_interrupt_resumes(tmp_path):
+def test_pty_interrupt_resumes(tmp_path: Path) -> None:
     script = interactive_script(tmp_path)
     interrupted = drive_pty(
         [sys.executable, str(script)],

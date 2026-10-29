@@ -1,4 +1,5 @@
 """Session identity, lifecycle ordering, event delivery, reset, and think changes."""
+from typing import Any, cast
 import re
 from uuid import UUID
 
@@ -11,19 +12,20 @@ from ds4py._native.protocol import SyncStatus
 from ds4py.engine.events import Stopped, Synced
 from ds4py.engine.lifecycle import SessionEvent
 from ds4py.errors import EmptyPromptError, EngineError
+from typing import Never
 
 
 class EmptySyncSession(FakeSession):
     """A fake session that accepts the empty reset prompt."""
 
-    def __init__(self, engine, ctx):
+    def __init__(self, engine: Any, ctx: Any) -> None:
         super().__init__(engine, ctx)
         self.reset_syncs = []
 
-    def sync(self, tokens, *, progress=None, cancel=None):
+    def sync(self, tokens: Any, *, progress: Any=None, cancel: Any=None) -> Any:
         if not tokens:
             self.reset_syncs.append(())
-            self._engine._native.record.append("reset")
+            cast(Any, self._engine._native).record.append("reset")
             self._tokens = []
             self._prompt_length = 0
             self._valid = True
@@ -33,18 +35,18 @@ class EmptySyncSession(FakeSession):
 
 
 class ResetNative(FakeNative):
-    def __init__(self, *, record=None, **fake):
+    def __init__(self, *, record: Any=None, **fake: Any) -> None:
         super().__init__(**fake)
         self.sessions = []
         self.record = [] if record is None else record
 
-    def open_engine(self, config):
+    def open_engine(self, config: Any) -> Any:
         engine = FakeEngine(self)
         if not isinstance(engine, FakeEngine):  # pragma: no cover - defensive
             raise AssertionError("FakeEngine subclass expected")
         original = engine.create_session
 
-        def create_session(ctx):
+        def create_session(ctx: Any) -> Any:
             session = EmptySyncSession(engine, ctx)
             engine._sessions.add(session)
             self.sessions.append(session)
@@ -54,8 +56,8 @@ class ResetNative(FakeNative):
         return engine
 
 
-def reset_engine(*, ctx=1024, family="deepseek4", think=ThinkMode.NONE,
-                 record=None, **fake):
+def reset_engine(*, ctx: Any=1024, family: Any="deepseek4", think: Any=ThinkMode.NONE,
+                 record: Any=None, **fake: Any) -> Any:
     from dataclasses import replace
 
     info = replace(
@@ -78,35 +80,35 @@ EMPTY_PROMPT_REJECTIONS = (
 class RejectingResetSession(FakeSession):
     """A strict native session that rejects the empty reset prompt."""
 
-    def __init__(self, engine, ctx, rejection):
+    def __init__(self, engine: Any, ctx: Any, rejection: Any) -> None:
         super().__init__(engine, ctx)
         self.rejection = rejection
         self.fallbacks = []
 
-    def sync(self, tokens, *, progress=None, cancel=None):
+    def sync(self, tokens: Any, *, progress: Any=None, cancel: Any=None) -> Any:
         if not tokens:
             raise self.rejection
         return super().sync(tokens, progress=progress, cancel=cancel)
 
-    def invalidate(self):
+    def invalidate(self) -> None:
         self.fallbacks.append("invalidate")
         super().invalidate()
 
-    def rewind(self, pos):
+    def rewind(self, pos: Any) -> None:
         self.fallbacks.append(("rewind", pos))
         super().rewind(pos)
 
 
 class RejectingResetNative(FakeNative):
-    def __init__(self, rejection, **fake):
+    def __init__(self, rejection: Any, **fake: Any) -> None:
         super().__init__(**fake)
         self.rejection = rejection
         self.sessions = []
 
-    def open_engine(self, config):
+    def open_engine(self, config: Any) -> Any:
         engine = FakeEngine(self)
 
-        def create_session(ctx):
+        def create_session(ctx: Any) -> Any:
             session = RejectingResetSession(engine, ctx, self.rejection)
             engine._sessions.add(session)
             self.sessions.append(session)
@@ -116,23 +118,23 @@ class RejectingResetNative(FakeNative):
         return engine
 
 
-def rejecting_engine(rejection, *, script=None):
+def rejecting_engine(rejection: Any, *, script: Any=None) -> Any:
     native = RejectingResetNative(rejection, script=script or reply(b"ok"))
     return ds4py.open("f.gguf", ctx=1024, think=ThinkMode.NONE, native=native), native
 
 
 class CloseCounter:
-    def __init__(self, record=None):
+    def __init__(self, record: Any=None) -> None:
         self.closes = 0
         self._record = record
 
-    def close(self):
+    def close(self) -> None:
         self.closes += 1
         if self._record is not None:
             self._record.append("close")
 
 
-def kinds(items):
+def kinds(items: Any) -> Any:
     return [
         item if isinstance(item, str) else
         item.kind if isinstance(item, SessionEvent) else type(item).__name__
@@ -140,7 +142,7 @@ def kinds(items):
     ]
 
 
-def test_session_id_is_a_uuid4_hex_and_stays_across_prompts():
+def test_session_id_is_a_uuid4_hex_and_stays_across_prompts() -> None:
     engine, _ = reset_engine(script=reply(b"ok"))
     with engine:
         session = engine.session()
@@ -155,7 +157,7 @@ def test_session_id_is_a_uuid4_hex_and_stays_across_prompts():
         assert session.id == first
 
 
-def test_new_publishes_end_then_closes_state_then_resets_then_starts():
+def test_new_publishes_end_then_closes_state_then_resets_then_starts() -> None:
     record = []
     engine, native = reset_engine(script=reply(b"ok"), record=record)
     with engine:
@@ -193,7 +195,7 @@ def test_new_publishes_end_then_closes_state_then_resets_then_starts():
 
 
 @pytest.mark.parametrize("message", EMPTY_PROMPT_REJECTIONS)
-def test_new_rewinds_when_the_native_rejects_the_empty_reset_prompt(message):
+def test_new_rewinds_when_the_native_rejects_the_empty_reset_prompt(message: Any) -> None:
     engine, native = rejecting_engine(EmptyPromptError(message))
     with engine:
         session = engine.session()
@@ -225,7 +227,7 @@ def test_new_rewinds_when_the_native_rejects_the_empty_reset_prompt(message):
     EngineError("native device failure during sync"),
     EngineError("empty prompt"),
 ])
-def test_new_propagates_an_unrelated_native_sync_error_without_starting_a_session(failure):
+def test_new_propagates_an_unrelated_native_sync_error_without_starting_a_session(failure: Any) -> None:
     engine, native = rejecting_engine(failure)
     with engine:
         session = engine.session()
@@ -271,7 +273,7 @@ def test_new_propagates_an_unrelated_native_sync_error_without_starting_a_sessio
         assert session.engine._worker._checkpoints == {}
 
 
-def test_switch_publishes_exact_order_and_runs_restore_while_idle():
+def test_switch_publishes_exact_order_and_runs_restore_while_idle() -> None:
     engine, _ = reset_engine(script=reply(b"ok"))
     with engine:
         session = engine.session()
@@ -284,7 +286,7 @@ def test_switch_publishes_exact_order_and_runs_restore_while_idle():
         session.on_event(lambda event: record.append(event))
         target = "a" * 32
 
-        def restore():
+        def restore() -> None:
             record.append("restore")
 
         returned = session.switch(target, restore)
@@ -303,7 +305,7 @@ def test_switch_publishes_exact_order_and_runs_restore_while_idle():
         assert session.state("jobs", lambda: CloseCounter()) is not state
 
 
-def test_switch_restore_failure_still_starts_the_target_session():
+def test_switch_restore_failure_still_starts_the_target_session() -> None:
     engine, _ = reset_engine(script=reply(b"ok"))
     with engine:
         session = engine.session()
@@ -315,7 +317,7 @@ def test_switch_restore_failure_still_starts_the_target_session():
         session.on_event(lambda event: record.append(event))
         failure = EngineError("restore rejected")
 
-        def restore():
+        def restore() -> Never:
             record.append("restore")
             raise failure
 
@@ -335,7 +337,7 @@ def test_switch_restore_failure_still_starts_the_target_session():
         assert session.state("jobs", lambda: CloseCounter()) is not state
 
 
-def test_fork_emits_only_forked_and_keeps_transcript_kv_checkpoints_and_state():
+def test_fork_emits_only_forked_and_keeps_transcript_kv_checkpoints_and_state() -> None:
     engine, native = reset_engine(script=reply(b"ok"))
     with engine:
         session = engine.session()
@@ -366,14 +368,14 @@ def test_fork_emits_only_forked_and_keeps_transcript_kv_checkpoints_and_state():
         assert session.state("jobs", lambda: CloseCounter()) is state
 
 
-def test_engine_events_are_published_before_the_consumer_receives_them():
+def test_engine_events_are_published_before_the_consumer_receives_them() -> None:
     engine, _ = reset_engine(script=reply(b"ok"))
     with engine:
         session = engine.session()
         session.append_tokens([5, 6], "user")
         published = []
 
-        def listener(event):
+        def listener(event: Any) -> None:
             published.append(event)
 
         session.on_event(listener, kinds={"Prefill", "Synced", "Token", "Stopped"})
@@ -388,7 +390,7 @@ def test_engine_events_are_published_before_the_consumer_receives_them():
         assert consumer[-1] == Stopped("stop_token")
 
 
-def test_on_event_filters_and_unsubscribes_idempotently():
+def test_on_event_filters_and_unsubscribes_idempotently() -> None:
     engine, _ = reset_engine()
     with engine:
         session = engine.session()
@@ -408,14 +410,14 @@ def test_on_event_filters_and_unsubscribes_idempotently():
         assert all(isinstance(event, SessionEvent) for event in seen)
 
 
-def test_listener_failure_is_reported_without_hiding_events_or_corrupting_native_state(capsys):
+def test_listener_failure_is_reported_without_hiding_events_or_corrupting_native_state(capsys: pytest.CaptureFixture[str]) -> None:
     engine, _ = reset_engine(script=reply(b"ok"))
     with engine:
         session = engine.session()
         session.append_tokens([5, 6], "user")
         observed = []
 
-        def broken(event):
+        def broken(event: Any) -> None:
             if event.kind == "Synced":
                 raise RuntimeError("listener exploded")
 
@@ -431,7 +433,7 @@ def test_listener_failure_is_reported_without_hiding_events_or_corrupting_native
         assert "listener exploded" in capsys.readouterr().err
 
 
-def test_set_think_invalidates_the_bound_prefix_without_mutating_a_live_round():
+def test_set_think_invalidates_the_bound_prefix_without_mutating_a_live_round() -> None:
     from pydantic_ai.messages import ModelRequest, UserPromptPart
 
     from ds4py.binding import MessageBinder

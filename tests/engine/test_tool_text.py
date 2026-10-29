@@ -1,3 +1,4 @@
+from typing import Any
 import pytest
 
 from ds4py.engine.tool_syntax.text import escape_tool_text, unescape_tool_text
@@ -14,7 +15,7 @@ CLOSING_TAGS = [
 
 
 @pytest.mark.parametrize("closing", CLOSING_TAGS)
-def test_literal_and_escaped_closing_delimiters_round_trip(closing):
+def test_literal_and_escaped_closing_delimiters_round_trip(closing: Any) -> None:
     escaped = "&lt;" + closing[1:]
     doubly_escaped = "&amp;lt;" + closing[1:]
 
@@ -26,7 +27,7 @@ def test_literal_and_escaped_closing_delimiters_round_trip(closing):
 
 @pytest.mark.parametrize("closing", CLOSING_TAGS)
 @pytest.mark.parametrize("prefixes", [0, 1, 2, 3])
-def test_repeated_amp_prefixes_follow_the_c_loop(closing, prefixes):
+def test_repeated_amp_prefixes_follow_the_c_loop(closing: Any, prefixes: Any) -> None:
     source = "&" + "amp;" * prefixes + "lt;" + closing[1:]
     escaped = "&" + "amp;" * (prefixes + 1) + "lt;" + closing[1:]
 
@@ -35,14 +36,14 @@ def test_repeated_amp_prefixes_follow_the_c_loop(closing, prefixes):
 
 
 @pytest.mark.parametrize("closing", CLOSING_TAGS)
-def test_ordinary_entities_html_and_unrelated_text_are_unchanged(closing):
+def test_ordinary_entities_html_and_unrelated_text_are_unchanged(closing: Any) -> None:
     text = "ordinary &amp; &lt; <p>&amp;</p> &lt;/other> &amp;lt;/other> &am &l ✓"
     assert unescape_tool_text(text, closing) == text
     assert escape_tool_text(text, closing) == text
 
 
 @pytest.mark.parametrize("closing", CLOSING_TAGS)
-def test_escape_then_unescape_returns_the_original_payload(closing):
+def test_escape_then_unescape_returns_the_original_payload(closing: Any) -> None:
     escaped = "&lt;" + closing[1:]
     payload = f"<p>&amp;</p>\n{closing}\n{escaped}\n&amp;{escaped[1:]}\n✓"
     assert unescape_tool_text(escape_tool_text(payload, closing), closing) == payload

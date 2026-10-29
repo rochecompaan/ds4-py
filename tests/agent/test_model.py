@@ -1,3 +1,5 @@
+from typing import Any, cast
+from collections.abc import Callable, Sequence
 import asyncio
 import copy
 from dataclasses import replace
@@ -10,6 +12,7 @@ from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.binding import MessageBinder
+from ds4py.engine.session import Engine
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.model import DS4Model
 from pydantic_ai import Agent
@@ -26,7 +29,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 
-def fake_engine(*, family="deepseek4", script=None, think=ThinkMode.NONE):
+def fake_engine(*, family: str="deepseek4", script: Any=None, think: ThinkMode=ThinkMode.NONE) -> Engine:
     info = replace(
         FakeNative()._info,
         name="fake-ds4",
@@ -39,71 +42,72 @@ def fake_engine(*, family="deepseek4", script=None, think=ThinkMode.NONE):
     return ds4py.open("f.gguf", ctx=8192, think=think, native=native)
 
 
-def scripted_text(text):
+def scripted_text(text: str) -> Callable[[Sequence[int], Sequence[int]], int]:
     tokens = tuple(tokenize_rendered(text))
     return lambda prompt, generated: (
         tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
     )
 
 
-def user(text="hello"):
+def user(text: str="hello") -> ModelRequest:
     return ModelRequest([UserPromptPart(text)])
 
 
-def make_model(session, **kwargs):
+def make_model(session: Any, **kwargs: Any) -> DS4Model:
     return DS4Model(session, sampling=SamplingPolicy(seed=1), **kwargs)
 
 
-def request(model, messages=None, settings=None, params=None):
+def request(model: Any, messages: Any=None, settings: Any=None, params: Any=None) -> ModelResponse:
     return asyncio.run(model.request(
         list(messages or [user()]), settings, params or ModelRequestParameters(),
     ))
 
 
-def native_calls(session):
+def native_calls(session: Any) -> list[Any]:
     return session._worker.call(lambda engine, native: list(native.calls)).result()
 
 
-def test_identity_profile_and_native_tool_capabilities():
+def test_identity_profile_and_native_tool_capabilities() -> None:
     with fake_engine() as engine:
         model = make_model(engine.session())
 
         assert model.model_name == "fake-ds4"
         assert model.system == "ds4"
-        assert model.profile["context_window"] == 8192
-        assert model.profile["supports_thinking"] is True
-        assert model.profile["supports_tools"] is True
-        assert model.profile["supports_inline_system_prompts"] is True
-        assert model.profile["supports_json_schema_output"] is False
-        assert model.profile["supports_json_object_output"] is False
-        assert model.profile["default_structured_output_mode"] == "prompted"
-        assert model.profile["json_schema_transformer"] is OpenAIJsonSchemaTransformer
-        assert model.profile["thinking_tags"] == ("<think>", "</think>")
-        assert model.profile["supported_native_tools"] == frozenset()
+        profile = cast(Any, model.profile)
+        assert profile["context_window"] == 8192
+        assert profile["supports_thinking"] is True
+        assert profile["supports_tools"] is True
+        assert profile["supports_inline_system_prompts"] is True
+        assert profile["supports_json_schema_output"] is False
+        assert profile["supports_json_object_output"] is False
+        assert profile["default_structured_output_mode"] == "prompted"
+        assert profile["json_schema_transformer"] is OpenAIJsonSchemaTransformer
+        assert profile["thinking_tags"] == ("<think>", "</think>")
+        assert profile["supported_native_tools"] == frozenset()
         assert model.supported_native_tools() == frozenset()
         assert model.supported_tool_addition_modes == frozenset()
         assert model.supported_tool_deferral_modes == frozenset()
 
 
-def test_request_prepares_settings_and_uses_concrete_sampling_policy():
+def test_request_prepares_settings_and_uses_concrete_sampling_policy() -> None:
     with fake_engine(script=scripted_text("sampled")) as engine:
         session = engine.session()
         model = make_model(session)
         original_prepare = model.prepare_request
         prepared = []
 
-        def recording_prepare(settings, params):
+        def recording_prepare(settings: Any, params: Any) -> Any:
             prepared.append((settings, params))
             return original_prepare(settings, params)
 
-        model.prepare_request = recording_prepare
+        cast(Any, model).prepare_request = recording_prepare
         settings = {"temperature": 0.25, "top_p": 0.8, "top_k": 7}
         response = request(model, settings=settings)
 
         assert len(prepared) == 1
         assert prepared[0][0] is settings
         assert response.parts == [TextPart("sampled")]
-        samples = session._worker.call(lambda engine, native: list(native.samples)).result()
+        samples = session._worker.call(lambda engine, native: list(cast(Any, native).samples)).result()
         assert samples[0] == (0.25, 7, 0.8, 0.05)
 
 
@@ -114,7 +118,7 @@ def test_request_prepares_settings_and_uses_concrete_sampling_policy():
     ("min_p", -math.inf),
     ("top_k", None),
 ])
-def test_request_rejects_missing_or_nonfinite_sampling_before_binding(field, value):
+def test_request_rejects_missing_or_nonfinite_sampling_before_binding(field: Any, value: Any) -> None:
     with fake_engine() as engine:
         session = engine.session()
         model = DS4Model(session, sampling=SamplingPolicy(**{field: value}))
@@ -126,7 +130,7 @@ def test_request_rejects_missing_or_nonfinite_sampling_before_binding(field, val
         assert native_calls(session) == []
 
 
-def test_request_rejects_none_override_and_noninteger_token_budget():
+def test_request_rejects_none_override_and_noninteger_token_budget() -> None:
     with fake_engine() as engine:
         session = engine.session()
         model = make_model(session)
@@ -137,7 +141,7 @@ def test_request_rejects_none_override_and_noninteger_token_budget():
         assert session.transcript.tokens == ()
 
 
-def test_text_and_thinking_deltas_become_distinct_parts_with_token_usage():
+def test_text_and_thinking_deltas_become_distinct_parts_with_token_usage() -> None:
     text = "consider</think>answer"
     with fake_engine(script=scripted_text(text), think=ThinkMode.HIGH) as engine:
         model = make_model(engine.session())
@@ -149,8 +153,8 @@ def test_text_and_thinking_deltas_become_distinct_parts_with_token_usage():
         assert response.model_name == "fake-ds4"
         assert response.provider_name == "ds4"
         assert response.provider_url is None
-        assert response.metadata["ds4.source"] == "sampled"
-        assert response.metadata["ds4.key"]
+        assert cast(Any, response.metadata)["ds4.source"] == "sampled"
+        assert cast(Any, response.metadata)["ds4.key"]
         output = len(tokenize_rendered(text))
         assert response.usage.output_tokens == output
         assert response.usage.input_tokens > 0
@@ -159,7 +163,7 @@ def test_text_and_thinking_deltas_become_distinct_parts_with_token_usage():
         assert response.usage.total_tokens == response.usage.input_tokens + output
 
 
-def test_tool_calls_have_stable_ids_and_preserve_sampled_raw_syntax():
+def test_tool_calls_have_stable_ids_and_preserve_sampled_raw_syntax() -> None:
     raw = (
         "<tool_call>\n<function=read>\n<parameter=path>\n/tmp/x\n</parameter>\n"
         "</function>\n</tool_call>"
@@ -173,12 +177,12 @@ def test_tool_calls_have_stable_ids_and_preserve_sampled_raw_syntax():
         assert part.tool_name == "read"
         assert part.args == {"path": "/tmp/x"}
         assert part.tool_call_id
-        assert part.tool_call_id.startswith(response.metadata["ds4.key"])
+        assert part.tool_call_id.startswith(cast(Any, response.metadata)["ds4.key"])
         assert part.provider_details == {"ds4py.raw": raw}
         assert response.finish_reason == "tool_call"
 
 
-def test_max_tokens_maps_to_length_without_counting_the_stop_token():
+def test_max_tokens_maps_to_length_without_counting_the_stop_token() -> None:
     with fake_engine(script=scripted_text("ab")) as engine:
         response = request(make_model(engine.session()), settings={"max_tokens": 1})
         assert response.parts == [TextPart("a")]
@@ -186,7 +190,7 @@ def test_max_tokens_maps_to_length_without_counting_the_stop_token():
         assert response.usage.output_tokens == 1
 
 
-def test_parser_failure_maps_to_error():
+def test_parser_failure_maps_to_error() -> None:
     malformed = "<tool_call><function=read><parameter=path>unfinished"
     with fake_engine(family="qwen", script=scripted_text(malformed)) as engine:
         response = request(make_model(engine.session()))
@@ -194,8 +198,8 @@ def test_parser_failure_maps_to_error():
         assert response.state == "complete"
 
 
-def test_real_agent_renders_instructions_once_and_invalidates_changes():
-    async def scenario():
+def test_real_agent_renders_instructions_once_and_invalidates_changes() -> None:
+    async def scenario() -> None:
         with fake_engine(script=scripted_text("done")) as engine:
             session = engine.session()
             model = make_model(session)
@@ -206,7 +210,7 @@ def test_real_agent_renders_instructions_once_and_invalidates_changes():
             assert result.output == "done"
             marker = tuple(engine.tokenize("unique instruction marker"))
 
-            def occurrences(tokens, needle):
+            def occurrences(tokens: Any, needle: Any) -> Any:
                 return [
                     index for index in range(len(tokens) - len(needle) + 1)
                     if tokens[index:index + len(needle)] == needle
@@ -232,7 +236,7 @@ def test_real_agent_renders_instructions_once_and_invalidates_changes():
     asyncio.run(scenario())
 
 
-def test_real_agent_executes_function_tool_and_samples_its_result_next_round():
+def test_real_agent_executes_function_tool_and_samples_its_result_next_round() -> None:
     raw = (
         "<tool_call>\n<function=add>\n<parameter=a>\n2\n</parameter>\n"
         "<parameter=b>\n3\n</parameter>\n</function>\n</tool_call>"
@@ -241,17 +245,17 @@ def test_real_agent_executes_function_tool_and_samples_its_result_next_round():
     answer_tokens = tuple(tokenize_rendered("sum=5"))
     result_marker = tuple(byte + 1 for byte in b"Tool result 1 (add):")
 
-    def contains(prompt, marker):
+    def contains(prompt: Any, marker: Any) -> bool:
         return any(
             tuple(prompt[index:index + len(marker)]) == marker
             for index in range(len(prompt) - len(marker) + 1)
         )
 
-    def script(prompt, generated):
+    def script(prompt: Any, generated: Any) -> Any:
         tokens = answer_tokens if contains(prompt, result_marker) else tool_tokens
         return tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
-    async def scenario():
+    async def scenario() -> None:
         with fake_engine(family="qwen", script=script) as engine:
             model = make_model(engine.session())
             agent = Agent(model)
@@ -280,7 +284,7 @@ def test_real_agent_executes_function_tool_and_samples_its_result_next_round():
     asyncio.run(scenario())
 
 
-def test_adopt_uses_stable_keys_without_collapsing_harness_history():
+def test_adopt_uses_stable_keys_without_collapsing_harness_history() -> None:
     with fake_engine() as engine:
         binder = MessageBinder(engine.session())
         history = [
@@ -295,9 +299,9 @@ def test_adopt_uses_stable_keys_without_collapsing_harness_history():
 
         adopted = binder.adopt(history)
 
-        assert [message.parts[0].content for message in adopted] == [
+        assert [cast(Any, message.parts[0]).content for message in adopted] == [
             "question-one", "answer-one", "question-two", "answer-two",
         ]
-        assert [message.metadata["ds4.key"] for message in adopted] == [
-            message.metadata["ds4.key"] for message in history
+        assert [cast(Any, message.metadata)["ds4.key"] for message in adopted] == [
+            cast(Any, message.metadata)["ds4.key"] for message in history
         ]

@@ -1,8 +1,11 @@
+from typing import Any, cast
+import pytest
 import asyncio
 from dataclasses import replace
 import threading
 
 import ds4py
+from ds4py.engine.session import Engine
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeEngine, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
@@ -20,29 +23,29 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 
 
-def fake_engine(*, script=None, think=ThinkMode.NONE, cancel=None):
+def fake_engine(*, script: Any=None, think: Any=ThinkMode.NONE, cancel: Any=None) -> Engine:
     native = FakeNative(script=script) if script is not None else FakeNative()
     info = replace(native._info, name="fake-ds4")
     native._info = info
     return ds4py.open("f.gguf", ctx=8192, think=think, native=native, cancel=cancel)
 
 
-def scripted_text(text):
+def scripted_text(text: Any) -> Any:
     tokens = tuple(tokenize_rendered(text))
     return lambda prompt, generated: (
         tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
     )
 
 
-def user(text="hello"):
+def user(text: Any="hello") -> ModelRequest:
     return ModelRequest([UserPromptPart(text)])
 
 
-def make_model(session, **kwargs):
+def make_model(session: Any, **kwargs: Any) -> DS4Model:
     return DS4Model(session, sampling=SamplingPolicy(seed=1), **kwargs)
 
 
-async def collect(model, messages, settings=None):
+async def collect(model: Any, messages: Any, settings: Any=None) -> Any:
     async with model.request_stream(
         list(messages), settings, ModelRequestParameters(),
     ) as stream:
@@ -50,10 +53,10 @@ async def collect(model, messages, settings=None):
         return stream.get(), events
 
 
-def test_empty_output_and_zero_prefill_have_zero_usage(monkeypatch):
+def test_empty_output_and_zero_prefill_have_zero_usage(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(FakeEngine, "assistant_prefix", lambda self, prefix, mode: [])
 
-    async def scenario():
+    async def scenario() -> None:
         with fake_engine(script=scripted_text("")) as engine:
             session = engine.session()
             model = make_model(session)
@@ -76,8 +79,8 @@ def test_empty_output_and_zero_prefill_have_zero_usage(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_thinking_only_output_is_retained():
-    async def scenario():
+def test_thinking_only_output_is_retained() -> None:
+    async def scenario() -> None:
         with fake_engine(script=scripted_text("thought"), think=ThinkMode.HIGH) as engine:
             response, events = await collect(make_model(engine.session()), [user()])
             assert response.parts == [ThinkingPart("thought")]
@@ -87,38 +90,38 @@ def test_thinking_only_output_is_retained():
     asyncio.run(scenario())
 
 
-def test_interrupted_round_returns_partial_text_as_interrupted():
+def test_interrupted_round_returns_partial_text_as_interrupted() -> None:
     cancel = threading.Event()
 
-    def script(prompt, generated):
+    def script(prompt: Any, generated: Any) -> Any:
         if len(generated) == 2:
             cancel.set()
         return ord("a") + 1
 
-    async def scenario():
+    async def scenario() -> None:
         with fake_engine(script=script, cancel=cancel) as engine:
             response, _ = await collect(make_model(engine.session()), [user()])
             assert response.parts == [TextPart("aaa")]
             assert response.state == "interrupted"
             assert response.finish_reason is None
             assert response.usage.output_tokens == 3
-            assert response.metadata["ds4.source"] == "sampled"
+            assert cast(Any, response.metadata)["ds4.source"] == "sampled"
 
     asyncio.run(scenario())
 
 
-def test_closing_event_iteration_binds_only_the_published_partial_response():
+def test_closing_event_iteration_binds_only_the_published_partial_response() -> None:
     outputs = [tuple(tokenize_rendered("partial")), tuple(tokenize_rendered("next"))]
     prompts = []
 
-    def script(prompt, generated):
+    def script(prompt: Any, generated: Any) -> Any:
         if not generated:
             prompts.append(tuple(prompt))
-            script.current = outputs.pop(0)
-        tokens = script.current
+            cast(Any, script).current = outputs.pop(0)
+        tokens = cast(Any, script).current
         return tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
-    async def scenario():
+    async def scenario() -> None:
         with fake_engine(script=script) as engine:
             session = engine.session()
             binder = MessageBinder(session)
@@ -126,7 +129,7 @@ def test_closing_event_iteration_binds_only_the_published_partial_response():
             bindings = 0
             original_bind = binder.bind_response
 
-            def counted_bind(response):
+            def counted_bind(response: Any) -> None:
                 nonlocal bindings
                 bindings += 1
                 original_bind(response)
@@ -140,7 +143,7 @@ def test_closing_event_iteration_binds_only_the_published_partial_response():
                 event = await anext(iterator)
                 assert isinstance(event, PartStartEvent)
                 assert event.part == TextPart("p")
-                await iterator.aclose()
+                await cast(Any, iterator).aclose()
                 response = stream.get()
 
             assert response.parts == [TextPart("p")]
@@ -151,7 +154,7 @@ def test_closing_event_iteration_binds_only_the_published_partial_response():
             sampled = [p for p in provenance if p.source == "sampled"]
             assert len(sampled) == 1
             assert sampled[0].kind == "assistant"
-            assert sampled[0].key == response.metadata["ds4.key"]
+            assert sampled[0].key == cast(Any, response.metadata)["ds4.key"]
             assert session.transcript.tokens[sampled[0].start:sampled[0].end] == tuple(
                 tokenize_rendered("p")
             )
@@ -176,8 +179,8 @@ def test_closing_event_iteration_binds_only_the_published_partial_response():
     asyncio.run(scenario())
 
 
-def test_session_bus_listeners_stay_on_the_asyncio_thread():
-    async def scenario():
+def test_session_bus_listeners_stay_on_the_asyncio_thread() -> None:
+    async def scenario() -> None:
         with fake_engine(script=scripted_text("done")) as engine:
             session = engine.session()
             owning_thread = threading.get_ident()
@@ -199,8 +202,8 @@ def test_session_bus_listeners_stay_on_the_asyncio_thread():
     asyncio.run(scenario())
 
 
-def test_request_relies_on_stream_terminal_binding_exactly_once():
-    async def scenario():
+def test_request_relies_on_stream_terminal_binding_exactly_once() -> None:
+    async def scenario() -> None:
         with fake_engine(script=scripted_text("done")) as engine:
             session = engine.session()
             binder = MessageBinder(session)
@@ -208,7 +211,7 @@ def test_request_relies_on_stream_terminal_binding_exactly_once():
             bindings = 0
             original_bind = binder.bind_response
 
-            def counted_bind(response):
+            def counted_bind(response: Any) -> None:
                 nonlocal bindings
                 bindings += 1
                 original_bind(response)
@@ -217,29 +220,29 @@ def test_request_relies_on_stream_terminal_binding_exactly_once():
             response = await model.request([user()], None, ModelRequestParameters())
             assert response.parts == [TextPart("done")]
             assert bindings == 1
-            assert binder._records[-1].key == response.metadata["ds4.key"]
+            assert binder._records[-1].key == cast(Any, response.metadata)["ds4.key"]
 
     asyncio.run(scenario())
 
 
-def test_direct_stream_response_is_reused_by_the_next_request_without_rerendering():
+def test_direct_stream_response_is_reused_by_the_next_request_without_rerendering() -> None:
     outputs = [tuple(tokenize_rendered("first")), tuple(tokenize_rendered("second"))]
 
-    def script(prompt, generated):
+    def script(prompt: Any, generated: Any) -> Any:
         if not generated:
             tokens = outputs.pop(0)
-            script.current = tokens
-        tokens = script.current
+            cast(Any, script).current = tokens
+        tokens = cast(Any, script).current
         return tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
-    async def scenario():
+    async def scenario() -> None:
         with fake_engine(script=script) as engine:
             session = engine.session()
             binder = MessageBinder(session)
             model = make_model(session, binder=binder)
             request = user("first request")
             first, _ = await collect(model, [request])
-            first_key = first.metadata["ds4.key"]
+            first_key = cast(Any, first.metadata)["ds4.key"]
             first_hash = next(
                 p.content_hash for p in binder.export_segments()
                 if p.key == first_key and p.source == "sampled"
@@ -253,7 +256,7 @@ def test_direct_stream_response_is_reused_by_the_next_request_without_rerenderin
             assert session.transcript.tokens[:len(before)] == before
             assert len(binder._records) == 4
             assert [record.key for record in binder._records[:2]] == [
-                request.metadata["ds4.key"], first_key,
+                cast(Any, request.metadata)["ds4.key"], first_key,
             ]
             assert binder._records[1].end == len(before)
             later = binder.export_segments()

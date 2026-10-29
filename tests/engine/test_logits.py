@@ -1,3 +1,5 @@
+from typing import Any, cast
+from collections.abc import Iterator
 import threading
 from array import array
 from collections.abc import Sequence
@@ -16,14 +18,14 @@ from ds4py.engine.logits import LogitsView
 from ds4py.errors import EngineError
 
 
-def scripted(*tokens):
+def scripted(*tokens: Any) -> Any:
     return lambda prompt, generated: (
         tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
     )
 
 
 @contextmanager
-def fake_session(script, *, chat=False, think=ThinkMode.HIGH):
+def fake_session(script: Any, *, chat: Any=False, think: Any=ThinkMode.HIGH) -> Iterator[Any]:
     with ds4py.open(
         Path("f.gguf"),
         ctx=1024,
@@ -38,39 +40,39 @@ def fake_session(script, *, chat=False, think=ThinkMode.HIGH):
         yield session
 
 
-def native_session(session):
+def native_session(session: Any) -> Any:
     return session._worker.call(lambda engine, native: native).result()
 
 
-def emitted_ids(events):
+def emitted_ids(events: Any) -> Any:
     return [event.id for event in events if isinstance(event, Token)]
 
 
-def test_no_hooks_never_copy_logits():
+def test_no_hooks_never_copy_logits() -> None:
     with fake_session(scripted(7, FAKE_EOS)) as session:
         native = native_session(session)
         assert list(session.run_round())[-1] == Stopped("stop_token")
         assert native.logit_copies == 0
 
 
-def test_sampled_tokens_materialize_only_on_access():
+def test_sampled_tokens_materialize_only_on_access() -> None:
     class CountingSequence(Sequence):
-        def __init__(self, values):
+        def __init__(self, values: Any) -> None:
             self.values = values
             self.iterations = 0
 
-        def __len__(self):
+        def __len__(self) -> int:
             return len(self.values)
 
-        def __getitem__(self, index):
+        def __getitem__(self, index: Any) -> Any:
             return self.values[index]
 
-        def __iter__(self):
+        def __iter__(self) -> Any:
             self.iterations += 1
             return iter(self.values)
 
     tokens = CountingSequence([7, 8, 9])
-    view = LogitsView(object(), vocab_size=1)
+    view = LogitsView(cast(Any, object()), vocab_size=1)
     view._update(
         position=3, in_think=False, think_tokens=0, parser_state=None,
         sampled_tokens=tokens,
@@ -83,10 +85,10 @@ def test_sampled_tokens_materialize_only_on_access():
     assert tokens.iterations == 1
 
 
-def test_logits_view_reuses_one_buffer_and_validates_lengths():
+def test_logits_view_reuses_one_buffer_and_validates_lengths() -> None:
     seen = {}
 
-    def hook(view):
+    def hook(view: Any) -> None:
         first, second = view.logits(), view.logits()
         seen["buffer"] = (first.obj, second.obj)
         seen["size"] = len(first)
@@ -109,10 +111,10 @@ def test_logits_view_reuses_one_buffer_and_validates_lengths():
     assert seen["size"] == 279
 
 
-def test_bias_changes_the_actual_next_token_and_transcript():
+def test_bias_changes_the_actual_next_token_and_transcript() -> None:
     mutations = []
 
-    def hook(view):
+    def hook(view: Any) -> None:
         if not view.sampled_tokens:
             before = view.logits()[7]
             view.bias(8, 2.0)
@@ -127,11 +129,11 @@ def test_bias_changes_the_actual_next_token_and_transcript():
         assert native_session(session).logit_sets == 1
 
 
-def test_raw_sampled_tokens_survive_stop_sequence_resume():
+def test_raw_sampled_tokens_survive_stop_sequence_resume() -> None:
     stop = (116, 117, 112, 113)
     following = (111, 102, 121, 117)
 
-    def script(prompt, generated):
+    def script(prompt: Any, generated: Any) -> Any:
         tokens = following if any(
             tuple(prompt[index:index + len(stop)]) == stop
             for index in range(len(prompt) - len(stop) + 1)
@@ -153,7 +155,7 @@ def test_raw_sampled_tokens_survive_stop_sequence_resume():
     assert states[-1] == stop + following
 
 
-def test_hook_state_tracks_only_committed_tokens():
+def test_hook_state_tracks_only_committed_tokens() -> None:
     tokens = tokenize_rendered("<think>a</think>b<think>c</think>")
 
     with fake_session(
@@ -171,7 +173,7 @@ def test_hook_state_tracks_only_committed_tokens():
         initial_position = prompt_length + len(assistant_prefix)
         states = []
 
-        def hook(view):
+        def hook(view: Any) -> None:
             states.append(
                 (
                     view.position,
@@ -205,14 +207,14 @@ def test_hook_state_tracks_only_committed_tokens():
         ]
 
 
-def test_hooks_share_a_view_and_run_in_order_on_the_worker_thread():
+def test_hooks_share_a_view_and_run_in_order_on_the_worker_thread() -> None:
     calls, views = [], []
 
-    def first(view):
+    def first(view: Any) -> None:
         calls.append(("first", threading.get_ident()))
         views.append(view)
 
-    def second(view):
+    def second(view: Any) -> None:
         calls.append(("second", threading.get_ident()))
         views.append(view)
 
@@ -229,11 +231,11 @@ def test_hooks_share_a_view_and_run_in_order_on_the_worker_thread():
         assert native_session(session).logit_copies == 0
 
 
-def test_hook_error_commits_nothing_and_releases_round_ownership():
+def test_hook_error_commits_nothing_and_releases_round_ownership() -> None:
     error = RuntimeError("hook failed")
     calls = 0
 
-    def hook(view):
+    def hook(view: Any) -> None:
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -250,7 +252,7 @@ def test_hook_error_commits_nothing_and_releases_round_ownership():
         assert events[-1] == Stopped("stop_token")
 
 
-def test_installing_a_hook_during_an_active_round_is_refused():
+def test_installing_a_hook_during_an_active_round_is_refused() -> None:
     with fake_session(scripted(7, 8, FAKE_EOS)) as session:
         events = session.run_round()
         assert next(event for event in events if isinstance(event, Token)).id == 7
@@ -260,7 +262,7 @@ def test_installing_a_hook_during_an_active_round_is_refused():
         session.add_logits_hook(lambda view: None)
 
 
-def test_literal_think_in_tool_argument_does_not_change_hook_control_state():
+def test_literal_think_in_tool_argument_does_not_change_hook_control_state() -> None:
     text = '<tool_call>read<arg_key>path</arg_key><arg_value><think>x</arg_value></tool_call>'
     tokens = [byte + 1 for byte in text.encode()]
     states = []

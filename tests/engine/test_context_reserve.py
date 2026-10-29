@@ -1,3 +1,5 @@
+from typing import Any
+from collections.abc import Iterator
 import threading
 from contextlib import contextmanager
 
@@ -18,10 +20,10 @@ DSML = ("<｜DSML｜tool_calls><｜DSML｜invoke name=\"read\">"
         "</｜DSML｜invoke></｜DSML｜tool_calls>")
 
 
-def scripted(*tokens):
+def scripted(*tokens: Any) -> Any:
     index = 0
 
-    def script(prompt, generated):
+    def script(prompt: Any, generated: Any) -> Any:
         nonlocal index
         token = tokens[index] if index < len(tokens) else FAKE_EOS
         index += 1
@@ -31,7 +33,7 @@ def scripted(*tokens):
 
 
 @contextmanager
-def chat_session(*tokens, ctx=347, cancel=None, think=ThinkMode.NONE):
+def chat_session(*tokens: Any, ctx: Any=347, cancel: Any=None, think: Any=ThinkMode.NONE) -> Iterator[Any]:
     # The default fake chat prompt plus assistant prefix is 345 tokens.
     with ds4py.open(
         "f.gguf",
@@ -45,7 +47,7 @@ def chat_session(*tokens, ctx=347, cancel=None, think=ThinkMode.NONE):
         yield session
 
 
-def next_pause(events, seen):
+def next_pause(events: Any, seen: Any) -> Any:
     for event in events:
         seen.append(event)
         if isinstance(event, ReserveReached):
@@ -53,11 +55,11 @@ def next_pause(events, seen):
     raise AssertionError("chat context reserve did not pause for a decision")
 
 
-def make_room(session, ctx=1024):
+def make_room(session: Any, ctx: Any=1024) -> None:
     session._worker.call(lambda engine, native: setattr(native, "_ctx", ctx)).result()
 
 
-def content_events(events):
+def content_events(events: Any) -> Any:
     return [
         event
         for event in events
@@ -65,14 +67,14 @@ def content_events(events):
     ]
 
 
-def test_raw_round_still_reports_context_reserve_directly():
+def test_raw_round_still_reports_context_reserve_directly() -> None:
     with ds4py.open("f.gguf", ctx=4, native=FakeNative()) as engine:
         session = engine.session()
         session.append_tokens([5, 6], "user")
         assert list(session.run_round())[-1] == Stopped("context_reserve")
 
 
-def test_chat_pause_waits_without_eos_and_fail_closes_once():
+def test_chat_pause_waits_without_eos_and_fail_closes_once() -> None:
     with chat_session(98) as session:
         events = []
         round_ = session.run_round()
@@ -89,7 +91,7 @@ def test_chat_pause_waits_without_eos_and_fail_closes_once():
         assert kinds.count("eos") == 1
 
 
-def test_resume_matches_unpaused_content_and_extends_one_assistant_segment():
+def test_resume_matches_unpaused_content_and_extends_one_assistant_segment() -> None:
     tokens = tuple(tokenize_rendered("<think>a</think>" + DSML))
     with chat_session(*tokens, ctx=1024, think=ThinkMode.HIGH) as session:
         expected_events = list(session.run_round(max_tokens=100))
@@ -114,7 +116,7 @@ def test_resume_matches_unpaused_content_and_extends_one_assistant_segment():
         assert kinds.count("assistant_prefix") == 1
 
 
-def test_resume_preserves_the_remaining_caller_token_budget():
+def test_resume_preserves_the_remaining_caller_token_budget() -> None:
     with chat_session(98, 99, 100) as session:
         events = []
         round_ = session.run_round(max_tokens=2)
@@ -127,7 +129,7 @@ def test_resume_preserves_the_remaining_caller_token_budget():
         assert events[-1] == Stopped("max_tokens")
 
 
-def test_repeated_pauses_and_zero_reserve_require_one_decision_each():
+def test_repeated_pauses_and_zero_reserve_require_one_decision_each() -> None:
     with chat_session(98, 99, 100) as session:
         round_ = session.run_round(max_tokens=10)
         first_events = []
@@ -146,7 +148,7 @@ def test_repeated_pauses_and_zero_reserve_require_one_decision_each():
         assert list(round_) == [Stopped("context_exhausted")]
 
 
-def test_advancing_without_a_decision_fails_and_releases_the_round():
+def test_advancing_without_a_decision_fails_and_releases_the_round() -> None:
     with chat_session(98) as session:
         events = []
         round_ = session.run_round()
@@ -157,7 +159,7 @@ def test_advancing_without_a_decision_fails_and_releases_the_round():
         session.append_user("next")
 
 
-def test_second_decision_cannot_change_an_inflight_continuation():
+def test_second_decision_cannot_change_an_inflight_continuation() -> None:
     with chat_session(98) as session:
         events = []
         round_ = session.run_round()
@@ -171,7 +173,7 @@ def test_second_decision_cannot_change_an_inflight_continuation():
         assert remainder[-1] == Stopped("stop_token")
 
 
-def test_reserve_validation_does_not_consume_the_decision():
+def test_reserve_validation_does_not_consume_the_decision() -> None:
     with chat_session(98) as session:
         events = []
         round_ = session.run_round()
@@ -185,7 +187,7 @@ def test_reserve_validation_does_not_consume_the_decision():
         assert list(round_)[-1] == Stopped("stop_token")
 
 
-def test_closing_a_paused_round_drains_and_preserves_worker_ownership():
+def test_closing_a_paused_round_drains_and_preserves_worker_ownership() -> None:
     cancel = threading.Event()
     with chat_session(98, cancel=cancel) as session:
         events = []

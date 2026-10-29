@@ -1,4 +1,6 @@
 """Compiled boundary double shared by the native adapter tests."""
+from typing import Any, cast
+from collections.abc import Iterator
 
 from pathlib import Path
 
@@ -6,7 +8,7 @@ import pytest
 
 
 @pytest.fixture
-def stub_engine(cc, upstream_headers, tmp_path):
+def stub_engine(cc: Any, upstream_headers: Any, tmp_path: Path) -> Iterator[Any]:
     # A compiled boundary double is needed because real sessions require a model.
     import ctypes
     import subprocess
@@ -21,7 +23,11 @@ def stub_engine(cc, upstream_headers, tmp_path):
                     str(Path(__file__).with_name("api_stub.c")), "-o", str(path)], check=True)
     handle = ctypes.CDLL(str(path))
     bindings = [b for b in CORE_BINDINGS if hasattr(handle, b.name)]
-    lib = Library(path, None, SimpleNamespace(available={b.name for b in bindings}, absent=set()), handle, bindings)
+    lib = Library(
+        path, cast(Any, None),
+        cast(Any, SimpleNamespace(available={b.name for b in bindings}, absent=set())),
+        handle, bindings,
+    )
     engine = NativeEngine(lib, 0x1234, EngineOptions(), InstanceLock.acquire(tmp_path / "lock"))
     yield engine, handle
     engine.close()

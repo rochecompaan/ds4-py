@@ -1,3 +1,4 @@
+from typing import Any, cast
 from dataclasses import replace
 import os
 from pathlib import Path
@@ -18,14 +19,14 @@ EXT_SITE = str((Path(__file__).parents[1] / "fixtures" / "ext_site").resolve())
 FORK_HASH = "b1e0ad190897de401780d02d246e610882bca676a531bd22d2e06b3769c52d9b"
 
 
-def run_check(lib, extra_env=None):
+def run_check(lib: Any, extra_env: Any=None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "ds4py", "check", "--lib", str(lib)],
         env={**os.environ, **(extra_env or {})}, capture_output=True, text=True,
     )
 
 
-def report_with(*, headers_known=True, absent=frozenset(), extensions=None, live_checks=None):
+def report_with(*, headers_known: Any=True, absent: Any=frozenset(), extensions: Any=None, live_checks: Any=None) -> Any:
     extensions = extensions or {}
     records = {b.name: BindingRecord(b.normalized, b.required, b.source, True)
                for b in CORE_BINDINGS}
@@ -43,7 +44,7 @@ def report_with(*, headers_known=True, absent=frozenset(), extensions=None, live
     return CheckReport(Path("/lib") / LIB_NAME, manifest, validation, extensions, None)
 
 
-def test_report_known_headers_and_no_optional_bindings():
+def test_report_known_headers_and_no_optional_bindings() -> None:
     assert format_report(report_with()).splitlines() == [
         f"library:  /lib/{LIB_NAME} (cpu)",
         "ds4 tree: /src/ds4 at 5379c1c9ac31",
@@ -55,7 +56,7 @@ def test_report_known_headers_and_no_optional_bindings():
     ]
 
 
-def test_report_lines_for_unknown_headers_and_optional_bindings():
+def test_report_lines_for_unknown_headers_and_optional_bindings() -> None:
     text = format_report(report_with(
         headers_known=False, absent={"ds4_engine_sampling_defaults"},
         extensions={"ds4_engine_layer_count": "test_ext",
@@ -67,7 +68,7 @@ def test_report_lines_for_unknown_headers_and_optional_bindings():
     assert "restore:  not verified" in text
 
 
-def test_report_non_git_tree_and_core_optional():
+def test_report_non_git_tree_and_core_optional() -> None:
     report = report_with(absent={"optional_core"})
     report.manifest = replace(report.manifest, source_commit=None)
     text = format_report(report)
@@ -75,7 +76,7 @@ def test_report_non_git_tree_and_core_optional():
     assert "optional: optional_core  absent  (core)" in text
 
 
-def test_refused_library_exits_1(tmp_path):
+def test_refused_library_exits_1(tmp_path: Path) -> None:
     lib = tmp_path / LIB_NAME
     lib.write_bytes(b"not a library")
     result = run_check(lib)
@@ -85,24 +86,24 @@ def test_refused_library_exits_1(tmp_path):
     assert result.stderr == ""
 
 
-def test_check_resolves_environment_path_on_failure(tmp_path, monkeypatch):
+def test_check_resolves_environment_path_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     lib = tmp_path / LIB_NAME
     monkeypatch.setenv("DS4_LIB", str(lib))
     report = check_library(None)
     assert report.lib_path == lib
     assert report.manifest is None and report.validation is None
-    assert "library not found" in report.error
+    assert "library not found" in cast(Any, report.error)
 
 
 @pytest.mark.build
-def test_check_upstream_build(built_upstream):
+def test_check_upstream_build(built_upstream: Any) -> None:
     result = run_check(built_upstream[0])
     assert result.returncode == 0, result.stdout + result.stderr
     assert "headers:  known" in result.stdout and "layouts:  ok" in result.stdout
 
 
 @pytest.mark.build
-def test_check_fork_build_lists_extension(built_fork):
+def test_check_fork_build_lists_extension(built_fork: Any) -> None:
     result = run_check(built_fork[0], {"PYTHONPATH": EXT_SITE})
     assert result.returncode == 0, result.stdout + result.stderr
     assert "headers:  known" in result.stdout
@@ -110,7 +111,7 @@ def test_check_fork_build_lists_extension(built_fork):
     assert "ds4_engine_layer_count  present  (test_ext)" in result.stdout
 
 
-def test_report_shows_the_live_checks():
+def test_report_shows_the_live_checks() -> None:
     text = format_report(report_with(live_checks={
         "sync_plans": {"ok": True, "message": "extend of 64 tokens took 0.120 s"},
         "restore": {"ok": False, "message": "the runs differ at token 3: 7 after a restore, 9 after a rebuild"}}))
@@ -118,7 +119,7 @@ def test_report_shows_the_live_checks():
     assert "restore:  disabled (the runs differ at token 3: 7 after a restore, 9 after a rebuild)" in text
     assert "sync:" not in format_report(report_with())
 
-def test_live_needs_a_model(capsys):
+def test_live_needs_a_model(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as e:
         cli.main(["check", "--live"])
     assert e.value.code == 2 and "--live needs --model" in capsys.readouterr().err
@@ -128,13 +129,13 @@ def test_live_needs_a_model(capsys):
     (True, True, None, 0), (True, False, None, 0),
     (False, True, None, 1), (True, True, 'refused', 1),
 ])
-def test_live_cli_exit_status(monkeypatch, capsys, sync_ok, restore_ok, error, expected):
+def test_live_cli_exit_status(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], sync_ok: Any, restore_ok: Any, error: Any, expected: Any) -> None:
     report = report_with(live_checks={
         'sync_plans': {'ok': sync_ok, 'message': 'counts'},
         'restore': {'ok': restore_ok, 'message': 'tokens'},
     })
     report.error = error
-    def live(lib, model, *, ctx):
+    def live(lib: Any, model: Any, *, ctx: Any) -> Any:
         assert (lib, model, ctx) == (Path('lib.so'), Path('model.gguf'), 512)
         return report
     monkeypatch.setattr(cli, 'check_live', live, raising=False)
@@ -144,7 +145,7 @@ def test_live_cli_exit_status(monkeypatch, capsys, sync_ok, restore_ok, error, e
 
 
 @pytest.mark.parametrize('fail', [False, True])
-def test_live_persists_checks_only_after_success_and_closes(monkeypatch, tmp_path, fail):
+def test_live_persists_checks_only_after_success_and_closes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fail: Any) -> None:
     from types import SimpleNamespace
     from ds4py.abi import check
     from ds4py._native.fake import FakeNative, FakeEngine
@@ -161,12 +162,12 @@ def test_live_persists_checks_only_after_success_and_closes(monkeypatch, tmp_pat
     monkeypatch.setattr(check, 'LibNative', lambda lib: native)
     engines = []
     original_close = FakeEngine.close
-    def close(engine):
+    def close(engine: Any) -> None:
         engines.append(engine)
         original_close(engine)
     monkeypatch.setattr(FakeEngine, 'close', close)
     run = check.run_live_checks
-    def reduced(worker):
+    def reduced(worker: Any) -> Any:
         if fail:
             raise EngineError('sync failed')
         return run(worker, prefix=128, tail=16, generate=32)
@@ -178,6 +179,6 @@ def test_live_persists_checks_only_after_success_and_closes(monkeypatch, tmp_pat
     else:
         result = check.check_live(lib, Path('f.gguf'), ctx=512)
         saved = Manifest.read(manifest_path(lib)).live_checks
-        assert result.manifest.live_checks == saved
+        assert cast(Any, result.manifest).live_checks == saved
         assert saved['sync_plans']['ok'] and saved['restore']['ok']
     assert len(engines) == 1

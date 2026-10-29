@@ -1,4 +1,5 @@
 """Path-specific failures from corrupt save records and interrupted writes."""
+from typing import Any
 
 import json
 from pathlib import Path
@@ -16,13 +17,14 @@ from ds4py.store import (
     SegmentProvenance,
     SessionStore,
 )
+from typing import Never
 
 DIGEST_123 = "7b0b5ea3ff36958c8e32ccf24b71da9ac68e51d0881bf75e62b837ec9ea6f3a5"
 DIGEST_EMPTY = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 
-def record(**overrides):
-    fields = dict(
+def record(**overrides: Any) -> SaveRecord:
+    fields: dict[str, Any] = dict(
         session_id="session-1",
         conversation_id="conversation-1",
         run_id="session-1.save-2",
@@ -45,8 +47,8 @@ def record(**overrides):
     return SaveRecord(**fields)
 
 
-def engine_info(**overrides):
-    fields = dict(
+def engine_info(**overrides: Any) -> EngineInfo:
+    fields: dict[str, Any] = dict(
         name="fake-model",
         model_id=41,
         family="deepseek41",
@@ -80,7 +82,7 @@ def write_raw_record(path: Path, data: dict) -> None:
         (KV_HEADER.pack(KV_MAGIC, KV_VERSION, 3) + b"abcd", "extra"),
     ],
 )
-def test_corrupt_kv_files_fail_with_the_path_and_reason(tmp_path, contents, reason):
+def test_corrupt_kv_files_fail_with_the_path_and_reason(tmp_path: Path, contents: Any, reason: Any) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("session-1") / "session.kv"
     path.parent.mkdir(parents=True)
@@ -97,7 +99,7 @@ def test_corrupt_kv_files_fail_with_the_path_and_reason(tmp_path, contents, reas
     "contents",
     [b"{not json", b"\xff\xfe", b"[]", b"null"],
 )
-def test_malformed_record_json_fails_with_the_path(tmp_path, contents):
+def test_malformed_record_json_fails_with_the_path(tmp_path: Path, contents: Any) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("session-1") / "save.json"
     path.parent.mkdir(parents=True)
@@ -110,7 +112,7 @@ def test_malformed_record_json_fails_with_the_path(tmp_path, contents):
     assert "record" in str(caught.value)
 
 
-def test_deeply_nested_record_json_fails_as_a_malformed_record(tmp_path):
+def test_deeply_nested_record_json_fails_as_a_malformed_record(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("session-1") / "save.json"
     path.parent.mkdir(parents=True)
@@ -123,7 +125,7 @@ def test_deeply_nested_record_json_fails_as_a_malformed_record(tmp_path):
     assert "record" in str(caught.value)
 
 
-def test_huge_token_count_integer_fails_as_a_malformed_record(tmp_path):
+def test_huge_token_count_integer_fails_as_a_malformed_record(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("session-1") / "save.json"
     data = record().to_dict()
@@ -139,7 +141,7 @@ def test_huge_token_count_integer_fails_as_a_malformed_record(tmp_path):
     assert "record" in str(caught.value)
 
 
-def test_kv_header_declaring_maximum_payload_fails_as_truncated(tmp_path):
+def test_kv_header_declaring_maximum_payload_fails_as_truncated(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("session-1") / "session.kv"
     path.parent.mkdir(parents=True)
@@ -166,8 +168,8 @@ def test_kv_header_declaring_maximum_payload_fails_as_truncated(tmp_path):
     ],
 )
 def test_invalid_record_counts_and_digests_fail_with_the_path(
-    tmp_path, key, value, reason,
-):
+    tmp_path: Path, key: Any, value: Any, reason: Any,
+) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("session-1") / "save.json"
     data = record().to_dict()
@@ -199,8 +201,8 @@ def test_invalid_record_counts_and_digests_fail_with_the_path(
     ],
 )
 def test_segments_must_cover_the_token_range(
-    tmp_path, tokens, tokens_sha256, segments, reason,
-):
+    tmp_path: Path, tokens: Any, tokens_sha256: Any, segments: Any, reason: Any,
+) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("session-1") / "save.json"
     data = record().to_dict()
@@ -223,14 +225,14 @@ def test_segments_must_cover_the_token_range(
     assert reason in str(caught.value)
 
 
-def test_find_rejects_an_unknown_prefix(tmp_path):
+def test_find_rejects_an_unknown_prefix(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
 
     with pytest.raises(StoreError, match="unknown"):
         store.find("missing")
 
 
-def test_find_rejects_an_ambiguous_prefix(tmp_path):
+def test_find_rejects_an_ambiguous_prefix(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
     for session_id in ("abc1111", "abc2222"):
         store.write_record_atomic(
@@ -246,7 +248,7 @@ def test_find_rejects_an_ambiguous_prefix(tmp_path):
     assert "abc2222" in str(caught.value)
 
 
-def test_find_ignores_sessions_without_a_save_record(tmp_path):
+def test_find_ignores_sessions_without_a_save_record(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
     store.session_dir("untouched").mkdir(parents=True)
 
@@ -254,7 +256,7 @@ def test_find_ignores_sessions_without_a_save_record(tmp_path):
         store.find("untouched")
 
 
-def test_model_mismatch_is_an_error_naming_the_session(tmp_path):
+def test_model_mismatch_is_an_error_naming_the_session(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
 
     with pytest.raises(StoreError) as caught:
@@ -264,7 +266,7 @@ def test_model_mismatch_is_an_error_naming_the_session(tmp_path):
     assert "model" in str(caught.value)
 
 
-def test_quant_mismatch_is_an_error_naming_the_session(tmp_path):
+def test_quant_mismatch_is_an_error_naming_the_session(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
 
     with pytest.raises(StoreError) as caught:
@@ -276,13 +278,13 @@ def test_quant_mismatch_is_an_error_naming_the_session(tmp_path):
 
 @pytest.mark.parametrize("failure", ["fsync", "replace"])
 def test_interrupted_kv_write_leaves_the_prior_file_intact(
-    tmp_path, monkeypatch, failure,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Any,
+) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("session-1") / "session.kv"
     store.write_kv_atomic(path, b"old payload")
 
-    def fail(*args, **kwargs):
+    def fail(*args: Any, **kwargs: Any) -> Never:
         raise OSError("interrupted")
 
     monkeypatch.setattr(store_module.os, failure, fail)
@@ -297,15 +299,15 @@ def test_interrupted_kv_write_leaves_the_prior_file_intact(
 
 
 def test_interrupted_record_write_leaves_the_prior_record_intact(
-    tmp_path, monkeypatch,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("session-1") / "save.json"
     old = record()
     store.write_record_atomic(path, old)
     new = record(run_id="session-1.save-3", title="A newer save")
 
-    def fail(*args, **kwargs):
+    def fail(*args: Any, **kwargs: Any) -> Never:
         raise OSError("interrupted")
 
     monkeypatch.setattr(store_module.os, "replace", fail)
@@ -319,8 +321,8 @@ def test_interrupted_record_write_leaves_the_prior_record_intact(
 
 
 def test_failed_record_replacement_keeps_the_old_record_for_mismatch_fallback(
-    tmp_path, monkeypatch,
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     store = SessionStore(tmp_path)
     kv_path = store.session_dir("session-1") / "session.kv"
     record_path = store.session_dir("session-1") / "save.json"
@@ -331,7 +333,7 @@ def test_failed_record_replacement_keeps_the_old_record_for_mismatch_fallback(
     store.write_kv_atomic(kv_path, new_payload)
     new = record(payload_bytes=len(new_payload), run_id="session-1.save-3")
 
-    def fail(*args, **kwargs):
+    def fail(*args: Any, **kwargs: Any) -> Never:
         raise OSError("snapshot write failed after KV replacement")
 
     monkeypatch.setattr(store_module.os, "replace", fail)
