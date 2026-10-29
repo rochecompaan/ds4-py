@@ -1,4 +1,5 @@
 import asyncio
+import copy
 from dataclasses import replace
 import math
 
@@ -8,6 +9,7 @@ import ds4py
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
+from ds4py.binding import MessageBinder
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.model import DS4Model
 from pydantic_ai import Agent
@@ -276,3 +278,26 @@ def test_real_agent_executes_function_tool_and_samples_its_result_next_round():
             assert result.usage.requests == 2
 
     asyncio.run(scenario())
+
+
+def test_adopt_uses_stable_keys_without_collapsing_harness_history():
+    with fake_engine() as engine:
+        binder = MessageBinder(engine.session())
+        history = [
+            user("question-one"),
+            ModelResponse([TextPart("answer-one")]),
+            user("question-two"),
+            ModelResponse([TextPart("answer-two")]),
+        ]
+        binder.prepare(history)
+        request_view = [copy.deepcopy(message) for message in history[2:]]
+        binder.prepare(request_view)
+
+        adopted = binder.adopt(history)
+
+        assert [message.parts[0].content for message in adopted] == [
+            "question-one", "answer-one", "question-two", "answer-two",
+        ]
+        assert [message.metadata["ds4.key"] for message in adopted] == [
+            message.metadata["ds4.key"] for message in history
+        ]

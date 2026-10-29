@@ -4,6 +4,13 @@ from ds4py.agent import build_agent_components
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai_harness import AskUser
+from pydantic_ai_harness.ask_user import (
+    AskUserAnswer,
+    AskUserRequest,
+    AskUserResponse,
+    Question,
+    QuestionOption,
+)
 
 
 class MockSession:
@@ -104,7 +111,55 @@ def test_no_ask_user_unless_interactive(tmp_path):
 
     model2 = FunctionModel(scripted, stream_function=stream_function)
     model2.session = MockSession()
+    async def question_answerer(request):
+        return AskUserResponse(answers=tuple(
+            AskUserAnswer(header=question.header, selected=(question.options[0].label,))
+            for question in request.questions
+        ))
+
     components2 = build_agent_components(
-        model2, tmp_path, interactive=True, answerer=lambda req: "y",
+        model2, tmp_path, interactive=True, question_answerer=question_answerer,
     )
     assert any(isinstance(c, AskUser) for c in components2.components)
+
+
+def test_approval_and_question_callbacks_have_separate_typed_contracts(tmp_path):
+    def scripted(messages, info):
+        return ModelResponse(parts=[TextPart("done")])
+
+    async def stream_function(messages, info):
+        yield "done"
+
+    model = FunctionModel(scripted, stream_function=stream_function)
+    model.session = MockSession()
+
+    def approval_answerer(request):
+        assert hasattr(request, "command")
+        return "y"
+
+    async def question_answerer(request):
+        assert isinstance(request, AskUserRequest)
+        return AskUserResponse(answers=tuple(
+            AskUserAnswer(header=question.header, selected=(question.options[0].label,))
+            for question in request.questions
+        ))
+
+    components = build_agent_components(
+        model, tmp_path, interactive=True,
+        approval_answerer=approval_answerer, question_answerer=question_answerer,
+    )
+    from ds4py.capabilities.approvals import DS4Approvals
+
+    approvals = next(c for c in components.components if isinstance(c, DS4Approvals))
+    questions = next(c for c in components.components if isinstance(c, AskUser))
+    request = AskUserRequest(questions=(Question(
+        header="next", question="What next?",
+        options=(QuestionOption(label="one"), QuestionOption(label="two")),
+    ),))
+
+    response = asyncio.run(questions.answerer(request))
+
+    assert approvals.answerer is approval_answerer
+    assert questions.answerer is question_answerer
+    assert isinstance(response, AskUserResponse)
+    assert response.answers[0].selected == ("one",)

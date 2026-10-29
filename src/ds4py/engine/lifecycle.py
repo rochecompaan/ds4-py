@@ -1,14 +1,16 @@
 """Session identity, the session event bus, and session-scoped state.
 
-Lifecycle events are emitted by the facade's consumer thread. Listeners run on
-that thread, so they must not call blocking session methods (rounds, syncs, or
-native jobs); doing so can deadlock the engine worker. State factories and
-``close()`` are orchestration concerns, not worker callbacks: they may acquire
-ordinary Python resources, but the facade decides when they run.
+Without an async bridge, listeners run on the facade's consumer thread and must
+not call blocking session methods (rounds, syncs, or native jobs). During an
+async model round, the bridge marshals every event to its owning event loop.
+State factories and ``close()`` are orchestration concerns, not worker callbacks:
+they may acquire ordinary Python resources, but the facade decides when they run.
 """
+from concurrent.futures import Future
+from contextlib import contextmanager
 from dataclasses import dataclass
 import sys
-from threading import RLock
+from threading import RLock, get_ident
 from typing import Any, Callable, Iterable, Mapping
 from uuid import uuid4
 
@@ -33,6 +35,8 @@ class SessionLifecycle:
         self._states: dict[str, object] = {}
         self._lock = RLock()
         self._error_handler = error_handler
+        self._loop = None
+        self._loop_thread = None
 
     @property
     def id(self) -> str:
@@ -58,12 +62,49 @@ class SessionLifecycle:
 
         return unsubscribe
 
+    @contextmanager
+    def deliver_on(self, loop):
+        """Deliver emissions from other threads on ``loop``'s owning thread."""
+        owner = get_ident()
+        with self._lock:
+            if self._loop is not None:
+                raise RuntimeError("session event delivery already has an owning loop")
+            self._loop = loop
+            self._loop_thread = owner
+        try:
+            yield
+        finally:
+            with self._lock:
+                if self._loop is loop and self._loop_thread == owner:
+                    self._loop = None
+                    self._loop_thread = None
+
     def emit(self, kind: str, **payload) -> None:
         event = SessionEvent(kind, self._id, dict(payload))
         with self._lock:
             listeners = tuple(self._listeners)
+            loop = self._loop
+            owner = self._loop_thread
+        if loop is not None and owner != get_ident():
+            delivered: Future[None] = Future()
+
+            def deliver() -> None:
+                try:
+                    self._emit_listeners(event, listeners)
+                except BaseException as error:
+                    delivered.set_exception(error)
+                else:
+                    delivered.set_result(None)
+
+            loop.call_soon_threadsafe(deliver)
+            # Keep event order and finish listeners before the producer proceeds.
+            delivered.result()
+            return
+        self._emit_listeners(event, listeners)
+
+    def _emit_listeners(self, event, listeners) -> None:
         for listener, allowed in listeners:
-            if allowed is not None and kind not in allowed:
+            if allowed is not None and event.kind not in allowed:
                 continue
             try:
                 listener(event)

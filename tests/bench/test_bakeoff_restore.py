@@ -1,6 +1,7 @@
 """Bakeoff save evidence and fresh-process restore checks."""
 
 import asyncio
+from dataclasses import replace
 import json
 from pathlib import Path
 import shutil
@@ -16,9 +17,17 @@ from bench.restore_check import (
     RestoreRun,
     check_restore,
     make_stripped_copy,
+    restore_command,
     run_attempt_with_save,
     validate_save,
 )
+import ds4py
+from ds4py import ThinkMode
+from ds4py._native.fake import FAKE_EOS, FakeNative
+from ds4py._native.fake_chat import tokenize_rendered
+from ds4py.engine.sampling import SamplingPolicy
+from ds4py.model import DS4Model
+from ds4py.runtime import AgentRuntime
 from ds4py.store import (
     KV_HEADER,
     SaveRecord,
@@ -31,6 +40,31 @@ from pydantic_ai_harness.step_persistence import (
     FileStepStore,
     RunRecord as StepRunRecord,
 )
+
+
+def restore_fake_engine(script):
+    info = replace(
+        FakeNative()._info,
+        name="fake-ds4", model_id=7, family="qwen",
+        is_deepseek41=False, is_glm_dsa=False, is_qwen4=True,
+    )
+    return ds4py.open(
+        "f.gguf", ctx=65536, think=ThinkMode.NONE,
+        native=FakeNative(info=info, script=script),
+    )
+
+
+def restore_script(*texts):
+    rounds = [tuple(tokenize_rendered(text)) for text in texts]
+    state = {"round": -1}
+
+    def next_token(prompt, generated):
+        if not generated:
+            state["round"] += 1
+        sequence = rounds[min(state["round"], len(rounds) - 1)]
+        return sequence[len(generated)] if len(generated) < len(sequence) else FAKE_EOS
+
+    return next_token
 
 
 def make_save(root, session_id="session-1"):
@@ -182,6 +216,42 @@ def test_short_restore_sequences_must_share_terminal_reason(tmp_path):
     result = check_restore(save, tmp_path / "work", runner=drive)
     assert not result.passed
     assert "terminal" in result.detail
+
+
+def test_restore_driver_preserves_noninteractive_prompt_composition(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "home")
+    with restore_fake_engine(restore_script("saved answer")) as engine:
+        model = DS4Model(engine.session(), sampling=SamplingPolicy(seed=1))
+        runtime = AgentRuntime(
+            model, project, store=store, interactive=False, read_only=True,
+        )
+
+        async def save_attempt():
+            await runtime.run("question")
+            return await runtime.save()
+
+        try:
+            record = asyncio.run(save_attempt())
+        finally:
+            asyncio.run(runtime.close())
+
+    replacement_engine = restore_fake_engine(restore_script("follow-up answer"))
+    metadata = tmp_path / "restore.json"
+    trace = tmp_path / "restore.jsonl"
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("DS4PY_HOME", str(store.root))
+    monkeypatch.setattr(ds4py, "open", lambda *args, **kwargs: replacement_engine)
+
+    status = restore_command([
+        "--session-id", record.session_id, "--metadata", str(metadata),
+        "--model", "f.gguf", "--backend", "cpu", "--ctx", "65536",
+        "--temp", "0", "--seed", "1", "--tokens", "256", "--trace", str(trace),
+    ])
+
+    assert status == 0
+    assert json.loads(metadata.read_text())["followup_plan"] == "extend"
 
 
 def test_default_noninteractive_attempt_uses_its_existing_single_save(monkeypatch):

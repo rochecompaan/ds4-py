@@ -176,6 +176,29 @@ def test_closing_event_iteration_binds_only_the_published_partial_response():
     asyncio.run(scenario())
 
 
+def test_session_bus_listeners_stay_on_the_asyncio_thread():
+    async def scenario():
+        with fake_engine(script=scripted_text("done")) as engine:
+            session = engine.session()
+            owning_thread = threading.get_ident()
+            delivered = []
+            session.on_event(
+                lambda event: delivered.append((event.kind, threading.get_ident())),
+                kinds={"run_start", "Synced", "Token", "Stopped", "run_end"},
+            )
+
+            session.emit("run_start")
+            await collect(make_model(session), [user()])
+            session.emit("run_end")
+
+            assert [kind for kind, _ in delivered] == [
+                "run_start", "Synced", "Token", "Token", "Token", "Token", "Stopped", "run_end",
+            ]
+            assert {thread for _, thread in delivered} == {owning_thread}
+
+    asyncio.run(scenario())
+
+
 def test_request_relies_on_stream_terminal_binding_exactly_once():
     async def scenario():
         with fake_engine(script=scripted_text("done")) as engine:

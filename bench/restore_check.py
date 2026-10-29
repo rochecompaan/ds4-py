@@ -324,6 +324,9 @@ def restore_command(argv):
     custom.add_argument("--metadata", type=Path, required=True)
     own, remaining = custom.parse_known_args(argv)
     args = parser().parse_args(remaining)
+    # Attempts run non-interactively. Restore must render the same prompt-visible
+    # capabilities; read_only below independently enforces restore safety.
+    args.non_interactive = True
     with _runtime(args, read_only=True) as runtime:
         with _trace(runtime, args):
             state = asyncio.run(_restore_operation(runtime, own.session_id))

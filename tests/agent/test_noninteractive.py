@@ -2,6 +2,7 @@ import asyncio
 import builtins
 import io
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -188,7 +189,7 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(monkeypatch
     runtime = next(item for item in created if isinstance(item, Runtime))
     assert runtime.kwargs == {
         "read_only": True, "yolo": True, "system": "persistent rules",
-        "interactive": False, "answerer": None,
+        "interactive": False, "approval_answerer": None, "question_answerer": None,
     }
     assert [(turn.role, turn.content) for turn in runtime.loaded] == [
         ("user", "earlier"), ("assistant", "answer"),
@@ -245,9 +246,29 @@ def test_agent_cli_interactive_constructs_and_runs_tui(monkeypatch):
     tui = next(item for item in created if isinstance(item, FakeTUI))
     assert tui.runtime is runtime
     assert runtime.kwargs["interactive"] is True
-    assert callable(runtime.kwargs["answerer"])
+    assert callable(runtime.kwargs["approval_answerer"])
+    assert callable(runtime.kwargs["question_answerer"])
     assert "tui-ran" in created
     assert created[-2:] == ["runtime-closed", "engine-closed"]
+
+
+def test_agent_cli_question_answerer_returns_a_typed_response(monkeypatch):
+    from ds4py import agent_cli
+    from pydantic_ai_harness.ask_user import (
+        AskUserRequest, AskUserResponse, Question, QuestionOption,
+    )
+
+    request = AskUserRequest(questions=(Question(
+        header="next", question="What next?",
+        options=(QuestionOption(label="one"), QuestionOption(label="two")),
+    ),))
+    monkeypatch.setattr(sys.stdin, "readline", lambda: "2\n")
+
+    response = asyncio.run(agent_cli._question_answerer(request))
+
+    assert isinstance(response, AskUserResponse)
+    assert response.answers[0].header == "next"
+    assert response.answers[0].selected == ("two",)
 
 
 def test_raw_alias_and_core_commands_do_not_import_the_harness(monkeypatch, tmp_path, capsys):

@@ -198,6 +198,13 @@ def _content_hash(message: ModelMessage) -> str:
     return _digest(_projection(message))
 
 
+def _key_recovery_hash(message: ModelMessage) -> str:
+    """Match processed copies that gained request instructions but lost their key."""
+    projection = _projection(message)
+    projection.pop("instructions", None)
+    return _digest(projection)
+
+
 def _validate(messages: Iterable[ModelMessage]) -> None:
     for message in messages:
         parts = message.parts
@@ -240,16 +247,34 @@ class MessageBinder:
         self._restored = False
 
     def adopt(self, messages: Sequence[ModelMessage]) -> list[ModelMessage]:
-        """Keep final harness messages only where they match the bound transcript."""
+        """Reconcile bound content by message key without truncating harness history.
+
+        The incoming sequence is authoritative: it may contain history omitted
+        from the model's request view. A candidate with the same stable key can
+        inherit its bound counterpart's content (for example, a partial response
+        that the harness later completed). An unkeyed processed copy can recover
+        its key only from a unique match that differs at most by request instructions.
+        """
         candidates = list(messages)
         _validate(candidates)
-        adopted = [
-            candidate
-            if index >= len(self._records)
-            or _content_hash(candidate) == self._records[index].content_hash
-            else deepcopy(self._bound_messages[index])
-            for index, candidate in enumerate(candidates)
-        ]
+        bound = {record.key: index for index, record in enumerate(self._records)}
+        recoverable: dict[str, list[int]] = {}
+        for index, message in enumerate(self._bound_messages):
+            recoverable.setdefault(_key_recovery_hash(message), []).append(index)
+        adopted = []
+        for candidate in candidates:
+            key = (candidate.metadata or {}).get("ds4.key")
+            index = bound.get(key)
+            if index is None and not key:
+                matches = recoverable.get(_key_recovery_hash(candidate), [])
+                if len(matches) == 1:
+                    index = matches[0]
+            if (
+                index is not None
+                and _content_hash(candidate) != self._records[index].content_hash
+            ):
+                candidate = deepcopy(self._bound_messages[index])
+            adopted.append(candidate)
         self._keyed(adopted)
         return adopted
 

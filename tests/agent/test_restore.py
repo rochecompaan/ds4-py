@@ -16,7 +16,7 @@ from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.engine.sampling import SamplingPolicy
-from ds4py.errors import StoreError
+from ds4py.errors import EngineError, StoreError
 from ds4py.model import DS4Model
 from ds4py.runtime import AgentRuntime
 from ds4py.store import KV_HEADER, KV_MAGIC, KV_VERSION, SessionStore, token_digest
@@ -361,6 +361,83 @@ def test_token_hash_mismatch_renders_and_reports_the_actual_path(tmp_path, monke
     ]
     assert switched[-1]["payload"]["restore_path"] == "render"
     assert "hash" in switched[-1]["payload"]["mismatch"]
+
+
+def test_invalid_snapshot_does_not_commit_switch_or_overwrite_target(tmp_path):
+    project, store, record, saved = saved_session(tmp_path)
+    steps = _steps(store.session_dir(saved["session_id"]))
+    snapshot = asyncio.run(steps.latest_snapshot(run_id=record.run_id))
+    response = next(message for message in snapshot.messages if isinstance(message, ModelResponse))
+    metadata = dict(response.metadata or {})
+    metadata.pop("ds4.key")
+    response.metadata = metadata
+    _replace_snapshot(steps, snapshot)
+    target_path = store.session_dir(saved["session_id"]) / "save.json"
+    target_before = target_path.read_bytes()
+
+    class State:
+        closed = 0
+
+        def close(self):
+            self.closed += 1
+
+    with fake_engine(script=scripted_rounds("old answer")) as engine:
+        model = make_model(engine)
+        runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
+        state = State()
+
+        async def scenario():
+            await runtime.run("old conversation")
+            old_id = runtime.session_id
+            old_messages = list(runtime.messages)
+            model.session.state("test", lambda: state)
+
+            with pytest.raises(StoreError, match="key"):
+                await runtime.switch(saved["session_id"])
+
+            assert runtime.session_id == old_id
+            assert dump(runtime.messages) == dump(old_messages)
+            assert state.closed == 0
+            await runtime.save()
+            assert target_path.read_bytes() == target_before
+
+        try:
+            asyncio.run(scenario())
+        finally:
+            asyncio.run(runtime.close())
+
+
+def test_native_restore_failure_never_saves_old_history_under_target(tmp_path, monkeypatch):
+    project, store, _record, saved = saved_session(tmp_path)
+    target_path = store.session_dir(saved["session_id"]) / "save.json"
+    target_before = target_path.read_bytes()
+
+    with fake_engine(script=scripted_rounds("old answer")) as engine:
+        model = make_model(engine)
+        runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
+
+        async def scenario():
+            await runtime.run("old conversation")
+
+            def reject_load(file, **kwargs):
+                raise EngineError("native restore rejected")
+
+            monkeypatch.setattr(model.session, "load_payload", reject_load)
+            with pytest.raises(EngineError, match="native restore rejected"):
+                await runtime.switch(saved["session_id"])
+
+            assert runtime.session_id == saved["session_id"]
+            assert dump(runtime.messages) == dump(saved["messages"])
+            assert model.session.transcript.tokens == ()
+            assert model.binder._records == []
+            with pytest.raises(StoreError, match="empty transcript"):
+                await runtime.save()
+            assert target_path.read_bytes() == target_before
+
+        try:
+            asyncio.run(scenario())
+        finally:
+            asyncio.run(runtime.close())
 
 
 def test_missing_named_snapshot_fails_with_the_run_id(tmp_path):

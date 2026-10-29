@@ -35,7 +35,7 @@ from pydantic_ai_harness.step_persistence import (
     RunRecord as StepRunRecord,
 )
 
-from ds4py.agent import Answerer, build_agent_components
+from ds4py.agent import ApprovalAnswerer, QuestionAnswerer, build_agent_components
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.engine.lifecycle import Listener, SessionEvent
@@ -48,6 +48,7 @@ from ds4py.runtime_restore import (
     RestoreResult,
     plan_restore,
     restore_snapshot,
+    validate_restore_snapshot,
 )
 from ds4py.store import (
     KV_HEADER,
@@ -147,7 +148,8 @@ class AgentRuntime:
         yolo: bool = False,
         system: str | None = None,
         interactive: bool = False,
-        answerer: Answerer | None = None,
+        approval_answerer: ApprovalAnswerer | None = None,
+        question_answerer: QuestionAnswerer | None = None,
     ) -> None:
         self.model = model
         self.project_dir = Path(project_dir)
@@ -170,7 +172,8 @@ class AgentRuntime:
             yolo=yolo,
             system=system,
             interactive=interactive,
-            answerer=answerer,
+            approval_answerer=approval_answerer,
+            question_answerer=question_answerer,
             session_dir=self._session_dir,
         )
         self._agent = self.components.agent
@@ -490,6 +493,19 @@ class AgentRuntime:
         ]
         return f"{prefix}{max(numbers, default=0) + 1}"
 
+    def _abort_restore(
+        self, snapshot: ContinuableSnapshot, record: SaveRecord,
+    ) -> None:
+        """Leave the committed target empty, never paired with old native state."""
+        self._session.reconcile_round(0)
+        self.model.binder.forget()
+        if self._notes is not None:
+            self._notes.sync_from_segments(())
+        self._messages = list(snapshot.messages)
+        self._title = record.title
+        self._created_at = record.created_at
+        self._status = "error"
+
     async def switch(self, session_prefix: str) -> SaveRecord:
         """Adopt a saved session: load its KV, or render its snapshot fresh."""
         self._require_open()
@@ -509,20 +525,30 @@ class AgentRuntime:
                 f"step {record.step_index}, which is missing"
             )
         plan = plan_restore(record, session_dir, self.store)
+        validate_restore_snapshot(
+            binder=self.model.binder,
+            snapshot=snapshot,
+            record=record,
+            session_dir=session_dir,
+        )
         if self._record is not None:
             self._record.relocate(session_dir / "events.jsonl")
         outcome: RestoreOutcome = {}
 
         def restore() -> RestoreResult:
-            result = restore_snapshot(
-                session=self._session,
-                binder=self.model.binder,
-                notes=self._notes,
-                record=record,
-                snapshot=snapshot,
-                plan=plan,
-                session_dir=session_dir,
-            )
+            try:
+                result = restore_snapshot(
+                    session=self._session,
+                    binder=self.model.binder,
+                    notes=self._notes,
+                    record=record,
+                    snapshot=snapshot,
+                    plan=plan,
+                    session_dir=session_dir,
+                )
+            except BaseException:
+                self._abort_restore(snapshot, record)
+                raise
             outcome.update(result)
             self._messages = list(snapshot.messages)
             self._title = record.title

@@ -80,6 +80,40 @@ def _approval_answerer(request):
     return answer
 
 
+async def _question_answerer(request):
+    """Read AskUser choices and return its typed response, never an approval string."""
+    from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserResponse
+
+    answers = []
+    for question in request.questions:
+        print(question.question, file=sys.stderr, flush=True)
+        for index, option in enumerate(question.options, 1):
+            description = f" — {option.description}" if option.description else ""
+            print(f"  {index}. {option.label}{description}", file=sys.stderr, flush=True)
+        prompt = "Choices (comma-separated)" if question.multi_select else "Choice"
+        answer = sys.stdin.readline()
+        if answer == "":
+            return AskUserResponse(cancelled=True)
+        selected = []
+        for value in (item.strip() for item in answer.split(",")):
+            if not value:
+                continue
+            if value.isdecimal() and 1 <= int(value) <= len(question.options):
+                label = question.options[int(value) - 1].label
+            else:
+                label = next(
+                    (option.label for option in question.options if option.label == value),
+                    None,
+                )
+            if label is None or label in selected:
+                return AskUserResponse(cancelled=True)
+            selected.append(label)
+        if not selected or (len(selected) > 1 and not question.multi_select):
+            return AskUserResponse(cancelled=True)
+        answers.append(AskUserAnswer(header=question.header, selected=tuple(selected)))
+    return AskUserResponse(answers=tuple(answers))
+
+
 @contextmanager
 def open_runtime(args, project_dir, *, read_only=False):
     """Open the canonical agent stack with an explicit CLI interaction policy."""
@@ -101,7 +135,8 @@ def open_runtime(args, project_dir, *, read_only=False):
         runtime = AgentRuntime(
             model, project_dir, read_only=read_only, yolo=args.yolo,
             system=args.system, interactive=not args.non_interactive,
-            answerer=None if args.yolo else _approval_answerer,
+            approval_answerer=None if args.yolo else _approval_answerer,
+            question_answerer=_question_answerer if not args.non_interactive else None,
         )
         try:
             yield runtime

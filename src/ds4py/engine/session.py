@@ -173,6 +173,10 @@ class Session:
         """Publish an extension/status event on this session's bus."""
         self._lifecycle.emit(kind, **payload)
 
+    def events_on_loop(self, loop):
+        """Scope all session-bus delivery to one asyncio loop's owning thread."""
+        return self._lifecycle.deliver_on(loop)
+
     def state(self, key: str, factory: Callable[[], T]) -> T:
         """Return the session-owned state for ``key``, creating it once."""
         self._require_open()
@@ -312,6 +316,21 @@ class Session:
                     self.drop_checkpoint(key)
             self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
             self._transcript.truncate(token_count)
+
+    def reconcile_round(self, token_count: int) -> None:
+        """Rewind native state and transcript to one closed round's sampled end.
+
+        The response owner calls this after closing and draining its facade
+        iterator. Cancellation cannot still be observed by a native job here.
+        """
+        with self._lock:
+            if self._active_round:
+                raise EngineError("a round is open")
+            self.truncate(token_count)
+            self._worker.call(
+                lambda engine, native: native.rewind(token_count)
+            ).result()
+            self._worker.cancel_event.clear()
 
     def append_user(self, text: str, images=()) -> Segment:
         """Append a user turn between rounds, initializing an empty chat if needed.

@@ -51,6 +51,22 @@ def plan_restore(
     return RestorePlan("kv", declared, None)
 
 
+def validate_restore_snapshot(
+    *,
+    binder: MessageBinder,
+    snapshot: ContinuableSnapshot,
+    record: SaveRecord,
+    session_dir: Path,
+) -> None:
+    """Validate snapshot/provenance agreement without mutating live state."""
+    try:
+        binder.validate_restore(snapshot.messages, record.segments)
+    except EngineError as error:
+        raise StoreError(
+            f"{session_dir / 'save.json'}: cannot restore: {error}"
+        ) from error
+
+
 def restore_snapshot(
     *,
     session: Session,
@@ -61,13 +77,7 @@ def restore_snapshot(
     plan: RestorePlan,
     session_dir: Path,
 ) -> RestoreResult:
-    """Restore one validated snapshot and report the path and any mismatch."""
-    try:
-        binder.validate_restore(snapshot.messages, record.segments)
-    except EngineError as error:
-        raise StoreError(
-            f"{session_dir / 'save.json'}: cannot restore: {error}"
-        ) from error
+    """Install one snapshot validated by :func:`validate_restore_snapshot`."""
     outcome: RestoreOutcome = {}
     loaded: list[int] | None = None
     if plan.payload_bytes is not None:

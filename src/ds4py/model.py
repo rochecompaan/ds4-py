@@ -155,7 +155,8 @@ class DS4Model(Model):
         response = DS4StreamedResponse(
             self, params, policy, max_tokens, stop_sequences,
         )
-        yield response
+        with self.session.events_on_loop(asyncio.get_running_loop()):
+            yield response
 
     async def request(self, messages, model_settings, model_request_parameters) -> ModelResponse:
         settings, params = self.prepare_request(model_settings, model_request_parameters)
@@ -381,16 +382,7 @@ class DS4StreamedResponse(StreamedResponse):
         )
         cutoff = sampled_start + self._output_tokens
 
-        def reconcile():
-            self._session.truncate(cutoff)
-            self._session._worker.call(
-                lambda engine, native: native.rewind(cutoff)
-            ).result()
-            # The facade round is closed, so no job remains to observe and
-            # clear a cancellation that arrived after the last sample.
-            self._session._worker.cancel_event.clear()
-
-        await asyncio.to_thread(reconcile)
+        await asyncio.to_thread(self._session.reconcile_round, cutoff)
         self._round_exhausted = True
         self._reconciled = True
 
