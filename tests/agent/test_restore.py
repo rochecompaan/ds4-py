@@ -1,13 +1,15 @@
 """Save, switch, new, fork, and close behavior (Task 9)."""
 
 import asyncio
+import json
+import shutil
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
-import json
 from pathlib import Path
-import shutil
 
 import pytest
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, ModelResponse
 
 import ds4py
 from ds4py import ThinkMode
@@ -18,7 +20,6 @@ from ds4py.errors import StoreError
 from ds4py.model import DS4Model
 from ds4py.runtime import AgentRuntime
 from ds4py.store import KV_HEADER, KV_MAGIC, KV_VERSION, SessionStore, token_digest
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, ModelResponse
 
 READ_CALL = (
     "<tool_call><function=read_file><parameter=path>hello.txt</parameter>"
@@ -113,6 +114,69 @@ def saved_session(tmp_path, script=(READ_CALL, "first answer"), *, hints=False):
         finally:
             asyncio.run(runtime.close())
     return project, store, record, state
+
+
+def test_save_and_switch_with_skill_history_preserves_provenance(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    skill = home / ".claude" / "skills" / "test-skill" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text(
+        "---\n"
+        "name: test-skill\n"
+        "description: Exercise deferred capability instructions.\n"
+        "---\n"
+        "Use the test skill.\n"
+    )
+    monkeypatch.setenv("HOME", str(home))
+    project, store, record, saved = saved_session(tmp_path, script=("first answer",))
+    assert any("test-skill" in str(message) for message in saved["messages"])
+
+    with fake_engine() as engine:
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
+        try:
+            restored = asyncio.run(runtime.switch(record.session_id))
+            assert restored == record
+            assert dump(runtime.messages) == dump(saved["messages"])
+        finally:
+            asyncio.run(runtime.close())
+
+
+def test_partial_response_does_not_replace_bound_history_in_saved_snapshot(tmp_path):
+    # The harness may expose a partial processed response while the binder's
+    # completed response is the version represented by the sampled tokens.
+    project, store, record, saved = saved_session(tmp_path, script=("first answer",))
+    with fake_engine() as engine:
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
+        try:
+            asyncio.run(runtime.switch(record.session_id))
+            steps = _steps(store.session_dir(record.session_id))
+            snapshot = asyncio.run(steps.latest_snapshot(run_id=record.run_id))
+            response = next(
+                message
+                for message in snapshot.messages
+                if isinstance(message, ModelResponse)
+            )
+            partial = deepcopy(response)
+            partial.parts = partial.parts[:1]
+            partial.parts[0].content = "partial"
+            candidates = [
+                partial if message is response else message
+                for message in snapshot.messages
+            ]
+            snapshot.messages = candidates
+            asyncio.run(runtime._adopt_history(record.run_id, candidates, snapshot))
+            updated = asyncio.run(runtime.save())
+        finally:
+            asyncio.run(runtime.close())
+
+    with fake_engine() as engine:
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
+        try:
+            restored = asyncio.run(runtime.switch(updated.session_id))
+            assert restored == updated
+            assert dump(runtime.messages) == dump(saved["messages"])
+        finally:
+            asyncio.run(runtime.close())
 
 
 def test_valid_kv_switch_restores_binding_without_prefill(tmp_path):

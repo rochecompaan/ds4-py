@@ -1,9 +1,28 @@
 """Match saved records to snapshots and restore native or rendered state."""
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, TypedDict
+
+from pydantic_ai_harness.step_persistence import ContinuableSnapshot
 
 from ds4py.errors import EngineError, StoreError
-from ds4py.store import KV_HEADER, SaveRecord, token_digest
+from ds4py.store import KV_HEADER, SaveRecord, SessionStore, token_digest
+
+if TYPE_CHECKING:
+    from ds4py.binding import MessageBinder
+    from ds4py.capabilities.system_notes import DS4SystemNotes
+    from ds4py.engine.session import Session
+
+
+class RestoreOutcome(TypedDict, total=False):
+    rejected: str
+
+
+class RestoreResult(RestoreOutcome):
+    restore_path: str
+    mismatch: str | None
 
 
 @dataclass(frozen=True)
@@ -13,7 +32,9 @@ class RestorePlan:
     mismatch: str | None
 
 
-def plan_restore(record: SaveRecord, session_dir: Path, store) -> RestorePlan:
+def plan_restore(
+    record: SaveRecord, session_dir: Path, store: SessionStore,
+) -> RestorePlan:
     """Select KV loading only when the declared payload is present and complete."""
     kv_path = session_dir / "session.kv"
     if record.payload_bytes == 0:
@@ -30,7 +51,16 @@ def plan_restore(record: SaveRecord, session_dir: Path, store) -> RestorePlan:
     return RestorePlan("kv", declared, None)
 
 
-def restore_snapshot(*, session, binder, notes, record, snapshot, plan, session_dir):
+def restore_snapshot(
+    *,
+    session: Session,
+    binder: MessageBinder,
+    notes: DS4SystemNotes | None,
+    record: SaveRecord,
+    snapshot: ContinuableSnapshot,
+    plan: RestorePlan,
+    session_dir: Path,
+) -> RestoreResult:
     """Restore one validated snapshot and report the path and any mismatch."""
     try:
         binder.validate_restore(snapshot.messages, record.segments)
@@ -38,8 +68,8 @@ def restore_snapshot(*, session, binder, notes, record, snapshot, plan, session_
         raise StoreError(
             f"{session_dir / 'save.json'}: cannot restore: {error}"
         ) from error
-    outcome = {}
-    loaded = None
+    outcome: RestoreOutcome = {}
+    loaded: list[int] | None = None
     if plan.payload_bytes is not None:
         with (session_dir / "session.kv").open("rb") as file:
             file.seek(KV_HEADER.size)

@@ -8,11 +8,14 @@ handles: one prompt is one harness run, saves and restores go through
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
+from typing import Any, BinaryIO, TypedDict
 from uuid import uuid4
 
+from pydantic_ai import AgentRunResult
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     ModelMessage,
@@ -21,18 +24,31 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     FileStepStore,
-    RunRecord as StepRunRecord,
     StepPersistence,
 )
+from pydantic_ai_harness.step_persistence import (
+    RunRecord as StepRunRecord,
+)
 
-from ds4py.agent import build_agent_components
+from ds4py.agent import Answerer, build_agent_components
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.system_notes import DS4SystemNotes
+from ds4py.engine.lifecycle import Listener, SessionEvent
+from ds4py.engine.prefix import PrefixTurn
+from ds4py.engine.session import Session
 from ds4py.errors import Ds4pyError, EngineError, StoreError
-from ds4py.runtime_restore import plan_restore, restore_snapshot
+from ds4py.model import DS4Model
+from ds4py.runtime_restore import (
+    RestoreOutcome,
+    RestoreResult,
+    plan_restore,
+    restore_snapshot,
+)
 from ds4py.store import (
     KV_HEADER,
     KV_MAGIC,
@@ -45,6 +61,11 @@ from ds4py.store import (
 
 _PLACEHOLDER_HEADER = KV_HEADER.pack(KV_MAGIC, KV_VERSION, 0)
 _SAVE_PREFIX = ".save-"
+
+
+class _PayloadWrite(TypedDict, total=False):
+    tokens: int
+    payload_bytes: int
 
 
 def _bindable(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -62,19 +83,19 @@ class SessionStepStore:
     session directory.
     """
 
-    def __init__(self, store):
+    def __init__(self, store: FileStepStore) -> None:
         self._store = store
         self._closed = False
 
     @property
-    def current(self):
+    def current(self) -> FileStepStore:
         return self._store
 
     @property
     def closed(self) -> bool:
         return self._closed
 
-    def relocate(self, store) -> None:
+    def relocate(self, store: FileStepStore) -> None:
         self._store = store
 
     def close(self) -> None:
@@ -89,10 +110,12 @@ class SessionStepStore:
 class _ModelStepTrace(AbstractCapability):
     """Expose the harness's actual model-step identity on the session bus."""
 
-    def __init__(self, session):
+    def __init__(self, session: Session) -> None:
         self._session = session
 
-    async def before_model_request(self, ctx, request_context):
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
         self._session.emit(
             "model_step", run_id=ctx.run_id, step_index=ctx.run_step,
         )
@@ -115,17 +138,17 @@ class AgentRuntime:
 
     def __init__(
         self,
-        model,
-        project_dir,
+        model: DS4Model,
+        project_dir: str | Path,
         *,
-        store=None,
-        clock=None,
-        read_only=False,
-        yolo=False,
-        system=None,
-        interactive=False,
-        answerer=None,
-    ):
+        store: SessionStore | None = None,
+        clock: Callable[[], datetime | str] | None = None,
+        read_only: bool = False,
+        yolo: bool = False,
+        system: str | None = None,
+        interactive: bool = False,
+        answerer: Answerer | None = None,
+    ) -> None:
         self.model = model
         self.project_dir = Path(project_dir)
         self.store = store if store is not None else SessionStore()
@@ -136,7 +159,7 @@ class AgentRuntime:
         self._status = "idle"
         self._closed = False
         self._running = False
-        self._run_task = None
+        self._run_task: asyncio.Task[Any] | None = None
         self._interrupted = False
         self._created_at = self._timestamp()
         self._session_dir = self.store.session_dir(self._session.id)
@@ -189,7 +212,9 @@ class AgentRuntime:
     def context_size(self) -> int:
         return self._session.engine.config.ctx
 
-    def on_event(self, listener, *, kinds=None):
+    def on_event(
+        self, listener: Listener, *, kinds: Iterable[str] | None = None,
+    ) -> Callable[[], None]:
         """Subscribe to session events; returns the unsubscribe call."""
         return self._session.on_event(listener, kinds=kinds)
 
@@ -210,7 +235,7 @@ class AgentRuntime:
             "step_store", lambda: SessionStepStore(self._step_store(session_id)),
         )
 
-    def _on_engine_event(self, event) -> None:
+    def _on_engine_event(self, event: SessionEvent) -> None:
         if event.kind == "Interrupted":
             self._interrupted = True
             return
@@ -238,7 +263,7 @@ class AgentRuntime:
         if task is not None and task is not asyncio.current_task():
             await asyncio.wait([task])
 
-    async def _latest(self, run_id: str):
+    async def _latest(self, run_id: str) -> ContinuableSnapshot | None:
         try:
             holder = self._holder()
             return await holder.current.latest_snapshot(
@@ -247,7 +272,12 @@ class AgentRuntime:
         except (Ds4pyError, OSError, ValueError):
             return None
 
-    async def _adopt_history(self, run_id, messages, snapshot=None) -> None:
+    async def _adopt_history(
+        self,
+        run_id: str,
+        messages: Sequence[ModelMessage],
+        snapshot: ContinuableSnapshot | None = None,
+    ) -> None:
         """Adopt canonical keys and keep the terminal harness snapshot exact."""
         self._messages = self.model.binder.adopt(messages)
         if snapshot is None:
@@ -257,7 +287,14 @@ class AgentRuntime:
             snapshot.idempotency_key = None
             await self._holder().current.save_snapshot(snapshot)
 
-    async def _fail(self, run_id: str, status: str, error, *, persist=True) -> None:
+    async def _fail(
+        self,
+        run_id: str,
+        status: str,
+        error: BaseException | None,
+        *,
+        persist: bool = True,
+    ) -> None:
         self._status = status
         persistence_error = None
         if persist:
@@ -282,7 +319,7 @@ class AgentRuntime:
             ),
         )
 
-    async def run(self, prompt: str):
+    async def run(self, prompt: str) -> AgentRunResult[Any]:
         """Run one prompt as one harness run and record its terminal status."""
         self._require_open()
         if self._running:
@@ -352,7 +389,7 @@ class AgentRuntime:
         if self._notes is not None:
             self._notes.hints_enabled = bool(enabled)
 
-    def load_prefix(self, turns) -> list[ModelMessage]:
+    def load_prefix(self, turns: Iterable[PrefixTurn]) -> list[ModelMessage]:
         """Seed the history from prefix-file turns so the next run renders them.
 
         Call this method while idle, before the first run. A stripped restore
@@ -387,9 +424,9 @@ class AgentRuntime:
         holder = self._holder()
         run_id = await self._next_save_run_id(holder.current)
 
-        written = {}
+        written: _PayloadWrite = {}
 
-        def write_payload(file):
+        def write_payload(file: BinaryIO) -> int:
             saved = self._session.save_payload(file, header=_PLACEHOLDER_HEADER)
             written["tokens"] = saved.tokens
             written["payload_bytes"] = saved.payload_bytes
@@ -443,7 +480,7 @@ class AgentRuntime:
         self._session.emit("saved", record=record.to_dict(), payload_bytes=payload_bytes)
         return record
 
-    async def _next_save_run_id(self, store) -> str:
+    async def _next_save_run_id(self, store: FileStepStore) -> str:
         prefix = f"{self._session.id}{_SAVE_PREFIX}"
         runs = await store.list_runs(conversation_id=self._session.id)
         numbers = [
@@ -474,9 +511,9 @@ class AgentRuntime:
         plan = plan_restore(record, session_dir, self.store)
         if self._record is not None:
             self._record.relocate(session_dir / "events.jsonl")
-        outcome = {}
+        outcome: RestoreOutcome = {}
 
-        def restore():
+        def restore() -> RestoreResult:
             result = restore_snapshot(
                 session=self._session,
                 binder=self.model.binder,
@@ -490,7 +527,10 @@ class AgentRuntime:
             self._messages = list(snapshot.messages)
             self._title = record.title
             self._created_at = record.created_at
-            return {key: result[key] for key in ("restore_path", "mismatch")}
+            return {
+                "restore_path": result["restore_path"],
+                "mismatch": result["mismatch"],
+            }
 
         self._session.switch(
             record.session_id,

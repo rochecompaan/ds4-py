@@ -1,14 +1,20 @@
 """Bind harness message history to the engine's single token transcript."""
-from dataclasses import dataclass
+from __future__ import annotations
+
 import hashlib
 import json
+from collections.abc import Iterable, Mapping, Sequence
+from copy import deepcopy
+from dataclasses import dataclass
 from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, NotRequired, Protocol, TypedDict
 from uuid import uuid4
 
 from pydantic_ai.messages import (
     InstructionBaselinePart,
     InstructionDeltaPart,
     InstructionPart,
+    ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
@@ -27,6 +33,40 @@ from ds4py.engine.tool_prompt import ToolDefinition
 from ds4py.engine.transcript import Segment, Transcript, TranscriptView
 from ds4py.errors import EngineError
 from ds4py.message_rendering import MessageRenderer, stable_text
+
+if TYPE_CHECKING:
+    from ds4py.capabilities.system_notes import DS4SystemNotes
+    from ds4py.engine.session import Engine, Session
+
+
+class _ProjectionPart(TypedDict, total=False):
+    kind: str
+    content: str
+    name: str
+    args: dict[str, Any]
+    id: str
+    raw: str
+
+
+class _MessageProjection(TypedDict):
+    kind: str
+    parts: list[_ProjectionPart]
+    instructions: NotRequired[str]
+
+
+class _Provenance(Protocol):
+    @property
+    def start(self) -> int: ...
+    @property
+    def end(self) -> int: ...
+    @property
+    def kind(self) -> str: ...
+    @property
+    def key(self) -> str: ...
+    @property
+    def content_hash(self) -> str: ...
+    @property
+    def source(self) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -57,21 +97,25 @@ class _BoundMessage:
 class _ScratchSession:
     """Rendering target with no native session/KV state."""
 
-    def __init__(self, engine):
+    def __init__(self, engine: Engine) -> None:
         self._engine = engine
         self._transcript = Transcript()
         self.transcript = TranscriptView(self._transcript)
 
-    def start_chat(self, tools=(), instructions=None):
+    def start_chat(
+        self, tools: Iterable[ToolDefinition] = (), instructions: str | None = None,
+    ) -> None:
         for segment in PromptBuilder(self._engine).begin(tools, instructions):
             self._transcript.append(segment.tokens, segment.kind)
         self._transcript.set_chat()
 
-    def append_tokens(self, tokens, kind, meta=None):
+    def append_tokens(
+        self, tokens: Sequence[int], kind: str, meta: Mapping[str, object] | None = None,
+    ) -> Segment:
         return self._transcript.append(tokens, kind, meta)
 
 
-def _definitions(tools) -> tuple[ToolDefinition, ...]:
+def _definitions(tools: Iterable[Any]) -> tuple[ToolDefinition, ...]:
     return tuple(
         ToolDefinition(
             tool.name,
@@ -83,21 +127,21 @@ def _definitions(tools) -> tuple[ToolDefinition, ...]:
     )
 
 
-def _digest(value) -> str:
+def _digest(value: Any) -> str:
     encoded = json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
     ).encode()
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _tool_digest(tools) -> str:
+def _tool_digest(tools: Iterable[ToolDefinition]) -> str:
     return _digest([
         {"name": tool.name, "description": tool.description, "parameters": tool.parameters}
         for tool in tools
     ])
 
 
-def _ensure_key(message) -> str:
+def _ensure_key(message: ModelMessage) -> str:
     metadata = dict(message.metadata or {})
     key = metadata.get("ds4.key")
     if not key:
@@ -107,15 +151,14 @@ def _ensure_key(message) -> str:
     return key
 
 
-def _arguments(args):
-    if isinstance(args, str):
-        args = json.loads(args)
-    return dict(args or {})
+def _arguments(args: str | Mapping[str, Any] | None) -> dict[str, Any]:
+    value: Any = json.loads(args) if isinstance(args, str) else args
+    return dict(value or {})
 
 
-def _projection(message) -> dict:
+def _projection(message: ModelMessage) -> _MessageProjection:
     dumped = ModelMessagesTypeAdapter.dump_python([message], warnings=False)[0]
-    projected = {"kind": dumped["kind"], "parts": []}
+    projected: _MessageProjection = {"kind": dumped["kind"], "parts": []}
     if isinstance(message, ModelRequest) and message.instructions is not None:
         projected["instructions"] = message.instructions
     for part in dumped["parts"]:
@@ -123,7 +166,7 @@ def _projection(message) -> dict:
         if kind in ("system-prompt", "instruction", "user-prompt", "text", "thinking"):
             projected["parts"].append({"kind": kind, "content": part["content"]})
         elif kind == "tool-call":
-            item = {
+            item: _ProjectionPart = {
                 "kind": kind,
                 "name": part["tool_name"],
                 "args": _arguments(part["args"]),
@@ -151,11 +194,11 @@ def _projection(message) -> dict:
     return projected
 
 
-def _content_hash(message) -> str:
+def _content_hash(message: ModelMessage) -> str:
     return _digest(_projection(message))
 
 
-def _validate(messages) -> None:
+def _validate(messages: Iterable[ModelMessage]) -> None:
     for message in messages:
         parts = message.parts
         for part in parts:
@@ -180,29 +223,38 @@ class MessageBinder:
     before that round closes.
     """
 
-    def __init__(self, session):
+    def __init__(self, session: Session) -> None:
         self.session = session
         self._renderer = MessageRenderer(session.engine)
         self.note_provider = None
         self._records: list[_BoundMessage] = []
+        self._bound_messages: list[ModelMessage] = []
         self._signature = None
         self._restored = False
 
     def forget(self) -> None:
         """Drop binding state so the next request renders the message list fresh."""
         self._records = []
+        self._bound_messages = []
         self._signature = None
         self._restored = False
 
-    def adopt(self, messages):
-        """Write recovered binding keys onto canonical harness history."""
-        messages = list(messages)
-        _validate(messages)
-        self._keyed(messages)
-        return messages
+    def adopt(self, messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+        """Keep final harness messages only where they match the bound transcript."""
+        candidates = list(messages)
+        _validate(candidates)
+        adopted = [
+            candidate
+            if index >= len(self._records)
+            or _content_hash(candidate) == self._records[index].content_hash
+            else deepcopy(self._bound_messages[index])
+            for index, candidate in enumerate(candidates)
+        ]
+        self._keyed(adopted)
+        return adopted
 
     @staticmethod
-    def _installed_segment(provenance) -> Segment:
+    def _installed_segment(provenance: _Provenance) -> Segment:
         kind = provenance.kind
         meta = {
             "key": provenance.key,
@@ -216,7 +268,9 @@ class MessageBinder:
             kind = "note"
         return Segment(provenance.start, provenance.end, kind, MappingProxyType(meta))
 
-    def _restored_preamble(self, definitions, instructions) -> bool:
+    def _restored_preamble(
+        self, definitions: Sequence[ToolDefinition], instructions: str | None,
+    ) -> bool:
         """True when the loaded transcript still starts with the current preamble."""
         if not self.session.transcript.chat:
             return False
@@ -225,11 +279,15 @@ class MessageBinder:
         loaded = self.session.transcript.tokens
         return bool(preamble) and len(preamble) <= len(loaded) and loaded[:len(preamble)] == preamble
 
-    def validate_restore(self, messages, segments) -> None:
+    def validate_restore(
+        self, messages: Sequence[ModelMessage], segments: Sequence[_Provenance],
+    ) -> None:
         """Validate saved history without installing a native transcript."""
         self._restore_state(messages, segments, loaded=None)
 
-    def restore(self, messages, segments) -> None:
+    def restore(
+        self, messages: Sequence[ModelMessage], segments: Sequence[_Provenance],
+    ) -> None:
         """Bind a loaded native payload to a saved message history.
 
         ``segments`` is a save record's provenance (values with ``start``,
@@ -245,10 +303,16 @@ class MessageBinder:
         )
         self.session._transcript.install(installed)
         self._records = records
+        self._bound_messages = deepcopy(list(messages))
         self._signature = None
         self._restored = True
 
-    def _restore_state(self, messages, segments, loaded):
+    def _restore_state(
+        self,
+        messages: Sequence[ModelMessage],
+        segments: Sequence[_Provenance],
+        loaded: int | None,
+    ) -> tuple[list[Segment], list[_BoundMessage]]:
         messages = list(messages)
         _validate(messages)
         installed = []
@@ -318,7 +382,7 @@ class MessageBinder:
         return installed, records
 
     @staticmethod
-    def _trailing_request(messages):
+    def _trailing_request(messages: Sequence[ModelMessage]) -> bool:
         if not messages or not isinstance(messages[-1], ModelRequest):
             return False
         return any(
@@ -327,14 +391,14 @@ class MessageBinder:
         )
 
     @staticmethod
-    def _continuation(messages):
+    def _continuation(messages: Sequence[ModelMessage]) -> bool:
         return bool(
             messages and isinstance(messages[-1], ModelRequest)
             and messages[-1].parts
             and isinstance(messages[-1].parts[-1], (ToolReturnPart, RetryPromptPart))
         )
 
-    def _retire_paused(self):
+    def _retire_paused(self) -> None:
         if self.session._paused_stream is None:
             return
         previous = self._records[-1]
@@ -354,14 +418,14 @@ class MessageBinder:
             previous.key, previous.content_hash, previous.start, end,
         )
 
-    def _sync_notes(self, provider):
+    def _sync_notes(self, provider: DS4SystemNotes | None) -> None:
         sync = getattr(provider, "resync_from_segments", None)
         if sync is None:
             sync = getattr(provider, "sync_from_segments", None)
         if sync is not None:
             sync(self.session.transcript.segments)
 
-    def _keyed(self, messages) -> list[tuple[str, str]]:
+    def _keyed(self, messages: Sequence[ModelMessage]) -> list[tuple[str, str]]:
         """Pair each message with its key and content hash.
 
         The harness renders requests from processed copies, so a key written on
@@ -387,8 +451,14 @@ class MessageBinder:
             keyed.append((key, content_hash))
         return keyed
 
-    def prepare(self, messages, *, tools=(), instructions=None,
-                note_provider=None) -> BindingChange:
+    def prepare(
+        self,
+        messages: Sequence[ModelMessage],
+        *,
+        tools: Iterable[Any] = (),
+        instructions: str | None = None,
+        note_provider: DS4SystemNotes | None = None,
+    ) -> BindingChange:
         messages = list(messages)
         _validate(messages)
         keyed = self._keyed(messages)
@@ -415,6 +485,7 @@ class MessageBinder:
             if len(self.session.transcript):
                 self.session.truncate(0)
             self._records = []
+            self._bound_messages = []
             self.session.start_chat(definitions, instructions)
             self._signature = signature
             if removed_notes:
@@ -450,6 +521,7 @@ class MessageBinder:
                 )
                 self.session.truncate(start)
                 self._records = self._records[:common]
+                self._bound_messages = self._bound_messages[:common]
                 kind = "rewrite"
                 if removed_notes:
                     self._sync_notes(provider)
@@ -468,9 +540,16 @@ class MessageBinder:
                 self.session, message, key, content_hash,
             )
             self._records.append(_BoundMessage(key, content_hash, message_start, end))
+            self._bound_messages.append(deepcopy(message))
         return BindingChange(kind, start, self._continuation(messages))
 
-    def count_tokens(self, messages, *, tools=(), instructions=None) -> int:
+    def count_tokens(
+        self,
+        messages: Sequence[ModelMessage],
+        *,
+        tools: Iterable[Any] = (),
+        instructions: str | None = None,
+    ) -> int:
         messages = list(messages)
         _validate(messages)
         scratch = _ScratchSession(self.session.engine)
@@ -483,8 +562,9 @@ class MessageBinder:
             scratch.append_tokens(prefix, "assistant_prefix")
         return len(scratch.transcript)
 
-    def bind_response(self, response) -> None:
+    def bind_response(self, response: ModelResponse) -> None:
         key = _ensure_key(response)
+        assert response.metadata is not None  # _ensure_key initializes it
         response.metadata["ds4.source"] = "sampled"
         content_hash = _content_hash(response)
         segments = self.session.transcript.segments
@@ -505,8 +585,10 @@ class MessageBinder:
         record = _BoundMessage(key, content_hash, start, len(self.session.transcript))
         if self._records and self._records[-1].key == key and self._records[-1].start == start:
             self._records[-1] = record
+            self._bound_messages[-1] = deepcopy(response)
         else:
             self._records.append(record)
+            self._bound_messages.append(deepcopy(response))
 
     def export_segments(self) -> tuple[SegmentProvenance, ...]:
         exported = []
