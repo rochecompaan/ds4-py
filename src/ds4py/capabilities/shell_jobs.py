@@ -5,7 +5,9 @@ import os
 import signal
 import time
 from pathlib import Path
+from typing import Any, cast
 
+from ds4py.engine.session import Session
 from pydantic_ai.capabilities import AbstractCapability
 
 _TERM_GRACE = 2.0
@@ -16,14 +18,14 @@ _POLL = 0.05
 class ShellJobState:
     """Session-scoped set of ``start_command`` IDs with best-effort cleanup."""
 
-    def __init__(self, workspace_dir):
+    def __init__(self, workspace_dir: str | Path) -> None:
         self.workspace_dir = Path(workspace_dir).resolve()
-        self.job_ids = set()
+        self.job_ids: set[str] = set()
 
-    def add(self, job_id):
+    def add(self, job_id: str) -> None:
         self.job_ids.add(job_id)
 
-    def close(self):
+    def close(self) -> None:
         for job_id in tuple(self.job_ids):
             base = self.workspace_dir / ".pydantic-ai-harness" / "shell" / job_id
             handle = base / "handle"
@@ -59,15 +61,19 @@ class ShellJobState:
 class DS4ShellJobs(AbstractCapability):
     """Record ``start_command`` job IDs so session end can stop them."""
 
-    def __init__(self, session, workspace):
+    def __init__(self, session: Session, workspace: object) -> None:
         self.session = session
         self.workspace = workspace
 
-    def _state(self):
+    def _state(self) -> ShellJobState:
         workspace_dir = getattr(self.workspace, "working_dir", self.workspace)
-        return self.session.state("shell_jobs", lambda: ShellJobState(workspace_dir))
+        return self.session.state(
+            "shell_jobs", lambda: ShellJobState(cast(str | Path, workspace_dir)),
+        )
 
-    async def after_tool_execute(self, ctx, *, call, tool_def, args, result):
+    async def after_tool_execute(
+        self, ctx: Any, *, call: Any, tool_def: Any, args: Any, result: Any,
+    ) -> Any:
         if call.tool_name == "start_command" and isinstance(result, str):
             for line in result.splitlines():
                 if line.startswith("ID: "):
@@ -78,7 +84,7 @@ class DS4ShellJobs(AbstractCapability):
         return result
 
 
-def _published_exit(status_path):
+def _published_exit(status_path: Path) -> int | None:
     if not status_path.exists():
         return None
     try:
@@ -87,14 +93,14 @@ def _published_exit(status_path):
         return None
 
 
-def _signal(pid, group, number):
+def _signal(pid: int, group: int | None, number: int) -> None:
     if group is not None:
         os.killpg(group, number)
     else:
         os.kill(pid, number)
 
 
-def _alive(pid, group):
+def _alive(pid: int, group: int | None) -> bool:
     try:
         if group is not None:
             os.killpg(group, 0)
@@ -107,7 +113,7 @@ def _alive(pid, group):
     return True
 
 
-def _wait_for_exit(pid, group, timeout):
+def _wait_for_exit(pid: int, group: int | None, timeout: float) -> bool:
     deadline = time.monotonic() + timeout
     while True:
         if not _alive(pid, group):

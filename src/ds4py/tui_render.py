@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 
-from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.formatted_text import FormattedText, StyleAndTextTuples
+from prompt_toolkit.output import Output
 from prompt_toolkit.shortcuts import print_formatted_text
 from prompt_toolkit.utils import get_cwidth
 from pydantic_ai.messages import (
@@ -19,17 +20,19 @@ from pydantic_ai.messages import (
 )
 
 from ds4py.engine.events import TextDelta
+from ds4py.engine.lifecycle import SessionEvent
+from ds4py.runtime import AgentRuntime
 
 
 _INLINE = re.compile(r"(\*\*[^*\n]+\*\*|(?<!\*)\*[^*\n]+\*(?!\*)|`[^`\n]+`)")
 _HEADING = re.compile(r"^#{1,6}\s+(.*)$")
 
 
-def _flatten(value):
+def _flatten(value: object) -> str:
     return " ".join(str(value).split())
 
 
-def _fit(value, width):
+def _fit(value: object, width: int) -> str:
     """Return one display line whose terminal column width is at most width."""
     text = _flatten(value)
     if width <= 0:
@@ -38,7 +41,7 @@ def _fit(value, width):
         return text
     if width == 1:
         return "…"
-    result = []
+    result: list[str] = []
     used = 0
     for char in text:
         char_width = get_cwidth(char)
@@ -49,9 +52,9 @@ def _fit(value, width):
     return "".join(result) + "…"
 
 
-def markdown_fragments(text):
+def markdown_fragments(text: str) -> StyleAndTextTuples:
     """Convert headings and simple inline Markdown to styled fragments."""
-    fragments = []
+    fragments: StyleAndTextTuples = []
     for line in text.splitlines(keepends=True):
         ending = "\n" if line.endswith("\n") else ""
         content = line[:-1] if ending else line
@@ -83,10 +86,10 @@ def markdown_fragments(text):
 class StreamRenderer:
     """Render harness deltas and bounded tool previews on the UI thread."""
 
-    def __init__(self, output=None):
+    def __init__(self, output: Output | None = None) -> None:
         self.output = output
 
-    def handle_event(self, event):
+    def handle_event(self, event: object) -> StyleAndTextTuples:
         fragments = self._fragments(event)
         if fragments:
             newline = isinstance(event, (FunctionToolCallEvent, FunctionToolResultEvent))
@@ -96,7 +99,7 @@ class StreamRenderer:
             )
         return fragments
 
-    def _fragments(self, event):
+    def _fragments(self, event: object) -> StyleAndTextTuples:
         if isinstance(event, TextDelta):
             if event.thinking:
                 return [("dim italic class:thinking", event.text)]
@@ -126,19 +129,19 @@ class StreamRenderer:
 class FooterModel:
     """Session-event-backed status rendered outside the conversation."""
 
-    def __init__(self, runtime):
+    def __init__(self, runtime: AgentRuntime) -> None:
         self.status = "idle"
-        self.plan = None
+        self.plan: str | None = None
         self.ctx_used = 0
         self.ctx_total = runtime.context_size
         self.cwd = str(runtime.project_dir)
-        self.prefill = None
-        self.service_pid = None
-        self.service_status = None
-        self.custom = {}
+        self.prefill: tuple[int, int, float] | None = None
+        self.service_pid: int | None = None
+        self.service_status: str | None = None
+        self.custom: dict[str, str] = {}
         self._unsubscribe = runtime.on_event(self.handle_event)
 
-    def handle_event(self, event):
+    def handle_event(self, event: SessionEvent) -> None:
         if event.kind == "run_start":
             self.status = "running"
             self.prefill = None
@@ -163,7 +166,7 @@ class FooterModel:
             else:
                 self.custom.pop(key, None)
 
-    def _parts(self):
+    def _parts(self) -> list[str]:
         parts = [self.status]
         if self.plan:
             parts.append(self.plan)
@@ -182,8 +185,8 @@ class FooterModel:
             parts.append(self.cwd)
         return parts
 
-    def render(self, width):
+    def render(self, width: int) -> StyleAndTextTuples:
         return [("class:footer", _fit(" | ".join(self._parts()), width))]
 
-    def close(self):
+    def close(self) -> None:
         self._unsubscribe()

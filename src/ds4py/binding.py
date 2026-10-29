@@ -264,7 +264,7 @@ class MessageBinder:
         adopted = []
         for candidate in candidates:
             key = (candidate.metadata or {}).get("ds4.key")
-            index = bound.get(key)
+            index = bound.get(key) if key is not None else None
             if index is None and not key:
                 matches = recoverable.get(_key_recovery_hash(candidate), [])
                 if len(matches) == 1:

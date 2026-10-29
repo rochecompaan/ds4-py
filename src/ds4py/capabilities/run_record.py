@@ -1,15 +1,22 @@
 """Append harness and engine events to a JSONL telemetry file."""
 
+from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+from typing import Any, cast
 
+from ds4py.engine.lifecycle import SessionEvent
+from ds4py.engine.session import Session
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandStartedEvent
 
 
-def _json_safe(value):
+JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
+
+
+def _json_safe(value: object) -> JsonValue:
     """Return ``value`` as JSON types, encoding byte payloads as explicit hex."""
     if isinstance(value, (bytes, bytearray, memoryview)):
         return bytes(value).hex()
@@ -27,7 +34,7 @@ def _json_safe(value):
     return str(value)
 
 
-def _event_payload(event) -> dict:
+def _event_payload(event: object) -> dict[str, JsonValue]:
     """Flatten one harness event without deep-copying it."""
     attributes = getattr(event, "__dict__", None)
     if not attributes:
@@ -45,29 +52,29 @@ class DS4RunRecord(AbstractCapability):
     the harness hook raises it (a run must not report success without a record).
     """
 
-    def __init__(self, session, path):
+    def __init__(self, session: Session, path: str | Path) -> None:
         self.session = session
         self.path = Path(path)
-        self.failure = None
-        self._run_id = None
+        self.failure: OSError | None = None
+        self._run_id: str | None = None
         self._written_run_end = None
         self._subscribed = False
         if hasattr(session, "on_event"):
             session.on_event(self._on_engine_event)
             self._subscribed = True
 
-    def relocate(self, path):
+    def relocate(self, path: str | Path) -> None:
         """Point later lines at another session directory."""
         self.path = Path(path)
 
-    async def for_run(self, ctx):
+    async def for_run(self, ctx: Any) -> "DS4RunRecord":
         if not self._subscribed and hasattr(self.session, "on_event"):
             self.session.on_event(self._on_engine_event)
             self._subscribed = True
         self._run_id = getattr(ctx, "run_id", None)
         return self
 
-    def _write(self, record: dict) -> None:
+    def _write(self, record: dict[str, object]) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("a", encoding="utf-8") as handle:
@@ -76,8 +83,8 @@ class DS4RunRecord(AbstractCapability):
             self.failure = error
             raise
 
-    def _line(self, kind: str, payload: dict) -> dict:
-        values = _json_safe(dict(payload))
+    def _line(self, kind: str, payload: Mapping[str, object]) -> dict[str, object]:
+        values = cast(dict[str, JsonValue], _json_safe(dict(payload)))
         return {
             "ts": datetime.now(timezone.utc).isoformat(),
             "kind": kind,
@@ -86,7 +93,7 @@ class DS4RunRecord(AbstractCapability):
             "payload": values,
         }
 
-    def write_run_end(self, **payload) -> None:
+    def write_run_end(self, **payload: object) -> None:
         """Persist a terminal line before publishing its matching bus event."""
         line = self._line("run_end", payload)
         try:
@@ -103,9 +110,10 @@ class DS4RunRecord(AbstractCapability):
                 # Rollback must not replace the original terminal write error.
                 pass
             raise
-        self._written_run_end = (line["run_id"], line["payload"].get("status"))
+        written_payload = cast(dict[str, JsonValue], line["payload"])
+        self._written_run_end = (line["run_id"], written_payload.get("status"))
 
-    def _on_engine_event(self, event):
+    def _on_engine_event(self, event: SessionEvent) -> None:
         kind = getattr(event, "kind", type(event).__name__)
         if kind == "agent_event":
             return
@@ -120,7 +128,7 @@ class DS4RunRecord(AbstractCapability):
             # Telemetry must never break the engine that is publishing.
             pass
 
-    async def on_event(self, ctx, *, event):
+    async def on_event(self, ctx: Any, *, event: object) -> None:
         line = self._line(type(event).__name__, _event_payload(event))
         line["conversation_id"] = getattr(ctx, "conversation_id", None)
         run_id = getattr(ctx, "run_id", None)

@@ -3,11 +3,17 @@
 import argparse
 import asyncio
 from contextlib import contextmanager, nullcontext
+from collections.abc import Iterator
 from pathlib import Path
 import sys
+from typing import TYPE_CHECKING
 
 from ds4py import ThinkMode
 from ds4py.errors import Ds4pyError
+
+if TYPE_CHECKING:
+    from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
+    from ds4py.runtime import AgentRuntime
 
 
 _THINK_MODES = {
@@ -60,7 +66,7 @@ def parser() -> argparse.ArgumentParser:
     return result
 
 
-def _think_mode(args) -> int:
+def _think_mode(args: argparse.Namespace) -> int:
     if args.think_mode is not None:
         return args.think_mode
     if args.think_level is not None:
@@ -70,7 +76,7 @@ def _think_mode(args) -> int:
     return ThinkMode.HIGH
 
 
-async def _question_answerer(request):
+async def _question_answerer(request: "AskUserRequest") -> "AskUserResponse":
     """Read AskUser choices and return its typed response."""
     from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserResponse
 
@@ -105,7 +111,9 @@ async def _question_answerer(request):
 
 
 @contextmanager
-def open_runtime(args, project_dir, *, read_only=False):
+def open_runtime(
+    args: argparse.Namespace, project_dir: str | Path, *, read_only: bool = False,
+) -> Iterator["AgentRuntime"]:
     """Open the canonical agent stack with its CLI interaction services."""
     from ds4py import open as open_engine
     from ds4py.engine.sampling import SamplingPolicy
@@ -133,7 +141,7 @@ def open_runtime(args, project_dir, *, read_only=False):
             asyncio.run(runtime.close())
 
 
-def command(args) -> int:
+def command(args: argparse.Namespace) -> int:
     from ds4py.engine.prefix import load_prefix
     from ds4py.noninteractive import run_noninteractive
     from ds4py.prefill_trace import PrefillTraceWriter
@@ -157,7 +165,7 @@ def command(args) -> int:
             return asyncio.run(_run_tui(runtime, prompt))
 
 
-async def _run_tui(runtime, prompt):
+async def _run_tui(runtime: "AgentRuntime", prompt: str | None) -> int:
     from ds4py.tui import TUI
 
     tui = TUI(runtime)

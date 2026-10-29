@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import inspect
 import shlex
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from prompt_toolkit.completion import Completion
+from typing import Never
+
+from ds4py.runtime import AgentRuntime
+from ds4py.store import SaveRecord
 
 
 class CommandError(ValueError):
@@ -15,7 +20,7 @@ class CommandError(ValueError):
 
 @dataclass(frozen=True)
 class _Command:
-    handler: object
+    handler: Callable[..., object]
     description: str
     usage: str
 
@@ -23,10 +28,13 @@ class _Command:
 class SlashCommandRegistry:
     """Extension seam for parsing, completing, and executing slash commands."""
 
-    def __init__(self):
-        self._commands = {}
+    def __init__(self) -> None:
+        self._commands: dict[str, _Command] = {}
 
-    def register(self, name, handler, *, description, usage=None):
+    def register(
+        self, name: str, handler: Callable[..., object], *,
+        description: str, usage: str | None = None,
+    ) -> None:
         name = name.lstrip("/")
         if not name or any(char.isspace() for char in name):
             raise ValueError("a command name must be one nonempty word")
@@ -36,7 +44,7 @@ class SlashCommandRegistry:
             handler, description, usage or f"/{name}",
         )
 
-    async def execute(self, line):
+    async def execute(self, line: str) -> object | None:
         try:
             parts = shlex.split(line)
         except ValueError as error:
@@ -50,7 +58,7 @@ class SlashCommandRegistry:
         result = command.handler(*parts[1:])
         return await result if inspect.isawaitable(result) else result
 
-    def completions(self, prefix):
+    def completions(self, prefix: str) -> list[Completion]:
         if not prefix.startswith("/") or any(char.isspace() for char in prefix):
             return []
         return [
@@ -63,40 +71,43 @@ class SlashCommandRegistry:
         ]
 
 
-def _usage(usage):
+def _usage(usage: str) -> Never:
     raise CommandError(f"usage: {usage}")
 
 
-def _record(action, record):
+def _record(action: str, record: SaveRecord) -> str:
     title = record.title or "(untitled)"
     return f"{action} {record.session_id} — {title} ({record.tokens} tokens)"
 
 
-def install_builtin_commands(registry, runtime, *, request_exit):
+def install_builtin_commands(
+    registry: SlashCommandRegistry, runtime: AgentRuntime, *,
+    request_exit: Callable[[], None],
+) -> None:
     """Install exactly the commands supported by the interactive shell."""
 
-    def no_args(args, usage):
+    def no_args(args: Sequence[str], usage: str) -> None:
         if args:
             _usage(usage)
 
-    def exit_(*args):
+    def exit_(*args: str) -> None:
         no_args(args, "/exit")
         request_exit()
 
-    async def new(*args):
+    async def new(*args: str) -> str:
         no_args(args, "/new")
         return f"new session {await runtime.new()}"
 
-    async def save(*args):
+    async def save(*args: str) -> str:
         no_args(args, "/save")
         return _record("saved", await runtime.save())
 
-    async def switch(*args):
+    async def switch(*args: str) -> str:
         if len(args) != 1:
             _usage("/switch <prefix>")
         return _record("switched to", await runtime.switch(args[0]))
 
-    def hints(*args):
+    def hints(*args: str) -> str:
         if len(args) != 1 or args[0] not in {"on", "off"}:
             _usage("/hints on|off")
         enabled = args[0] == "on"

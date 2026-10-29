@@ -1,11 +1,13 @@
 """Render canonical harness messages into engine token segments."""
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Protocol, cast
 
 from pydantic_ai.messages import (
     InstructionBaselinePart,
     InstructionDeltaPart,
     InstructionPart,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -18,10 +20,21 @@ from pydantic_ai.messages import (
 )
 
 from ds4py.engine.prompt import PromptBuilder, RenderedSegment
+from ds4py.engine.session import Engine
+from ds4py.engine.transcript import Segment, TranscriptView
 from ds4py.engine.tool_syntax.render import render_tool_call
 
 
-def stable_text(value) -> str:
+class RenderTarget(Protocol):
+    @property
+    def transcript(self) -> TranscriptView: ...
+
+    def append_tokens(
+        self, tokens: Sequence[int], kind: str, meta: Mapping[str, object] | None = None,
+    ) -> Segment: ...
+
+
+def stable_text(value: object) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, bytes):
@@ -33,7 +46,7 @@ def stable_text(value) -> str:
     return str(value)
 
 
-def _retry_text(part) -> str:
+def _retry_text(part: RetryPromptPart) -> str:
     text = stable_text(part.content)
     return text if text.startswith("Tool error:") else "Tool error: " + text
 
@@ -41,13 +54,15 @@ def _retry_text(part) -> str:
 class MessageRenderer:
     """Render one message history without owning prefix-binding state."""
 
-    def __init__(self, engine):
+    def __init__(self, engine: Engine) -> None:
         self.engine = engine
 
-    def request_segments(self, builder, prefix, message):
-        segments = []
+    def request_segments(
+        self, builder: PromptBuilder, prefix: Sequence[int], message: ModelRequest,
+    ) -> list[RenderedSegment]:
+        segments: list[RenderedSegment] = []
 
-        def append(role, text):
+        def append(role: str, text: str) -> None:
             nonlocal prefix
             tokens = builder.message(prefix, role, text)
             if tokens:
@@ -67,7 +82,7 @@ class MessageRenderer:
                 append("system", part.content)
                 index += 1
             elif isinstance(part, UserPromptPart):
-                append("user", part.content)
+                append("user", cast(str, part.content))
                 index += 1
             else:
                 results = []
@@ -81,12 +96,12 @@ class MessageRenderer:
                             f"{stable_text(current.content)}"
                         )
                     else:
-                        results.append(_retry_text(current))
+                        results.append(_retry_text(cast(RetryPromptPart, current)))
                     index += 1
                 append("tool", "\n\n".join(results))
         return segments
 
-    def _dsml_calls(self, parts, sampled):
+    def _dsml_calls(self, parts: Sequence[ToolCallPart], sampled: bool) -> str:
         family = self.engine.info.family
         calls = " calls" if family == "deepseek41" else "tool_calls"
         stanzas = []
@@ -100,8 +115,10 @@ class MessageRenderer:
             stanzas.append("\n".join(markup.split("\n")[1:-1]))
         return f"<｜DSML｜{calls}>\n{'\n'.join(stanzas)}\n</｜DSML｜{calls}>"
 
-    def response_segments(self, builder, prefix, message):
-        spans = []
+    def response_segments(
+        self, builder: PromptBuilder, prefix: Sequence[int], message: ModelResponse,
+    ) -> list[RenderedSegment]:
+        spans: list[tuple[str, bool]] = []
         sampled = (message.metadata or {}).get("ds4.source") == "sampled"
         family = self.engine.info.family
         parts = [
@@ -110,7 +127,7 @@ class MessageRenderer:
         ]
         in_thinking = False
 
-        def close_thinking():
+        def close_thinking() -> None:
             nonlocal in_thinking
             if sampled and in_thinking:
                 spans.append(("</think>", True))
@@ -136,10 +153,12 @@ class MessageRenderer:
                 end = index
                 while end < len(parts) and isinstance(parts[end], ToolCallPart):
                     end += 1
-                spans.append((self._dsml_calls(parts[index:end], sampled), True))
+                tool_parts = cast(list[ToolCallPart], parts[index:end])
+                spans.append((self._dsml_calls(tool_parts, sampled), True))
                 index = end
             else:
                 close_thinking()
+                part = cast(ToolCallPart, part)
                 details = part.provider_details or {}
                 raw = details.get("ds4py.raw")
                 markup = raw if sampled and isinstance(raw, str) else render_tool_call(
@@ -165,7 +184,9 @@ class MessageRenderer:
             segments.append(RenderedSegment("eos", end))
         return segments
 
-    def append(self, target, message, key, content_hash):
+    def append(
+        self, target: RenderTarget, message: ModelMessage, key: str, content_hash: str,
+    ) -> tuple[int, int]:
         """Append one message and return its start and end token positions."""
         start = len(target.transcript)
         builder = PromptBuilder(self.engine)
@@ -183,7 +204,7 @@ class MessageRenderer:
                 target.append_tokens(segment.tokens, segment.kind, segment_meta)
         return start, len(target.transcript)
 
-    def preflight(self, messages):
+    def preflight(self, messages: Iterable[ModelMessage]) -> None:
         family = self.engine.info.family
         for message in messages:
             if not isinstance(message, ModelResponse):

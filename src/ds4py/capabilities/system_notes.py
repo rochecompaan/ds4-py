@@ -1,9 +1,14 @@
 """System-note provider for the ds4-py default agent."""
 
+from collections.abc import Callable, Sequence
 from datetime import datetime
+from typing import Any
 
+from ds4py.engine.lifecycle import SessionEvent
+from ds4py.engine.session import Session
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
+    ModelMessage,
     ModelRequest,
     RetryPromptPart,
     ToolReturnPart,
@@ -38,7 +43,10 @@ _UNKNOWN = object()
 class DS4SystemNotes(AbstractCapability):
     """Tracks date and hints notes and asks the binder to append them."""
 
-    def __init__(self, session, *, clock=None, hints=False):
+    def __init__(
+        self, session: Session, *,
+        clock: Callable[[], datetime | str] | None = None, hints: bool = False,
+    ) -> None:
         self.session = session
         self.clock = clock or (lambda: datetime.now().astimezone())
         self.hints_enabled = hints
@@ -48,7 +56,7 @@ class DS4SystemNotes(AbstractCapability):
         self._compaction_subscribed = False
         self._compaction_subject = None
 
-    def pending(self, messages):
+    def pending(self, messages: Sequence[ModelMessage]) -> list[tuple[str, str]]:
         """Return notes that would be emitted without mutating provider state."""
         if not messages:
             return []
@@ -61,7 +69,7 @@ class DS4SystemNotes(AbstractCapability):
         if not (is_user or is_continuation):
             return []
 
-        result = []
+        result: list[tuple[str, str]] = []
         if is_user and not self._date_emitted:
             now = self.clock()
             when = now.strftime("%Y-%m-%d %H:%M:%S %Z") if isinstance(now, datetime) else str(now)
@@ -77,7 +85,7 @@ class DS4SystemNotes(AbstractCapability):
                            "hints_on" if self.hints_enabled else "hints_off"))
         return result
 
-    def notes(self, messages):
+    def notes(self, messages: Sequence[ModelMessage]) -> list[tuple[str, str]]:
         """Return ``(text, subtype)`` pairs to append before the request."""
         result = self.pending(messages)
         for _, subtype in result:
@@ -92,7 +100,7 @@ class DS4SystemNotes(AbstractCapability):
                 self._hints_applied = False
         return result
 
-    async def before_model_request(self, ctx, request_context):
+    async def before_model_request(self, ctx: Any, request_context: Any) -> Any:
         if not self._compaction_subscribed:
             subject = getattr(ctx, "compaction_subject", None)
             if subject is None:
@@ -104,12 +112,12 @@ class DS4SystemNotes(AbstractCapability):
             self._compaction_subscribed = True
         return request_context
 
-    def _on_compacted(self, event):
+    def _on_compacted(self, event: SessionEvent) -> None:
         if self._hints_applied is not _UNSET:
             self._hints_applied = _UNKNOWN
         self._hints_full_emitted = False
 
-    def _segment_subtype(self, segment):
+    def _segment_subtype(self, segment: object) -> object:
         kind = getattr(segment, "kind", segment)
         meta = getattr(segment, "meta", {}) or {}
         subtype = meta.get("subtype") if hasattr(meta, "get") else None
@@ -119,7 +127,7 @@ class DS4SystemNotes(AbstractCapability):
             return kind.split(":", 1)[1]
         return kind
 
-    def sync_from_segments(self, segments):
+    def sync_from_segments(self, segments: Sequence[object]) -> None:
         """Reset emitted-note state from the transcript without changing settings."""
         self._date_emitted = False
         self._hints_full_emitted = False
@@ -136,7 +144,7 @@ class DS4SystemNotes(AbstractCapability):
             elif subtype == "hints_off":
                 self._hints_applied = False
 
-    def resync_from_segments(self, segments):
+    def resync_from_segments(self, segments: Sequence[object]) -> None:
         """Resync transcript state without erasing a pending compaction reset."""
         compaction_invalidated = self._hints_applied is _UNKNOWN
         self.sync_from_segments(segments)
@@ -144,7 +152,7 @@ class DS4SystemNotes(AbstractCapability):
             self._hints_applied = _UNKNOWN
             self._hints_full_emitted = False
 
-    def restore_from_segments(self, segments):
+    def restore_from_segments(self, segments: Sequence[object]) -> None:
         """Restore date/hints state from saved transcript segments."""
         self.sync_from_segments(segments)
         for segment in segments:

@@ -4,28 +4,40 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from collections.abc import Callable, Iterable
 
-from prompt_toolkit.completion import Completer
+from prompt_toolkit.completion import CompleteEvent, Completer, Completion
+from prompt_toolkit.document import Document
+from prompt_toolkit.formatted_text import StyleAndTextTuples
+from prompt_toolkit.input import Input
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.key_binding.key_processor import KeyPressEvent
+from prompt_toolkit.output import Output
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import PromptSession, print_formatted_text
 
+from ds4py.engine.lifecycle import SessionEvent
+from ds4py.runtime import AgentRuntime
 from ds4py.tui_commands import SlashCommandRegistry, install_builtin_commands
 from ds4py.tui_render import FooterModel, StreamRenderer
 
 
 class _SlashCompleter(Completer):
-    def __init__(self, registry):
+    def __init__(self, registry: SlashCommandRegistry) -> None:
         self.registry = registry
 
-    def get_completions(self, document, complete_event):
+    def get_completions(
+        self, document: Document, complete_event: CompleteEvent,
+    ) -> Iterable[Completion]:
         yield from self.registry.completions(document.text_before_cursor)
 
 
 class TUI:
     """Own prompt input, event rendering, commands, and the live footer."""
 
-    def __init__(self, runtime, input=None, output=None):
+    def __init__(
+        self, runtime: AgentRuntime, input: Input | None = None, output: Output | None = None,
+    ) -> None:
         self.runtime = runtime
         self.output = output
         self.renderer = StreamRenderer(output)
@@ -45,69 +57,69 @@ class TUI:
         install_builtin_commands(
             self.commands, runtime, request_exit=self._request_exit,
         )
-        self._loop = None
-        self._events = asyncio.Queue()
-        self._prompt_task = None
-        self._queued = deque()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._events: asyncio.Queue[SessionEvent] = asyncio.Queue()
+        self._prompt_task: asyncio.Task[str] | None = None
+        self._queued: deque[str] = deque()
         self._in_loop = False
         self._closed = False
-        self._unsubscribe = runtime.on_event(self._receive_event)
+        self._unsubscribe: Callable[[], None] = runtime.on_event(self._receive_event)
 
-    def _request_exit(self):
+    def _request_exit(self) -> None:
         self.exiting = True
 
-    def _bottom_toolbar(self):
+    def _bottom_toolbar(self) -> StyleAndTextTuples:
         width = self.session.app.output.get_size().columns
         return self.footer.render(width)
 
-    def _keys(self):
+    def _keys(self) -> KeyBindings:
         keys = KeyBindings()
 
         @keys.add("enter")
-        def submit(event):
+        def submit(event: KeyPressEvent) -> None:
             event.current_buffer.validate_and_handle()
 
         @keys.add("escape", "enter")
-        def newline(event):
+        def newline(event: KeyPressEvent) -> None:
             event.current_buffer.insert_text("\n")
 
         @keys.add("c-c")
-        def cancel(event):
+        def cancel(event: KeyPressEvent) -> None:
             self.runtime.cancel()
 
         @keys.add("c-d")
-        def exit_(event):
+        def exit_(event: KeyPressEvent) -> None:
             event.app.exit(exception=EOFError())
 
         return keys
 
-    def show_message(self, text):
+    def show_message(self, text: object) -> None:
         """Write a command result or error outside the model renderer."""
         print_formatted_text(str(text), output=self.output)
 
-    def _receive_event(self, event):
+    def _receive_event(self, event: SessionEvent) -> None:
         if self._loop is not None:
             self._loop.call_soon_threadsafe(self._events.put_nowait, event)
 
-    async def _render_events(self):
+    async def _render_events(self) -> None:
         while True:
             event = await self._events.get()
             if event.kind == "agent_event":
                 self.renderer.handle_event(event.payload["event"])
             self.session.app.invalidate()
 
-    def _ensure_prompt(self):
+    def _ensure_prompt(self) -> asyncio.Task[str]:
         if self._prompt_task is None:
             self._prompt_task = asyncio.create_task(
                 self.session.prompt_async("ds4py> "),
             )
         return self._prompt_task
 
-    def _take_prompt(self, task):
+    def _take_prompt(self, task: asyncio.Task[str]) -> str:
         self._prompt_task = None
         return task.result()
 
-    async def _next_line(self):
+    async def _next_line(self) -> str:
         task = self._ensure_prompt()
         try:
             return await task
@@ -115,7 +127,7 @@ class TUI:
             if task.done():
                 self._prompt_task = None
 
-    async def _run_with_controls(self, prompt):
+    async def _run_with_controls(self, prompt: str) -> None:
         run_task = asyncio.create_task(self.runtime.run(prompt))
         while True:
             prompt_task = self._ensure_prompt()
@@ -140,7 +152,7 @@ class TUI:
                         self.show_message(f"error: {error}")
                     return
 
-    async def dispatch(self, line):
+    async def dispatch(self, line: str) -> None:
         """Execute one submitted prompt or command without escaping the loop."""
         if not line.strip():
             return
@@ -161,7 +173,7 @@ class TUI:
             except Exception as error:
                 self.show_message(f"error: {error}")
 
-    async def run(self, initial=None):
+    async def run(self, initial: str | None = None) -> int:
         """Run an optional initial prompt, then accept input until exit."""
         self._loop = asyncio.get_running_loop()
         self._in_loop = True
@@ -193,7 +205,7 @@ class TUI:
             self.close()
         return 0
 
-    def close(self):
+    def close(self) -> None:
         if self._closed:
             return
         self._closed = True

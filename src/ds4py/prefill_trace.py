@@ -3,9 +3,12 @@
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
+from typing import Any, Callable, TypedDict, cast
 
 from ds4py.engine.ds4py_replay import read_ds4py
 from ds4py.engine.events import Stopped, Synced, Token
+from ds4py.engine.lifecycle import SessionEvent
+from ds4py.engine.session import Session
 
 
 @dataclass(frozen=True)
@@ -21,6 +24,13 @@ class PrefillTraceRecord:
     sampled: tuple[int, ...]
 
 
+class _CurrentRound(TypedDict):
+    prompt: tuple[int, ...]
+    cached: int
+    prefill_suffix: tuple[int, ...]
+    sampled: list[int]
+
+
 class PrefillTraceWriter:
     """Subscribe before a run and append one record at each round terminal.
 
@@ -28,7 +38,7 @@ class PrefillTraceWriter:
     counts all rounds written by this subscriber across appended runs.
     """
 
-    def __init__(self, session, path, *, think: int):
+    def __init__(self, session: Session, path: str | Path, *, think: int) -> None:
         self.session = session
         self.path = Path(path)
         self.think = int(think)
@@ -40,15 +50,15 @@ class PrefillTraceWriter:
         else:
             self.round_index = 0
         self._step_index = 0
-        self._run_id = None
+        self._run_id: str | None = None
         self._active_run = False
-        self._current = None
-        self._unsubscribe = session.on_event(self._on_event)
+        self._current: _CurrentRound | None = None
+        self._unsubscribe: Callable[[], None] | None = session.on_event(self._on_event)
 
-    def __enter__(self):
+    def __enter__(self) -> "PrefillTraceWriter":
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args: Any) -> None:
         self.close()
 
     def close(self) -> None:
@@ -70,7 +80,7 @@ class PrefillTraceWriter:
         current = self._current
         self.append(PrefillTraceRecord(
             session_id=session_id,
-            run_id=self._run_id,
+            run_id=cast(str, self._run_id),
             step_index=self._step_index,
             round_index=self.round_index,
             prompt=current["prompt"],
@@ -83,7 +93,7 @@ class PrefillTraceWriter:
         self._step_index += 1
         self.round_index += 1
 
-    def _on_event(self, event) -> None:
+    def _on_event(self, event: SessionEvent) -> None:
         if event.kind == "run_start":
             self._finish_round(event.session_id)
             self._run_id = event.payload["run_id"]

@@ -500,7 +500,7 @@ class Session:
 
     def run_round(self, *, max_tokens: int = 50_000,
                   sampling: SamplingPolicy | None = None,
-                  stop_sequences: Sequence[bytes] = ()) -> Iterator[Event]:
+                  stop_sequences: Sequence[bytes] = ()) -> Generator[Event, None, None]:
         """Synchronize and generate on the worker; ownership begins at iteration.
 
         While open, other rounds and caller mutations are refused. A stop

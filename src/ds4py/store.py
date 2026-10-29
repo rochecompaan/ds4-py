@@ -17,7 +17,9 @@ import os
 from pathlib import Path
 import struct
 import tempfile
+from typing import Any, BinaryIO, Callable, cast
 
+from ds4py._native.protocol import EngineInfo
 from ds4py.errors import StoreError
 
 KV_HEADER = struct.Struct(">8sIQ")
@@ -46,7 +48,7 @@ def token_digest(tokens: Iterable[int]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _integer(value, name: str) -> int:
+def _integer(value: Any, name: str) -> int:
     if isinstance(value, bool):
         raise ValueError(f"{name} must be an integer")
     try:
@@ -55,14 +57,14 @@ def _integer(value, name: str) -> int:
         raise ValueError(f"{name} must be an integer") from error
 
 
-def _nonnegative(value, name: str) -> int:
+def _nonnegative(value: Any, name: str) -> int:
     value = _integer(value, name)
     if value < 0:
         raise ValueError(f"{name} must not be negative")
     return value
 
 
-def _string(value, name: str) -> str:
+def _string(value: Any, name: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{name} must be a string")
     return value
@@ -79,7 +81,7 @@ class SegmentProvenance:
     content_hash: str
     source: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         start = _nonnegative(self.start, "segment start")
         end = _nonnegative(self.end, "segment end")
         if end <= start:
@@ -132,7 +134,7 @@ class SaveRecord:
     segments: tuple[SegmentProvenance, ...]
     version: int = SAVE_FORMAT_VERSION
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         object.__setattr__(self, "version", _integer(self.version, "version"))
         if self.version != SAVE_FORMAT_VERSION:
             raise ValueError(f"unsupported save record version {self.version}")
@@ -264,7 +266,7 @@ class SessionStore:
     Resolution never creates directories or moves files.
     """
 
-    def __init__(self, root: str | os.PathLike | None = None):
+    def __init__(self, root: str | os.PathLike | None = None) -> None:
         self._root = None if root is None else Path(root).expanduser()
 
     @property
@@ -303,7 +305,7 @@ class SessionStore:
         except OSError as error:
             raise StoreError(f"{path}: cannot read KV file: {error}") from error
 
-    def _checked_kv_header(self, file, path: Path) -> tuple[int, int]:
+    def _checked_kv_header(self, file: BinaryIO, path: Path) -> tuple[int, int]:
         raw = file.read(KV_HEADER.size)
         if len(raw) != KV_HEADER.size:
             raise StoreError(
@@ -338,7 +340,9 @@ class SessionStore:
         except OSError as error:
             raise StoreError(f"{path}: cannot read KV file: {error}") from error
 
-    def write_kv_stream_atomic(self, path: str | os.PathLike, write_payload) -> int:
+    def write_kv_stream_atomic(
+        self, path: str | os.PathLike, write_payload: Callable[[BinaryIO], int],
+    ) -> int:
         """Stream a payload into the KV file and publish it at one rename.
 
         ``write_payload(file)`` writes the whole file from position zero (its own
@@ -358,7 +362,9 @@ class SessionStore:
                 dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False,
             ) as file:
                 temporary = Path(file.name)
-                payload_bytes = _nonnegative(write_payload(file), "payload byte count")
+                payload_bytes = _nonnegative(
+                    write_payload(cast(BinaryIO, file)), "payload byte count",
+                )
                 if payload_bytes > _MAX_UINT32:
                     raise StoreError(
                         f"{path}: payload of {payload_bytes} bytes does not fit "
@@ -430,7 +436,7 @@ class SessionStore:
         path = sessions / names[0] / _SAVE_FILE
         return self.read_record(path), path
 
-    def validate_for_engine(self, record: SaveRecord, info) -> None:
+    def validate_for_engine(self, record: SaveRecord, info: EngineInfo) -> None:
         """Refuse a record saved by another model identity or quantization."""
         if record.model_id != info.model_id:
             raise StoreError(

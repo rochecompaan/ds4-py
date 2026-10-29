@@ -1,44 +1,54 @@
 """Adapt the ds4 engine facade to Pydantic AI requests and streamed responses."""
 import asyncio
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import math
 import operator
 import sys
+from typing import Any, TypeVar, cast
 from uuid import uuid4
 
 import anyio
 
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import (
+    FinishReason, InstructionPart, ModelMessage, ModelResponse, ModelResponseStreamEvent,
+)
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
 from ds4py.binding import MessageBinder
+from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.engine.events import (
-    Interrupted, ReserveReached, Stopped, Synced, TextDelta, Token, ToolCalls,
+    Event, Interrupted, ReserveReached, Stopped, Synced, TextDelta, Token, ToolCalls,
     ToolSyntax,
 )
 from ds4py.engine.sampling import SamplingPolicy
+from ds4py.engine.session import Session
 from ds4py.errors import EngineError
 
 
 _END = object()
+T = TypeVar("T")
 
 
 class ContextReserveError(EngineError):
     """The response hit the context reserve and no compaction strategy is installed."""
 
 
-def _context_reserve_message(needed):
+def _context_reserve_message(needed: int | None) -> str:
     return (
         f"context reserve reached with {needed} token(s) needed; "
         "M4 compaction is not available in this build"
     )
 
 
-def _next(iterator):
+def _next(iterator: Iterator[T]) -> T | object:
     """Keep StopIteration out of the Future used by asyncio.to_thread."""
     try:
         return next(iterator)
@@ -46,7 +56,7 @@ def _next(iterator):
         return _END
 
 
-def _integer(value, name):
+def _integer(value: Any, name: str) -> int:
     if value is None or isinstance(value, bool):
         raise ValueError(f"{name} must be a concrete integer")
     try:
@@ -55,7 +65,7 @@ def _integer(value, name):
         raise ValueError(f"{name} must be a concrete integer") from error
 
 
-def _finite(value, name):
+def _finite(value: Any, name: str) -> float:
     if value is None or isinstance(value, bool):
         raise ValueError(f"{name} must be a concrete finite number")
     try:
@@ -67,7 +77,7 @@ def _finite(value, name):
     return value
 
 
-def _instructions(parts):
+def _instructions(parts: Sequence[InstructionPart] | None) -> str | None:
     if not parts:
         return None
     return "\n\n".join(part.content for part in parts) or None
@@ -84,9 +94,13 @@ class DS4Model(Model):
     supported_tool_addition_modes = frozenset()
     supported_tool_deferral_modes = frozenset()
 
-    def __init__(self, session, *, binder=None, sampling: SamplingPolicy,
-                 max_tokens=50_000, stop_sequences=(), note_provider=None,
-                 reserve_handler=None):
+    def __init__(
+        self, session: Session, *, binder: MessageBinder | None = None,
+        sampling: SamplingPolicy, max_tokens: int = 50_000,
+        stop_sequences: Sequence[bytes] = (),
+        note_provider: DS4SystemNotes | None = None,
+        reserve_handler: Callable[[int], int | None] | None = None,
+    ) -> None:
         super().__init__()
         self.session = session
         self.binder = binder or MessageBinder(session)
@@ -99,18 +113,18 @@ class DS4Model(Model):
         self.reserve_handler = reserve_handler
 
     @property
-    def model_name(self):
+    def model_name(self) -> str:
         return self.session.engine.info.name
 
     @property
-    def system(self):
+    def system(self) -> str:
         return "ds4"
 
     @classmethod
-    def supported_native_tools(cls):
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         return frozenset()
 
-    def _instance_profile_defaults(self, profile):
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         return ModelProfile(**{
             **profile,
             "context_window": self.session.engine.config.ctx,
@@ -124,7 +138,9 @@ class DS4Model(Model):
             "thinking_tags": ("<think>", "</think>"),
         })
 
-    def _request_config(self, settings):
+    def _request_config(
+        self, settings: ModelSettings | None,
+    ) -> tuple[SamplingPolicy, int, tuple[bytes, ...]]:
         settings = settings or {}
         policy = SamplingPolicy(
             temperature=_finite(settings.get("temperature", self.sampling.temperature), "temperature"),
@@ -143,7 +159,10 @@ class DS4Model(Model):
         return policy, max_tokens, stop_sequences
 
     @asynccontextmanager
-    async def _open_stream(self, messages, settings, params):
+    async def _open_stream(
+        self, messages: list[ModelMessage], settings: ModelSettings | None,
+        params: ModelRequestParameters,
+    ) -> AsyncIterator["DS4StreamedResponse"]:
         policy, max_tokens, stop_sequences = self._request_config(settings)
         instruction_parts = self._get_instruction_parts(messages, params)
         self.binder.prepare(
@@ -158,7 +177,10 @@ class DS4Model(Model):
         with self.session.events_on_loop(asyncio.get_running_loop()):
             yield response
 
-    async def request(self, messages, model_settings, model_request_parameters) -> ModelResponse:
+    async def request(
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
         settings, params = self.prepare_request(model_settings, model_request_parameters)
         async with self._open_stream(messages, settings, params) as stream:
             async for _ in stream:
@@ -166,8 +188,11 @@ class DS4Model(Model):
             return stream.get()
 
     @asynccontextmanager
-    async def request_stream(self, messages, model_settings, model_request_parameters,
-                             run_context=None):
+    async def request_stream(
+        self, messages: list[ModelMessage], model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncIterator["DS4StreamedResponse"]:
         settings, params = self.prepare_request(model_settings, model_request_parameters)
         async with self._open_stream(messages, settings, params) as stream:
             yield stream
@@ -177,7 +202,8 @@ class DS4StreamedResponse(StreamedResponse):
     """Translate facade events while finalizing sampled provenance exactly once."""
 
     def __init__(self, model: DS4Model, params: ModelRequestParameters,
-                 sampling: SamplingPolicy, max_tokens: int, stop_sequences):
+                 sampling: SamplingPolicy, max_tokens: int, stop_sequences: Sequence[bytes],
+    ) -> None:
         super().__init__(model_request_parameters=params)
         self._model = model
         self._session = model.session
@@ -195,52 +221,52 @@ class DS4StreamedResponse(StreamedResponse):
         self._round_started = False
         self._bound = False
         self._round_start = len(self._session.transcript)
-        self._sampled_start = None
+        self._sampled_start: int | None = None
         self._prefilled = 0
         self._output_tokens = 0
         self._tool_index = 0
         self._in_tool_syntax = False
         self._pull_lock = asyncio.Lock()
-        self._pending_pull = None
-        self._cleanup_task = None
-        self._reserve_needed = None
+        self._pending_pull: asyncio.Future[Any] | None = None
+        self._cleanup_task: asyncio.Task[None] | None = None
+        self._reserve_needed: int | None = None
         self._context_exhausted = False
 
     @property
-    def model_name(self):
+    def model_name(self) -> str:
         return self._model.model_name
 
     @property
-    def provider_name(self):
+    def provider_name(self) -> str:
         return "ds4"
 
     @property
-    def provider_url(self):
+    def provider_url(self) -> None:
         return None
 
     @property
-    def timestamp(self):
+    def timestamp(self) -> datetime:
         return self._timestamp
 
-    def _interrupted(self):
+    def _interrupted(self) -> None:
         # StreamedResponse.get() gives cancellation precedence only when the
         # response is explicitly incomplete. Do not call session.cancel() after
         # the facade has already consumed and cleared its interruption.
         self.state = "incomplete"
         self._cancelled = True
 
-    def _stopped(self, reason):
-        self.finish_reason = {
+    def _stopped(self, reason: str) -> None:
+        self.finish_reason = cast(FinishReason | None, {
             "stop_token": "stop",
             "max_tokens": "length",
             "tool_call_complete": "tool_call",
             "parser_error": "error",
             "context_exhausted": "error",
-        }.get(reason)
+        }.get(reason))
         if reason == "interrupted":
             self._interrupted()
 
-    def _finalize(self):
+    def _finalize(self) -> None:
         if self._bound:
             return
         self._usage = RequestUsage(
@@ -256,12 +282,12 @@ class DS4StreamedResponse(StreamedResponse):
             self._binder.bind_response(self.get())
         self._bound = True
 
-    def __aiter__(self):
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         # The harness wrappers do not propagate aclose() through every nested
         # async generator. This outer boundary owns early-close finalization.
         parent = super().__aiter__()
 
-        async def iterate():
+        async def iterate() -> AsyncIterator[ModelResponseStreamEvent]:
             try:
                 async for event in parent:
                     yield event
@@ -275,9 +301,9 @@ class DS4StreamedResponse(StreamedResponse):
 
         return iterate()
 
-    def _dispatch(self, event):
+    def _dispatch(self, event: Event) -> list[ModelResponseStreamEvent]:
         """Apply one facade event; return harness stream events to publish."""
-        outputs = []
+        outputs: list[ModelResponseStreamEvent] = []
         if isinstance(event, ReserveReached):
             self._reserve_needed = event.needed
             budget = (
@@ -327,7 +353,7 @@ class DS4StreamedResponse(StreamedResponse):
             self._interrupted()
         return outputs
 
-    async def _pull(self):
+    async def _pull(self) -> Any:
         async with self._pull_lock:
             if self._round_exhausted:
                 return _END
@@ -343,7 +369,7 @@ class DS4StreamedResponse(StreamedResponse):
                 self._pending_pull = pull
                 raise
 
-    async def _drain_locked(self, pull):
+    async def _drain_locked(self, pull: asyncio.Future[Any] | None) -> None:
         """Consume facade events until interruption or facade completion."""
         self._round_started = True
         while not self._round_exhausted:
@@ -364,7 +390,7 @@ class DS4StreamedResponse(StreamedResponse):
             if isinstance(event, (Stopped, Interrupted)):
                 return
 
-    async def _close_round_locked(self):
+    async def _close_round_locked(self) -> None:
         if self._reconciled:
             return
         pending, self._pending_pull = self._pending_pull, None
@@ -386,7 +412,7 @@ class DS4StreamedResponse(StreamedResponse):
         self._round_exhausted = True
         self._reconciled = True
 
-    async def _cleanup(self):
+    async def _cleanup(self) -> None:
         """Terminal drain, close, reconcile, and finalization in one owner."""
         try:
             async with self._pull_lock:
@@ -400,7 +426,7 @@ class DS4StreamedResponse(StreamedResponse):
         finally:
             self._finalize()
 
-    async def _finish(self):
+    async def _finish(self) -> None:
         # Every terminal path awaits this same task, so drain/close/reconcile
         # runs once even when the consumer and the harness race to close.
         task = self._cleanup_task
@@ -419,7 +445,7 @@ class DS4StreamedResponse(StreamedResponse):
             if not primary:
                 raise
 
-    async def _get_event_iterator(self):
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         try:
             while True:
                 try:
@@ -444,7 +470,7 @@ class DS4StreamedResponse(StreamedResponse):
         finally:
             await self._finish()
 
-    async def close_stream(self):
+    async def close_stream(self) -> None:
         self._cancelled = True
         self._interrupted()
         if self._round_started and not self._round_exhausted:
