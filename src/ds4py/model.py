@@ -41,6 +41,14 @@ class ContextReserveError(EngineError):
     """The response hit the context reserve and no compaction strategy is installed."""
 
 
+class ResponseTerminalError(EngineError):
+    """The model response ended before producing a complete valid result."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"model response ended with {reason}")
+
+
 def _context_reserve_message(needed: int | None) -> str:
     return (
         f"context reserve reached with {needed} token(s) needed; "
@@ -467,6 +475,8 @@ class DS4StreamedResponse(StreamedResponse):
                     raise ContextReserveError(
                         _context_reserve_message(self._reserve_needed)
                     )
+                if isinstance(event, Stopped) and event.reason in {"max_tokens", "parser_error"}:
+                    raise ResponseTerminalError(event.reason)
         finally:
             await self._finish()
 

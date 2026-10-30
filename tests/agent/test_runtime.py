@@ -7,6 +7,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
+from io import StringIO
 import json
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.session import Engine
 from ds4py.errors import EngineError
 from ds4py.model import DS4Model
+from ds4py.noninteractive import run_noninteractive
 from ds4py.prefill_trace import PrefillTraceWriter
 from ds4py.engine.replay import read_replay
 from ds4py.runtime import AgentRuntime
@@ -349,6 +351,43 @@ def test_failed_run_reports_error_and_keeps_a_loadable_snapshot(tmp_path: Path) 
     last = failed_messages[-1]
     assert isinstance(last, ModelRequest)
     assert any(isinstance(part, ToolReturnPart) for part in last.parts)
+
+
+@pytest.mark.parametrize(("reason", "text", "max_tokens"), [
+    ("max_tokens", "ab", 1),
+    (
+        "parser_error",
+        "I'll write code\n<tool_call><function=read><parameter=path>unfinished",
+        50_000,
+    ),
+])
+def test_response_terminal_failures_have_error_records_and_nonzero_exit(
+    tmp_path: Path, reason: str, text: str, max_tokens: int,
+) -> None:
+    store = SessionStore(tmp_path / "home")
+    with fake_engine(script=scripted_rounds(text)) as engine:
+        runtime = AgentRuntime(
+            make_model(engine, max_tokens=max_tokens), project_dir(tmp_path), store=store,
+        )
+        session_id = runtime.session_id
+        output, errors = StringIO(), StringIO()
+        try:
+            code = asyncio.run(run_noninteractive(
+                runtime, "hello", out=output, err=errors,
+            ))
+            assert code == 1
+            assert reason in errors.getvalue()
+            assert output.getvalue() == ""
+            assert runtime.status == "error"
+        finally:
+            asyncio.run(runtime.close())
+
+    run_ends = [
+        line for line in read_events(store.session_dir(session_id) / "events.jsonl")
+        if line["kind"] == "run_end"
+    ]
+    assert run_ends[-1]["payload"]["status"] == "error"
+    assert reason in run_ends[-1]["payload"]["error"]
 
 
 def test_canonical_snapshot_write_failure_ends_a_successful_run_as_error(

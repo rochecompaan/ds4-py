@@ -14,6 +14,7 @@ from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.binding import MessageBinder
 from ds4py.engine.session import Engine
 from ds4py.engine.sampling import SamplingPolicy
+from ds4py.errors import EngineError
 from ds4py.model import DS4Model
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
@@ -182,20 +183,19 @@ def test_tool_calls_have_stable_ids_and_preserve_sampled_raw_syntax() -> None:
         assert response.finish_reason == "tool_call"
 
 
-def test_max_tokens_maps_to_length_without_counting_the_stop_token() -> None:
+def test_max_tokens_rejects_partial_response_text() -> None:
     with fake_engine(script=scripted_text("ab")) as engine:
-        response = request(make_model(engine.session()), settings={"max_tokens": 1})
-        assert response.parts == [TextPart("a")]
-        assert response.finish_reason == "length"
-        assert response.usage.output_tokens == 1
+        with pytest.raises(EngineError, match="max_tokens") as caught:
+            request(make_model(engine.session()), settings={"max_tokens": 1})
+        assert caught.value.reason == "max_tokens"
 
 
-def test_parser_failure_maps_to_error() -> None:
+def test_parser_failure_rejects_malformed_response() -> None:
     malformed = "<tool_call><function=read><parameter=path>unfinished"
     with fake_engine(family="qwen", script=scripted_text(malformed)) as engine:
-        response = request(make_model(engine.session()))
-        assert response.finish_reason == "error"
-        assert response.state == "complete"
+        with pytest.raises(EngineError, match="parser_error") as caught:
+            request(make_model(engine.session()))
+        assert caught.value.reason == "parser_error"
 
 
 def test_real_agent_renders_instructions_once_and_invalidates_changes() -> None:
