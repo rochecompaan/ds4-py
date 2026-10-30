@@ -3,7 +3,6 @@
 import ctypes as C
 import fcntl
 import os
-import tempfile
 import threading
 import weakref
 from contextlib import contextmanager
@@ -37,8 +36,7 @@ _open_lock = threading.Lock()
 
 # Instance locking and open-time configuration.
 def lock_path() -> Path:
-    default = Path(tempfile.gettempdir()) / "ds4.lock"
-    return Path(os.environ.get("DS4_LOCK_FILE") or default)
+    return Path(os.environ.get("DS4_LOCK_FILE") or "/tmp/ds4.lock")  # noqa: S108 - Preserve the documented default lock location.
 
 
 def engine_lock_path() -> Path:
