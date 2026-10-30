@@ -21,8 +21,8 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.2
         with:
           python-version: "3.14"
-      - run: uv run --extra agent pyright
-      - run: uv run --extra agent ruff check src bench tests
+      - run: uv run --frozen --extra agent ty check
+      - run: uv run --frozen --extra agent ruff check src bench tests
 
   unit:
     timeout-minutes: 20
