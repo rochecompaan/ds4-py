@@ -127,19 +127,19 @@ Run the focused pytest test, `ruff check src/ds4py/_json.py tests/test_json.py`,
 - Consumes: Task 1 rules and Task 2 JSON contracts where raw payloads need them.
 - Produces: `ruff check src/ds4py/_native src/ds4py/abi src/ds4py/raw.py` and `ty check` on the same paths with zero diagnostics; a minimal documented native `Any` exception list.
 
-- [ ] **Step 1: Triage native diagnostics by boundary**
+- [x] **Step 1: Triage native diagnostics by boundary**
 
 Separate genuine ctypes/dynamic signatures from ordinary code. Keep `Any` only in the smallest necessary `_native` or raw interfaces; use `object`, precise handle/pointer types, `JsonValue`, `Generator`/`AsyncGenerator`, and parameterized generics elsewhere. Replace string-based deprecated ctypes annotations where the runtime contract is preserved.
 
-- [ ] **Step 2: Resolve native and ABI Ruff diagnostics**
+- [x] **Step 2: Resolve native and ABI Ruff diagnostics**
 
 Fix imports, context-manager annotations, subprocess/path/security findings, exception behavior, and complexity without changing native calls or file formats. Add only path-scoped, commented exceptions for unavoidable ctypes or dynamic signatures.
 
-- [ ] **Step 3: Resolve native and ABI ty diagnostics**
+- [x] **Step 3: Resolve native and ABI ty diagnostics**
 
 Add exact generic arguments, overrides, narrowing, and sound return contracts. Do not suppress `unsound-*` findings in ordinary modules; validate or wrap dynamic values at the boundary.
 
-- [ ] **Step 4: Run the native regression gate**
+- [x] **Step 4: Run the native regression gate**
 
 ```bash
 devenv shell -- uv run --frozen --extra agent ruff check src/ds4py/_native src/ds4py/abi src/ds4py/raw.py
