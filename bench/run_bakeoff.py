@@ -105,9 +105,7 @@ def build_agent_command(
     config: AgentConfig, prompt: str, trace_path: str | Path,
 ) -> list[str]:
     """Build equivalent C and ds4-py sampling/task invocations."""
-    command = [*config.executable]
-    if config.agent == "ds4py":
-        command.append("--non-interactive")
+    command = [*config.executable, "--non-interactive"]
     command.extend([
         "--model", config.model,
         "--backend", config.backend,
@@ -366,12 +364,17 @@ def run_tasks_sequentially(
     results: list[TaskRunResult] = []
     for config in configs:
         for staged in workspaces:
+            label = f"{config.agent}/{staged.task_id}"
+            print(f"[bakeoff] start {label}", flush=True)
             workspace = clone_workspace(
                 staged, Path(results_root) / "workspaces" / staged.task_id / config.agent,
             )
-            results.append(run_task(
+            completed = run_task(
                 workspace, config, results_root, grade_runner=grade_runner,
-            ))
+            )
+            results.append(completed)
+            outcome = "PASS" if completed.passed else "FAIL"
+            print(f"[bakeoff] finish {label}: {outcome}", flush=True)
     return results
 
 

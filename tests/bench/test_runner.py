@@ -115,7 +115,7 @@ def test_agent_commands_share_model_sampling_and_task_prompt(tmp_path: Path) -> 
             ("--tokens", "256"), ("--prompt", prompt), ("--trace", str(trace)),
         ):
             assert command[command.index(flag) + 1] == value
-    assert "--yolo" not in c_command
+    assert "--non-interactive" in c_command and "--yolo" not in c_command
     assert "--non-interactive" in python and "--yolo" not in python
 
 
@@ -179,6 +179,25 @@ def test_c_and_python_run_sequentially_on_equivalent_tasks(tmp_path: Path) -> No
     assert results[0].tool_accounting is None
     assert not (tmp_path / "concurrency-violation").exists()
     assert not (results[0].save_dir or Path("missing")).exists() if results[0].save_dir else True
+
+
+def test_sequential_runner_reports_each_task_start_and_finish(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = make_exercise(tmp_path)
+    staged = prepare_exercise(source, tmp_path / "staged")
+
+    run_tasks_sequentially(
+        [staged], [config(tmp_path, "c"), config(tmp_path)], tmp_path / "results",
+        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(command, 0, "pass", ""),
+    )
+
+    assert capsys.readouterr().out.splitlines() == [
+        "[bakeoff] start c/tiny",
+        "[bakeoff] finish c/tiny: PASS",
+        "[bakeoff] start ds4py/tiny",
+        "[bakeoff] finish ds4py/tiny: PASS",
+    ]
 
 
 def test_c_metrics_failure_leaves_tool_accounting_unavailable(tmp_path: Path) -> None:
