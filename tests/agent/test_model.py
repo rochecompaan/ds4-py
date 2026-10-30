@@ -14,8 +14,7 @@ from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.binding import MessageBinder
 from ds4py.engine.session import Engine
 from ds4py.engine.sampling import SamplingPolicy
-from ds4py.errors import EngineError
-from ds4py.model import DS4Model
+from ds4py.model import DS4Model, ResponseTerminalError
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelRequest,
@@ -185,7 +184,7 @@ def test_tool_calls_have_stable_ids_and_preserve_sampled_raw_syntax() -> None:
 
 def test_max_tokens_rejects_partial_response_text() -> None:
     with fake_engine(script=scripted_text("ab")) as engine:
-        with pytest.raises(EngineError, match="max_tokens") as caught:
+        with pytest.raises(ResponseTerminalError, match="max_tokens") as caught:
             request(make_model(engine.session()), settings={"max_tokens": 1})
         assert caught.value.reason == "max_tokens"
 
@@ -193,7 +192,7 @@ def test_max_tokens_rejects_partial_response_text() -> None:
 def test_parser_failure_rejects_malformed_response() -> None:
     malformed = "<tool_call><function=read><parameter=path>unfinished"
     with fake_engine(family="qwen", script=scripted_text(malformed)) as engine:
-        with pytest.raises(EngineError, match="parser_error") as caught:
+        with pytest.raises(ResponseTerminalError, match="parser_error") as caught:
             request(make_model(engine.session()))
         assert caught.value.reason == "parser_error"
 
