@@ -65,11 +65,28 @@ lint.ignore = [
   "COM812", # The formatter owns trailing commas.
   "E501",   # The formatter owns line wrapping.
   "ISC001", # The formatter owns string concatenation layout.
+  "TRY003", # Domain exceptions carry their useful context at raise sites.
 ]
 lint.explicit-preview-rules = true
 lint.per-file-ignores."src/ds4py/_native/**/*.py" = [
   "ANN401", # ctypes signatures remain dynamic at the native boundary.
   "TID251", # Any is isolated to reviewed native signatures.
+]
+lint.per-file-ignores."src/ds4py/_native/fake.py" = [
+  "PLR2004", # Scripted token IDs and model limits are intentional fixtures.
+]
+lint.per-file-ignores."src/ds4py/_native/fake_chat.py" = [
+  "PLR2004", # Scripted token IDs are intentional protocol fixtures.
+  "RUF001",  # Fullwidth vertical bars are required DSML protocol markers.
+]
+lint.per-file-ignores."src/ds4py/_native/modelcheck.py" = [
+  "S603", # Child inspection uses a fixed argument list without a shell.
+]
+lint.per-file-ignores."src/ds4py/abi/build.py" = [
+  "S603", # Build commands use fixed argument lists without a shell.
+]
+lint.per-file-ignores."src/ds4py/abi/probe.py" = [
+  "S603", # Compiler probes use fixed argument lists without a shell.
 ]
 lint.per-file-ignores."tests/**/*.py" = [
   "ANN401",  # Dynamic test doubles can require Any.

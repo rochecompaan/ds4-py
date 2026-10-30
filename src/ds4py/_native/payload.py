@@ -7,9 +7,13 @@ only that stream is closed.
 
 import ctypes
 import os
-from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import BinaryIO
+from typing import TYPE_CHECKING, BinaryIO
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+from ._results import int_result
 
 _libc = ctypes.CDLL(None, use_errno=True)
 _fdopen = _libc.fdopen
@@ -29,7 +33,7 @@ def _os_error() -> OSError:
 
 
 @contextmanager
-def native_stream(file: BinaryIO, mode: str) -> Iterator[int]:
+def native_stream(file: BinaryIO, mode: str) -> Generator[int]:
     """Yield a libc stream for ``file``; close only the duplicated descriptor.
 
     The Python object is flushed and its logical position is made authoritative
@@ -51,9 +55,9 @@ def native_stream(file: BinaryIO, mode: str) -> Iterator[int]:
         os.close(descriptor)
         raise error
 
-    failure = None
+    failure: BaseException | None = None
     try:
-        yield stream
+        yield int_result(stream)
     except BaseException as error:
         failure = error
         raise
@@ -66,7 +70,7 @@ def native_stream(file: BinaryIO, mode: str) -> Iterator[int]:
                 file.seek(0, os.SEEK_END)  # discard read-ahead before adopting it
                 file.seek(position)
             except BaseException:
-                if failure is None:
+                if failure is None:  # ty: ignore[redundant-condition-strict]  # Exceptions bypass the normal assignment.
                     raise
-        if status and failure is None:
+        if status and failure is None:  # ty: ignore[redundant-condition-strict]  # Exceptions bypass the normal assignment.
             raise error

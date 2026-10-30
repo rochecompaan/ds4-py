@@ -1,11 +1,13 @@
 """Deterministic, thread-confined native handles for model-free tests."""
 
-import ctypes as C
 import struct
 import threading
 import zlib
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import Any, BinaryIO, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, cast
+
+if TYPE_CHECKING:
+    import ctypes as C
 
 from ds4py.errors import EmptyPromptError, EngineError, MissingBinding
 
@@ -92,13 +94,16 @@ class FakeClock:
         self._time += seconds
 
 
+_DEFAULT_REPLY = reply(b"ok")
+
+
 class FakeNative:
     backend = "cpu"
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - The fake mirrors the native configuration surface.
         self,
         *,
-        script: Script = reply(b"ok"),
+        script: Script = _DEFAULT_REPLY,
         chunk: int = 4,
         clock: FakeClock | None = None,
         chunk_seconds: float = 0.0,
@@ -161,7 +166,8 @@ class _Handle:
         self._thread = threading.get_ident()
 
     def _assert_thread(self) -> None:
-        assert threading.get_ident() == self._thread, "fake handle used on another thread"
+        if threading.get_ident() != self._thread:
+            raise AssertionError("fake handle used on another thread")
 
     def _check(self) -> None:
         self._assert_thread()

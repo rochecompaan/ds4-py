@@ -1,11 +1,13 @@
 """Python-owned values and opaque native handle contracts."""
 
-import ctypes
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
 from pathlib import Path
-from typing import Any, BinaryIO, Protocol
+from typing import TYPE_CHECKING, Any, BinaryIO, Protocol
+
+if TYPE_CHECKING:
+    import ctypes
 
 
 class ThinkMode(IntEnum):
