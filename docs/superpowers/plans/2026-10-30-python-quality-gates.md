@@ -91,27 +91,27 @@ git commit -m "build: configure strict Python quality tools"
   - `is_json_value(value: object) -> TypeIs[JsonValue]`
   - `is_json_object(value: object) -> TypeIs[JsonObject]`
 
-- [ ] **Step 1: Apply only safe mechanical Ruff changes**
+- [x] **Step 1: Apply only safe mechanical Ruff changes**
 
 Run `devenv shell -- uv run --frozen --extra agent ruff check src bench tests --fix`, review every changed class of fix, then run `ruff format src bench tests`. Do not use `--unsafe-fixes` and do not manually mix behavioral edits into the mechanical commit.
 
-- [ ] **Step 2: Verify the mechanical changes before adding new code**
+- [x] **Step 2: Verify the mechanical changes before adding new code**
 
 Run `HOME=/tmp/ds4-quality-empty-home devenv shell -- uv run --frozen --extra agent pytest -m "not build and not live" -q`. Expected: all portable tests pass. Commit only the mechanical changes as `style: apply Ruff formatting and safe fixes`.
 
-- [ ] **Step 3: Write failing JSON validator tests**
+- [x] **Step 3: Write failing JSON validator tests**
 
 In `tests/test_json.py`, cover every scalar, nested lists/objects, empty containers, rejection of tuples and custom objects, rejection of non-string object keys, and rejection when one deeply nested value is invalid. Include a ty-checked helper that accepts `object`, narrows it with `is_json_value`, and passes the result to a `JsonValue` consumer.
 
-- [ ] **Step 4: Run the JSON tests to verify they fail**
+- [x] **Step 4: Run the JSON tests to verify they fail**
 
 Run `devenv shell -- uv run --frozen --extra agent pytest tests/test_json.py -q`. Expected: collection or import failure because `ds4py._json` does not exist.
 
-- [ ] **Step 5: Implement the JSON aliases and recursive TypeIs validators**
+- [x] **Step 5: Implement the JSON aliases and recursive TypeIs validators**
 
 Create `src/ds4py/_json.py` with the four public interfaces above. Accept only JSON-shaped runtime values, require string object keys, recurse through lists and dictionaries, and use standard-library `TypeIs`. Do not add `Any`, `TypeGuard`, or runtime behavior unrelated to validation.
 
-- [ ] **Step 6: Verify the new module and commit**
+- [x] **Step 6: Verify the new module and commit**
 
 Run the focused pytest test, `ruff check src/ds4py/_json.py tests/test_json.py`, `ruff format --check` on those files, and `ty check src/ds4py/_json.py tests/test_json.py`. Expected: all pass. Commit `feat: add typed JSON boundary validators`.
 
