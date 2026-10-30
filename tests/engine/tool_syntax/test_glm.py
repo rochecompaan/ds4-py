@@ -1,7 +1,7 @@
-from typing import Any
-from dataclasses import replace
 import json
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -9,8 +9,9 @@ from ds4py._native.fake import FakeNative
 from ds4py.engine.tool_syntax import make_parser
 from ds4py.engine.tool_syntax.glm import Glm
 
-
-CASES = json.loads((Path(__file__).parents[2] / "fixtures" / "tool_syntax" / "glm.json").read_text())
+CASES = json.loads(
+    (Path(__file__).parents[2] / "fixtures" / "tool_syntax" / "glm.json").read_text()
+)
 
 
 def observed_calls(snapshot: Any) -> Any:
@@ -23,7 +24,7 @@ def test_glm_fixtures(case: Any, chunk_size: Any) -> None:
     parser = Glm()
     data = case["input"].encode()
     for offset in range(0, len(data), chunk_size):
-        parser.feed(data[offset:offset + chunk_size])
+        parser.feed(data[offset : offset + chunk_size])
     snapshot = parser.finish()
     assert snapshot.state == case["state"], snapshot.error
     assert observed_calls(snapshot) == case["calls"]
@@ -32,7 +33,9 @@ def test_glm_fixtures(case: Any, chunk_size: Any) -> None:
 
 
 def test_raw_ignores_prose_before_and_after_the_canonical_block() -> None:
-    stanza = b"<tool_call>read<arg_key>path</arg_key><arg_value>x</arg_value></tool_call>"
+    stanza = (
+        b"<tool_call>read<arg_key>path</arg_key><arg_value>x</arg_value></tool_call>"
+    )
     snapshot = Glm().feed(b"before" + stanza + b"after")
     assert snapshot.state == "DONE"
     assert snapshot.raw == stanza

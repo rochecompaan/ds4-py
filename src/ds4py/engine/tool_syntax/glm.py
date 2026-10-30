@@ -30,7 +30,7 @@ class Glm(DelimiterParser):
                 return False
             self._fail("expected <arg_key> or </tool_call> in GLM tool call")
             return True
-        name = bytes(self.raw[self.parse_pos:end]).strip(_ASCII_SPACE)
+        name = bytes(self.raw[self.parse_pos : end]).strip(_ASCII_SPACE)
         name = self._decode(name, "GLM function name")
         if not name:
             if self.state != "ERROR":
@@ -77,7 +77,8 @@ class Glm(DelimiterParser):
             )
             return False
         text = self._decode(
-            self.raw[self._param_value_start:end], f"GLM argument {self._param_name!r}"
+            self.raw[self._param_value_start : end],
+            f"GLM argument {self._param_name!r}",
         )
         if text is None:
             return True

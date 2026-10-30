@@ -1,4 +1,5 @@
 """Parse typed answers to harness multiple-choice questions."""
+
 from __future__ import annotations
 
 from pydantic_ai_harness.ask_user import Question

@@ -25,18 +25,25 @@ def test_default_prompt_aligns_agent_native_and_read_guidance() -> None:
     definition = ToolDefinition(
         "read_file",
         "Read a file.",
-        {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+        {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
     )
     with ds4py.open("f.gguf", ctx=4096, native=FakeNative()) as engine:
         segments = PromptBuilder(engine).begin(
-            [definition], instructions=DEFAULT_CODING_AGENT_INSTRUCTIONS,
+            [definition],
+            instructions=DEFAULT_CODING_AGENT_INSTRUCTIONS,
         )
         tokens = [token for segment in segments for token in segment.tokens]
         prompt = b"".join(engine.token_text(token) for token in tokens).decode()
 
     assert OPENING in prompt
     assert prompt.index(OPENING) < prompt.index("You have access to native DSML tools.")
-    assert prompt.index("You have access to native DSML tools.") < prompt.index('{"name":"read_file"')
+    assert prompt.index("You have access to native DSML tools.") < prompt.index(
+        '{"name":"read_file"'
+    )
     assert READ_GUIDANCE in prompt
 
     assert "edit_file" in prompt
@@ -48,5 +55,11 @@ def test_default_prompt_aligns_agent_native_and_read_guidance() -> None:
     assert "# Rules" in prompt
     assert "search_files" in prompt
 
-    for forbidden in ("whole=true", "raw=true", "call more", "google_search", "visit_page"):
+    for forbidden in (
+        "whole=true",
+        "raw=true",
+        "call more",
+        "google_search",
+        "visit_page",
+    ):
         assert forbidden not in prompt

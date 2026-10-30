@@ -1,10 +1,13 @@
 """Token acceptance and commit policy separated from native decode steps."""
+
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
-from typing import Callable, Protocol, cast
+from typing import Protocol, cast
 
 from ds4py._native.protocol import EngineHandle, SessionHandle
 from ds4py.errors import EngineError
+
 from .events import Event, Token
 from .logits import LogitsView
 from .pause import ControlSpan
@@ -39,9 +42,17 @@ class GenerateJob:
 
 
 class DecodeContext:
-    def __init__(self, engine: EngineHandle, job: GenerateJob, *, limit: int,
-                 limit_reason: str, cancelled: Callable[[], bool],
-                 emit: Callable[[Event], None], session: SessionHandle | None = None) -> None:
+    def __init__(
+        self,
+        engine: EngineHandle,
+        job: GenerateJob,
+        *,
+        limit: int,
+        limit_reason: str,
+        cancelled: Callable[[], bool],
+        emit: Callable[[Event], None],
+        session: SessionHandle | None = None,
+    ) -> None:
         self.rng = job.rng.state
         self.reason: str | None = None
         self._engine, self._job = engine, job
@@ -54,8 +65,9 @@ class DecodeContext:
             job.stream.sampled_tokens if job.stream is not None else job.sampled_tokens
         )
         self._logits_view = (
-            LogitsView(cast(SessionHandle, session), engine.info().vocab_size)
-            if job.logits_hooks else None
+            LogitsView(cast("SessionHandle", session), engine.info().vocab_size)
+            if job.logits_hooks
+            else None
         )
         self._verdict = Verdict.CONTINUE
         self._event_buffer: list[Event] | None = None
@@ -97,7 +109,10 @@ class DecodeContext:
 
     def sampling(self) -> SamplingPolicy:
         policy = self._job.sampling
-        if self._job.stream is not None and self._job.stream.parser.wants_greedy_sampling():
+        if (
+            self._job.stream is not None
+            and self._job.stream.parser.wants_greedy_sampling()
+        ):
             return replace(policy, temperature=0.0, top_k=0, top_p=1.0, min_p=0.0)
         return policy
 
@@ -176,7 +191,11 @@ class DecodeContext:
 
     def finalize(self) -> None:
         stream = self._job.stream
-        if stream is None or self.reason in ("interrupted", "context_reserve", "stop_sequence"):
+        if stream is None or self.reason in (
+            "interrupted",
+            "context_reserve",
+            "stop_sequence",
+        ):
             return
         finish_parser = self._finish_parser
         if finish_parser is None:
@@ -206,7 +225,9 @@ class PlainStep:
             p = ctx.sampling()
             token = session.sample(p.temperature, p.top_k, p.top_p, p.min_p, ctx.rng)
             if token < 0:
-                raise EngineError("cannot sample: the session state is not valid; sync first")
+                raise EngineError(
+                    "cannot sample: the session state is not valid; sync first"
+                )
             verdict = ctx.accept(token)
             if verdict is Verdict.STOP_BEFORE:
                 return
@@ -216,18 +237,31 @@ class PlainStep:
                 return
 
 
-def generate(engine: EngineHandle, session: SessionHandle, job: GenerateJob, *,
-             cancelled: Callable[[], bool], emit: Callable[[Event], None],
-             step: DecodeStep | None = None) -> str:
+def generate(
+    engine: EngineHandle,
+    session: SessionHandle,
+    job: GenerateJob,
+    *,
+    cancelled: Callable[[], bool],
+    emit: Callable[[Event], None],
+    step: DecodeStep | None = None,
+) -> str:
     room = session.ctx() - session.pos()
     limit = min(job.max_tokens, max(room - job.reserve, 0))
-    limit_reason = "max_tokens" if job.max_tokens <= room - job.reserve else "context_reserve"
+    limit_reason = (
+        "max_tokens" if job.max_tokens <= room - job.reserve else "context_reserve"
+    )
     decode_step = step or PlainStep()
     if job.logits_hooks and not decode_step.hooks_every_sample:
         decode_step = PlainStep()
     ctx = DecodeContext(
-        engine, job, limit=limit, limit_reason=limit_reason,
-        cancelled=cancelled, emit=emit, session=session,
+        engine,
+        job,
+        limit=limit,
+        limit_reason=limit_reason,
+        cancelled=cancelled,
+        emit=emit,
+        session=session,
     )
     if job.resume:
         ctx.resume()

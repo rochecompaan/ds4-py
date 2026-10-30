@@ -1,6 +1,7 @@
 """Session identity, lifecycle ordering, event delivery, reset, and think changes."""
-from typing import Any, cast
+
 import re
+from typing import Any, Never, cast
 from uuid import UUID
 
 import pytest
@@ -12,7 +13,6 @@ from ds4py._native.protocol import SyncStatus
 from ds4py.engine.events import Stopped, Synced
 from ds4py.engine.lifecycle import SessionEvent
 from ds4py.errors import EmptyPromptError, EngineError
-from typing import Never
 
 
 class EmptySyncSession(FakeSession):
@@ -22,10 +22,10 @@ class EmptySyncSession(FakeSession):
         super().__init__(engine, ctx)
         self.reset_syncs = []
 
-    def sync(self, tokens: Any, *, progress: Any=None, cancel: Any=None) -> Any:
+    def sync(self, tokens: Any, *, progress: Any = None, cancel: Any = None) -> Any:
         if not tokens:
             self.reset_syncs.append(())
-            cast(Any, self._engine._native).record.append("reset")
+            cast("Any", self._engine._native).record.append("reset")
             self._tokens = []
             self._prompt_length = 0
             self._valid = True
@@ -35,7 +35,7 @@ class EmptySyncSession(FakeSession):
 
 
 class ResetNative(FakeNative):
-    def __init__(self, *, record: Any=None, **fake: Any) -> None:
+    def __init__(self, *, record: Any = None, **fake: Any) -> None:
         super().__init__(**fake)
         self.sessions = []
         self.record = [] if record is None else record
@@ -56,8 +56,14 @@ class ResetNative(FakeNative):
         return engine
 
 
-def reset_engine(*, ctx: Any=1024, family: Any="deepseek4", think: Any=ThinkMode.NONE,
-                 record: Any=None, **fake: Any) -> Any:
+def reset_engine(
+    *,
+    ctx: Any = 1024,
+    family: Any = "deepseek4",
+    think: Any = ThinkMode.NONE,
+    record: Any = None,
+    **fake: Any,
+) -> Any:
     from dataclasses import replace
 
     info = replace(
@@ -85,7 +91,7 @@ class RejectingResetSession(FakeSession):
         self.rejection = rejection
         self.fallbacks = []
 
-    def sync(self, tokens: Any, *, progress: Any=None, cancel: Any=None) -> Any:
+    def sync(self, tokens: Any, *, progress: Any = None, cancel: Any = None) -> Any:
         if not tokens:
             raise self.rejection
         return super().sync(tokens, progress=progress, cancel=cancel)
@@ -118,13 +124,13 @@ class RejectingResetNative(FakeNative):
         return engine
 
 
-def rejecting_engine(rejection: Any, *, script: Any=None) -> Any:
+def rejecting_engine(rejection: Any, *, script: Any = None) -> Any:
     native = RejectingResetNative(rejection, script=script or reply(b"ok"))
     return ds4py.open("f.gguf", ctx=1024, think=ThinkMode.NONE, native=native), native
 
 
 class CloseCounter:
-    def __init__(self, record: Any=None) -> None:
+    def __init__(self, record: Any = None) -> None:
         self.closes = 0
         self._record = record
 
@@ -136,8 +142,11 @@ class CloseCounter:
 
 def kinds(items: Any) -> Any:
     return [
-        item if isinstance(item, str) else
-        item.kind if isinstance(item, SessionEvent) else type(item).__name__
+        item
+        if isinstance(item, str)
+        else item.kind
+        if isinstance(item, SessionEvent)
+        else type(item).__name__
         for item in items
     ]
 
@@ -195,7 +204,9 @@ def test_new_publishes_end_then_closes_state_then_resets_then_starts() -> None:
 
 
 @pytest.mark.parametrize("message", EMPTY_PROMPT_REJECTIONS)
-def test_new_rewinds_when_the_native_rejects_the_empty_reset_prompt(message: Any) -> None:
+def test_new_rewinds_when_the_native_rejects_the_empty_reset_prompt(
+    message: Any,
+) -> None:
     engine, native = rejecting_engine(EmptyPromptError(message))
     with engine:
         session = engine.session()
@@ -223,11 +234,16 @@ def test_new_rewinds_when_the_native_rejects_the_empty_reset_prompt(message: Any
         assert list(session.run_round(max_tokens=1))[-1] == Stopped("max_tokens")
 
 
-@pytest.mark.parametrize("failure", [
-    EngineError("native device failure during sync"),
-    EngineError("empty prompt"),
-])
-def test_new_propagates_an_unrelated_native_sync_error_without_starting_a_session(failure: Any) -> None:
+@pytest.mark.parametrize(
+    "failure",
+    [
+        EngineError("native device failure during sync"),
+        EngineError("empty prompt"),
+    ],
+)
+def test_new_propagates_an_unrelated_native_sync_error_without_starting_a_session(
+    failure: Any,
+) -> None:
     engine, native = rejecting_engine(failure)
     with engine:
         session = engine.session()
@@ -260,7 +276,9 @@ def test_new_propagates_an_unrelated_native_sync_error_without_starting_a_sessio
         # and the native snapshot survive, so checkpoint operations still work.
         assert facade_checkpoints == {"turn": checkpointed.tokens}
         assert session._checkpoint_tokens == facade_checkpoints
-        assert session.engine._worker._checkpoints == {"turn": (native_tokens, snapshot)}
+        assert session.engine._worker._checkpoints == {
+            "turn": (native_tokens, snapshot)
+        }
         assert not snapshot.closed
         # The worker owns a still-usable session after the failed reset.
         session.append_user("after")
@@ -293,9 +311,17 @@ def test_switch_publishes_exact_order_and_runs_restore_while_idle() -> None:
 
         assert returned == target == session.id
         assert kinds(record) == [
-            "switching", "session_end", "close", "restore", "session_start", "switched",
+            "switching",
+            "session_end",
+            "close",
+            "restore",
+            "session_start",
+            "switched",
         ]
-        assert record[0].session_id == old and record[0].payload == {"old": old, "new": target}
+        assert record[0].session_id == old and record[0].payload == {
+            "old": old,
+            "new": target,
+        }
         assert record[1].session_id == old and record[1].payload == {"old": old}
         assert record[3] == "restore"
         assert record[4].session_id == target
@@ -327,11 +353,18 @@ def test_switch_restore_failure_still_starts_the_target_session() -> None:
         assert caught.value is failure
         assert session.id == target
         assert kinds(record) == [
-            "switching", "session_end", "close", "restore", "session_start",
+            "switching",
+            "session_end",
+            "close",
+            "restore",
+            "session_start",
         ]
         assert record[-1].session_id == target
         assert record[-1].payload == {
-            "old": old, "new": target, "status": "error", "error": "restore rejected",
+            "old": old,
+            "new": target,
+            "status": "error",
+            "error": "restore rejected",
         }
         assert state.closes == 1
         assert session.state("jobs", lambda: CloseCounter()) is not state
@@ -387,7 +420,9 @@ CLOSED_SESSION_OPERATIONS = {
 
 
 @pytest.mark.parametrize(
-    "operation", CLOSED_SESSION_OPERATIONS.values(), ids=CLOSED_SESSION_OPERATIONS,
+    "operation",
+    CLOSED_SESSION_OPERATIONS.values(),
+    ids=CLOSED_SESSION_OPERATIONS,
 )
 def test_closed_session_rejects_public_mutation_generation_and_checkpoints(
     operation: Any,
@@ -421,7 +456,9 @@ def test_engine_events_are_published_before_the_consumer_receives_them() -> None
         assert all(
             bus_kind == event.payload["event"].__class__.__name__
             and event.payload["event"] is delivered_event
-            for bus_kind, event, delivered_event in zip(kinds(published), published, consumer)
+            for bus_kind, event, delivered_event in zip(
+                kinds(published), published, consumer
+            )
         )
         assert consumer[-1] == Stopped("stop_token")
 
@@ -432,7 +469,8 @@ def test_on_event_filters_and_unsubscribes_idempotently() -> None:
         session = engine.session()
         seen = []
         unsubscribe = session.on_event(
-            lambda event: seen.append(event), kinds=("status",),
+            lambda event: seen.append(event),
+            kinds=("status",),
         )
         session.emit("status", text="ready")
         session.emit("other", text="hidden")
@@ -446,7 +484,9 @@ def test_on_event_filters_and_unsubscribes_idempotently() -> None:
         assert all(isinstance(event, SessionEvent) for event in seen)
 
 
-def test_listener_failure_is_reported_without_hiding_events_or_corrupting_native_state(capsys: pytest.CaptureFixture[str]) -> None:
+def test_listener_failure_is_reported_without_hiding_events_or_corrupting_native_state(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     engine, _ = reset_engine(script=reply(b"ok"))
     with engine:
         session = engine.session()
@@ -494,7 +534,9 @@ def test_set_think_invalidates_the_bound_prefix_without_mutating_a_live_round() 
 
         rnd = session.run_round(max_tokens=0)
         try:
-            assert isinstance(next(event for event in rnd if isinstance(event, Synced)), Synced)
+            assert isinstance(
+                next(event for event in rnd if isinstance(event, Synced)), Synced
+            )
             with pytest.raises(EngineError, match="round"):
                 session.set_think(ThinkMode.NONE)
         finally:

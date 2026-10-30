@@ -2,17 +2,16 @@
 
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bench.workspaces import load_manifest
 from bench.run_bakeoff import AgentConfig, run_bakeoff
-
+from bench.workspaces import load_manifest
 
 pytestmark = pytest.mark.live
 
@@ -24,28 +23,32 @@ def test_complete_bakeoff_passes_all_six_gates() -> None:
     }
     if os.environ.get("DS4_RUN_BAKEOFF") != "1" or not all(required.values()):
         pytest.skip(
-            "set DS4_RUN_BAKEOFF=1, DS4_TEST_MODEL, DS4_AGENT, "
-            "and POLYGLOT_BENCHMARK for the complete live bake-off"
+            "set DS4_RUN_BAKEOFF=1, DS4_TEST_MODEL, DS4_AGENT, and POLYGLOT_BENCHMARK for the complete live bake-off"
         )
 
     root = Path(__file__).resolve().parents[2]
-    model = Path(cast(str, required["DS4_TEST_MODEL"])).expanduser().resolve()
-    cli = Path(cast(str, required["DS4_AGENT"])).expanduser().resolve()
+    model = Path(cast("str", required["DS4_TEST_MODEL"])).expanduser().resolve()
+    cli = Path(cast("str", required["DS4_AGENT"])).expanduser().resolve()
     manifest = load_manifest(root / "bench/bakeoff.yaml")
     common: dict[str, Any] = dict(
-        model=str(model), backend="cpu", ctx=manifest.ctx,
-        temperature=manifest.temperature, seed=manifest.seed, tokens=512,
+        model=str(model),
+        backend="cpu",
+        ctx=manifest.ctx,
+        temperature=manifest.temperature,
+        seed=manifest.seed,
+        tokens=512,
     )
     configs = (
         AgentConfig("c", (str(cli),), **common),
         AgentConfig(
-            "ds4py", (sys.executable, str(root / "bench/restore_check.py"), "attempt"),
+            "ds4py",
+            (sys.executable, str(root / "bench/restore_check.py"), "attempt"),
             **common,
         ),
     )
     report = run_bakeoff(
         root / "bench/bakeoff.yaml",
-        Path(cast(str, required["POLYGLOT_BENCHMARK"])).expanduser().resolve(),
+        Path(cast("str", required["POLYGLOT_BENCHMARK"])).expanduser().resolve(),
         root,
         configs,
         root / "bench/results",

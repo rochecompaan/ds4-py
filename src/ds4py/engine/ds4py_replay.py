@@ -2,14 +2,20 @@
 
 import json
 from pathlib import Path
-
-from .replay_types import _THINK_NAMES, ReplayError, ReplayRound, ReplayTrace
 from typing import Never
 
+from .replay_types import _THINK_NAMES, ReplayError, ReplayRound, ReplayTrace
 
 _FIELDS = (
-    "session_id", "run_id", "step_index", "round_index", "prompt", "think",
-    "cached", "prefill_suffix", "sampled",
+    "session_id",
+    "run_id",
+    "step_index",
+    "round_index",
+    "prompt",
+    "think",
+    "cached",
+    "prefill_suffix",
+    "sampled",
 )
 
 
@@ -35,7 +41,11 @@ def read_ds4py(path: Path, text: str) -> ReplayTrace:
             if not isinstance(value[name], str) or not value[name]:
                 error(line_number, f"{name} must be a nonempty string")
         for name in ("step_index", "round_index", "cached"):
-            if isinstance(value[name], bool) or not isinstance(value[name], int) or value[name] < 0:
+            if (
+                isinstance(value[name], bool)
+                or not isinstance(value[name], int)
+                or value[name] < 0
+            ):
                 error(line_number, f"{name} must be a nonnegative integer")
         for name in ("prompt", "prefill_suffix", "sampled"):
             tokens = value[name]
@@ -60,7 +70,9 @@ def read_ds4py(path: Path, text: str) -> ReplayTrace:
         prompt = tuple(value["prompt"])
         suffix = tuple(value["prefill_suffix"])
         if cached + len(suffix) != len(prompt):
-            error(line_number, "cached + prefill_suffix length must equal prompt length")
+            error(
+                line_number, "cached + prefill_suffix length must equal prompt length"
+            )
         if prompt[cached:] != suffix:
             error(line_number, "suffix does not match prompt")
         if value["round_index"] != len(rounds):
@@ -70,10 +82,17 @@ def read_ds4py(path: Path, text: str) -> ReplayTrace:
         if run_id in last_steps and step <= last_steps[run_id]:
             error(line_number, "step_index must increase within a run")
         last_steps[run_id] = step
-        rounds.append(ReplayRound(
-            number=value["round_index"], prompt=prompt, sampled=tuple(value["sampled"]),
-            think=think, cached=cached, context_limited=False, prefix_only=False,
-        ))
+        rounds.append(
+            ReplayRound(
+                number=value["round_index"],
+                prompt=prompt,
+                sampled=tuple(value["sampled"]),
+                think=think,
+                cached=cached,
+                context_limited=False,
+                prefix_only=False,
+            )
+        )
     if not rounds:
         error(1, "no replay rounds")
     return ReplayTrace(None, None, tuple(rounds))

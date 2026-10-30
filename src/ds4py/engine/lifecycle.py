@@ -6,14 +6,15 @@ async model round, the bridge marshals every event to its owning event loop.
 State factories and ``close()`` are orchestration concerns, not worker callbacks:
 they may acquire ordinary Python resources, but the facade decides when they run.
 """
+
+import sys
 from asyncio import AbstractEventLoop
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass
-import sys
 from threading import RLock, get_ident
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any
 from uuid import uuid4
 
 Listener = Callable[["SessionEvent"], None]
@@ -31,7 +32,9 @@ class SessionEvent:
 class SessionLifecycle:
     """Identity, subscriptions, and state objects owned by one live session."""
 
-    def __init__(self, *, error_handler: Callable[[Exception], None] | None = None) -> None:
+    def __init__(
+        self, *, error_handler: Callable[[Exception], None] | None = None
+    ) -> None:
         self._id = uuid4().hex
         self._listeners: list[tuple[Listener, frozenset[str] | None]] = []
         self._states: dict[str, object] = {}
@@ -48,9 +51,14 @@ class SessionLifecycle:
         self._id = uuid4().hex if new_id is None else new_id
         return self._id
 
-    def on_event(self, listener: Listener, *, kinds: Iterable[str] | None = None
-                 ) -> Callable[[], None]:
-        allowed = None if kinds is None else frozenset((kinds,) if isinstance(kinds, str) else kinds)
+    def on_event(
+        self, listener: Listener, *, kinds: Iterable[str] | None = None
+    ) -> Callable[[], None]:
+        allowed = (
+            None
+            if kinds is None
+            else frozenset((kinds,) if isinstance(kinds, str) else kinds)
+        )
         entry = (listener, allowed)
         with self._lock:
             self._listeners.append(entry)
@@ -105,7 +113,8 @@ class SessionLifecycle:
         self._emit_listeners(event, listeners)
 
     def _emit_listeners(
-        self, event: SessionEvent,
+        self,
+        event: SessionEvent,
         listeners: Iterable[tuple[Listener, frozenset[str] | None]],
     ) -> None:
         for listener, allowed in listeners:

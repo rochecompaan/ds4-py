@@ -21,7 +21,9 @@ def escape_tool_text(text: str, closing_tag: str) -> str:
     output = []
     copied_from = 0
     for position, character in enumerate(text):
-        if text.startswith(closing_tag, position) or _escaped_close_at(text, position, closing_tag):
+        if text.startswith(closing_tag, position) or _escaped_close_at(
+            text, position, closing_tag
+        ):
             output.append(text[copied_from:position])
             output.append("&lt;" if character == "<" else "&amp;")
             copied_from = position + 1

@@ -1,4 +1,5 @@
 """Canonical native syntax for assistant calls reconstructed from history."""
+
 import json
 from collections.abc import Mapping
 
@@ -28,7 +29,9 @@ def _validate_json(value: object) -> None:
     if type(value) is dict:
         for key, item in value.items():
             if not isinstance(key, str):
-                raise ValueError(f"JSON object keys must be strings, got {type(key).__name__}")
+                raise ValueError(
+                    f"JSON object keys must be strings, got {type(key).__name__}"
+                )
             _validate_json(item)
         return
     raise ValueError(f"cannot preserve non-JSON value of type {type(value).__name__}")
@@ -37,7 +40,10 @@ def _validate_json(value: object) -> None:
 def _json(value: object) -> str:
     _validate_json(value)
     return json.dumps(
-        value, ensure_ascii=False, separators=(",", ":"), allow_nan=False,
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
     ).replace("<", "\\u003c")
 
 
@@ -48,7 +54,10 @@ def _validate_name(family: str, value: object, kind: str) -> None:
     elif family == "glm":
         invalid = invalid or (
             isinstance(value, str)
-            and (value != value.strip(" \t\r\n") or (kind == "tool name" and "<" in value))
+            and (
+                value != value.strip(" \t\r\n")
+                or (kind == "tool name" and "<" in value)
+            )
         )
     elif family == "qwen":
         invalid = invalid or (
@@ -85,8 +94,7 @@ def _glm(name: str, args: Mapping[str, object]) -> str:
             raise ValueError(f"GLM cannot preserve non-string argument {key!r}")
         key_text = escape_tool_text(str(key), "</arg_key>")
         spans.append(
-            f"<arg_key>{key_text}</arg_key><arg_value>"
-            f"{escape_tool_text(value, '</arg_value>')}</arg_value>"
+            f"<arg_key>{key_text}</arg_key><arg_value>{escape_tool_text(value, '</arg_value>')}</arg_value>"
         )
     spans.append("</tool_call>")
     return "".join(spans)
@@ -98,19 +106,27 @@ def _qwen(name: str, args: Mapping[str, object]) -> str:
         value_text = value if isinstance(value, str) else _json(value)
         if isinstance(value, str):
             if value_is_json(value.encode()):
-                raise ValueError(f"Qwen cannot preserve JSON-looking string argument {key!r}")
+                raise ValueError(
+                    f"Qwen cannot preserve JSON-looking string argument {key!r}"
+                )
             value_text = escape_tool_text(value_text, "</parameter>")
         elif not value_is_json(value_text.encode()):
             raise ValueError(f"Qwen cannot preserve non-JSON argument {key!r}")
-        lines.extend([
-            f"<parameter={key}>", value_text, "</parameter>",
-        ])
+        lines.extend(
+            [
+                f"<parameter={key}>",
+                value_text,
+                "</parameter>",
+            ]
+        )
     lines.extend(["</function>", "</tool_call>"])
     return "\n".join(lines)
 
 
 def render_tool_call(
-    family: str, name: str, args: Mapping[str, object] | str | None,
+    family: str,
+    name: str,
+    args: Mapping[str, object] | str | None,
 ) -> str:
     """Render one call in the model family's existing native syntax."""
     arguments = _arguments(args)

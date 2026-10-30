@@ -58,7 +58,9 @@ class ReplayResult:
 
 
 def select_c_traces(
-    task_results: Iterable[TaskRunResult], *, expected_tasks: int = 12,
+    task_results: Iterable[TaskRunResult],
+    *,
+    expected_tasks: int = 12,
 ) -> list[tuple[str, Path]]:
     """Select every C attempt in manifest order; ds4-py self-replay is forbidden."""
     tasks = [item for item in task_results if item.agent == "c"]
@@ -81,7 +83,9 @@ def select_c_traces(
 
 
 def _parse_c(
-    engine: Engine, round_: ReplayRound, chunks: Iterable[bytes],
+    engine: Engine,
+    round_: ReplayRound,
+    chunks: Iterable[bytes],
 ) -> Snapshot:
     parser = make_parser(engine.info)
     mode = int(round_.think)
@@ -96,7 +100,9 @@ def _parse_c(
 
 
 def _token_description(
-    engine: Engine, tokens: Sequence[int], index: int,
+    engine: Engine,
+    tokens: Sequence[int],
+    index: int,
 ) -> str:
     if index >= len(tokens):
         return "id=<missing> bytes=<missing>"
@@ -104,8 +110,12 @@ def _token_description(
 
 
 def _assert_tokens(
-    engine: Engine, task_id: str, ordinal: int, round_: ReplayRound,
-    actual: Sequence[int], source: str,
+    engine: Engine,
+    task_id: str,
+    ordinal: int,
+    round_: ReplayRound,
+    actual: Sequence[int],
+    source: str,
 ) -> None:
     expected = round_.sampled
     if actual == expected:
@@ -124,13 +134,19 @@ def _assert_tokens(
 
 
 def _check_round(
-    engine: Engine, task_id: str, ordinal: int, round_: ReplayRound,
-    events: Sequence[Event], transcript: Transcript,
+    engine: Engine,
+    task_id: str,
+    ordinal: int,
+    round_: ReplayRound,
+    events: Sequence[Event],
+    transcript: Transcript,
 ) -> tuple[bool, str]:
     if not events or not isinstance(events[-1], Stopped):
-        raise ReplayMismatch(f"{task_id} trace round {ordinal} did not drain to Stopped")
+        raise ReplayMismatch(
+            f"{task_id} trace round {ordinal} did not drain to Stopped"
+        )
     emitted = tuple(event.id for event in events if isinstance(event, Token))
-    additions = transcript.tokens[len(round_.prompt):]
+    additions = transcript.tokens[len(round_.prompt) :]
     _assert_tokens(engine, task_id, ordinal, round_, emitted, "emitted token")
     _assert_tokens(engine, task_id, ordinal, round_, additions, "transcript addition")
 
@@ -158,10 +174,12 @@ def _check_round(
     tool_call = c_snapshot.state == "DONE" and bool(c_snapshot.calls)
     if tool_call:
         bytewise = _parse_c(
-            engine, round_, (data[index:index + 1] for index in range(len(data)))
+            engine, round_, (data[index : index + 1] for index in range(len(data)))
         )
         if bytewise != c_snapshot:
-            raise ReplayMismatch(f"{task_id} trace round {ordinal}: bytewise parser mismatch")
+            raise ReplayMismatch(
+                f"{task_id} trace round {ordinal}: bytewise parser mismatch"
+            )
         for split in range(len(data) + 1):
             observed = _parse_c(engine, round_, [data[:split], data[split:]])
             if observed != c_snapshot:
@@ -183,12 +201,20 @@ def _reserve(engine: Engine, round_: ReplayRound) -> int:
 
 def generation_limit(engine: Engine, round_: ReplayRound) -> int:
     """Natural rounds need one EOS/token slot; bounded rounds use the exact prefix."""
-    return len(round_.sampled) if round_.prefix_only or round_.context_limited else len(round_.sampled) + 1
+    return (
+        len(round_.sampled)
+        if round_.prefix_only or round_.context_limited
+        else len(round_.sampled) + 1
+    )
 
 
 def replay_round(
-    engine: Engine, policy: SamplingPolicy, rng: Rng, task_id: str,
-    ordinal: int, round_: ReplayRound,
+    engine: Engine,
+    policy: SamplingPolicy,
+    rng: Rng,
+    task_id: str,
+    ordinal: int,
+    round_: ReplayRound,
 ) -> ReplayResult:
     """Replay one C-owned prompt without preflight, translation, or tool calls."""
     transcript = Transcript()
@@ -196,30 +222,56 @@ def replay_round(
         transcript.append(round_.prompt, "system")
     list(engine._worker.submit(SyncJob(round_.prompt)))
     stream = RoundStream(engine.info, round_.think)
-    events = list(engine._worker.submit(GenerateJob(
-        policy, rng, generation_limit(engine, round_), transcript,
-        reserve=_reserve(engine, round_), think_mode=round_.think, stream=stream,
-        control=stream.control,
-    )))
+    events = list(
+        engine._worker.submit(
+            GenerateJob(
+                policy,
+                rng,
+                generation_limit(engine, round_),
+                transcript,
+                reserve=_reserve(engine, round_),
+                think_mode=round_.think,
+                stream=stream,
+                control=stream.control,
+            )
+        )
+    )
     tool_call, terminal = _check_round(
-        engine, task_id, ordinal, round_, events, transcript,
+        engine,
+        task_id,
+        ordinal,
+        round_,
+        events,
+        transcript,
     )
     return ReplayResult(
-        task_id, ordinal, True,
+        task_id,
+        ordinal,
+        True,
         f"{task_id} round {ordinal}: {len(round_.sampled)} tokens; {terminal}",
-        tokens=len(round_.sampled), tool_call=tool_call, terminal_reason=terminal,
+        tokens=len(round_.sampled),
+        tool_call=tool_call,
+        terminal_reason=terminal,
     )
 
 
 def replay_trace(
-    engine: Engine, trace: ReplayTrace, *, task_id: str = "trace",
+    engine: Engine,
+    trace: ReplayTrace,
+    *,
+    task_id: str = "trace",
 ) -> tuple[ReplayResult, ...]:
     """Reuse one C-capture RNG across rounds, resetting it for each C attempt."""
     policy = SamplingPolicy.for_engine(engine.info, temperature=0.0, seed=1)
     rng = Rng(1)
     return tuple(
         replay_round(
-            engine, policy, rng, task_id, ordinal, round_,
+            engine,
+            policy,
+            rng,
+            task_id,
+            ordinal,
+            round_,
         )
         for ordinal, round_ in enumerate(trace.rounds)
     )
@@ -228,13 +280,13 @@ def replay_trace(
 def _validate_selection(selected: Sequence[tuple[str, Path]]) -> None:
     identifiers = {task_id for task_id, _path in selected}
     if len(selected) == 0 or len(identifiers) != 12:
-        raise ReplaySelectionError(
-            f"gate 6 needs 12 C tasks, found {len(identifiers)}"
-        )
+        raise ReplaySelectionError(f"gate 6 needs 12 C tasks, found {len(identifiers)}")
 
 
 def replay_with_engine(
-    engine: Engine, selected: Sequence[tuple[str, Path]], *,
+    engine: Engine,
+    selected: Sequence[tuple[str, Path]],
+    *,
     require_full_set: bool = True,
 ) -> tuple[ReplayResult, ...]:
     """Replay selected C files sequentially on one already-open engine."""
@@ -247,7 +299,9 @@ def replay_with_engine(
         try:
             trace = read_replay(path)
             if trace.model is None or trace.ctx is None:
-                raise ReplaySelectionError(f"trace {path} is missing model or context metadata")
+                raise ReplaySelectionError(
+                    f"trace {path} is missing model or context metadata"
+                )
             if Path(trace.model).expanduser().resolve() != model:
                 raise ReplaySelectionError(
                     f"trace model {trace.model} does not match selected {model}"
@@ -257,35 +311,55 @@ def replay_with_engine(
                     f"trace ctx {trace.ctx} does not match engine ctx {engine.config.ctx}"
                 )
         except (OSError, ValueError) as error:
-            results.append(ReplayResult(
-                task_id, -1, False,
-                f"{task_id} round -1: malformed C trace {path}: {error}",
-                trace_path=path,
-            ))
+            results.append(
+                ReplayResult(
+                    task_id,
+                    -1,
+                    False,
+                    f"{task_id} round -1: malformed C trace {path}: {error}",
+                    trace_path=path,
+                )
+            )
             continue
         policy = SamplingPolicy.for_engine(engine.info, temperature=0.0, seed=1)
         rng = Rng(1)
         for ordinal, round_ in enumerate(trace.rounds):
             try:
                 result = replay_round(
-                    engine, policy, rng, task_id, ordinal, round_,
+                    engine,
+                    policy,
+                    rng,
+                    task_id,
+                    ordinal,
+                    round_,
                 )
             except (Ds4pyError, ReplayMismatch) as error:
                 result = ReplayResult(
-                    task_id, ordinal, False, str(error), trace_path=path,
+                    task_id,
+                    ordinal,
+                    False,
+                    str(error),
+                    trace_path=path,
                 )
             results.append(ReplayResult(**{**result.__dict__, "trace_path": path}))
     if require_full_set and not any(result.tool_call for result in results):
-        results.append(ReplayResult(
-            "<selection>", -1, False,
-            "full 12-run C set contains no tool-call round to replay",
-        ))
+        results.append(
+            ReplayResult(
+                "<selection>",
+                -1,
+                False,
+                "full 12-run C set contains no tool-call round to replay",
+            )
+        )
     return tuple(results)
 
 
 def replay_c_traces(
-    task_results: Iterable[TaskRunResult], model: str | Path, *,
-    lib: str | Path | None = None, backend: str = "cpu",
+    task_results: Iterable[TaskRunResult],
+    model: str | Path,
+    *,
+    lib: str | Path | None = None,
+    backend: str = "cpu",
 ) -> tuple[ReplayResult, ...]:
     """Load the selected GGUF once and close it after the sequential C phase."""
     selected = select_c_traces(task_results)
@@ -301,8 +375,11 @@ def replay_c_traces(
 
 
 def replay_task_results(
-    task_results: Iterable[TaskRunResult], config: ReplayConfig | str | Path, *,
-    lib: str | Path | None = None, backend: str | None = None,
+    task_results: Iterable[TaskRunResult],
+    config: ReplayConfig | str | Path,
+    *,
+    lib: str | Path | None = None,
+    backend: str | None = None,
 ) -> tuple[ReplayResult, ...]:
     """Convert selection/loading failures into gate evidence instead of skipping."""
     if isinstance(config, (str, Path)):
@@ -313,7 +390,10 @@ def replay_task_results(
         selected_backend = config.backend if backend is None else backend
     try:
         return replay_c_traces(
-            task_results, model, lib=lib, backend=selected_backend,
+            task_results,
+            model,
+            lib=lib,
+            backend=selected_backend,
         )
     except (Ds4pyError, OSError, ValueError) as error:
         return (ReplayResult("<selection>", -1, False, str(error)),)
@@ -326,13 +406,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--model", type=Path, default=os.environ.get("DS4_TEST_MODEL"))
-    parser.add_argument("--backend", default=os.environ.get("DS4_BAKEOFF_BACKEND", "cpu"))
+    parser.add_argument(
+        "--backend", default=os.environ.get("DS4_BAKEOFF_BACKEND", "cpu")
+    )
     parser.add_argument("--lib")
     args = parser.parse_args(argv)
     if args.model is None:
         parser.error("--model or DS4_TEST_MODEL is required")
     report_path = args.report / "bakeoff.json" if args.report.is_dir() else args.report
     import json
+
     data = json.loads(report_path.read_text())
     tasks = [TaskRunResult.from_dict(item) for item in data.get("tasks", [])]
     results = replay_task_results(tasks, args.model, lib=args.lib, backend=args.backend)

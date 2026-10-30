@@ -1,4 +1,5 @@
 """Parse ds4-agent-compatible assistant prefix files."""
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -7,17 +8,18 @@ from typing import Literal
 @dataclass(frozen=True)
 class PrefixTurn:
     """One plain-text historical user or assistant turn."""
+
     role: Literal["user", "assistant"]
     content: str
 
 
 class PrefixError(ValueError):
     """Invalid prefix-file syntax, encoding, or file access."""
-    pass
 
 
 def _marker_at(
-    data: bytes, position: int,
+    data: bytes,
+    position: int,
 ) -> tuple[Literal["user", "assistant"], int] | None:
     if data.startswith(b"USER:", position):
         return "user", 5
@@ -26,12 +28,16 @@ def _marker_at(
     return None
 
 
-def _decode_content(data: bytes, start: int, end: int, role: str, line: int, turn_start: int) -> str:
+def _decode_content(
+    data: bytes, start: int, end: int, role: str, line: int, turn_start: int
+) -> str:
     try:
         return data[start:end].decode("utf-8")
     except UnicodeDecodeError as exc:
         invalid_line = line + data.count(b"\n", turn_start, start + exc.start)
-        raise PrefixError(f"line {invalid_line}: invalid UTF-8 in {role.upper()} turn") from exc
+        raise PrefixError(
+            f"line {invalid_line}: invalid UTF-8 in {role.upper()} turn"
+        ) from exc
 
 
 def parse_prefix(data: bytes) -> tuple[PrefixTurn, ...]:
@@ -78,7 +84,9 @@ def parse_prefix(data: bytes) -> tuple[PrefixTurn, ...]:
         if content_end == content_start:
             raise PrefixError(f"line {line} has an empty {role.upper()} turn")
 
-        content = _decode_content(data, content_start, content_end, role, line, turn_start)
+        content = _decode_content(
+            data, content_start, content_end, role, line, turn_start
+        )
         turns.append(PrefixTurn(role, content))
         position = next_position
         line = next_line

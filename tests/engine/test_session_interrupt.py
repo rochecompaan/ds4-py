@@ -1,8 +1,9 @@
 """Bounded real-SIGINT regression, isolated from pytest's signal handling."""
-from typing import Any
+
 import subprocess
 import sys
 import textwrap
+from typing import Any
 
 import pytest
 
@@ -10,7 +11,7 @@ import pytest
 @pytest.mark.parametrize("phase", ["sync", "generation"])
 @pytest.mark.parametrize("signals", [1, 2])
 def test_caller_sigint_drains_before_releasing_round(phase: Any, signals: Any) -> None:
-    probe = textwrap.dedent(r'''
+    probe = textwrap.dedent(r"""
         import os
         import signal
         import sys
@@ -134,10 +135,12 @@ def test_caller_sigint_drains_before_releasing_round(phase: Any, signals: Any) -
             session.append_tokens([7], "user")
             assert list(session.run_round(max_tokens=0))[-1] == Stopped("max_tokens")
         print("SIGINT drain OK", phase, signals)
-    ''')
+    """)
     result = subprocess.run(
         [sys.executable, "-c", probe, phase, str(signals)],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True,
+        text=True,
+        timeout=15,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == f"SIGINT drain OK {phase} {signals}"
@@ -145,7 +148,7 @@ def test_caller_sigint_drains_before_releasing_round(phase: Any, signals: Any) -
 
 @pytest.mark.parametrize("phase", ["sync", "generation"])
 def test_interrupt_after_end_dequeue_releases_round(phase: Any) -> None:
-    probe = textwrap.dedent(r'''
+    probe = textwrap.dedent(r"""
         import sys
         import ds4py
         from ds4py._native.fake import FakeNative, reply
@@ -201,16 +204,19 @@ def test_interrupt_after_end_dequeue_releases_round(phase: Any) -> None:
             session.append_tokens([7], "user")
             assert list(session.run_round(max_tokens=0))[-1] == Stopped("max_tokens")
         print("lost END recovered", phase)
-    ''')
+    """)
     result = subprocess.run(
-        [sys.executable, "-c", probe, phase], capture_output=True, text=True, timeout=5,
+        [sys.executable, "-c", probe, phase],
+        capture_output=True,
+        text=True,
+        timeout=5,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == f"lost END recovered {phase}"
 
 
 def test_lost_end_with_completion_after_receive_wait_still_terminates() -> None:
-    probe = textwrap.dedent(r'''
+    probe = textwrap.dedent(r"""
         import threading
         from queue import SimpleQueue
         from ds4py.engine.worker import _END, _JobEvents
@@ -249,9 +255,12 @@ def test_lost_end_with_completion_after_receive_wait_still_terminates() -> None:
             finisher.join(3)
         assert not finisher.is_alive()
         print("late completion recovered")
-    ''')
+    """)
     result = subprocess.run(
-        [sys.executable, "-c", probe], capture_output=True, text=True, timeout=5,
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        timeout=5,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == "late completion recovered"

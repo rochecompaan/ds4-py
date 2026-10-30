@@ -1,17 +1,18 @@
 """Persist probe evidence and validate it against installed declarations."""
 
-from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 import os
-from pathlib import Path
 import tempfile
-from typing import Sequence
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
 from ds4py._native.bindings import Binding
 from ds4py._native.structs import StructLayout
 from ds4py._native.typemap import TYPE_MAP_VERSION
 from ds4py.errors import AbiMismatch
+
 from .pins import KNOWN_HEADERS
 
 MANIFEST_NAME = "libds4.abi.json"
@@ -52,24 +53,29 @@ class Manifest:
     metal_sources: dict[str, str] = field(default_factory=dict)
 
     @classmethod
-    def read(cls, path: Path) -> "Manifest":
+    def read(cls, path: Path) -> Manifest:
         data = json.loads(path.read_text())
-        data["bindings"] = {name: BindingRecord(**record)
-                            for name, record in data["bindings"].items()}
-        data["layouts"] = {name: StructLayout(**layout)
-                           for name, layout in data["layouts"].items()}
+        data["bindings"] = {
+            name: BindingRecord(**record) for name, record in data["bindings"].items()
+        }
+        data["layouts"] = {
+            name: StructLayout(**layout) for name, layout in data["layouts"].items()
+        }
         return cls(**data)
 
     def write(self, path: Path) -> None:
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(
-                mode="w", dir=path.parent, prefix=f".{path.name}.", delete=False,
+                mode="w",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                delete=False,
             ) as stream:
                 temporary = Path(stream.name)
                 json.dump(asdict(self), stream, indent=2)
                 stream.write("\n")
-            os.replace(temporary, path)
+            os.replace(temporary, path)  # noqa: PTH105 - Keep the atomic OS seam patchable in tests.
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
@@ -83,13 +89,20 @@ class Validation:
 
 
 def validate(
-    m: Manifest, *, lib_sha256: str, bindings: Sequence[Binding],
+    m: Manifest,
+    *,
+    lib_sha256: str,
+    bindings: Sequence[Binding],
     layouts: dict[str, StructLayout],
 ) -> Validation:
-    if m.backend == "metal" and (not isinstance(m.metal_sources, dict) or not m.metal_sources):
+    if m.backend == "metal" and (
+        not isinstance(m.metal_sources, dict) or not m.metal_sources
+    ):
         raise AbiMismatch("Metal shader records are missing or invalid." + _REBUILD)
     if m.type_map_version != TYPE_MAP_VERSION:
-        raise AbiMismatch("type-map version differs from the installed version." + _REBUILD)
+        raise AbiMismatch(
+            "type-map version differs from the installed version." + _REBUILD
+        )
     if m.library_sha256 != lib_sha256:
         raise AbiMismatch("library SHA-256 differs from its manifest." + _REBUILD)
     available, absent = set(), set()
@@ -108,7 +121,8 @@ def validate(
             )
         if not record.ok and binding.required:
             raise AbiMismatch(
-                f"{binding.name}: required signature probe failed: {record.message}" + _REBUILD
+                f"{binding.name}: required signature probe failed: {record.message}"
+                + _REBUILD
             )
         (available if record.ok else absent).add(binding.name)
     for name, expected in layouts.items():
@@ -123,7 +137,8 @@ def validate(
             recorded = actual.fields.get(field_name)
             if recorded != offset:
                 raise AbiMismatch(
-                    f"{name}.{field_name}: offset {recorded} differs from {offset}." + _REBUILD
+                    f"{name}.{field_name}: offset {recorded} differs from {offset}."
+                    + _REBUILD
                 )
     warnings = tuple(
         f"unknown header {name}: {digest[:12]}"

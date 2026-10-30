@@ -2,15 +2,27 @@
 
 import ctypes
 import os
-from pathlib import Path
 import sys
 import threading
 from collections.abc import Callable, Iterable
+from pathlib import Path
 from typing import Any
 
-from ds4py.abi.manifest import Manifest, Validation, file_sha256, manifest_path, validate
+from ds4py.abi.manifest import (
+    Manifest,
+    Validation,
+    file_sha256,
+    manifest_path,
+    validate,
+)
 from ds4py.abi.shaders import metal_source_env
-from ds4py.errors import AbiMismatch, LibraryAlreadyLoaded, LibraryNotFound, MissingBinding
+from ds4py.errors import (
+    AbiMismatch,
+    LibraryAlreadyLoaded,
+    LibraryNotFound,
+    MissingBinding,
+)
+
 from .bindings import Binding, all_bindings
 from .structs import STRUCTS, struct_layout
 from .typemap import ctypes_signature, parse_prototype
@@ -58,8 +70,12 @@ class Library:
             try:
                 fn = getattr(handle, binding.name)
             except AttributeError as exc:
-                raise AbiMismatch(f"{binding.name}: symbol missing from {path}." + _REBUILD) from exc
-            fn.restype, fn.argtypes = ctypes_signature(parse_prototype(binding.prototype))
+                raise AbiMismatch(
+                    f"{binding.name}: symbol missing from {path}." + _REBUILD
+                ) from exc
+            fn.restype, fn.argtypes = ctypes_signature(
+                parse_prototype(binding.prototype)
+            )
             self._functions[binding.name] = fn
         try:
             self._free = handle.free
@@ -102,11 +118,15 @@ def load_library(lib: str | Path | None = None) -> Library:
         try:
             manifest = Manifest.read(manifest_file)
         except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
-            raise AbiMismatch(f"cannot read {manifest_file}: {exc}." + _REBUILD) from exc
+            raise AbiMismatch(
+                f"cannot read {manifest_file}: {exc}." + _REBUILD
+            ) from exc
         bindings = all_bindings()
         layouts = STRUCTS
         validation = validate(
-            manifest, lib_sha256=file_sha256(real), bindings=bindings,
+            manifest,
+            lib_sha256=file_sha256(real),
+            bindings=bindings,
             layouts={name: struct_layout(cls) for name, cls in layouts.items()},
         )
         if manifest.backend == "metal":

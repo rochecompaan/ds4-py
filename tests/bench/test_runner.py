@@ -1,19 +1,17 @@
 """Sequential bakeoff runner and gates 1–5 with fake executables."""
-from typing import Any
 
-from dataclasses import replace
 import json
-from pathlib import Path
-from types import SimpleNamespace
 import subprocess
 import sys
-import textwrap
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bench.workspaces import clone_workspace, prepare_exercise
 from bench.metrics import EventSummary, ToolAccounting
 from bench.replay_c_traces import ReplayResult
 from bench.report import build_report
@@ -26,34 +24,49 @@ from bench.run_bakeoff import (
     run_task,
     run_tasks_sequentially,
 )
+from bench.workspaces import prepare_exercise
 
 
-def config(tmp_path: Path, agent: Any="ds4py") -> Any:
+def config(tmp_path: Path, agent: Any = "ds4py") -> Any:
     executable = tmp_path / f"{agent}-fake.py"
     if not executable.exists():
         executable.write_text(FAKE_AGENT)
     return AgentConfig(
-        agent=agent, executable=(sys.executable, str(executable)), model="/model.gguf",
-        backend="cpu", ctx=100000, temperature=0, seed=1, tokens=256,
+        agent=agent,
+        executable=(sys.executable, str(executable)),
+        model="/model.gguf",
+        backend="cpu",
+        ctx=100000,
+        temperature=0,
+        seed=1,
+        tokens=256,
     )
 
 
-def result(task_id: Any="task", agent: Any="ds4py", **changes: Any) -> Any:
+def result(task_id: Any = "task", agent: Any = "ds4py", **changes: Any) -> Any:
     save = Path("/saves") / task_id / agent
     trace = Path("/traces") / task_id / agent
     metric_values: dict[str, Any] = dict(
-        wall_seconds=10, progress_events=3, tokens=20, tool_calls=1,
-        avg_prefill_reuse=0.8, non_extend_rounds=0,
+        wall_seconds=10,
+        progress_events=3,
+        tokens=20,
+        tool_calls=1,
+        avg_prefill_reuse=0.8,
+        non_extend_rounds=0,
         tool_accounting=ToolAccounting(1, 1) if agent == "ds4py" else None,
     )
     for name in EventSummary.__dataclass_fields__:
         if name in changes:
             metric_values[name] = changes.pop(name)
     values = dict(
-        task_id=task_id, agent=agent, passed=True, attempts=1,
+        task_id=task_id,
+        agent=agent,
+        passed=True,
+        attempts=1,
         summary=EventSummary(**metric_values),
         attempt_save_dirs=(save,) if agent == "ds4py" else (),
-        attempt_trace_paths=(trace,), grader_outputs=("grader secret output",),
+        attempt_trace_paths=(trace,),
+        grader_outputs=("grader secret output",),
     )
     values.update(changes)
     return TaskRunResult(**values)
@@ -63,11 +76,18 @@ def with_summary(item: Any, **changes: Any) -> Any:
     return replace(item, summary=replace(item.summary, **changes))
 
 
-def test_task_result_preserves_summary_evidence_and_derives_last_attempt_paths() -> None:
+def test_task_result_preserves_summary_evidence_and_derives_last_attempt_paths() -> (
+    None
+):
     summary = EventSummary(
-        wall_seconds=2, progress_events=3, tokens=4, tool_calls=1,
-        avg_prefill_reuse=0.625, non_extend_rounds=1,
-        allowed_non_extend_rounds=1, non_extension_reasons=("compaction",),
+        wall_seconds=2,
+        progress_events=3,
+        tokens=4,
+        tool_calls=1,
+        avg_prefill_reuse=0.625,
+        non_extend_rounds=1,
+        allowed_non_extend_rounds=1,
+        non_extension_reasons=("compaction",),
         reuse_ratios=(0.5, 0.75),
     )
     first_save = Path("/saves/first")
@@ -75,7 +95,11 @@ def test_task_result_preserves_summary_evidence_and_derives_last_attempt_paths()
     first_trace = Path("/traces/first")
     last_trace = Path("/traces/last")
     run = TaskRunResult(
-        task_id="task", agent="ds4py", passed=True, attempts=2, summary=summary,
+        task_id="task",
+        agent="ds4py",
+        passed=True,
+        attempts=2,
+        summary=summary,
         attempt_save_dirs=(first_save, last_save),
         attempt_trace_paths=(first_trace, last_trace),
     )
@@ -93,7 +117,8 @@ def test_task_result_preserves_summary_evidence_and_derives_last_attempt_paths()
 def healthy_restore(results: Any) -> Any:
     runs = tuple(
         RestoreResult(save_dir=save, passed=True)
-        for item in results if item.agent == "ds4py"
+        for item in results
+        if item.agent == "ds4py"
         for save in item.attempt_save_dirs
     )
     return RestoreSummary(
@@ -110,9 +135,14 @@ def test_agent_commands_share_model_sampling_and_task_prompt(tmp_path: Path) -> 
 
     for command in (c_command, python):
         for flag, value in (
-            ("--model", "/model.gguf"), ("--backend", "cpu"),
-            ("--ctx", "100000"), ("--temp", "0"), ("--seed", "1"),
-            ("--tokens", "256"), ("--prompt", prompt), ("--trace", str(trace)),
+            ("--model", "/model.gguf"),
+            ("--backend", "cpu"),
+            ("--ctx", "100000"),
+            ("--temp", "0"),
+            ("--seed", "1"),
+            ("--tokens", "256"),
+            ("--prompt", prompt),
+            ("--trace", str(trace)),
         ):
             assert command[command.index(flag) + 1] == value
     assert "--non-interactive" in c_command and "--yolo" not in c_command
@@ -131,27 +161,38 @@ def test_request_limit_failure_is_named_in_task_errors(tmp_path: Path) -> None:
         + "raise SystemExit(1)\n"
     )
     agent = replace(
-        config(tmp_path), executable=(sys.executable, str(executable)),
+        config(tmp_path),
+        executable=(sys.executable, str(executable)),
     )
 
     completed = run_task(
-        workspace, agent, tmp_path / "results",
-        grade_runner=lambda *args: subprocess.CompletedProcess([], 0, stdout="pass", stderr=""),
+        workspace,
+        agent,
+        tmp_path / "results",
+        grade_runner=lambda *args: subprocess.CompletedProcess(
+            [], 0, stdout="pass", stderr=""
+        ),
     )
 
     assert "attempt 1 request_limit" in completed.errors
 
 
-def test_failed_first_attempt_feeds_grader_output_to_exactly_one_retry(tmp_path: Path) -> None:
+def test_failed_first_attempt_feeds_grader_output_to_exactly_one_retry(
+    tmp_path: Path,
+) -> None:
     source = make_exercise(tmp_path)
     workspace = prepare_exercise(source, tmp_path / "staged")
-    outcomes = iter([
-        subprocess.CompletedProcess([], 1, stdout="hidden failure", stderr=""),
-        subprocess.CompletedProcess([], 0, stdout="hidden pass", stderr=""),
-    ])
+    outcomes = iter(
+        [
+            subprocess.CompletedProcess([], 1, stdout="hidden failure", stderr=""),
+            subprocess.CompletedProcess([], 0, stdout="hidden pass", stderr=""),
+        ]
+    )
 
     completed = run_task(
-        workspace, config(tmp_path), tmp_path / "results",
+        workspace,
+        config(tmp_path),
+        tmp_path / "results",
         grade_runner=lambda *args: next(outcomes),
     )
 
@@ -167,15 +208,20 @@ def test_failed_first_attempt_feeds_grader_output_to_exactly_one_retry(tmp_path:
 
 
 def test_relative_results_root_keeps_attempt_artifacts_at_invocation_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = make_exercise(tmp_path)
     workspace = prepare_exercise(source, tmp_path / "staged")
     monkeypatch.chdir(tmp_path)
 
     completed = run_task(
-        workspace, config(tmp_path), Path("results"),
-        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(command, 0, "pass", ""),
+        workspace,
+        config(tmp_path),
+        Path("results"),
+        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(
+            command, 0, "pass", ""
+        ),
     )
 
     assert completed.errors == ()
@@ -191,28 +237,44 @@ def test_c_and_python_run_sequentially_on_equivalent_tasks(tmp_path: Path) -> No
     staged = prepare_exercise(source, tmp_path / "staged")
 
     results = run_tasks_sequentially(
-        [staged], [config(tmp_path, "c"), config(tmp_path)], tmp_path / "results",
-        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(command, 0, "pass", ""),
+        [staged],
+        [config(tmp_path, "c"), config(tmp_path)],
+        tmp_path / "results",
+        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(
+            command, 0, "pass", ""
+        ),
     )
 
-    assert [(item.task_id, item.agent) for item in results] == [("tiny", "c"), ("tiny", "ds4py")]
+    assert [(item.task_id, item.agent) for item in results] == [
+        ("tiny", "c"),
+        ("tiny", "ds4py"),
+    ]
     assert all(item.passed for item in results)
     invocations = read_invocations(tmp_path)
     assert [item["agent"] for item in invocations] == ["c", "ds4py"]
     assert results[0].tool_accounting is None
     assert not (tmp_path / "concurrency-violation").exists()
-    assert not (results[0].save_dir or Path("missing")).exists() if results[0].save_dir else True
+    assert (
+        not (results[0].save_dir or Path("missing")).exists()
+        if results[0].save_dir
+        else True
+    )
 
 
 def test_sequential_runner_reports_each_task_start_and_finish(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     source = make_exercise(tmp_path)
     staged = prepare_exercise(source, tmp_path / "staged")
 
     run_tasks_sequentially(
-        [staged], [config(tmp_path, "c"), config(tmp_path)], tmp_path / "results",
-        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(command, 0, "pass", ""),
+        [staged],
+        [config(tmp_path, "c"), config(tmp_path)],
+        tmp_path / "results",
+        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(
+            command, 0, "pass", ""
+        ),
     )
 
     assert capsys.readouterr().out.splitlines() == [
@@ -229,12 +291,17 @@ def test_c_metrics_failure_leaves_tool_accounting_unavailable(tmp_path: Path) ->
     executable = tmp_path / "c-without-evidence.py"
     executable.write_text("")
     c_config = replace(
-        config(tmp_path, "c"), executable=(sys.executable, str(executable)),
+        config(tmp_path, "c"),
+        executable=(sys.executable, str(executable)),
     )
 
     completed = run_task(
-        workspace, c_config, tmp_path / "results",
-        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(command, 0, "pass", ""),
+        workspace,
+        c_config,
+        tmp_path / "results",
+        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(
+            command, 0, "pass", ""
+        ),
     )
 
     assert completed.errors
@@ -262,26 +329,49 @@ def test_gate_one_allows_exactly_one_task_of_pass_slack() -> None:
     assert "attempt" in report.gates["gate-1"].detail
 
 
-def test_gate_two_allows_bad_argument_retry_but_not_parser_error_or_missing_outcome() -> None:
+def test_gate_two_allows_bad_argument_retry_but_not_parser_error_or_missing_outcome() -> (
+    None
+):
     c = result(agent="c")
     python = with_summary(result(), tool_accounting=ToolAccounting(2, 1, 0, 1))
-    assert build_report([c, python], healthy_restore([c, python])).gates["gate-2"].passed
+    assert (
+        build_report([c, python], healthy_restore([c, python])).gates["gate-2"].passed
+    )
 
     parser_error = with_summary(python, parser_errors=1)
-    assert not build_report([c, parser_error], healthy_restore([c, parser_error])).gates["gate-2"].passed
+    assert (
+        not build_report([c, parser_error], healthy_restore([c, parser_error]))
+        .gates["gate-2"]
+        .passed
+    )
     missing = with_summary(python, tool_accounting=ToolAccounting(2, 1, 0, 0))
-    assert not build_report([c, missing], healthy_restore([c, missing])).gates["gate-2"].passed
+    assert (
+        not build_report([c, missing], healthy_restore([c, missing]))
+        .gates["gate-2"]
+        .passed
+    )
 
 
 def test_gate_three_enforces_time_and_only_unexplained_non_extensions() -> None:
     c = result(agent="c", wall_seconds=10)
     python = result(wall_seconds=15.01)
-    assert not build_report([c, python], healthy_restore([c, python])).gates["gate-3"].passed
+    assert (
+        not build_report([c, python], healthy_restore([c, python]))
+        .gates["gate-3"]
+        .passed
+    )
 
     on_time = with_summary(
-        python, wall_seconds=15, invalid_non_extend_rounds=1, non_extend_rounds=1,
+        python,
+        wall_seconds=15,
+        invalid_non_extend_rounds=1,
+        non_extend_rounds=1,
     )
-    assert not build_report([c, on_time], healthy_restore([c, on_time])).gates["gate-3"].passed
+    assert (
+        not build_report([c, on_time], healthy_restore([c, on_time]))
+        .gates["gate-3"]
+        .passed
+    )
 
 
 def test_gate_four_requires_interrupt_resume() -> None:
@@ -326,8 +416,12 @@ def test_report_json_has_attempt_feedback_and_table_has_six_deltas_not_logs() ->
     assert python_data["grader_outputs"] == ["grader secret output"]
     table = report.compact_table()
     for metric in (
-        "wall_seconds", "progress_events", "tokens", "tool_calls",
-        "avg_prefill_reuse", "non_extend_rounds",
+        "wall_seconds",
+        "progress_events",
+        "tokens",
+        "tool_calls",
+        "avg_prefill_reuse",
+        "non_extend_rounds",
     ):
         assert metric in table
     assert "delta" in table and "grader secret output" not in table
@@ -347,7 +441,7 @@ def read_invocations(root: Any) -> Any:
     return [json.loads(line) for line in path.read_text().splitlines()]
 
 
-FAKE_AGENT = r'''
+FAKE_AGENT = r"""
 import fcntl
 import json
 import os
@@ -398,10 +492,12 @@ with lock_path.open("w") as lock:
     with Path(os.environ["BAKEOFF_INVOCATIONS"]).open("a") as stream:
         stream.write(json.dumps(invocation) + "\n")
     fcntl.flock(lock, fcntl.LOCK_UN)
-'''
+"""
 
 
-def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_complete_runner_writes_gate_six_after_acceptance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import bench.run_bakeoff as runner
 
     order = []
@@ -409,27 +505,34 @@ def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkey
     monkeypatch.setattr(runner, "load_manifest", lambda _path: object())
     monkeypatch.setattr(runner, "prepare_manifest", lambda *args: staged)
     monkeypatch.setattr(
-        runner, "run_tasks_sequentially",
+        runner,
+        "run_tasks_sequentially",
         lambda *args, **kwargs: order.append("tasks") or (),
     )
     monkeypatch.setattr(
-        runner, "check_result_saves",
+        runner,
+        "check_result_saves",
         lambda *args: order.append("restores") or (),
     )
     monkeypatch.setattr(runner, "clone_workspace", lambda *args: object())
     monkeypatch.setattr(
-        runner, "interruption_acceptance",
+        runner,
+        "interruption_acceptance",
         lambda *args: order.append("interruption") or CheckResult(True, "ok"),
     )
     replay = ReplayResult("task", 0, True, "tool replay", tool_call=True)
     monkeypatch.setattr(
-        runner, "replay_task_results",
+        runner,
+        "replay_task_results",
         lambda *args: order.append("replay") or (replay,),
     )
 
     report = run_bakeoff(
-        tmp_path / "manifest", tmp_path / "benchmark", tmp_path,
-        (config(tmp_path),), tmp_path / "results",
+        tmp_path / "manifest",
+        tmp_path / "benchmark",
+        tmp_path,
+        (config(tmp_path),),
+        tmp_path / "results",
     )
 
     assert order == ["tasks", "restores", "interruption", "replay"]

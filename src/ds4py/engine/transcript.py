@@ -1,10 +1,21 @@
 """Thread-safe token history with segment boundaries."""
+
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from threading import Lock
 from types import MappingProxyType
-from typing import Mapping, Sequence
 
-KINDS = ("system", "user", "assistant_prefix", "assistant", "tool", "eos", "note", "reminder", "compaction")
+KINDS = (
+    "system",
+    "user",
+    "assistant_prefix",
+    "assistant",
+    "tool",
+    "eos",
+    "note",
+    "reminder",
+    "compaction",
+)
 
 
 @dataclass(frozen=True)
@@ -18,7 +29,7 @@ class Segment:
 class TranscriptView:
     """Live, read-only observations of session-owned history."""
 
-    def __init__(self, transcript: "Transcript") -> None:
+    def __init__(self, transcript: Transcript) -> None:
         self._transcript = transcript
 
     @property
@@ -67,8 +78,9 @@ class Transcript:
         with self._lock:
             return len(self._tokens)
 
-    def append(self, tokens: Sequence[int], kind: str,
-               meta: Mapping | None = None) -> Segment:
+    def append(
+        self, tokens: Sequence[int], kind: str, meta: Mapping | None = None
+    ) -> Segment:
         with self._lock:
             if kind not in KINDS:
                 raise ValueError(f"unknown segment kind: {kind}")
@@ -76,8 +88,12 @@ class Transcript:
             if not added:
                 raise ValueError("a segment must contain tokens")
             start = len(self._tokens)
-            segment = Segment(start, start + len(added), kind,
-                              MappingProxyType(dict(meta) if meta is not None else {}))
+            segment = Segment(
+                start,
+                start + len(added),
+                kind,
+                MappingProxyType(dict(meta) if meta is not None else {}),
+            )
             self._tokens.extend(added)
             self._segments.append(segment)
             return segment
@@ -99,7 +115,9 @@ class Transcript:
                 replace(
                     segment,
                     meta=MappingProxyType({**segment.meta, **meta}),
-                ) if segment.start >= start and segment.kind in kinds else segment
+                )
+                if segment.start >= start and segment.kind in kinds
+                else segment
                 for segment in self._segments
             ]
 
@@ -121,8 +139,7 @@ class Transcript:
                 expected = segment.end
             if expected != len(self._tokens):
                 raise ValueError(
-                    f"installed segments cover {expected} tokens, "
-                    f"not the {len(self._tokens)} tokens present"
+                    f"installed segments cover {expected} tokens, not the {len(self._tokens)} tokens present"
                 )
             self._segments = installed
             self._chat = True

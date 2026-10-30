@@ -57,8 +57,13 @@ class LogitsView:
         return self._sampled_snapshot
 
     def _update(
-        self, *, position: int, in_think: bool, think_tokens: int,
-        parser_state: str | None, sampled_tokens: Sequence[int],
+        self,
+        *,
+        position: int,
+        in_think: bool,
+        think_tokens: int,
+        parser_state: str | None,
+        sampled_tokens: Sequence[int],
     ) -> None:
         self._position = position
         self._in_think = in_think

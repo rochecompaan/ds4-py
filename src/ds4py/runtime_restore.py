@@ -1,4 +1,5 @@
 """Match saved records to snapshots and restore native or rendered state."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -33,7 +34,9 @@ class RestorePlan:
 
 
 def plan_restore(
-    record: SaveRecord, session_dir: Path, store: SessionStore,
+    record: SaveRecord,
+    session_dir: Path,
+    store: SessionStore,
 ) -> RestorePlan:
     """Select KV loading only when the declared payload is present and complete."""
     kv_path = session_dir / "session.kv"
@@ -44,9 +47,9 @@ def plan_restore(
     declared = store.read_kv_header(kv_path)
     if declared != record.payload_bytes:
         return RestorePlan(
-            "render", None,
-            f"{kv_path}: the KV payload is {declared} bytes, "
-            f"the save record declares {record.payload_bytes}",
+            "render",
+            None,
+            f"{kv_path}: the KV payload is {declared} bytes, the save record declares {record.payload_bytes}",
         )
     return RestorePlan("kv", declared, None)
 
@@ -86,8 +89,7 @@ def restore_snapshot(
             loaded = session.load_payload(file, payload_bytes=plan.payload_bytes)
         if len(loaded) != record.tokens:
             outcome["rejected"] = (
-                f"the loaded payload has {len(loaded)} tokens, "
-                f"the save record declares {record.tokens}"
+                f"the loaded payload has {len(loaded)} tokens, the save record declares {record.tokens}"
             )
         elif token_digest(loaded) != record.tokens_sha256:
             outcome["rejected"] = (

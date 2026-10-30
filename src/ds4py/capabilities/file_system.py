@@ -1,4 +1,5 @@
 """Configure harness filesystem tools for the ds4-py coding agent."""
+
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -30,7 +31,10 @@ class DS4FileSystem(FileSystem):
     """A filesystem capability whose schema reflects its configured read default."""
 
     _prepared_toolset: PreparedToolset[Any] | None = field(
-        default=None, init=False, repr=False, compare=False,
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
     )
 
     # FileSystem's declared return union excludes its supported toolset wrappers.

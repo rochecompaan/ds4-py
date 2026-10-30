@@ -1,4 +1,5 @@
 """Session-level chat helpers; these functions own transcript mutations."""
+
 from collections.abc import Generator, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, cast
 
@@ -19,7 +20,9 @@ if TYPE_CHECKING:
 
 
 def _append(
-    session: "Session", tokens: Sequence[int], kind: str,
+    session: "Session",
+    tokens: Sequence[int],
+    kind: str,
     meta: Mapping[str, object] | None = None,
 ) -> Segment | None:
     if not tokens:
@@ -28,7 +31,8 @@ def _append(
 
 
 def start_chat(
-    session: "Session", tools: Iterable[ToolDefinition] = (),
+    session: "Session",
+    tools: Iterable[ToolDefinition] = (),
     instructions: str | None = None,
 ) -> None:
     if session._transcript.chat:
@@ -53,16 +57,23 @@ def _require_chat(session: "Session") -> None:
 
 
 def append_user(
-    session: "Session", text: str, images: Sequence[object] = (),
+    session: "Session",
+    text: str,
+    images: Sequence[object] = (),
 ) -> Segment:
     if images:
         raise EngineError("image input requires M5 vision support")
     _start_if_empty(session)
     retire_paused(session)
     builder = PromptBuilder(session._engine)
-    return cast(Segment, _append(
-        session, builder.message(session._transcript.tokens, "user", text), "user",
-    ))
+    return cast(
+        Segment,
+        _append(
+            session,
+            builder.message(session._transcript.tokens, "user", text),
+            "user",
+        ),
+    )
 
 
 def append_prefix(session: "Session", turns: Iterable[PrefixTurn]) -> None:
@@ -80,12 +91,16 @@ def append_prefix(session: "Session", turns: Iterable[PrefixTurn]) -> None:
 
 
 def run_round(
-    session: "Session", max_tokens: int, sampling: SamplingPolicy | None,
+    session: "Session",
+    max_tokens: int,
+    sampling: SamplingPolicy | None,
     stop_sequences: Sequence[bytes] = (),
 ) -> Generator[Event, None, None]:
     stream = session._paused_stream
     resuming = stream is not None
-    control = resolve_control(stream.control if stream is not None else None, stop_sequences)
+    control = resolve_control(
+        stream.control if stream is not None else None, stop_sequences
+    )
     if not resuming:
         append_assistant_prefix(session)
     try:
@@ -103,13 +118,21 @@ def run_round(
             # An unchanged full session is already synced. Generate again so a
             # zero reserve reports another pause instead of failing the sync.
             sampled_before = len(stream.sampled_tokens)
-            action = yield from session._job_events(GenerateJob(
-                sampling or session._engine.sampling_defaults, session._rng,
-                remaining, session._transcript, reserve=reserve,
-                think_mode=think, stream=stream,
-                logits_hooks=tuple(session._logits_hooks),
-                control=control, resume=resuming,
-            ), pause_on_reserve=True)
+            action = yield from session._job_events(
+                GenerateJob(
+                    sampling or session._engine.sampling_defaults,
+                    session._rng,
+                    remaining,
+                    session._transcript,
+                    reserve=reserve,
+                    think_mode=think,
+                    stream=stream,
+                    logits_hooks=tuple(session._logits_hooks),
+                    control=control,
+                    resume=resuming,
+                ),
+                pause_on_reserve=True,
+            )
             last_tokens = session._transcript.tokens
             if not isinstance(action, tuple) or action[0] != "resume":
                 return
@@ -134,7 +157,9 @@ def append_assistant_prefix(session: "Session") -> Segment | None:
 
 def append_assistant_end(session: "Session") -> Segment | None:
     _require_chat(session)
-    return _append(session, PromptBuilder(session._engine).append_assistant_end(), "eos")
+    return _append(
+        session, PromptBuilder(session._engine).append_assistant_end(), "eos"
+    )
 
 
 def append_tool_results(session: "Session", results: Iterable[str]) -> Segment:
@@ -146,7 +171,9 @@ def append_tool_results(session: "Session", results: Iterable[str]) -> Segment:
 
 
 def append_system_note(
-    session: "Session", text: str, subtype: str | None = None,
+    session: "Session",
+    text: str,
+    subtype: str | None = None,
 ) -> Segment:
     _require_chat(session)
     retire_paused(session)

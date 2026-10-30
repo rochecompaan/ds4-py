@@ -12,7 +12,10 @@ def test_transcript_segments() -> None:
     t.extend([5, 6])
     assert t.tokens == (1, 2, 3, 4, 5, 6)
     assert len(t) == 6
-    assert [(s.start, s.end, s.kind) for s in t.segments] == [(0, 3, "user"), (3, 6, "assistant")]
+    assert [(s.start, s.end, s.kind) for s in t.segments] == [
+        (0, 3, "user"),
+        (3, 6, "assistant"),
+    ]
     t.truncate(4)
     assert [(s.start, s.end) for s in t.segments] == [(0, 3), (3, 4)]
     t.truncate(3)
@@ -36,7 +39,7 @@ def test_snapshots_and_metadata_do_not_change_when_transcript_changes() -> None:
     assert old_segments == (segment,)
     assert segment.end == 1 and segment.meta == {"turn": 1}
     with pytest.raises(TypeError):
-        cast(Any, t.segments[0].meta)["turn"] = 2
+        cast("Any", t.segments[0].meta)["turn"] = 2
     assert t.tokens == (1, 2)
 
 

@@ -1,8 +1,7 @@
-from typing import Any, cast
 import ctypes as C
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -41,7 +40,7 @@ class ChatLib:
 
     def push(self, pointer: Any, token: Any) -> None:
         tokens = self.tokens(pointer)
-        values = list(tokens.v[:tokens.len]) + [token]
+        values = list(tokens.v[: tokens.len]) + [token]
         array = (C.c_int * len(values))(*values)
         self.keepalive.append(array)
         tokens.v = C.cast(array, C.POINTER(C.c_int))
@@ -81,11 +80,11 @@ class ChatLib:
 def native_handle() -> Any:
     lib = ChatLib()
     engine = NativeEngine.__new__(NativeEngine)
-    _Handle.__init__(engine, cast(Any, lib), 0x1234)
+    _Handle.__init__(engine, cast("Any", lib), 0x1234)
     return engine, lib
 
 
-def fake_engine(family: Any="deepseek4") -> Any:
+def fake_engine(family: Any = "deepseek4") -> Any:
     native = FakeNative()
     info = replace(
         native._info,
@@ -166,7 +165,9 @@ def test_fake_rendered_specials_never_leak_into_plain_tokenization() -> None:
 def test_fake_chat_rendering_appends_only_the_native_delta() -> None:
     engine = fake_engine()
     prefix = engine.tokenize("prefix")
-    assert engine.chat_begin() == engine.tokenize("<｜begin▁of▁sentence｜>", rendered=True)
+    assert engine.chat_begin() == engine.tokenize(
+        "<｜begin▁of▁sentence｜>", rendered=True
+    )
     assert engine.think_prefix(prefix, ThinkMode.NONE) == []
     assert engine.render_message(prefix, "user", "hello") == (
         engine.tokenize("<｜User｜>", rendered=True) + engine.tokenize("hello")
@@ -192,7 +193,9 @@ def test_fake_qwen_native_tool_markup_is_plain_like_pinned_upstream() -> None:
 def test_public_engine_chat_counterparts_run_on_the_worker() -> None:
     engine = open_engine(Path("fake.gguf"), native=FakeNative())
     try:
-        assert engine._chat_begin() == engine.tokenize("<｜begin▁of▁sentence｜>", rendered=True)
+        assert engine._chat_begin() == engine.tokenize(
+            "<｜begin▁of▁sentence｜>", rendered=True
+        )
         assert engine._think_prefix([], ThinkMode.NONE) == []
         assert engine._render_message([], "user", "x")
         assert engine._assistant_prefix([], ThinkMode.HIGH)

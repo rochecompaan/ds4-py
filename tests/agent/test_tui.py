@@ -59,14 +59,22 @@ def test_prompt_loop_accepts_pipe_input_and_exit() -> None:
 
 def test_model_question_uses_active_prompt_and_returns_typed_answer() -> None:
     from pydantic_ai_harness.ask_user import (
-        AskUserRequest, AskUserResponse, Question, QuestionOption,
+        AskUserRequest,
+        AskUserResponse,
+        Question,
+        QuestionOption,
     )
 
     runtime: Any = FakeRuntime()
-    request = AskUserRequest(questions=(Question(
-        header="next", question="What next?",
-        options=(QuestionOption(label="one"), QuestionOption(label="two")),
-    ),))
+    request = AskUserRequest(
+        questions=(
+            Question(
+                header="next",
+                question="What next?",
+                options=(QuestionOption(label="one"), QuestionOption(label="two")),
+            ),
+        )
+    )
     with create_pipe_input() as input_:
         input_.send_text("ask\n2\n/exit\n")
         tui = TUI(runtime, input=input_, output=DummyOutput())
@@ -100,12 +108,20 @@ def test_enter_submits_and_alt_enter_inserts_newline() -> None:
     alt_enter = tui.key_bindings.get_bindings_for_keys((Keys.Escape, Keys.Enter))[0]
     submitted = []
     inserted = []
-    cast(Any, enter.handler)(SimpleNamespace(current_buffer=SimpleNamespace(
-        validate_and_handle=lambda: submitted.append(True),
-    )))
-    cast(Any, alt_enter.handler)(SimpleNamespace(current_buffer=SimpleNamespace(
-        insert_text=inserted.append,
-    )))
+    cast(Any, enter.handler)(
+        SimpleNamespace(
+            current_buffer=SimpleNamespace(
+                validate_and_handle=lambda: submitted.append(True),
+            )
+        )
+    )
+    cast(Any, alt_enter.handler)(
+        SimpleNamespace(
+            current_buffer=SimpleNamespace(
+                insert_text=inserted.append,
+            )
+        )
+    )
 
     assert submitted == [True]
     assert inserted == ["\n"]
@@ -120,9 +136,13 @@ def test_ctrl_c_cancels_without_touching_partial_text_and_ctrl_d_exits() -> None
 
     exits = []
     ctrl_d = tui.key_bindings.get_bindings_for_keys((Keys.ControlD,))[0]
-    cast(Any, ctrl_d.handler)(SimpleNamespace(app=SimpleNamespace(
-        exit=lambda exception: exits.append(exception),
-    )))
+    cast(Any, ctrl_d.handler)(
+        SimpleNamespace(
+            app=SimpleNamespace(
+                exit=lambda exception: exits.append(exception),
+            )
+        )
+    )
     assert len(exits) == 1
     assert isinstance(exits[0], EOFError)
 
@@ -132,9 +152,15 @@ def test_footer_distinguishes_prefill_from_token_generation() -> None:
     try:
         footer.handle_event(SessionEvent("run_start", "session", {}))
         assert footer.status == "running"
-        footer.handle_event(SessionEvent("Prefill", "session", {
-            "event": SimpleNamespace(done=2, total=2, tps=10.0),
-        }))
+        footer.handle_event(
+            SessionEvent(
+                "Prefill",
+                "session",
+                {
+                    "event": SimpleNamespace(done=2, total=2, tps=10.0),
+                },
+            )
+        )
         assert footer.status == "running"
         footer.handle_event(SessionEvent("Token", "session", {}))
         assert footer.status == "streaming"
@@ -152,12 +178,18 @@ def fragment_text(fragments: Any) -> str:
 
 def test_text_and_thinking_deltas_have_distinct_styles() -> None:
     renderer = StreamRenderer(DummyOutput())
-    text = renderer.handle_event(PartDeltaEvent(
-        index=0, delta=TextPartDelta("visible"),
-    ))
-    thinking = renderer.handle_event(PartDeltaEvent(
-        index=0, delta=ThinkingPartDelta(content_delta="private"),
-    ))
+    text = renderer.handle_event(
+        PartDeltaEvent(
+            index=0,
+            delta=TextPartDelta("visible"),
+        )
+    )
+    thinking = renderer.handle_event(
+        PartDeltaEvent(
+            index=0,
+            delta=ThinkingPartDelta(content_delta="private"),
+        )
+    )
 
     assert fragment_text(text) == "visible"
     assert fragment_text(thinking) == "private"
@@ -169,12 +201,19 @@ def test_tool_previews_are_one_line_and_ellipsized() -> None:
     renderer = StreamRenderer(DummyOutput())
     long_value = "alpha\nbeta " * 40
     events = [
-        FunctionToolCallEvent(part=ToolCallPart(
-            tool_name="write_file", args={"path": "a.txt", "content": long_value},
-        )),
-        FunctionToolResultEvent(part=ToolReturnPart(
-            tool_name="write_file", content=long_value, tool_call_id="call-1",
-        )),
+        FunctionToolCallEvent(
+            part=ToolCallPart(
+                tool_name="write_file",
+                args={"path": "a.txt", "content": long_value},
+            )
+        ),
+        FunctionToolResultEvent(
+            part=ToolReturnPart(
+                tool_name="write_file",
+                content=long_value,
+                tool_call_id="call-1",
+            )
+        ),
     ]
 
     for event in events:
@@ -187,9 +226,12 @@ def test_tool_previews_are_one_line_and_ellipsized() -> None:
 
 def test_stream_renderer_applies_markdown_to_text_deltas() -> None:
     renderer = StreamRenderer(DummyOutput())
-    fragments: Any = renderer.handle_event(PartDeltaEvent(
-        index=0, delta=TextPartDelta("**bold** and `code`"),
-    ))
+    fragments: Any = renderer.handle_event(
+        PartDeltaEvent(
+            index=0,
+            delta=TextPartDelta("**bold** and `code`"),
+        )
+    )
 
     assert fragment_text(fragments) == "bold and code"
     assert any("bold" in style for style, _text in fragments)
@@ -197,7 +239,9 @@ def test_stream_renderer_applies_markdown_to_text_deltas() -> None:
 
 
 def test_markdown_becomes_styled_prompt_toolkit_fragments() -> None:
-    fragments: Any = markdown_fragments("# Heading\n**bold** and *emphasis* with `code`")
+    fragments: Any = markdown_fragments(
+        "# Heading\n**bold** and *emphasis* with `code`"
+    )
     styles = [style for style, _text in fragments]
     text = fragment_text(fragments)
 

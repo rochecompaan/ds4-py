@@ -1,11 +1,12 @@
 """Incremental Qwen function/parameter tool-call parser."""
+
 import json
 import re
+from typing import Never
 
 from .delimiter import DelimiterParser
 from .model import ToolArgument
 from .text import unescape_tool_text
-from typing import Never
 
 _ASCII_SPACE = b" \t\r\n"
 _CLOSE = b"</tool_call>"
@@ -31,8 +32,9 @@ def value_is_json(value: bytes) -> bool:
     trimmed = value[start:end]
     if not trimmed:
         return False
-    if ((trimmed.startswith(b"{") and trimmed.endswith(b"}"))
-            or (trimmed.startswith(b"[") and trimmed.endswith(b"]"))):
+    if (trimmed.startswith(b"{") and trimmed.endswith(b"}")) or (
+        trimmed.startswith(b"[") and trimmed.endswith(b"]")
+    ):
         return True
     if trimmed in (b"true", b"false", b"null"):
         return True
@@ -127,8 +129,10 @@ class Qwen(DelimiterParser):
                     value = _parse_number(number)
                 else:
                     value = json.loads(text, parse_constant=self._reject_json_constant)
-            except (json.JSONDecodeError, ValueError):
-                self._fail(f"Qwen parameter {self._param_name!r} contains malformed JSON")
+            except json.JSONDecodeError, ValueError:
+                self._fail(
+                    f"Qwen parameter {self._param_name!r} contains malformed JSON"
+                )
                 return True
         else:
             value = unescape_tool_text(text, _PARAMETER_CLOSE.decode())

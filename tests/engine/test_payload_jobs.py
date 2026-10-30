@@ -1,14 +1,15 @@
 """Session save/load jobs over the single native worker."""
-from typing import Any
+
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 import ds4py
-from ds4py.engine.session import Engine
 from ds4py._native.fake import FakeNative, FakeSession, reply
-from ds4py.engine.events import Loaded, Saved, Stopped, Synced
+from ds4py.engine.events import Loaded, Stopped, Synced
 from ds4py.engine.plan import Plan
+from ds4py.engine.session import Engine
 from ds4py.errors import CheckpointError, EngineError
 
 HEADER = b"DS4PYKV\0" + bytes(12)
@@ -34,7 +35,8 @@ def save_to(path: Any, session: Any) -> Any:
 
 
 def test_save_syncs_the_trailing_eos_before_writing_header_and_payload(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     synced = []
     original = FakeSession.sync
@@ -47,7 +49,9 @@ def test_save_syncs_the_trailing_eos_before_writing_header_and_payload(
     with fake_engine(script=reply(b"ok")) as engine:
         session = chat_session(engine)
         kinds = []
-        session.on_event(lambda event: kinds.append(event.kind), kinds=("Synced", "Saved"))
+        session.on_event(
+            lambda event: kinds.append(event.kind), kinds=("Synced", "Saved")
+        )
         path = tmp_path / "session.kv"
         saved = save_to(path, session)
 
@@ -60,7 +64,9 @@ def test_save_syncs_the_trailing_eos_before_writing_header_and_payload(
         assert len(data) == len(HEADER) + saved.payload_bytes
 
 
-def test_save_accepts_a_caller_header_without_a_store_length_policy(tmp_path: Path) -> None:
+def test_save_accepts_a_caller_header_without_a_store_length_policy(
+    tmp_path: Path,
+) -> None:
     header = b"short"
     path = tmp_path / "session.kv"
     with fake_engine() as engine:
@@ -71,12 +77,13 @@ def test_save_accepts_a_caller_header_without_a_store_length_policy(tmp_path: Pa
             assert file.tell() == len(header) + saved.payload_bytes
 
     data = path.read_bytes()
-    assert data[:len(header)] == header
+    assert data[: len(header)] == header
     assert len(data) == len(header) + saved.payload_bytes
 
 
 def test_save_closes_the_staged_payload_on_success_and_write_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     staged_objects = []
     original = FakeSession.stage_payload
@@ -120,7 +127,9 @@ def test_save_closes_the_staged_payload_on_success_and_write_failure(
     assert [tracked.closes for tracked in staged_objects] == [1, 1]
 
 
-def test_load_adopts_native_tokens_restores_chat_and_permits_extension(tmp_path: Path) -> None:
+def test_load_adopts_native_tokens_restores_chat_and_permits_extension(
+    tmp_path: Path,
+) -> None:
     with fake_engine(script=reply(b"ok")) as engine:
         session = chat_session(engine)
         saved_tokens = session.transcript.tokens
@@ -131,7 +140,8 @@ def test_load_adopts_native_tokens_restores_chat_and_permits_extension(tmp_path:
         assert session.transcript.tokens == ()
         loaded_events = []
         session.on_event(
-            lambda event: loaded_events.append(event.payload["event"]), kinds=("Loaded",),
+            lambda event: loaded_events.append(event.payload["event"]),
+            kinds=("Loaded",),
         )
 
         with path.open("r+b") as file:
@@ -142,7 +152,9 @@ def test_load_adopts_native_tokens_restores_chat_and_permits_extension(tmp_path:
         assert loaded == list(saved_tokens)
         assert session.transcript.tokens == saved_tokens
         assert session.transcript.chat
-        assert [(segment.start, segment.end) for segment in session.transcript.segments] == [
+        assert [
+            (segment.start, segment.end) for segment in session.transcript.segments
+        ] == [
             (0, len(saved_tokens)),
         ]
         assert session.ctx_used == len(saved_tokens)
@@ -157,7 +169,9 @@ def test_load_adopts_native_tokens_restores_chat_and_permits_extension(tmp_path:
         assert events[-1] == Stopped("max_tokens")
 
 
-def test_load_clears_checkpoints_that_point_at_the_previous_transcript(tmp_path: Path) -> None:
+def test_load_clears_checkpoints_that_point_at_the_previous_transcript(
+    tmp_path: Path,
+) -> None:
     with fake_engine() as engine:
         session = engine.session()
         session.append_tokens([5, 6, 7], "user")
@@ -173,7 +187,9 @@ def test_load_clears_checkpoints_that_point_at_the_previous_transcript(tmp_path:
             session.drop_checkpoint("old")
 
 
-def test_load_failure_keeps_the_existing_transcript_and_file_usable(tmp_path: Path) -> None:
+def test_load_failure_keeps_the_existing_transcript_and_file_usable(
+    tmp_path: Path,
+) -> None:
     with fake_engine() as engine:
         session = engine.session()
         session.append_tokens([5, 6], "user")

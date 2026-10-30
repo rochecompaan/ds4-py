@@ -63,7 +63,7 @@ def native_stream(file: BinaryIO, mode: str) -> Iterator[int]:
         error = _os_error()
         if position >= 0:
             try:
-                file.seek(0, os.SEEK_END)   # discard read-ahead before adopting it
+                file.seek(0, os.SEEK_END)  # discard read-ahead before adopting it
                 file.seek(position)
             except BaseException:
                 if failure is None:

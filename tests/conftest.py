@@ -1,10 +1,10 @@
-from typing import TYPE_CHECKING, Any
-from collections.abc import Callable, Iterator, Sequence
 import importlib
 import os
-from pathlib import Path
 import shutil
+from collections.abc import Callable, Iterator, Sequence
 from importlib.metadata import MetadataPathFinder
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -14,19 +14,21 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture(scope="session")
-def built_upstream(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, "Manifest"]:
+def built_upstream(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Manifest]:
     from ds4py.abi.build import build_library
     from ds4py.abi.manifest import Manifest, manifest_path
 
     src = os.environ.get("DS4_SRC_UPSTREAM")
     if not src:
         pytest.skip("DS4_SRC_UPSTREAM is not set")
-    lib = build_library(Path(src), backend="cpu", out_dir=tmp_path_factory.mktemp("upstream-build"))
+    lib = build_library(
+        Path(src), backend="cpu", out_dir=tmp_path_factory.mktemp("upstream-build")
+    )
     return lib, Manifest.read(manifest_path(lib))
 
 
 @pytest.fixture(scope="session")
-def built_fork(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, "Manifest"]:
+def built_fork(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Manifest]:
     from ds4py.abi.build import build_library
     from ds4py.abi.manifest import Manifest, manifest_path
 
@@ -34,11 +36,15 @@ def built_fork(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, "Manifes
     if not src:
         pytest.skip("DS4_SRC_FORK is not set")
     with pytest.MonkeyPatch.context() as mp:
-        mp.syspath_prepend(str((Path(__file__).parent / "fixtures" / "ext_site").resolve()))
+        mp.syspath_prepend(
+            str((Path(__file__).parent / "fixtures" / "ext_site").resolve())
+        )
         importlib.invalidate_caches()
         MetadataPathFinder().invalidate_caches()
         try:
-            lib = build_library(Path(src), backend="cpu", out_dir=tmp_path_factory.mktemp("fork-build"))
+            lib = build_library(
+                Path(src), backend="cpu", out_dir=tmp_path_factory.mktemp("fork-build")
+            )
             return lib, Manifest.read(manifest_path(lib))
         finally:
             MetadataPathFinder().invalidate_caches()
@@ -79,17 +85,21 @@ def probed() -> dict[Any, Any]:
 
 @pytest.fixture
 def make_manifest(
-    cc: str, probed: dict[Any, Any], tmp_path_factory: pytest.TempPathFactory,
-) -> Callable[..., tuple[Path, "Manifest"]]:
-    from ds4py.abi import probe
-    from ds4py.abi.manifest import BindingRecord, Manifest, file_sha256
+    cc: str,
+    probed: dict[Any, Any],
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Callable[..., tuple[Path, Manifest]]:
     from ds4py._native.bindings import CORE_BINDINGS
     from ds4py._native.loader import LIB_NAME
     from ds4py._native.typemap import TYPE_MAP_VERSION
+    from ds4py.abi import probe
+    from ds4py.abi.manifest import BindingRecord, Manifest, file_sha256
 
     def make(
-        where: Path, headers_dir: Path, bindings: Sequence["Binding"]=CORE_BINDINGS,
-    ) -> tuple[Path, "Manifest"]:
+        where: Path,
+        headers_dir: Path,
+        bindings: Sequence[Binding] = CORE_BINDINGS,
+    ) -> tuple[Path, Manifest]:
         lib = where / LIB_NAME
         lib.write_bytes(b"dummy library")
         key = (headers_dir.resolve(), tuple(b.name for b in bindings))
@@ -103,12 +113,23 @@ def make_manifest(
         hashes = probe.header_hashes(headers_dir)
         return lib, Manifest(
             type_map_version=TYPE_MAP_VERSION,
-            library_file=LIB_NAME, library_sha256=file_sha256(lib),
-            source_path=str(headers_dir), source_commit=None, backend="cpu",
-            headers=hashes, headers_known=probe.headers_known(hashes),
-            bindings={b.name: BindingRecord(b.normalized, b.required, b.source,
-                                          signatures[b.name].ok, signatures[b.name].message)
-                      for b in bindings},
+            library_file=LIB_NAME,
+            library_sha256=file_sha256(lib),
+            source_path=str(headers_dir),
+            source_commit=None,
+            backend="cpu",
+            headers=hashes,
+            headers_known=probe.headers_known(hashes),
+            bindings={
+                b.name: BindingRecord(
+                    b.normalized,
+                    b.required,
+                    b.source,
+                    signatures[b.name].ok,
+                    signatures[b.name].message,
+                )
+                for b in bindings
+            },
             layouts=layouts,
         )
 
@@ -118,6 +139,7 @@ def make_manifest(
 @pytest.fixture
 def fresh_loader() -> Iterator[None]:
     from ds4py._native import loader
+
     loader._loaded = None
     yield
     loader._loaded = None

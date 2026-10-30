@@ -1,20 +1,20 @@
-from typing import Any
-from dataclasses import replace
 import fcntl
 import io
 import os
-from pathlib import Path
 import shutil
 import sys
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
 
 import pytest
+from test_probe import doctored
 
+from ds4py._native.loader import LIB_NAME
 from ds4py.abi import build, pins
 from ds4py.abi.build import build_library
 from ds4py.abi.manifest import Manifest, file_sha256, manifest_path
-from ds4py._native.loader import LIB_NAME
 from ds4py.errors import BuildError
-from test_probe import doctored
 
 
 @pytest.fixture
@@ -33,14 +33,18 @@ def test_not_a_ds4_tree(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("missing", ["Makefile", "ds4.h", "ds4_kvstore.h", "ds4.c"])
-def test_missing_source_file_is_reported_first(fake_tree: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: Any) -> None:
+def test_missing_source_file_is_reported_first(
+    fake_tree: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: Any
+) -> None:
     (fake_tree / missing).unlink()
     monkeypatch.setenv("CC", str(tmp_path / "no-compiler"))
     with pytest.raises(BuildError, match=f"missing {missing}"):
         build_library(fake_tree, backend="cpu", out_dir=tmp_path / "out")
 
 
-def test_no_compiler(tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_compiler(
+    tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("CC", str(tmp_path / "no-such-cc"))
     with pytest.raises(BuildError, match="no C compiler"):
         build_library(fake_tree, backend="cpu", out_dir=tmp_path / "out")
@@ -56,28 +60,41 @@ def only_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *names: Any) -> 
     monkeypatch.delenv("CC", raising=False)
 
 
-def test_no_make(tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_make(
+    tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     only_tools(tmp_path, monkeypatch, "cc")
     with pytest.raises(BuildError, match="make not found on PATH"):
         build_library(fake_tree, backend="cpu", out_dir=tmp_path / "out")
 
 
-def test_rocm_is_refused(tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rocm_is_refused(
+    tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     only_tools(tmp_path, monkeypatch, "cc", "make")
-    with pytest.raises(BuildError, match="backend rocm is not supported by ds4py build yet"):
+    with pytest.raises(
+        BuildError, match="backend rocm is not supported by ds4py build yet"
+    ):
         build_library(fake_tree, backend="rocm", out_dir=tmp_path / "out")
 
 
 @pytest.mark.skipif(sys.platform == "darwin", reason="metal builds on macOS")
-def test_metal_needs_macos(tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_metal_needs_macos(
+    tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     only_tools(tmp_path, monkeypatch, "cc", "make")
     with pytest.raises(BuildError, match="backend metal needs macOS"):
         build_library(fake_tree, backend="metal", out_dir=tmp_path / "out")
 
 
-def test_changed_argument_type_fails_before_make(cc: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    tree = doctored(tmp_path, "int ds4_session_eval(ds4_session *s, int token,",
-                              "int ds4_session_eval(ds4_session *s, long token,")
+def test_changed_argument_type_fails_before_make(
+    cc: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tree = doctored(
+        tmp_path,
+        "int ds4_session_eval(ds4_session *s, int token,",
+        "int ds4_session_eval(ds4_session *s, long token,",
+    )
     (tree / "Makefile").write_text("")
     (tree / "ds4.c").write_text("")
     monkeypatch.setattr(build, "_run_make", lambda *a, **k: pytest.fail("make ran"))
@@ -87,7 +104,9 @@ def test_changed_argument_type_fails_before_make(cc: Any, tmp_path: Path, monkey
     assert not (tmp_path / "out" / LIB_NAME).exists()
 
 
-def test_one_build_per_out_dir(cc: Any, tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_one_build_per_out_dir(
+    cc: Any, tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     out = tmp_path / "out"
     out.mkdir()
     held = os.open(out / ".build.lock", os.O_RDWR | os.O_CREAT, 0o600)
@@ -102,10 +121,17 @@ def test_one_build_per_out_dir(cc: Any, tmp_path: Path, fake_tree: Any, monkeypa
 
 def installed(out: Any) -> Any:
     lib = out / LIB_NAME
-    return lib.read_bytes(), Manifest.read(manifest_path(lib)).library_sha256 == file_sha256(lib)
+    return lib.read_bytes(), Manifest.read(
+        manifest_path(lib)
+    ).library_sha256 == file_sha256(lib)
 
 
-def test_install_switches_the_library_and_manifest_together(make_manifest: Any, tmp_path: Path, upstream_headers: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_install_switches_the_library_and_manifest_together(
+    make_manifest: Any,
+    tmp_path: Path,
+    upstream_headers: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def pair(name: Any, **changes: Any) -> Any:
         (tmp_path / name).mkdir()
         lib, m = make_manifest(tmp_path / name, upstream_headers)
@@ -115,9 +141,16 @@ def test_install_switches_the_library_and_manifest_together(make_manifest: Any, 
     out = tmp_path / "out"
     one, two, four = pair("one"), pair("two"), pair("four")
     three = pair("three", type_map_version=0)
-    assert build.install(one[0], one[1], out) == out / LIB_NAME and installed(out) == (b"one", True)
+    assert build.install(one[0], one[1], out) == out / LIB_NAME and installed(out) == (
+        b"one",
+        True,
+    )
     with monkeypatch.context() as mp:
-        mp.setattr(Manifest, "write", lambda self, path: (_ for _ in ()).throw(OSError("disk full")))
+        mp.setattr(
+            Manifest,
+            "write",
+            lambda self, path: (_ for _ in ()).throw(OSError("disk full")),
+        )
         with pytest.raises(OSError, match="disk full"):
             build.install(two[0], two[1], out)
     with pytest.raises(BuildError):
@@ -128,17 +161,26 @@ def test_install_switches_the_library_and_manifest_together(make_manifest: Any, 
     assert len(list((out / "installs").iterdir())) == 2
 
 
-@pytest.mark.parametrize("failure", ["missing_root", "changed_shader", "copy", "switch"])
+@pytest.mark.parametrize(
+    "failure", ["missing_root", "changed_shader", "copy", "switch"]
+)
 def test_shader_publication_failure_keeps_old_generation(
-    make_manifest: Any, tmp_path: Path, upstream_headers: Any, monkeypatch: pytest.MonkeyPatch, failure: Any,
+    make_manifest: Any,
+    tmp_path: Path,
+    upstream_headers: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Any,
 ) -> None:
     import hashlib
+
     source = tmp_path / "source"
     (source / "metal").mkdir(parents=True)
     (source / "metal/dense.metal").write_bytes(b"original shader")
     lib, m = make_manifest(source, upstream_headers)
     m.backend = "metal"
-    m.metal_sources = {"metal/dense.metal": hashlib.sha256(b"original shader").hexdigest()}
+    m.metal_sources = {
+        "metal/dense.metal": hashlib.sha256(b"original shader").hexdigest()
+    }
     out = tmp_path / "out"
     current = build.install(lib, m, out, metal_root=source)
     old = current.resolve()
@@ -146,20 +188,26 @@ def test_shader_publication_failure_keeps_old_generation(
         (source / "metal/dense.metal").write_bytes(b"wrong shader")
     if failure == "copy":
         original_copy = shutil.copy2
+
         def fail_copy(src: Any, dst: Any, *args: Any, **kwargs: Any) -> Any:
             if Path(src).suffix == ".metal":
                 raise OSError("shader copy failed")
             return original_copy(src, dst, *args, **kwargs)
+
         monkeypatch.setattr(shutil, "copy2", fail_copy)
     if failure == "switch":
         original_replace = os.replace
+
         def fail_replace(src: Any, dst: Any) -> Any:
             if Path(dst) == current:
                 raise OSError("switch failed")
             return original_replace(src, dst)
+
         monkeypatch.setattr(os, "replace", fail_replace)
     with pytest.raises((BuildError, OSError)):
-        build.install(lib, m, out, metal_root=None if failure == "missing_root" else source)
+        build.install(
+            lib, m, out, metal_root=None if failure == "missing_root" else source
+        )
     assert current.resolve() == old
     assert (old.parent / "metal/dense.metal").read_bytes() == b"original shader"
     assert len(list((out / "installs").iterdir())) == 1
@@ -167,22 +215,30 @@ def test_shader_publication_failure_keeps_old_generation(
 
 
 def test_metal_build_captures_assets_before_make_and_loads_after_relocation(
-    cc: Any, fake_tree: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    cc: Any,
+    fake_tree: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import hashlib
     from unittest.mock import MagicMock
+
     from ds4py._native import loader
 
     (fake_tree / "metal").mkdir()
     (fake_tree / "metal/dense.metal").write_bytes(b"captured shader")
     monkeypatch.setattr(build, "_preflight", lambda *a: cc)
+
     def native_make(farm: Any, *args: Any) -> None:
         (farm / LIB_NAME).write_bytes(b"native library")
         (fake_tree / "metal/dense.metal").write_bytes(b"changed during build")
+
     monkeypatch.setattr(build, "_run_make", native_make)
     lib = build_library(fake_tree, backend="metal", out_dir=tmp_path / "out", cc=cc)
     m = Manifest.read(manifest_path(lib))
-    assert m.metal_sources == {"metal/dense.metal": hashlib.sha256(b"captured shader").hexdigest()}
+    assert m.metal_sources == {
+        "metal/dense.metal": hashlib.sha256(b"captured shader").hexdigest()
+    }
     shutil.rmtree(fake_tree)
     moved = tmp_path / "moved"
     lib.parent.rename(moved)
@@ -197,14 +253,28 @@ def test_metal_build_captures_assets_before_make_and_loads_after_relocation(
 
 def test_mirror_skips_git_and_objects(tmp_path: Path) -> None:
     src, farm = tmp_path / "src", tmp_path / "farm"
-    for rel in (".git/HEAD", "ds4.c", "metal/ds4.metal", "ds4.o", "metal/ds4.o", "libds4.a", "libds4.so", "libds4.dylib"):
+    for rel in (
+        ".git/HEAD",
+        "ds4.c",
+        "metal/ds4.metal",
+        "ds4.o",
+        "metal/ds4.o",
+        "libds4.a",
+        "libds4.so",
+        "libds4.dylib",
+    ):
         (src / rel).parent.mkdir(parents=True, exist_ok=True)
         (src / rel).write_text(rel)
     build._mirror(src, farm)
     build._mirror(src, farm)
-    files = {str(Path(d, f).relative_to(farm)) for d, _, fs in os.walk(farm) for f in fs}
+    files = {
+        str(Path(d, f).relative_to(farm)) for d, _, fs in os.walk(farm) for f in fs
+    }
     assert files == {"ds4.c", "metal/ds4.metal"} and not (farm / ".git").exists()
-    assert all((farm / f).is_symlink() and (farm / f).resolve() == (src / f).resolve() for f in files)
+    assert all(
+        (farm / f).is_symlink() and (farm / f).resolve() == (src / f).resolve()
+        for f in files
+    )
     assert not (farm / "metal").is_symlink()
 
 
@@ -262,7 +332,12 @@ def test_mirror_does_not_recurse_into_itself(tmp_path: Path) -> None:
     assert not (farm / "farm").exists()
 
 
-def test_failed_switch_keeps_old_pair_and_cleans_staging(make_manifest: Any, tmp_path: Path, upstream_headers: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_failed_switch_keeps_old_pair_and_cleans_staging(
+    make_manifest: Any,
+    tmp_path: Path,
+    upstream_headers: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     src = tmp_path / "src"
     src.mkdir()
     pair = make_manifest(src, upstream_headers)
@@ -290,7 +365,13 @@ def test_failed_switch_keeps_old_pair_and_cleans_staging(make_manifest: Any, tmp
 @pytest.mark.parametrize("after_switch", [False, True])
 @pytest.mark.parametrize("relative_out", [False, True])
 def test_interrupted_switch_retains_every_published_pair(
-        make_manifest: Any, tmp_path: Path, upstream_headers: Any, monkeypatch: pytest.MonkeyPatch, after_switch: Any, relative_out: Any) -> None:
+    make_manifest: Any,
+    tmp_path: Path,
+    upstream_headers: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    after_switch: Any,
+    relative_out: Any,
+) -> None:
     src = tmp_path / "src"
     src.mkdir()
     pair = make_manifest(src, upstream_headers)
@@ -332,26 +413,50 @@ def test_make_failure_streams_output_and_reports_tail(tmp_path: Path) -> None:
     assert "line0\n" not in str(error.value) and "line44\n" in str(error.value)
 
 
-def test_cli_build_reports_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_build_reports_errors(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     from ds4py.cli import main
+
     assert main(["build", "--src", str(tmp_path)]) == 1
     assert "ds4py:" in capsys.readouterr().err
 
 
 @pytest.mark.build
-def test_cpu_build_of_upstream(built_upstream: Any, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cpu_build_of_upstream(
+    built_upstream: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
     from ds4py.cli import main
 
     lib, m = built_upstream
     assert lib.name == LIB_NAME and m.library_sha256 == file_sha256(lib)
-    assert all(r.ok for r in m.bindings.values()) and m.headers_known and m.backend == "cpu"
+    assert (
+        all(r.ok for r in m.bindings.values())
+        and m.headers_known
+        and m.backend == "cpu"
+    )
     if (Path(os.environ["DS4_SRC_UPSTREAM"]) / ".git").exists():
         assert m.source_commit == pins.UPSTREAM.commit
     # The CLI rebuild shares the farm: objects survive and are not recompiled.
     objects = {p: p.stat().st_mtime_ns for p in (lib.parent / "build").rglob("*.o")}
     held = lib.resolve()
     assert objects
-    assert main(["build", "--src", m.source_path, "--backend", "cpu", "--out", str(lib.parent), "-j", "1"]) == 0
+    assert (
+        main(
+            [
+                "build",
+                "--src",
+                m.source_path,
+                "--backend",
+                "cpu",
+                "--out",
+                str(lib.parent),
+                "-j",
+                "1",
+            ]
+        )
+        == 0
+    )
     assert str(lib) in capsys.readouterr().out.splitlines()
     assert all(p.stat().st_mtime_ns == timestamp for p, timestamp in objects.items())
     assert lib.resolve() != held and held.exists()

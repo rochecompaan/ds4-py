@@ -1,8 +1,8 @@
 """Command-line entry point for ds4py."""
 
 import argparse
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from ds4py._native.loader import default_lib_dir
 from ds4py.abi.build import build_library, default_backend
@@ -15,10 +15,14 @@ def _core_main(argv: list[str]) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     build = commands.add_parser("build", help="build a checked libds4")
     build.add_argument("--src", type=Path, required=True)
-    build.add_argument("--backend", choices=("cpu", "metal", "cuda", "rocm"), default=default_backend())
+    build.add_argument(
+        "--backend", choices=("cpu", "metal", "cuda", "rocm"), default=default_backend()
+    )
     build.add_argument("--out", type=Path, default=default_lib_dir())
     build.add_argument("-j", type=int)
-    check = commands.add_parser("check", help="check a libds4 ABI without opening a model")
+    check = commands.add_parser(
+        "check", help="check a libds4 ABI without opening a model"
+    )
     check.add_argument("--lib", type=Path)
     check.add_argument("--live", action="store_true")
     check.add_argument("--model", type=Path)
@@ -38,13 +42,16 @@ def _core_main(argv: list[str]) -> int:
     backends = raw.add_mutually_exclusive_group()
     backends.add_argument("--backend")
     for backend in ("cpu", "metal", "cuda"):
-        backends.add_argument(f"--{backend}", dest="backend", action="store_const", const=backend)
+        backends.add_argument(
+            f"--{backend}", dest="backend", action="store_const", const=backend
+        )
     raw.add_argument("-t", dest="threads", type=int, default=0)
     raw.add_argument("--trace", type=Path)
     raw.add_argument("--lib", type=Path)
     args = parser.parse_args(argv)
     if args.command == "raw":
         from ds4py.raw import command
+
         try:
             return command(args)
         except (Ds4pyError, OSError, UnicodeError) as exc:
@@ -54,17 +61,24 @@ def _core_main(argv: list[str]) -> int:
         if args.live and args.model is None:
             parser.error("--live needs --model")
         try:
-            report = (check_live(args.lib, args.model, ctx=args.ctx) if args.live
-                      else check_library(args.lib))
+            report = (
+                check_live(args.lib, args.model, ctx=args.ctx)
+                if args.live
+                else check_library(args.lib)
+            )
         except (Ds4pyError, OSError) as exc:
             print(f"ds4py: {exc}", file=sys.stderr)
             return 1
         print(format_report(report))
-        sync_failed = (report.manifest is not None and
-                       report.manifest.live_checks.get("sync_plans", {}).get("ok") is False)
+        sync_failed = (
+            report.manifest is not None
+            and report.manifest.live_checks.get("sync_plans", {}).get("ok") is False
+        )
         return 1 if report.error is not None or sync_failed else 0
     try:
-        installed = build_library(args.src, backend=args.backend, out_dir=args.out, jobs=args.j)
+        installed = build_library(
+            args.src, backend=args.backend, out_dir=args.out, jobs=args.j
+        )
         print(installed)
     except Ds4pyError as exc:
         print(f"ds4py: {exc}", file=sys.stderr)
@@ -80,4 +94,5 @@ def main(argv: list[str] | None = None) -> int:
         args.remove("--raw")
         return _core_main(["raw", *args])
     from ds4py.agent_cli import main as agent_main
+
     return agent_main(args)

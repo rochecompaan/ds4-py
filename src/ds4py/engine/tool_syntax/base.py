@@ -1,5 +1,7 @@
 """Shared byte-stream state for family-specific tool parsers."""
+
 from ds4py._native.protocol import EngineInfo
+
 from .model import Snapshot, ToolCall
 
 _THINK_OPEN = b"<think>"
@@ -14,6 +16,7 @@ class ToolParser:
 
     Own it on the decode worker; do not feed it concurrently.
     """
+
     def __init__(self) -> None:
         self.state = "SEARCH"
         self.raw = bytearray()
@@ -42,8 +45,13 @@ class ToolParser:
 
     def _snapshot(self) -> Snapshot:
         return Snapshot(
-            self.state, bytes(self.raw), tuple(self._calls), self.error,
-            self.param_close_prefix, self.in_think, self.dsml_in_think,
+            self.state,
+            bytes(self.raw),
+            tuple(self._calls),
+            self.error,
+            self.param_close_prefix,
+            self.in_think,
+            self.dsml_in_think,
         )
 
     def _fail(self, message: str) -> None:
@@ -91,7 +99,9 @@ class ToolParser:
                 else:
                     self._start(form[1])
                 return
-            markers = (_THINK_OPEN, _THINK_CLOSE) + tuple(form[0] for form in self._forms)
+            markers = (_THINK_OPEN, _THINK_CLOSE) + tuple(
+                form[0] for form in self._forms
+            )
             if any(marker.startswith(pending) for marker in markers):
                 return
             ordinary = self._pending[0]
@@ -133,7 +143,9 @@ class ToolParser:
         if self.state in ("DONE", "ERROR"):
             return False
         pending = bytes(self._pending)
-        if len(pending) > 1 and any(form[0].startswith(pending) for form in self._forms):
+        if len(pending) > 1 and any(
+            form[0].startswith(pending) for form in self._forms
+        ):
             return True
         if not self._active:
             return False
@@ -147,10 +159,13 @@ class ToolParser:
 def make_parser(info: EngineInfo) -> ToolParser:
     """Select a fresh parser from engine family flags; performs no native calls."""
     from .dsml import Dsml
+
     if info.is_qwen4:
         from .qwen import Qwen
+
         return Qwen()
     if info.is_glm_dsa:
         from .glm import Glm
+
         return Glm()
     return Dsml(v41=info.is_deepseek41)

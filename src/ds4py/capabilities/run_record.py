@@ -117,7 +117,9 @@ class DS4RunRecord(AbstractCapability):
         payload = dict(getattr(event, "payload", {}) or {})
         if kind == "agent_event":
             harness_event = payload.get("event")
-            line = self._line(type(harness_event).__name__, _event_payload(harness_event))
+            line = self._line(
+                type(harness_event).__name__, _event_payload(harness_event)
+            )
             line["conversation_id"] = payload.get("conversation_id")
             if payload.get("run_id") is not None:
                 line["run_id"] = payload["run_id"]

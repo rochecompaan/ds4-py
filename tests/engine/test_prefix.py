@@ -1,11 +1,9 @@
-from typing import Any
 from pathlib import Path
+from typing import Any, Never
 
 import pytest
 
 from ds4py.engine.prefix import PrefixError, PrefixTurn, load_prefix, parse_prefix
-from typing import Never
-
 
 BOM = b"\xef\xbb\xbf"
 
@@ -28,7 +26,10 @@ def test_multiple_pairs_preserve_order() -> None:
 
 def test_bom_is_recognized_only_at_the_start() -> None:
     data = "USER: héllo\nASSISTANT: ✓".encode()
-    assert parse_prefix(BOM + data) == (PrefixTurn("user", "héllo"), PrefixTurn("assistant", "✓"))
+    assert parse_prefix(BOM + data) == (
+        PrefixTurn("user", "héllo"),
+        PrefixTurn("assistant", "✓"),
+    )
     with pytest.raises(PrefixError, match="line 1 must start"):
         parse_prefix(BOM + BOM + data)
 
@@ -80,10 +81,12 @@ def test_marker_like_text_inside_a_line_is_content() -> None:
 
 def test_only_one_newline_and_one_preceding_cr_are_trimmed() -> None:
     assert parse_prefix(b"USER: one\r\nASSISTANT: two\r\n") == (
-        PrefixTurn("user", "one"), PrefixTurn("assistant", "two"),
+        PrefixTurn("user", "one"),
+        PrefixTurn("assistant", "two"),
     )
     assert parse_prefix(b"USER: one\n\nASSISTANT: two\n\n") == (
-        PrefixTurn("user", "one\n"), PrefixTurn("assistant", "two\n"),
+        PrefixTurn("user", "one\n"),
+        PrefixTurn("assistant", "two\n"),
     )
 
 
@@ -103,12 +106,15 @@ def test_empty_turns_and_a_final_user_turn_are_errors(data: Any, message: Any) -
 
 def test_whitespace_only_turn_with_remaining_content_is_accepted() -> None:
     assert parse_prefix(b"USER:  \nASSISTANT: \t\n") == (
-        PrefixTurn("user", " "), PrefixTurn("assistant", "\t"),
+        PrefixTurn("user", " "),
+        PrefixTurn("assistant", "\t"),
     )
 
 
 def test_invalid_utf8_reports_the_source_line() -> None:
-    with pytest.raises(PrefixError, match="line 3: invalid UTF-8 in ASSISTANT turn") as caught:
+    with pytest.raises(
+        PrefixError, match="line 3: invalid UTF-8 in ASSISTANT turn"
+    ) as caught:
         parse_prefix(b"USER: ok\nASSISTANT: first\n\xff")
     assert isinstance(caught.value.__cause__, UnicodeDecodeError)
 
@@ -116,32 +122,41 @@ def test_invalid_utf8_reports_the_source_line() -> None:
 def test_load_prefix_reads_bytes(tmp_path: Path) -> None:
     path = tmp_path / "prefix.txt"
     path.write_bytes(BOM + "USER: héllo\nASSISTANT: ✓".encode())
-    assert load_prefix(path) == (PrefixTurn("user", "héllo"), PrefixTurn("assistant", "✓"))
+    assert load_prefix(path) == (
+        PrefixTurn("user", "héllo"),
+        PrefixTurn("assistant", "✓"),
+    )
 
 
 def test_load_open_failure_includes_path_and_cause(tmp_path: Path) -> None:
     path = tmp_path / "missing.txt"
-    with pytest.raises(PrefixError, match=rf"cannot open prefix file .*{path.name}") as caught:
+    with pytest.raises(
+        PrefixError, match=rf"cannot open prefix file .*{path.name}"
+    ) as caught:
         load_prefix(path)
     assert str(path) in str(caught.value)
     assert isinstance(caught.value.__cause__, FileNotFoundError)
 
 
-def test_load_read_failure_includes_path_and_cause(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_read_failure_includes_path_and_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = tmp_path / "broken.txt"
 
     class BrokenReader:
         def __enter__(self) -> Any:
             return self
 
-        def __exit__(self, *exc: Any) -> None:
+        def __exit__(self, *exc: object) -> None:
             return None
 
         def read(self) -> Never:
             raise OSError("read failed")
 
     monkeypatch.setattr(Path, "open", lambda self, *args: BrokenReader())
-    with pytest.raises(PrefixError, match=rf"cannot read prefix file .*{path.name}: read failed") as caught:
+    with pytest.raises(
+        PrefixError, match=rf"cannot read prefix file .*{path.name}: read failed"
+    ) as caught:
         load_prefix(path)
     assert str(path) in str(caught.value)
     assert isinstance(caught.value.__cause__, OSError)

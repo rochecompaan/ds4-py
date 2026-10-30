@@ -63,7 +63,9 @@ class AgentConfig:
     def __post_init__(self) -> None:
         if self.agent not in {"c", "ds4py"}:
             raise ValueError("agent must be 'c' or 'ds4py'")
-        object.__setattr__(self, "executable", tuple(str(item) for item in self.executable))
+        object.__setattr__(
+            self, "executable", tuple(str(item) for item in self.executable)
+        )
 
 
 @dataclass(frozen=True)
@@ -121,15 +123,18 @@ class EventSummary:
             invalid_non_extend_rounds=data.get("invalid_non_extend_rounds", 0),
             allowed_non_extend_rounds=data.get("allowed_non_extend_rounds", 0),
             non_extension_reasons=_strings(
-                data.get("non_extension_reasons", ()), "non_extension_reasons",
+                data.get("non_extension_reasons", ()),
+                "non_extension_reasons",
             ),
             parser_errors=data.get("parser_errors", 0),
             tool_accounting=(
                 None if accounting is None else ToolAccounting.from_dict(accounting)
             ),
             reuse_ratios=tuple(
-                float(item) for item in _sequence(
-                    data.get("reuse_ratios", ()), "reuse_ratios",
+                float(item)
+                for item in _sequence(
+                    data.get("reuse_ratios", ()),
+                    "reuse_ratios",
                 )
             ),
         )
@@ -158,7 +163,10 @@ class TaskRunResult:
             value = getattr(self.summary, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"{name} must be nonnegative")
-        if not math.isfinite(self.summary.wall_seconds) or self.summary.wall_seconds < 0:
+        if (
+            not math.isfinite(self.summary.wall_seconds)
+            or self.summary.wall_seconds < 0
+        ):
             raise ValueError("wall_seconds must be finite and nonnegative")
         reuse = self.summary.avg_prefill_reuse
         if reuse is not None and not 0 <= reuse <= 1:
@@ -176,10 +184,12 @@ class TaskRunResult:
             summary=EventSummary.from_dict(_field(data, "summary")),
             grader_outputs=_strings(data.get("grader_outputs", ()), "grader_outputs"),
             attempt_save_dirs=_paths(
-                data.get("attempt_save_dirs", ()), "attempt_save_dirs",
+                data.get("attempt_save_dirs", ()),
+                "attempt_save_dirs",
             ),
             attempt_trace_paths=_paths(
-                data.get("attempt_trace_paths", ()), "attempt_trace_paths",
+                data.get("attempt_trace_paths", ()),
+                "attempt_trace_paths",
             ),
             errors=_strings(data.get("errors", ()), "errors"),
             workspace=(

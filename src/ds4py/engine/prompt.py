@@ -1,9 +1,11 @@
 """Render trusted chat structure while keeping caller payloads plain."""
+
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ds4py.errors import EngineError
+
 from .tool_prompt import ToolDefinition, ToolPromptGenerator
 from .tool_syntax.text import escape_tool_text
 
@@ -14,6 +16,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class RenderedSegment:
     """Internal rendered delta and transcript kind; not a second history."""
+
     kind: str
     tokens: list[int]
 
@@ -24,12 +27,15 @@ class PromptBuilder:
     Call from outside the worker, between rounds. Trusted markup is rendered;
     caller payloads are tokenized as plain text.
     """
-    def __init__(self, engine: "Engine") -> None:
+
+    def __init__(self, engine: Engine) -> None:
         self.engine = engine
         self.family = engine.info.family
 
     def begin(
-        self, tools: Iterable[ToolDefinition] = (), instructions: str | None = None,
+        self,
+        tools: Iterable[ToolDefinition] = (),
+        instructions: str | None = None,
     ) -> list[RenderedSegment]:
         """Build initial chat segments for definitions and optional plain instructions."""
         segments: list[RenderedSegment] = []
@@ -58,7 +64,9 @@ class PromptBuilder:
             role = self.engine._render_message(prefix, "system", "")
             append("system", role + tool_tokens)
         elif self.family == "qwen":
-            append("system", self._qwen_open("system") + tool_tokens + self._qwen_close())
+            append(
+                "system", self._qwen_open("system") + tool_tokens + self._qwen_close()
+            )
         else:
             append("system", tool_tokens)
         return segments
@@ -70,10 +78,14 @@ class PromptBuilder:
         return tokens
 
     def _qwen_open(self, role: str) -> list[int]:
-        return self.engine.tokenize("<|im_start|>", rendered=True) + self.engine.tokenize(role + "\n")
+        return self.engine.tokenize(
+            "<|im_start|>", rendered=True
+        ) + self.engine.tokenize(role + "\n")
 
     def _qwen_close(self) -> list[int]:
-        return self.engine.tokenize("<|im_end|>", rendered=True) + self.engine.tokenize("\n")
+        return self.engine.tokenize("<|im_end|>", rendered=True) + self.engine.tokenize(
+            "\n"
+        )
 
     def message(self, prefix: Sequence[int], role: str, text: str) -> list[int]:
         """Render one role delta against prefix, keeping text untrusted."""
@@ -81,11 +93,17 @@ class PromptBuilder:
             return self._tool_message(prefix, text)
         if self.family == "glm":
             if role in ("system", "developer"):
-                return self.engine._render_message(prefix, "system", "") + self.engine.tokenize(text)
+                return self.engine._render_message(
+                    prefix, "system", ""
+                ) + self.engine.tokenize(text)
             if role == "assistant":
                 return self._glm_assistant(prefix, text)
         elif self.family == "qwen" and role == "assistant":
-            return self._qwen_open("assistant") + self.engine.tokenize(text) + self._qwen_close()
+            return (
+                self._qwen_open("assistant")
+                + self.engine.tokenize(text)
+                + self._qwen_close()
+            )
         return self.engine._render_message(prefix, role, text)
 
     def _glm_assistant(self, prefix: Sequence[int], text: str) -> list[int]:
@@ -93,19 +111,25 @@ class PromptBuilder:
             marker = "<think>" if text.startswith("<think>") else "</think>"
             rendered = self.engine._render_message(prefix, "assistant", marker)
             suffix = self.engine.tokenize(marker, rendered=True)
-            if not suffix or rendered[-len(suffix):] != suffix:
-                raise EngineError("native GLM assistant template has an unexpected think marker")
-            return rendered[:-len(suffix)] + self.engine.tokenize(text)
-        return self.engine._render_message(prefix, "assistant", "") + self.engine.tokenize(text)
+            if not suffix or rendered[-len(suffix) :] != suffix:
+                raise EngineError(
+                    "native GLM assistant template has an unexpected think marker"
+                )
+            return rendered[: -len(suffix)] + self.engine.tokenize(text)
+        return self.engine._render_message(
+            prefix, "assistant", ""
+        ) + self.engine.tokenize(text)
 
     def _tool_message(self, prefix: Sequence[int], text: str) -> list[int]:
         if self.family == "glm":
             closing = self.engine.tokenize("</tool_response>", rendered=True)
             rendered = self.engine._render_message(prefix, "tool", "")
-            if not closing or rendered[-len(closing):] != closing:
-                raise EngineError("native GLM tool template has an unexpected closing delimiter")
+            if not closing or rendered[-len(closing) :] != closing:
+                raise EngineError(
+                    "native GLM tool template has an unexpected closing delimiter"
+                )
             escaped = escape_tool_text(text, "</tool_response>")
-            return rendered[:-len(closing)] + self.engine.tokenize(escaped) + closing
+            return rendered[: -len(closing)] + self.engine.tokenize(escaped) + closing
         if self.family == "qwen":
             escaped = escape_tool_text(text, "</tool_response>")
             return (
@@ -120,7 +144,9 @@ class PromptBuilder:
         return self.engine._render_message(prefix, "tool", text)
 
     def restored_assistant(
-        self, prefix: Sequence[int], spans: Iterable[tuple[str, bool]],
+        self,
+        prefix: Sequence[int],
+        spans: Iterable[tuple[str, bool]],
     ) -> list[int]:
         """Render an assistant body from plain text and trusted-markup spans.
 
@@ -130,9 +156,11 @@ class PromptBuilder:
         tokens = self.message(prefix, "assistant", "")
         closing = self._qwen_close() if self.family == "qwen" else []
         if closing:
-            if tokens[-len(closing):] != closing:
-                raise EngineError("native Qwen assistant template has an unexpected close")
-            tokens = tokens[:-len(closing)]
+            if tokens[-len(closing) :] != closing:
+                raise EngineError(
+                    "native Qwen assistant template has an unexpected close"
+                )
+            tokens = tokens[: -len(closing)]
         for text, rendered in spans:
             if text:
                 tokens.extend(self.engine.tokenize(text, rendered=rendered))

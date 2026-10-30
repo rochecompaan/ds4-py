@@ -1,4 +1,5 @@
 from typing import Any
+
 from ds4py.engine.decoder import Decoder
 from ds4py.engine.events import TextDelta
 from ds4py.engine.tool_syntax.glm import Glm
@@ -75,7 +76,8 @@ def test_finish_flushes_safe_pending_text_and_incomplete_utf8() -> None:
 def test_initial_thinking_labels_pre_marker_output() -> None:
     decoder = Decoder(thinking=True)
     assert collapse(decoder.feed(b"reason</think>answer")) == [
-        ("reason", True), ("answer", False),
+        ("reason", True),
+        ("answer", False),
     ]
 
 
@@ -84,7 +86,9 @@ def test_display_decoding_does_not_mutate_transcript_or_tool_parser() -> None:
     parser = Glm()
     before = parser.feed(b"")
     decoder = Decoder()
-    decoder.feed(b"<tool_call>read<arg_key>path</arg_key><arg_value>x</arg_value></tool_call>")
+    decoder.feed(
+        b"<tool_call>read<arg_key>path</arg_key><arg_value>x</arg_value></tool_call>"
+    )
     decoder.finish()
     assert transcript.tokens == () and transcript.segments == ()
     assert parser.feed(b"") == before

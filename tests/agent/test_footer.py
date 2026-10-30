@@ -30,9 +30,14 @@ def test_footer_tracks_live_plan_prefill_service_and_extension_status() -> None:
     footer = FooterModel(runtime)
     runtime.emit("run_start", run_id="run")
     runtime.emit("Prefill", event=Prefill(done=7, total=9, cached_prefix=2, tps=12.5))
-    runtime.emit("Synced", event=Synced(
-        pos=42, plan=Plan("extend", 2, 40, True, None), prefilled=40,
-    ))
+    runtime.emit(
+        "Synced",
+        event=Synced(
+            pos=42,
+            plan=Plan("extend", 2, 40, True, None),
+            prefilled=40,
+        ),
+    )
     runtime.emit("service_started", pid=123, status="running")
     runtime.emit("status", key="custom", text="ready")
 
@@ -72,7 +77,7 @@ class RecordSession:
     def __init__(self) -> None:
         self.listeners = []
 
-    def on_event(self, listener: Any, *, kinds: Any=None) -> Any:
+    def on_event(self, listener: Any, *, kinds: Any = None) -> Any:
         self.listeners.append((listener, kinds))
         return lambda: self.listeners.remove((listener, kinds))
 
@@ -93,20 +98,36 @@ def test_runtime_bridge_publishes_shell_events_without_a_run_record() -> None:
     ctx = SimpleNamespace(conversation_id="session", run_id="run")
 
     async def scenario() -> None:
-        await bridge.on_event(ctx, event=CommandStartedEvent(command="sleep 1", pid=321))
-        await bridge.on_event(ctx, event=CommandFinishedEvent(
-            pid=321, output_path="out", status_path="status",
-            exit_code=None, truncated=False,
-        ))
-        await bridge.on_event(ctx, event=CommandFinishedEvent(
-            pid=321, output_path="out", status_path="status",
-            exit_code=0, truncated=False,
-        ))
+        await bridge.on_event(
+            ctx, event=CommandStartedEvent(command="sleep 1", pid=321)
+        )
+        await bridge.on_event(
+            ctx,
+            event=CommandFinishedEvent(
+                pid=321,
+                output_path="out",
+                status_path="status",
+                exit_code=None,
+                truncated=False,
+            ),
+        )
+        await bridge.on_event(
+            ctx,
+            event=CommandFinishedEvent(
+                pid=321,
+                output_path="out",
+                status_path="status",
+                exit_code=0,
+                truncated=False,
+            ),
+        )
 
     asyncio.run(scenario())
     services = [event for event in seen if event.kind.startswith("service_")]
     assert [event.kind for event in services] == [
-        "service_started", "service_status", "service_stopped",
+        "service_started",
+        "service_status",
+        "service_stopped",
     ]
     assert services[0].payload["pid"] == 321
     assert services[0].payload["status"] == "running"

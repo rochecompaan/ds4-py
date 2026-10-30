@@ -1,4 +1,5 @@
 """Default ds4-py agent composition."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -56,12 +57,20 @@ def build_agent_components(
         LocalWorkspace(project_dir, read_only=read_only),
         DS4FileSystem(
             tools=(
-                "read_file", "write_file", "edit_file", "search_files",
-                "find_files", "create_directory", "file_info",
+                "read_file",
+                "write_file",
+                "edit_file",
+                "search_files",
+                "find_files",
+                "create_directory",
+                "file_info",
             ),
-            root_dir=project_dir, cwd=project_dir,
-            content_hashes=True, read_only=False,
-            max_read_lines=160, max_read_chars=50_000,
+            root_dir=project_dir,
+            cwd=project_dir,
+            content_hashes=True,
+            read_only=False,
+            max_read_lines=160,
+            max_read_chars=50_000,
         ),
         Shell(cwd=project_dir),
         DS4ShellJobs(model.session, project_dir),
@@ -85,6 +94,8 @@ def build_agent_components(
 
     options: AgentOptions = {
         "capabilities": components,
-        "instructions": system if system is not None else DEFAULT_CODING_AGENT_INSTRUCTIONS,
+        "instructions": system
+        if system is not None
+        else DEFAULT_CODING_AGENT_INSTRUCTIONS,
     }
     return AgentComponents(agent=Agent(model, **options), components=components)

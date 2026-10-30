@@ -1,12 +1,12 @@
 """Read token-level ds4-agent traces for deterministic live replay."""
+
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-import re
+from typing import Never
 
 from .ds4py_replay import read_ds4py
 from .replay_types import _THINK_NAMES, ReplayError, ReplayRound, ReplayTrace
-from typing import Never
-
 
 _TIMESTAMP = re.compile(
     r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?"
@@ -25,6 +25,8 @@ _GENERATION = re.compile(
 _WORKER = re.compile(
     r"^agent worker start ctx=(\S+) backend=(\S+) model=(.*?) trace=(\S+)$"
 )
+
+
 @dataclass
 class _Block:
     label: str
@@ -48,7 +50,7 @@ class _Round:
     prefix_only: bool = False
 
 
-def _think_mode(value: str, reader: "_Reader", line: int) -> int:
+def _think_mode(value: str, reader: _Reader, line: int) -> int:
     if value in _THINK_NAMES:
         return _THINK_NAMES[value]
     if value.isdecimal():
@@ -229,11 +231,12 @@ class _Reader:
             self.can_compact = False
         else:
             current = self.current
-            assert current is not None and self.base is not None
+            assert current is not None
+            assert self.base is not None
             expected = current.prompt_length - current.cached
             if len(ids) != expected:
                 self.error("suffix length does not match prefill", block.line)
-            current.prompt = self.base[:current.cached] + ids
+            current.prompt = self.base[: current.cached] + ids
 
     def prefill(self, text: str) -> None:
         match = _PREFILL.fullmatch(text)
@@ -265,7 +268,12 @@ class _Reader:
         if suffix_length != prompt_length - cached:
             self.error("suffix length does not match prefill")
         self.current = _Round(
-            number, transcript, prompt_length, cached, suffix_length, think,
+            number,
+            transcript,
+            prompt_length,
+            cached,
+            suffix_length,
+            think,
         )
         self.can_compact = False
 
@@ -284,15 +292,17 @@ class _Reader:
         if carried < 0 or limited not in (0, 1):
             self.error("invalid generation flags")
         current.context_limited = bool(limited)
-        self.rounds.append(ReplayRound(
-            number=current.number,
-            prompt=current.prompt,
-            sampled=tuple(current.sampled),
-            think=current.think,
-            cached=current.cached,
-            context_limited=current.context_limited,
-            prefix_only=current.prefix_only,
-        ))
+        self.rounds.append(
+            ReplayRound(
+                number=current.number,
+                prompt=current.prompt,
+                sampled=tuple(current.sampled),
+                think=current.think,
+                cached=current.cached,
+                context_limited=current.context_limited,
+                prefix_only=current.prefix_only,
+            )
+        )
         self.base = current.prompt + tuple(current.sampled)
         self.current = None
         self.can_compact = True
