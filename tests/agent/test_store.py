@@ -1,7 +1,7 @@
 """Behavior of the stdlib save record and KV store primitives."""
-from typing import Any
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -68,7 +68,7 @@ def test_kv_payload_round_trips_through_the_declared_header(tmp_path: Path) -> N
 
     store.write_kv_atomic(path, payload)
 
-    magic, version, declared = KV_HEADER.unpack(path.read_bytes()[:KV_HEADER.size])
+    magic, version, declared = KV_HEADER.unpack(path.read_bytes()[: KV_HEADER.size])
     assert (magic, version, declared) == (KV_MAGIC, KV_VERSION, len(payload))
     assert path.stat().st_size == KV_HEADER.size + len(payload)
     assert store.read_kv(path) == payload

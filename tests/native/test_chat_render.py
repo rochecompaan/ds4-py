@@ -1,8 +1,7 @@
-from typing import Any, cast
 import ctypes as C
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -41,7 +40,7 @@ class ChatLib:
 
     def push(self, pointer: Any, token: Any) -> None:
         tokens = self.tokens(pointer)
-        values = list(tokens.v[:tokens.len]) + [token]
+        values = list(tokens.v[: tokens.len]) + [token]
         array = (C.c_int * len(values))(*values)
         self.keepalive.append(array)
         tokens.v = C.cast(array, C.POINTER(C.c_int))
@@ -81,11 +80,11 @@ class ChatLib:
 def native_handle() -> Any:
     lib = ChatLib()
     engine = NativeEngine.__new__(NativeEngine)
-    _Handle.__init__(engine, cast(Any, lib), 0x1234)
+    _Handle.__init__(engine, cast("Any", lib), 0x1234)
     return engine, lib
 
 
-def fake_engine(family: Any="deepseek4") -> Any:
+def fake_engine(family: Any = "deepseek4") -> Any:
     native = FakeNative()
     info = replace(
         native._info,
@@ -171,9 +170,7 @@ def test_fake_chat_rendering_appends_only_the_native_delta() -> None:
     assert engine.render_message(prefix, "user", "hello") == (
         engine.tokenize("<｜User｜>", rendered=True) + engine.tokenize("hello")
     )
-    assert engine.assistant_prefix(prefix, ThinkMode.HIGH) == (
-        engine.tokenize("<｜Assistant｜><think>", rendered=True)
-    )
+    assert engine.assistant_prefix(prefix, ThinkMode.HIGH) == (engine.tokenize("<｜Assistant｜><think>", rendered=True))
     assert prefix == engine.tokenize("prefix")
 
 

@@ -1,21 +1,30 @@
 """Thread-confined ctypes lifecycle and ownership adapters for ds4."""
+
 import ctypes as C
-from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager
 import fcntl
 import os
-from pathlib import Path
 import threading
 import weakref
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, BinaryIO, cast
 
 from ds4py.abi.shaders import metal_source_env
 from ds4py.errors import EmptyPromptError, EngineError, EngineLockedError
+
 from . import chat, payload, structs
 from .loader import Library
 from .modelcheck import inspect_model
 from .protocol import (
-    BACKENDS, CancelFn, EngineConfig, EngineInfo, ProgressFn, Snapshot, SyncStatus, family_of,
+    BACKENDS,
+    CancelFn,
+    EngineConfig,
+    EngineInfo,
+    ProgressFn,
+    Snapshot,
+    SyncStatus,
+    family_of,
 )
 
 _open_lock = threading.Lock()
@@ -36,7 +45,7 @@ class InstanceLock:
         self._fd = fd
 
     @classmethod
-    def acquire(cls, path: Path) -> "InstanceLock":
+    def acquire(cls, path: Path) -> InstanceLock:
         fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             try:
@@ -44,7 +53,9 @@ class InstanceLock:
             except BlockingIOError:
                 pid = os.read(fd, 64).decode(errors="replace").strip()
                 owner = f" (pid {pid})" if pid else ""
-                raise EngineLockedError(f"another ds4 process holds {path}{owner}; stop it or set DS4_LOCK_FILE") from None
+                raise EngineLockedError(
+                    f"another ds4 process holds {path}{owner}; stop it or set DS4_LOCK_FILE"
+                ) from None
             os.ftruncate(fd, 0)
             os.write(fd, f"{os.getpid()}\n".encode())
         except BaseException:
@@ -60,7 +71,7 @@ class InstanceLock:
     def __enter__(self) -> InstanceLock:
         return self
 
-    def __exit__(self, *exc: Any) -> None:
+    def __exit__(self, *exc: object) -> None:
         self.close()
 
 
@@ -84,9 +95,14 @@ def engine_options(config: EngineConfig, *, inspect_only: bool = False) -> struc
     if config.backend not in BACKENDS:
         raise ValueError(f"unknown backend: {config.backend}")
     return structs.EngineOptions(
-        model_path=os.fsencode(config.model), backend=BACKENDS[config.backend],
-        n_threads=config.threads, context_size=config.ctx, placement_ctx_hint=config.ctx,
-        mtp_draft_tokens=1, mtp_margin=3.0, inspect_only=inspect_only,
+        model_path=os.fsencode(config.model),
+        backend=BACKENDS[config.backend],
+        n_threads=config.threads,
+        context_size=config.ctx,
+        placement_ctx_hint=config.ctx,
+        mtp_draft_tokens=1,
+        mtp_margin=3.0,
+        inspect_only=inspect_only,
     )
 
 
@@ -124,9 +140,15 @@ class LibNative:
             lock = InstanceLock.acquire(lock_path())
             try:
                 second = engine_lock_path()
-                sources = metal_source_env(
-                    self.lib.path.resolve().parent, self.lib.manifest.metal_sources, os.environ,
-                ) if self.backend == "metal" else {}
+                sources = (
+                    metal_source_env(
+                        self.lib.path.resolve().parent,
+                        self.lib.manifest.metal_sources,
+                        os.environ,
+                    )
+                    if self.backend == "metal"
+                    else {}
+                )
                 inspect_model(self.lib.path, config, second)
                 options = engine_options(config)
                 raw = C.c_void_p()
@@ -135,7 +157,7 @@ class LibNative:
                 if status:
                     raise EngineError(f"ds4_engine_open failed ({status})")
                 try:
-                    return NativeEngine(self.lib, cast(int, raw.value), options, lock)
+                    return NativeEngine(self.lib, cast("int", raw.value), options, lock)
                 except BaseException:
                     self.bind("ds4_engine_close")(raw)
                     raise
@@ -162,7 +184,11 @@ class _Handle:
 
 class NativeEngine(_Handle):
     def __init__(
-        self, lib: Library, raw: int, options: structs.EngineOptions, lock: InstanceLock,
+        self,
+        lib: Library,
+        raw: int,
+        options: structs.EngineOptions,
+        lock: InstanceLock,
     ) -> None:
         super().__init__(lib, raw)
         self._options, self._lock = options, lock
@@ -181,18 +207,29 @@ class NativeEngine(_Handle):
     def _read_info(self) -> EngineInfo:
         def get(name: str) -> Any:
             return self._call("ds4_engine_" + name)
+
         deep, glm, qwen = get("is_deepseek41"), get("is_glm_dsa"), get("is_qwen4")
-        return EngineInfo(get("model_name").decode(), get("model_id"),
-                          family_of(deepseek41=deep, glm=glm, qwen=qwen),
-                          deep, glm, qwen, get("has_vision"), get("routed_quant_bits"),
-                          get("mtp_draft_tokens"), get("vocab_size"))
+        return EngineInfo(
+            get("model_name").decode(),
+            get("model_id"),
+            family_of(deepseek41=deep, glm=glm, qwen=qwen),
+            deep,
+            glm,
+            qwen,
+            get("has_vision"),
+            get("routed_quant_bits"),
+            get("mtp_draft_tokens"),
+            get("vocab_size"),
+        )
 
     def tokenize(self, text: str, *, rendered: bool = False) -> list[int]:
         self._assert_thread()
         tokens = structs.Tokens()
         try:
-            self._call("ds4_tokenize_rendered_chat" if rendered else "ds4_tokenize_text", text.encode(), C.byref(tokens))
-            return list(tokens.v[:tokens.len])
+            self._call(
+                "ds4_tokenize_rendered_chat" if rendered else "ds4_tokenize_text", text.encode(), C.byref(tokens)
+            )
+            return list(tokens.v[: tokens.len])
         finally:
             self._lib.fn("ds4_tokens_free")(C.byref(tokens))
 
@@ -207,7 +244,11 @@ class NativeEngine(_Handle):
     def render_message(self, prefix: Sequence[int], role: str, content: str) -> list[int]:
         """Return the native role/message delta without changing prefix; worker only."""
         return chat.append_delta(
-            self, prefix, "ds4_chat_append_message", role.encode(), content.encode(),
+            self,
+            prefix,
+            "ds4_chat_append_message",
+            role.encode(),
+            content.encode(),
         )
 
     def assistant_prefix(self, prefix: Sequence[int], mode: int) -> list[int]:
@@ -243,8 +284,8 @@ class NativeEngine(_Handle):
         raw = C.c_void_p()
         if self._lib.fn("ds4_session_create")(C.byref(raw), self.raw, ctx):
             raise EngineError("ds4_session_create failed")
-        self._session_allocations.add(cast(int, raw.value))
-        session = NativeSession(self, cast(int, raw.value))
+        self._session_allocations.add(cast("int", raw.value))
+        session = NativeSession(self, cast("int", raw.value))
         self._sessions.add(session)
         return session
 
@@ -284,8 +325,7 @@ class NativeStagedPayload:
             raise EngineError("staged payload is closed")
         error = C.create_string_buffer(512)
         with payload.native_stream(file, "wb") as stream:
-            status = self._lib.fn("ds4_session_write_staged_payload")(
-                C.byref(self._data), stream, error, len(error))
+            status = self._lib.fn("ds4_session_write_staged_payload")(C.byref(self._data), stream, error, len(error))
         if status:
             raise EngineError(error.value.decode(errors="replace"))
 
@@ -361,7 +401,12 @@ class NativeSession(_Handle):
             self._progress = self._cancel = self._callback_error = None
 
     def sample(
-        self, temperature: float, top_k: int, top_p: float, min_p: float, rng: C.c_uint64,
+        self,
+        temperature: float,
+        top_k: int,
+        top_p: float,
+        min_p: float,
+        rng: C.c_uint64,
     ) -> int:
         token = self._call("ds4_session_sample", temperature, top_k, top_p, min_p, C.byref(rng))
         return token
@@ -373,11 +418,13 @@ class NativeSession(_Handle):
     def copy_logits(self, out: Any) -> None:
         """Copy into a vocabulary-sized writable float32 buffer; worker only."""
         from .logits import copy_logits
+
         copy_logits(self, out)
 
     def set_logits(self, values: Sequence[float]) -> None:
         """Replace logits from a vocabulary-sized sequence; worker only."""
         from .logits import set_logits
+
         set_logits(self, values)
 
     def eval(self, token: int) -> None:
@@ -394,7 +441,7 @@ class NativeSession(_Handle):
 
     def tokens(self) -> list[int]:
         data = self._call("ds4_session_tokens").contents
-        return list(data.v[:data.len])
+        return list(data.v[: data.len])
 
     def common_prefix(self, tokens: Sequence[int]) -> int:
         return self._call("ds4_session_common_prefix", C.byref(_tokens(tokens)))
@@ -435,7 +482,7 @@ class NativeSession(_Handle):
 
     def load_snapshot(self, snap: Snapshot) -> None:
         self._assert_thread()
-        native_snap = cast(NativeSnapshot, snap)
+        native_snap = cast("NativeSnapshot", snap)
         if native_snap._closed:
             raise EngineError("snapshot is closed")
         self._error_call("ds4_session_load_snapshot", C.byref(native_snap._data))

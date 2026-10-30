@@ -1,8 +1,8 @@
 from typing import Any
+
 import pytest
 
 from ds4py.engine.tool_prompt import ToolDefinition, ToolPromptGenerator
-
 
 READ_SCHEMA = '{"name":"read","description":"Read a file.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}'
 EDIT_SCHEMA = '{"name":"edit","description":"Edit ✓","parameters":{"type":"object","properties":{"path":{"type":"string"},"new_string":{"type":"string"},"whole":{"type":"boolean"}},"required":["path","new_string"]}}'
@@ -29,7 +29,7 @@ DEFINITIONS = [
 ]
 
 
-def deepseek_expected(schemas: Any, *, v41: Any=False) -> str:
+def deepseek_expected(schemas: Any, *, v41: Any = False) -> str:
     calls = " calls" if v41 else "tool_calls"
     invoke = " invoke" if v41 else "invoke"
     parameter = " parameter" if v41 else "parameter"
@@ -41,11 +41,11 @@ def deepseek_expected(schemas: Any, *, v41: Any=False) -> str:
         f"<tools>{schemas}</tools>\n\n"
         "Call example:\n"
         f"<｜DSML｜{calls}>\n"
-        f"<｜DSML｜{invoke} name=\"read\">\n"
-        f"<｜DSML｜{parameter} name=\"path\" string=\"true\">README.md</｜DSML｜{parameter}>\n"
+        f'<｜DSML｜{invoke} name="read">\n'
+        f'<｜DSML｜{parameter} name="path" string="true">README.md</｜DSML｜{parameter}>\n'
         f"</｜DSML｜{invoke}>\n"
         f"</｜DSML｜{calls}>\n\n"
-        "Use string=\"false\" for JSON values.\n"
+        'Use string="false" for JSON values.\n'
         f"Escape literal {closing} as {escaped}; write {escaped} literally as {doubly_escaped}. "
         "Other entities stay unchanged.\n"
     )
@@ -93,8 +93,7 @@ def test_glm_prompt_is_exact() -> None:
 
 def test_qwen_prompt_is_exact_and_wraps_each_schema() -> None:
     wrapped = (
-        '{"type":"function","function":' + READ_SCHEMA + '}\n'
-        + '{"type":"function","function":' + EDIT_SCHEMA + '}'
+        '{"type":"function","function":' + READ_SCHEMA + "}\n" + '{"type":"function","function":' + EDIT_SCHEMA + "}"
     )
     prompt = ToolPromptGenerator("qwen").generate(DEFINITIONS)
     assert prompt == qwen_expected(wrapped)
@@ -135,20 +134,21 @@ def test_unknown_family_is_an_error() -> None:
         ToolPromptGenerator("other").generate(DEFINITIONS)
 
 
-@pytest.mark.parametrize('family', ['deepseek4', 'deepseek41', 'glm', 'qwen'])
+@pytest.mark.parametrize("family", ["deepseek4", "deepseek41", "glm", "qwen"])
 def test_every_generated_example_executes_the_intended_call(family: Any) -> None:
     from ds4py.engine.tool_syntax.dsml import Dsml
     from ds4py.engine.tool_syntax.glm import Glm
     from ds4py.engine.tool_syntax.qwen import Qwen
+
     prompt = ToolPromptGenerator(family).generate([])
-    examples = prompt.split('Call example:\n', 1)[1].split('\n\n', 1)[0]
-    factory = {'glm': Glm, 'qwen': Qwen}.get(family, lambda: Dsml(v41=family == 'deepseek41'))
+    examples = prompt.split("Call example:\n", 1)[1].split("\n\n", 1)[0]
+    factory = {"glm": Glm, "qwen": Qwen}.get(family, lambda: Dsml(v41=family == "deepseek41"))
     # No prose or unsupported teaching stanza may be silently skipped.
-    examples = examples.splitlines() if family == 'glm' else [examples]
+    examples = examples.splitlines() if family == "glm" else [examples]
     assert examples
     for example in examples:
         parser = factory()
         parser.feed(example.encode())
         result = parser.finish()
-        assert result.state == 'DONE'
-        assert [(call.name, dict(call.args)) for call in result.calls] == [('read', {'path': 'README.md'})]
+        assert result.state == "DONE"
+        assert [(call.name, dict(call.args)) for call in result.calls] == [("read", {"path": "README.md"})]

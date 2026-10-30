@@ -1,16 +1,16 @@
 """Gate 6 replays complete C traces without executing tools."""
+
+import json
+import sys
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
-from dataclasses import replace
-import json
-from pathlib import Path
-import sys
-from types import SimpleNamespace
-
 import ds4py
-from ds4py.engine.session import Engine
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
+from ds4py.engine.session import Engine
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
@@ -23,13 +23,9 @@ from bench.replay_c_traces import (
 from bench.report import build_report, update_replay_report
 from bench.restore_check import RestoreSummary
 
-
 MODEL = "/models/fake.gguf"
 STAMP = "2026-10-21 09:05:07.042 "
-TOOL_TEXT = (
-    "<tool_call><function=read><parameter=path>/tmp/x</parameter>"
-    "</function></tool_call>"
-)
+TOOL_TEXT = "<tool_call><function=read><parameter=path>/tmp/x</parameter></function></tool_call>"
 
 
 def write_c_trace(path: Any, text: Any) -> Any:
@@ -40,23 +36,21 @@ def write_c_trace(path: Any, text: Any) -> Any:
         STAMP + f"tokens label=initial_system_prompt start=0 len={len(prompt)}",
     ]
     lines.extend(STAMP + f"token index={index} id={token}" for index, token in enumerate(prompt))
-    lines.extend([
-        STAMP + f"prefill tool_round=0 transcript={len(prompt)} prompt={len(prompt)} cached=0 suffix={len(prompt)} think=none",
-        STAMP + f"tokens label=prefill_suffix start=0 len={len(prompt)}",
-    ])
-    lines.extend(STAMP + f"token index={index} id={token}" for index, token in enumerate(prompt))
     lines.extend(
-        STAMP + f"token index={index} id={token}"
-        for index, token in enumerate(sampled, 1)
+        [
+            STAMP
+            + f"prefill tool_round=0 transcript={len(prompt)} prompt={len(prompt)} cached=0 suffix={len(prompt)} think=none",
+            STAMP + f"tokens label=prefill_suffix start=0 len={len(prompt)}",
+        ]
     )
-    lines.append(
-        STAMP + f"generation finished tool_round=0 generated={len(sampled)} carried=0 context_limited=0"
-    )
+    lines.extend(STAMP + f"token index={index} id={token}" for index, token in enumerate(prompt))
+    lines.extend(STAMP + f"token index={index} id={token}" for index, token in enumerate(sampled, 1))
+    lines.append(STAMP + f"generation finished tool_round=0 generated={len(sampled)} carried=0 context_limited=0")
     path.write_text("\n".join(lines) + "\n")
     return sampled
 
 
-def engine_for(sampled: Any, mismatch_at: Any=None) -> Engine:
+def engine_for(sampled: Any, mismatch_at: Any = None) -> Engine:
     def script(prompt: Any, generated: Any) -> Any:
         index = len(generated)
         if index >= len(sampled):
@@ -74,12 +68,29 @@ def test_tool_round_replays_every_token_and_stops_without_tool_execution(tmp_pat
     sampled = write_c_trace(path, TOOL_TEXT)
     assert len(sampled) > 16
     with engine_for(sampled) as engine:
-        assert generation_limit(engine, cast(Any, type("Round", (), {
-            "sampled": sampled, "prefix_only": False, "context_limited": False,
-            "prompt": (1, 2),
-        }))()) == len(sampled) + 1
+        assert (
+            generation_limit(
+                engine,
+                cast(
+                    "Any",
+                    type(
+                        "Round",
+                        (),
+                        {
+                            "sampled": sampled,
+                            "prefix_only": False,
+                            "context_limited": False,
+                            "prompt": (1, 2),
+                        },
+                    ),
+                )(),
+            )
+            == len(sampled) + 1
+        )
         results = replay_with_engine(
-            engine, [("tool-task", path)], require_full_set=False,
+            engine,
+            [("tool-task", path)],
+            require_full_set=False,
         )
 
     assert len(results) == 1
@@ -96,7 +107,9 @@ def test_token_mismatch_fails_with_task_round_and_token_index(tmp_path: Path) ->
 
     with engine_for(sampled, mismatch_at=1) as engine:
         results = replay_with_engine(
-            engine, [("mismatch-task", path)], require_full_set=False,
+            engine,
+            [("mismatch-task", path)],
+            require_full_set=False,
         )
 
     assert not results[0].passed
@@ -112,7 +125,9 @@ def test_malformed_c_record_becomes_failing_gate_evidence(tmp_path: Path) -> Non
 
     with engine_for(tokenize_rendered("hello")) as engine:
         results = replay_with_engine(
-            engine, [("broken-task", path)], require_full_set=False,
+            engine,
+            [("broken-task", path)],
+            require_full_set=False,
         )
 
     assert not results[0].passed
@@ -163,17 +178,25 @@ def test_selection_includes_every_c_attempt_trace_and_requires_twelve_tasks(tmp_
         paths.append((first, second))
     tasks = [
         SimpleNamespace(
-            task_id=f"task-{index}", agent="c", attempts=2,
-            attempt_trace_paths=paths[index], trace_path=paths[index][-1],
+            task_id=f"task-{index}",
+            agent="c",
+            attempts=2,
+            attempt_trace_paths=paths[index],
+            trace_path=paths[index][-1],
         )
         for index in range(12)
     ]
-    tasks.append(SimpleNamespace(
-        task_id="task-0", agent="ds4py", attempts=1,
-        attempt_trace_paths=(tmp_path / "python.jsonl",), trace_path=tmp_path / "python.jsonl",
-    ))
+    tasks.append(
+        SimpleNamespace(
+            task_id="task-0",
+            agent="ds4py",
+            attempts=1,
+            attempt_trace_paths=(tmp_path / "python.jsonl",),
+            trace_path=tmp_path / "python.jsonl",
+        )
+    )
 
-    selected = select_c_traces(cast(Any, tasks))
+    selected = select_c_traces(cast("Any", tasks))
 
     assert len(selected) == 24
     assert [path for _task, path in selected] == [path for pair in paths for path in pair]

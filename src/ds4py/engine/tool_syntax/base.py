@@ -1,12 +1,12 @@
 """Shared byte-stream state for family-specific tool parsers."""
+
 from ds4py._native.protocol import EngineInfo
+
 from .model import Snapshot, ToolCall
 
 _THINK_OPEN = b"<think>"
 _THINK_CLOSE = b"</think>"
-_DSML_MARKERS = tuple(
-    marker.encode() for marker in ("｜DSML｜", "|DSML|", "<DSML｜", "</DSML｜")
-)
+_DSML_MARKERS = tuple(marker.encode() for marker in ("｜DSML｜", "|DSML|", "<DSML｜", "</DSML｜"))
 
 
 class ToolParser:
@@ -14,6 +14,7 @@ class ToolParser:
 
     Own it on the decode worker; do not feed it concurrently.
     """
+
     def __init__(self) -> None:
         self.state = "SEARCH"
         self.raw = bytearray()
@@ -42,8 +43,13 @@ class ToolParser:
 
     def _snapshot(self) -> Snapshot:
         return Snapshot(
-            self.state, bytes(self.raw), tuple(self._calls), self.error,
-            self.param_close_prefix, self.in_think, self.dsml_in_think,
+            self.state,
+            bytes(self.raw),
+            tuple(self._calls),
+            self.error,
+            self.param_close_prefix,
+            self.in_think,
+            self.dsml_in_think,
         )
 
     def _fail(self, message: str) -> None:
@@ -119,9 +125,7 @@ class ToolParser:
             return self._snapshot()
         if self._active:
             self._finish_active()
-        elif len(self._pending) > 1 and any(
-            form[0].startswith(self._pending) for form in self._forms
-        ):
+        elif len(self._pending) > 1 and any(form[0].startswith(self._pending) for form in self._forms):
             self._fail("incomplete tool-call opening marker")
         return self._snapshot()
 
@@ -147,10 +151,13 @@ class ToolParser:
 def make_parser(info: EngineInfo) -> ToolParser:
     """Select a fresh parser from engine family flags; performs no native calls."""
     from .dsml import Dsml
+
     if info.is_qwen4:
         from .qwen import Qwen
+
         return Qwen()
     if info.is_glm_dsa:
         from .glm import Glm
+
         return Glm()
     return Dsml(v41=info.is_deepseek41)

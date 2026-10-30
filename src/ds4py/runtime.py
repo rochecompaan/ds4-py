@@ -115,10 +115,14 @@ class _ModelStepTrace(AbstractCapability):
         self._session = session
 
     async def before_model_request(
-        self, ctx: RunContext[Any], request_context: ModelRequestContext,
+        self,
+        ctx: RunContext[Any],
+        request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         self._session.emit(
-            "model_step", run_id=ctx.run_id, step_index=ctx.run_step,
+            "model_step",
+            run_id=ctx.run_id,
+            step_index=ctx.run_step,
         )
         return request_context
 
@@ -212,7 +216,10 @@ class AgentRuntime:
         return self._session.engine.config.ctx
 
     def on_event(
-        self, listener: Listener, *, kinds: Iterable[str] | None = None,
+        self,
+        listener: Listener,
+        *,
+        kinds: Iterable[str] | None = None,
     ) -> Callable[[], None]:
         """Subscribe to session events; returns the unsubscribe call."""
         return self._session.on_event(listener, kinds=kinds)
@@ -231,7 +238,8 @@ class AgentRuntime:
     def _holder(self) -> SessionStepStore:
         session_id = self._session.id
         return self._session.state(
-            "step_store", lambda: SessionStepStore(self._step_store(session_id)),
+            "step_store",
+            lambda: SessionStepStore(self._step_store(session_id)),
         )
 
     def _on_engine_event(self, event: SessionEvent) -> None:
@@ -266,9 +274,10 @@ class AgentRuntime:
         try:
             holder = self._holder()
             return await holder.current.latest_snapshot(
-                run_id=run_id, include_interrupted=True,
+                run_id=run_id,
+                include_interrupted=True,
             )
-        except (Ds4pyError, OSError, ValueError):
+        except Ds4pyError, OSError, ValueError:
             return None
 
     async def _adopt_history(
@@ -301,7 +310,9 @@ class AgentRuntime:
                 snapshot = await self._latest(run_id)
                 if snapshot is not None:
                     await self._adopt_history(
-                        run_id, _bindable(list(snapshot.messages)), snapshot=snapshot,
+                        run_id,
+                        _bindable(list(snapshot.messages)),
+                        snapshot=snapshot,
                     )
                     self._note_title()
             except Exception as caught:  # noqa: BLE001 - preserve and report both failures
@@ -313,9 +324,7 @@ class AgentRuntime:
             run_id=run_id,
             status=status,
             error=None if error is None else str(error),
-            persistence_error=(
-                None if persistence_error is None else str(persistence_error)
-            ),
+            persistence_error=(None if persistence_error is None else str(persistence_error)),
         )
 
     async def run(self, prompt: str) -> AgentRunResult[Any]:
@@ -349,7 +358,9 @@ class AgentRuntime:
                 raise
             except BaseException as error:
                 await self._fail(
-                    run_id, "interrupted" if self._interrupted else "error", error,
+                    run_id,
+                    "interrupted" if self._interrupted else "error",
+                    error,
                 )
                 raise
             try:
@@ -432,12 +443,12 @@ class AgentRuntime:
             return saved.payload_bytes
 
         payload_bytes = self.store.write_kv_stream_atomic(
-            session_dir / "session.kv", write_payload,
+            session_dir / "session.kv",
+            write_payload,
         )
         if written.get("tokens") != len(tokens) or written.get("payload_bytes") != payload_bytes:
             raise EngineError(
-                f"the native payload covers {written.get('tokens')} tokens, "
-                f"the transcript has {len(tokens)}"
+                f"the native payload covers {written.get('tokens')} tokens, the transcript has {len(tokens)}"
             )
 
         snapshot = ContinuableSnapshot(
@@ -447,9 +458,13 @@ class AgentRuntime:
             conversation_id=session_id,
             agent_name="ds4py",
         )
-        await holder.current.register_run(StepRunRecord(
-            run_id=run_id, conversation_id=session_id, agent_name="ds4py",
-        ))
+        await holder.current.register_run(
+            StepRunRecord(
+                run_id=run_id,
+                conversation_id=session_id,
+                agent_name="ds4py",
+            )
+        )
         await holder.current.save_snapshot(snapshot)
 
         info = self._session.engine.info
@@ -469,8 +484,12 @@ class AgentRuntime:
             tokens_sha256=token_digest(tokens),
             segments=tuple(
                 SegmentProvenance(
-                    segment.start, segment.end, segment.kind, segment.key,
-                    segment.content_hash, segment.source,
+                    segment.start,
+                    segment.end,
+                    segment.kind,
+                    segment.key,
+                    segment.content_hash,
+                    segment.source,
                 )
                 for segment in self.model.binder.export_segments()
             ),
@@ -483,14 +502,16 @@ class AgentRuntime:
         prefix = f"{self._session.id}{_SAVE_PREFIX}"
         runs = await store.list_runs(conversation_id=self._session.id)
         numbers = [
-            int(run.run_id[len(prefix):])
+            int(run.run_id[len(prefix) :])
             for run in runs
-            if run.run_id.startswith(prefix) and run.run_id[len(prefix):].isdigit()
+            if run.run_id.startswith(prefix) and run.run_id[len(prefix) :].isdigit()
         ]
         return f"{prefix}{max(numbers, default=0) + 1}"
 
     def _abort_restore(
-        self, snapshot: ContinuableSnapshot, record: SaveRecord,
+        self,
+        snapshot: ContinuableSnapshot,
+        record: SaveRecord,
     ) -> None:
         """Leave the committed target empty, never paired with old native state."""
         self._session.reconcile_round(0)
@@ -510,10 +531,12 @@ class AgentRuntime:
         self.store.validate_for_engine(record, self._session.engine.info)
         session_dir = self.store.session_dir(record.session_id)
         snapshots = await self._step_store(record.session_id).list_snapshots(
-            run_id=record.run_id, include_interrupted=True,
+            run_id=record.run_id,
+            include_interrupted=True,
         )
         snapshot = next(
-            (item for item in snapshots if item.step_index == record.step_index), None,
+            (item for item in snapshots if item.step_index == record.step_index),
+            None,
         )
         if snapshot is None:
             raise StoreError(

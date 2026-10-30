@@ -3,10 +3,11 @@
 The C trace owns every next prompt. No ds4-py tool is executed, and no Python
 self-feeding can introduce a token that was not present in the C trace.
 """
+
 import os
-from typing import cast
-from pathlib import Path
 import sys
+from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -25,11 +26,9 @@ def test_chat_matches_c_trace_without_executing_tools(request: pytest.FixtureReq
     if not model or not trace_path:
         pytest.skip("set DS4_TEST_MODEL and DS4_REPLAY_TRACE for live replay parity")
     live_lib = request.getfixturevalue("live_lib")
-    trace = read_replay(cast(str, trace_path))
-    traced_model = Path(cast(str, trace.model)).expanduser().resolve()
-    selected_model = Path(cast(str, model)).expanduser().resolve()
-    assert traced_model == selected_model, (
-        f"trace model {traced_model} != DS4_TEST_MODEL {selected_model}"
-    )
-    with ds4py.open(selected_model, ctx=cast(int, trace.ctx), lib=live_lib, seed=1) as engine:
+    trace = read_replay(cast("str", trace_path))
+    traced_model = Path(cast("str", trace.model)).expanduser().resolve()
+    selected_model = Path(cast("str", model)).expanduser().resolve()
+    assert traced_model == selected_model, f"trace model {traced_model} != DS4_TEST_MODEL {selected_model}"
+    with ds4py.open(selected_model, ctx=cast("int", trace.ctx), lib=live_lib, seed=1) as engine:
         replay_trace(engine, trace)

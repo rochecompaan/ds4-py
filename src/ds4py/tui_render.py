@@ -23,7 +23,6 @@ from ds4py.engine.events import TextDelta
 from ds4py.engine.lifecycle import SessionEvent
 from ds4py.runtime import AgentRuntime
 
-
 _INLINE = re.compile(r"(\*\*[^*\n]+\*\*|(?<!\*)\*[^*\n]+\*(?!\*)|`[^`\n]+`)")
 _HEADING = re.compile(r"^#{1,6}\s+(.*)$")
 
@@ -67,7 +66,7 @@ def markdown_fragments(text: str) -> StyleAndTextTuples:
         offset = 0
         for match in _INLINE.finditer(content):
             if match.start() > offset:
-                fragments.append(("class:text", content[offset:match.start()]))
+                fragments.append(("class:text", content[offset : match.start()]))
             token = match.group(0)
             if token.startswith("**"):
                 fragments.append(("class:markdown.bold bold", token[2:-2]))
@@ -94,8 +93,10 @@ class StreamRenderer:
         if fragments:
             newline = isinstance(event, (FunctionToolCallEvent, FunctionToolResultEvent))
             print_formatted_text(
-                FormattedText(fragments), output=self.output,
-                end="\n" if newline else "", flush=True,
+                FormattedText(fragments),
+                output=self.output,
+                end="\n" if newline else "",
+                flush=True,
             )
         return fragments
 
@@ -174,10 +175,7 @@ class FooterModel:
         if self.prefill is not None:
             done, total, tps = self.prefill
             filled = min(32, round(32 * done / total)) if total else 0
-            parts.append(
-                f"prefill {'▶' * filled}{'·' * (32 - filled)} "
-                f"{done}/{total} {tps:.1f} tok/s"
-            )
+            parts.append(f"prefill {'▶' * filled}{'·' * (32 - filled)} {done}/{total} {tps:.1f} tok/s")
         if self.service_status is not None:
             parts.append(f"shell {self.service_pid or '-'} {self.service_status}")
         parts.extend(f"{key}: {value}" for key, value in sorted(self.custom.items()))

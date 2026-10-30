@@ -1,18 +1,28 @@
 """Bakeoff save evidence and fresh-process restore checks."""
-from typing import Any, cast
 
 import asyncio
-from dataclasses import replace
 import json
-from pathlib import Path
 import shutil
 import sys
+from dataclasses import replace
+from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bench.run_bakeoff import drive_pty
+from typing import Never
+
+from pydantic_ai_harness.step_persistence import (
+    ContinuableSnapshot,
+    FileStepStore,
+)
+from pydantic_ai_harness.step_persistence import (
+    RunRecord as StepRunRecord,
+)
+
+import ds4py
 from bench.restore_check import (
     RestoreError,
     RestoreRun,
@@ -22,12 +32,12 @@ from bench.restore_check import (
     run_attempt_with_save,
     validate_save,
 )
-import ds4py
-from ds4py.engine.session import Engine
+from bench.run_bakeoff import drive_pty
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.engine.sampling import SamplingPolicy
+from ds4py.engine.session import Engine
 from ds4py.model import DS4Model
 from ds4py.runtime import AgentRuntime
 from ds4py.store import (
@@ -37,22 +47,22 @@ from ds4py.store import (
     SessionStore,
     token_digest,
 )
-from pydantic_ai_harness.step_persistence import (
-    ContinuableSnapshot,
-    FileStepStore,
-    RunRecord as StepRunRecord,
-)
-from typing import Never
 
 
 def restore_fake_engine(script: Any) -> Engine:
     info = replace(
         FakeNative()._info,
-        name="fake-ds4", model_id=7, family="qwen",
-        is_deepseek41=False, is_glm_dsa=False, is_qwen4=True,
+        name="fake-ds4",
+        model_id=7,
+        family="qwen",
+        is_deepseek41=False,
+        is_glm_dsa=False,
+        is_qwen4=True,
     )
     return ds4py.open(
-        "f.gguf", ctx=65536, think=ThinkMode.NONE,
+        "f.gguf",
+        ctx=65536,
+        think=ThinkMode.NONE,
         native=FakeNative(info=info, script=script),
     )
 
@@ -70,57 +80,90 @@ def restore_script(*texts: Any) -> Any:
     return next_token
 
 
-def make_save(root: Any, session_id: Any="session-1") -> Any:
+def make_save(root: Any, session_id: Any = "session-1") -> Any:
     store = SessionStore(root / "home")
     save_dir = store.session_dir(session_id)
     save_dir.mkdir(parents=True)
     run_id = session_id + ".save-1"
     record = SaveRecord(
-        session_id=session_id, conversation_id=session_id, run_id=run_id,
-        step_index=0, model_id=1, quant_bits=2, ctx=100000, title="task",
+        session_id=session_id,
+        conversation_id=session_id,
+        run_id=run_id,
+        step_index=0,
+        model_id=1,
+        quant_bits=2,
+        ctx=100000,
+        title="task",
         created_at="2026-01-01T00:00:00+00:00",
-        last_used="2026-01-01T00:00:00+00:00", payload_bytes=3, tokens=1,
+        last_used="2026-01-01T00:00:00+00:00",
+        payload_bytes=3,
+        tokens=1,
         tokens_sha256=token_digest([1]),
         segments=(SegmentProvenance(0, 1, "user", "key", "a" * 64, "test"),),
     )
     store.write_kv_atomic(save_dir / "session.kv", b"kv!")
     store.write_record_atomic(save_dir / "save.json", record)
     (save_dir / "events.jsonl").write_text(
-        json.dumps({"kind": "run_start", "run_id": "run-1", "payload": {}}) + "\n" +
-        json.dumps({"kind": "run_end", "run_id": "run-1", "payload": {"status": "success"}}) + "\n"
+        json.dumps({"kind": "run_start", "run_id": "run-1", "payload": {}})
+        + "\n"
+        + json.dumps({"kind": "run_end", "run_id": "run-1", "payload": {"status": "success"}})
+        + "\n"
     )
 
     async def snapshot() -> None:
         steps = FileStepStore(save_dir / "steps")
-        await steps.register_run(StepRunRecord(
-            run_id=run_id, conversation_id=session_id, agent_name="ds4py",
-        ))
-        await steps.save_snapshot(ContinuableSnapshot(
-            run_id=run_id, step_index=0, messages=[], conversation_id=session_id,
-            agent_name="ds4py",
-        ))
+        await steps.register_run(
+            StepRunRecord(
+                run_id=run_id,
+                conversation_id=session_id,
+                agent_name="ds4py",
+            )
+        )
+        await steps.save_snapshot(
+            ContinuableSnapshot(
+                run_id=run_id,
+                step_index=0,
+                messages=[],
+                conversation_id=session_id,
+                agent_name="ds4py",
+            )
+        )
 
     asyncio.run(snapshot())
     return save_dir
 
 
 def write_trace(path: Any, sampled: Any) -> None:
-    path.write_text(json.dumps({
-        "session_id": "restore", "run_id": "followup", "step_index": 0,
-        "round_index": 0, "prompt": [1, 2], "think": 0, "cached": 0,
-        "prefill_suffix": [1, 2], "sampled": list(sampled),
-    }) + "\n")
+    path.write_text(
+        json.dumps(
+            {
+                "session_id": "restore",
+                "run_id": "followup",
+                "step_index": 0,
+                "round_index": 0,
+                "prompt": [1, 2],
+                "think": 0,
+                "cached": 0,
+                "prefill_suffix": [1, 2],
+                "sampled": list(sampled),
+            }
+        )
+        + "\n"
+    )
 
 
-def successful_driver(calls: Any, tokens: Any=(1, 2, 3), reason: Any="stop_token") -> Any:
+def successful_driver(calls: Any, tokens: Any = (1, 2, 3), reason: Any = "stop_token") -> Any:
     def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
         calls.append((home, session_id, case))
         write_trace(trace_path, tokens)
         return RestoreRun(
-            trace_path=trace_path, terminal_reason=reason, switch_prefill=0,
+            trace_path=trace_path,
+            terminal_reason=reason,
+            switch_prefill=0,
             followup_plan="extend" if case == 1 else "rebuild",
             followup_prefill=2 if case == 1 else 12,
         )
+
     return drive
 
 
@@ -168,7 +211,7 @@ def test_restore_cases_compare_tokens_and_enforce_prefill_paths(tmp_path: Path) 
     assert result.passed, result.detail
     assert [call[2] for call in calls] == [1, 2]
     assert all(call[1] == "session-1" for call in calls)
-    stripped = cast(Any, result.stripped_save_dir)
+    stripped = cast("Any", result.stripped_save_dir)
     assert SessionStore().read_kv_header(stripped / "session.kv") == 0
 
 
@@ -178,8 +221,11 @@ def test_restore_token_mismatch_fails_with_index(tmp_path: Path) -> None:
     def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
         write_trace(trace_path, (1, 2, 3) if case == 1 else (1, 9, 3))
         return RestoreRun(
-            trace_path, "stop_token", 0,
-            "extend" if case == 1 else "rebuild", 2 if case == 1 else 12,
+            trace_path,
+            "stop_token",
+            0,
+            "extend" if case == 1 else "rebuild",
+            2 if case == 1 else 12,
         )
 
     result = check_restore(save, tmp_path / "work", runner=drive)
@@ -190,14 +236,18 @@ def test_restore_token_mismatch_fails_with_index(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("case1_prefill,case2_prefill", [(1, 12), (0, 0)])
 def test_restore_requires_no_case1_prefill_and_real_case2_prefill(
-    tmp_path: Path, case1_prefill: Any, case2_prefill: Any,
+    tmp_path: Path,
+    case1_prefill: Any,
+    case2_prefill: Any,
 ) -> None:
     save = make_save(tmp_path)
 
     def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
         write_trace(trace_path, (1, 2))
         return RestoreRun(
-            trace_path, "stop_token", case1_prefill if case == 1 else 0,
+            trace_path,
+            "stop_token",
+            case1_prefill if case == 1 else 0,
             "extend" if case == 1 else "rebuild",
             2 if case == 1 else case2_prefill,
         )
@@ -212,8 +262,11 @@ def test_short_restore_sequences_must_share_terminal_reason(tmp_path: Path) -> N
     def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
         write_trace(trace_path, (1, 2))
         return RestoreRun(
-            trace_path, "stop_token" if case == 1 else "max_tokens", 0,
-            "extend" if case == 1 else "rebuild", 2 if case == 1 else 12,
+            trace_path,
+            "stop_token" if case == 1 else "max_tokens",
+            0,
+            "extend" if case == 1 else "rebuild",
+            2 if case == 1 else 12,
         )
 
     result = check_restore(save, tmp_path / "work", runner=drive)
@@ -221,14 +274,20 @@ def test_short_restore_sequences_must_share_terminal_reason(tmp_path: Path) -> N
     assert "terminal" in result.detail
 
 
-def test_restore_driver_preserves_noninteractive_prompt_composition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_restore_driver_preserves_noninteractive_prompt_composition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     project = tmp_path / "project"
     project.mkdir()
     store = SessionStore(tmp_path / "home")
     with restore_fake_engine(restore_script("saved answer")) as engine:
         model = DS4Model(engine.session(), sampling=SamplingPolicy(seed=1))
         runtime = AgentRuntime(
-            model, project, store=store, interactive=False, read_only=True,
+            model,
+            project,
+            store=store,
+            interactive=False,
+            read_only=True,
         )
 
         async def save_attempt() -> Any:
@@ -247,11 +306,28 @@ def test_restore_driver_preserves_noninteractive_prompt_composition(tmp_path: Pa
     monkeypatch.setenv("DS4PY_HOME", str(store.root))
     monkeypatch.setattr(ds4py, "open", lambda *args, **kwargs: replacement_engine)
 
-    status = restore_command([
-        "--session-id", record.session_id, "--metadata", str(metadata),
-        "--model", "f.gguf", "--backend", "cpu", "--ctx", "65536",
-        "--temp", "0", "--seed", "1", "--tokens", "256", "--trace", str(trace),
-    ])
+    status = restore_command(
+        [
+            "--session-id",
+            record.session_id,
+            "--metadata",
+            str(metadata),
+            "--model",
+            "f.gguf",
+            "--backend",
+            "cpu",
+            "--ctx",
+            "65536",
+            "--temp",
+            "0",
+            "--seed",
+            "1",
+            "--tokens",
+            "256",
+            "--trace",
+            str(trace),
+        ]
+    )
 
     assert status == 0
     assert json.loads(metadata.read_text())["followup_plan"] == "extend"
@@ -296,7 +372,7 @@ def test_attempt_saves_in_finally_even_when_prompt_fails() -> None:
 
 def interactive_script(root: Any) -> Any:
     path = root / "interactive.py"
-    path.write_text('''\
+    path.write_text("""\
 print("PREFILL", flush=True)
 while True:
     try:
@@ -307,7 +383,7 @@ while True:
     if line == "continue":
         print("RESUMED", flush=True)
         break
-''')
+""")
     return path
 
 

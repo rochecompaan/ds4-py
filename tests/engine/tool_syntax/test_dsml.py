@@ -1,14 +1,13 @@
-from typing import Any, cast
-from dataclasses import replace
 import json
+from dataclasses import replace
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 from ds4py._native.fake import FakeNative
 from ds4py.engine.tool_syntax import make_parser
 from ds4py.engine.tool_syntax.dsml import Dsml
-
 
 CASES = json.loads((Path(__file__).parents[2] / "fixtures" / "tool_syntax" / "dsml.json").read_text())
 
@@ -23,7 +22,7 @@ def test_dsml_fixtures(case: Any, chunk_size: Any) -> None:
     parser = Dsml(v41=case.get("v41", False))
     data = case["input"].encode()
     for offset in range(0, len(data), chunk_size):
-        snapshot = parser.feed(data[offset:offset + chunk_size])
+        snapshot = parser.feed(data[offset : offset + chunk_size])
     snapshot = parser.finish()
     assert snapshot.state == case["state"], snapshot.error
     assert observed_calls(snapshot) == case["calls"]
@@ -33,7 +32,7 @@ def test_dsml_fixtures(case: Any, chunk_size: Any) -> None:
 
 def test_raw_contains_only_the_canonical_tool_stanza() -> None:
     parser = Dsml()
-    ordinary = parser.feed("ordinary prose ".encode())
+    ordinary = parser.feed(b"ordinary prose ")
     assert ordinary.raw == b""
     started = parser.feed("<DSML｜tool_calls>".encode())
     assert started.raw == "<｜DSML｜tool_calls>".encode()
@@ -46,10 +45,12 @@ def test_raw_contains_only_the_canonical_tool_stanza() -> None:
 
 def test_snapshots_are_immutable_and_do_not_change_with_later_feeds() -> None:
     parser = Dsml()
-    first = parser.feed("<｜DSML｜tool_calls><｜DSML｜invoke name=\"read\"><｜DSML｜parameter name=\"path\" string=\"true\">a</｜DSML｜parameter></｜DSML｜invoke>".encode())
+    first = parser.feed(
+        '<｜DSML｜tool_calls><｜DSML｜invoke name="read"><｜DSML｜parameter name="path" string="true">a</｜DSML｜parameter></｜DSML｜invoke>'.encode()
+    )
     assert len(first.calls) == 1
     with pytest.raises(TypeError):
-        cast(Any, first.calls[0].args)["path"] = "changed"
+        cast("Any", first.calls[0].args)["path"] = "changed"
     second = parser.feed("</｜DSML｜tool_calls>".encode())
     assert second.state == "DONE"
     assert first.state == "STRUCTURAL"
@@ -71,14 +72,14 @@ def test_feed_after_done_or_error_is_a_no_op() -> None:
     assert error_parser.feed(text) == error
 
 
-@pytest.mark.parametrize("partial", ["<｜DS", "<DSML｜tool_calls>", "<｜DSML｜tool_calls><｜DSML｜invoke name=\"read\">"])
+@pytest.mark.parametrize("partial", ["<｜DS", "<DSML｜tool_calls>", '<｜DSML｜tool_calls><｜DSML｜invoke name="read">'])
 def test_finish_rejects_partial_openers_and_active_stanzas(partial: Any) -> None:
     parser = Dsml()
     parser.feed(partial.encode())
     snapshot = parser.finish()
     assert snapshot.state == "ERROR"
     assert snapshot.calls == ()
-    assert "incomplete" in cast(Any, snapshot.error)
+    assert "incomplete" in cast("Any", snapshot.error)
 
 
 def test_finish_allows_ordinary_text_and_a_single_angle_bracket() -> None:
@@ -99,7 +100,7 @@ def test_greedy_sampling_follows_structure_and_partial_closing_delimiter() -> No
     parser = Dsml()
     structural = parser.feed("<｜DSML｜tool_calls>".encode())
     assert structural.state == "STRUCTURAL" and parser.wants_greedy_sampling()
-    value = parser.feed("<｜DSML｜invoke name=\"read\"><｜DSML｜parameter name=\"path\" string=\"true\">abc".encode())
+    value = parser.feed('<｜DSML｜invoke name="read"><｜DSML｜parameter name="path" string="true">abc'.encode())
     assert value.state == "PARAM_VALUE" and not parser.wants_greedy_sampling()
     closing = parser.feed("</｜DSML｜param".encode())
     assert closing.param_close_prefix and parser.wants_greedy_sampling()
@@ -121,17 +122,25 @@ def test_malformed_dsml_markers_outside_blocks_are_errors(marker: Any) -> None:
 @pytest.mark.parametrize("v41", [False, True])
 @pytest.mark.parametrize("explicit_invoke_close", [True, False])
 def test_invalid_utf8_in_ignored_attribute_is_parser_error_for_all_chunks(
-    v41: Any, explicit_invoke_close: Any,
+    v41: Any,
+    explicit_invoke_close: Any,
 ) -> None:
-    invoke, parameter, calls = (" invoke", " parameter", " calls") if v41 else (
-        "invoke", "parameter", "tool_calls",
+    invoke, parameter, calls = (
+        (" invoke", " parameter", " calls")
+        if v41
+        else (
+            "invoke",
+            "parameter",
+            "tool_calls",
+        )
     )
     invoke_close = f"</｜DSML｜{invoke}>" if explicit_invoke_close else ""
     data = (
         f'<｜DSML｜{calls}><｜DSML｜{invoke} name="read" extra="'.encode()
         + b"\xff"
-        + (f'"><｜DSML｜{parameter} name="path" string="true">x'
-           f'</｜DSML｜{parameter}>{invoke_close}</｜DSML｜{calls}>').encode()
+        + (
+            f'"><｜DSML｜{parameter} name="path" string="true">x</｜DSML｜{parameter}>{invoke_close}</｜DSML｜{calls}>'
+        ).encode()
     )
     partitions = [[data], [bytes([byte]) for byte in data]]
     partitions += [[data[:split], data[split:]] for split in range(len(data) + 1)]
@@ -142,7 +151,7 @@ def test_invalid_utf8_in_ignored_attribute_is_parser_error_for_all_chunks(
         for chunk in chunks:
             snapshot = parser.feed(chunk)
         assert snapshot.state == "ERROR"
-        assert "raw" in cast(Any, snapshot.error) and "UTF-8" in cast(Any, snapshot.error)
+        assert "raw" in cast("Any", snapshot.error) and "UTF-8" in cast("Any", snapshot.error)
         assert snapshot.calls == ()
 
 
@@ -157,7 +166,9 @@ def test_split_think_markers_reject_dsml_inside_thinking() -> None:
 
 
 def test_think_tags_inside_parameter_values_are_literal() -> None:
-    snapshot = Dsml().feed(next(case for case in CASES if case["source"].startswith("C test_agent_tool_argument"))["input"].encode())
+    snapshot = Dsml().feed(
+        next(case for case in CASES if case["source"].startswith("C test_agent_tool_argument"))["input"].encode()
+    )
     assert snapshot.state == "DONE"
     assert not snapshot.in_think and not snapshot.dsml_in_think
 

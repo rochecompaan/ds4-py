@@ -1,6 +1,6 @@
 """Bounded UTF-8 stop matching and resumable control-span state."""
 
-from typing import Iterable
+from collections.abc import Iterable
 
 
 def _failure_table(sequence: bytes) -> tuple[int, ...]:

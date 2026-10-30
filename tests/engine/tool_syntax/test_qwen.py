@@ -1,14 +1,13 @@
-from typing import Any
-from dataclasses import replace
 import json
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from ds4py._native.fake import FakeNative
 from ds4py.engine.tool_syntax import make_parser
 from ds4py.engine.tool_syntax.qwen import Qwen
-
 
 CASES = json.loads((Path(__file__).parents[2] / "fixtures" / "tool_syntax" / "qwen.json").read_text())
 
@@ -29,7 +28,7 @@ def test_qwen_fixtures(case: Any, chunk_size: Any) -> None:
     parser = Qwen()
     data = case["input"].encode()
     for offset in range(0, len(data), chunk_size):
-        parser.feed(data[offset:offset + chunk_size])
+        parser.feed(data[offset : offset + chunk_size])
     snapshot = parser.finish()
     assert snapshot.state == case["state"], snapshot.error
     assert observed_calls(snapshot) == case["calls"]
@@ -47,17 +46,17 @@ def test_numeric_classification_uses_the_c_64_byte_guard() -> None:
     assert numeric(64) == "1" * 64
 
 
-@pytest.mark.parametrize(("text", "expected", "value_type"), [
-    ("+1", 1, int),
-    ("01", 1, int),
-    ("1.", 1.0, float),
-    (".5", 0.5, float),
-])
+@pytest.mark.parametrize(
+    ("text", "expected", "value_type"),
+    [
+        ("+1", 1, int),
+        ("01", 1, int),
+        ("1.", 1.0, float),
+        (".5", 0.5, float),
+    ],
+)
 def test_c_numeric_forms_preserve_typed_arguments(text: Any, expected: Any, value_type: Any) -> None:
-    snapshot = parse(
-        f"<tool_call><function=echo><parameter=value>{text}</parameter>"
-        "</function></tool_call>"
-    )
+    snapshot = parse(f"<tool_call><function=echo><parameter=value>{text}</parameter></function></tool_call>")
     assert snapshot.state == "DONE", snapshot.error
     value = snapshot.calls[0].args["value"]
     assert value == expected
@@ -65,8 +64,10 @@ def test_c_numeric_forms_preserve_typed_arguments(text: Any, expected: Any, valu
 
 
 def test_ordinary_text_is_not_json_decoded_by_experiment() -> None:
-    snapshot = parse("<tool_call><function=echo><parameter=a>001x</parameter><parameter=b>True</parameter><parameter=c>\"hello\"</parameter></function></tool_call>")
-    assert snapshot.calls[0].args == {"a": "001x", "b": "True", "c": "\"hello\""}
+    snapshot = parse(
+        '<tool_call><function=echo><parameter=a>001x</parameter><parameter=b>True</parameter><parameter=c>"hello"</parameter></function></tool_call>'
+    )
+    assert snapshot.calls[0].args == {"a": "001x", "b": "True", "c": '"hello"'}
 
 
 def test_qwen_closing_delimiter_requests_greedy_sampling() -> None:

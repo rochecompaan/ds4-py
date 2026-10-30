@@ -1,13 +1,14 @@
 """Generate model-family-native prompts from caller-owned tool definitions."""
-from collections.abc import Iterable
-from dataclasses import dataclass
+
 import json
-from typing import Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
 class ToolDefinition:
     """Caller-owned tool schema; names, descriptions, and parameters are untrusted."""
+
     name: str
     description: str
     parameters: Mapping[str, object]
@@ -16,12 +17,14 @@ class ToolDefinition:
 @dataclass(frozen=True)
 class ToolPromptSpan:
     """A template span with an explicit trusted-rendering boundary."""
+
     text: str
     rendered: bool
 
 
 class ToolPromptGenerator:
     """Generate executable family examples and schemas without native calls."""
+
     def __init__(self, family: str) -> None:
         self.family = family
 
@@ -49,7 +52,11 @@ class ToolPromptGenerator:
 
     @staticmethod
     def _schema_spans(
-        schemas: Iterable[str], prefix: str, suffix: str, *, qwen: bool = False,
+        schemas: Iterable[str],
+        prefix: str,
+        suffix: str,
+        *,
+        qwen: bool = False,
     ) -> list[ToolPromptSpan]:
         spans = [ToolPromptSpan(prefix, True)]
         for index, schema in enumerate(schemas):
@@ -75,11 +82,11 @@ class ToolPromptGenerator:
             "</tools>\n\n"
             "Call example:\n"
             f"<｜DSML｜{calls}>\n"
-            f"<｜DSML｜{invoke} name=\"read\">\n"
-            f"<｜DSML｜{parameter} name=\"path\" string=\"true\">README.md</｜DSML｜{parameter}>\n"
+            f'<｜DSML｜{invoke} name="read">\n'
+            f'<｜DSML｜{parameter} name="path" string="true">README.md</｜DSML｜{parameter}>\n'
             f"</｜DSML｜{invoke}>\n"
             f"</｜DSML｜{calls}>\n\n"
-            "Use string=\"false\" for JSON values.\n"
+            'Use string="false" for JSON values.\n'
             f"Escape literal {closing} as {escaped}; write {escaped} literally as {doubly_escaped}. "
             "Other entities stay unchanged.\n"
         )

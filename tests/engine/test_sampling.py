@@ -1,7 +1,8 @@
-import pytest
 import ctypes
 from dataclasses import replace
 from pathlib import Path
+
+import pytest
 
 from ds4py._native.fake import FakeNative
 from ds4py._native.protocol import EngineConfig
@@ -15,7 +16,9 @@ def test_glm_defaults_unless_set() -> None:
     assert SamplingPolicy.for_engine(glm) == SamplingPolicy(top_p=0.95, min_p=0.0)
     assert SamplingPolicy.for_engine(glm, min_p=0.1).min_p == 0.1
     assert SamplingPolicy.for_engine(INFO, temperature=0.0) == SamplingPolicy(temperature=0.0)
-    assert SamplingPolicy.for_engine(glm, temperature=0.5, top_p=0.8, min_p=0.2, top_k=4, seed=0) == SamplingPolicy(0.5, 0.8, 0.2, 4, 0)
+    assert SamplingPolicy.for_engine(glm, temperature=0.5, top_p=0.8, min_p=0.2, top_k=4, seed=0) == SamplingPolicy(
+        0.5, 0.8, 0.2, 4, 0
+    )
 
 
 def test_rng_seed() -> None:

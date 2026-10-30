@@ -1,7 +1,7 @@
-from typing import Any, cast
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -10,7 +10,11 @@ from ds4py._native.fake_chat import tokenize_rendered
 from ds4py._native.protocol import EngineConfig, ThinkMode
 from ds4py.engine.decode import GenerateJob, generate
 from ds4py.engine.events import (
-    Stopped, TextDelta, Thinking, Token, ToolCalls, ToolSyntax,
+    Stopped,
+    TextDelta,
+    Thinking,
+    Token,
+    ToolCalls,
 )
 from ds4py.engine.pause import ControlSpan
 from ds4py.engine.sampling import Rng, SamplingPolicy
@@ -18,13 +22,16 @@ from ds4py.engine.stream import RoundStream
 from ds4py.engine.transcript import Transcript
 from ds4py.engine.worker import EngineWorker, SyncJob
 
-DSML = ("<｜DSML｜tool_calls><｜DSML｜invoke name=\"read\">"
-        "<｜DSML｜parameter name=\"path\" string=\"true\">/tmp/x</｜DSML｜parameter>"
-        "</｜DSML｜invoke></｜DSML｜tool_calls>")
-GLM_TWO = ("<tool_call>first<arg_key>x</arg_key><arg_value>1</arg_value></tool_call>"
-           "<tool_call>second<arg_key>y</arg_key><arg_value>2</arg_value></tool_call>")
-QWEN = ("<tool_call><function=read><parameter=path>/tmp/x</parameter>"
-        "</function></tool_call>")
+DSML = (
+    '<｜DSML｜tool_calls><｜DSML｜invoke name="read">'
+    '<｜DSML｜parameter name="path" string="true">/tmp/x</｜DSML｜parameter>'
+    "</｜DSML｜invoke></｜DSML｜tool_calls>"
+)
+GLM_TWO = (
+    "<tool_call>first<arg_key>x</arg_key><arg_value>1</arg_value></tool_call>"
+    "<tool_call>second<arg_key>y</arg_key><arg_value>2</arg_value></tool_call>"
+)
+QWEN = "<tool_call><function=read><parameter=path>/tmp/x</parameter></function></tool_call>"
 
 
 def scripted(tokens: Any) -> Any:
@@ -51,8 +58,16 @@ def workers() -> Iterator[Any]:
         worker.close()
 
 
-def run_native(workers: Any, native: Any, *, chat: Any=True, max_tokens: Any=1000, ctx: Any=1024,
-               think: Any=ThinkMode.NONE, policy: Any=None) -> Any:
+def run_native(
+    workers: Any,
+    native: Any,
+    *,
+    chat: Any = True,
+    max_tokens: Any = 1000,
+    ctx: Any = 1024,
+    think: Any = ThinkMode.NONE,
+    policy: Any = None,
+) -> Any:
     worker = EngineWorker(native, EngineConfig(Path("f"), ctx=ctx))
     workers.append(worker)
     transcript = Transcript()
@@ -60,8 +75,12 @@ def run_native(workers: Any, native: Any, *, chat: Any=True, max_tokens: Any=100
     list(worker.submit(SyncJob((5, 6))))
     stream = RoundStream(worker.info, think) if chat else None
     job = GenerateJob(
-        policy or SamplingPolicy(), Rng(1), max_tokens, transcript,
-        think_mode=think if chat else None, stream=stream,
+        policy or SamplingPolicy(),
+        Rng(1),
+        max_tokens,
+        transcript,
+        think_mode=think if chat else None,
+        stream=stream,
         control=stream.control if stream is not None else ControlSpan(),
     )
     events = list(worker.submit(job))
@@ -72,12 +91,17 @@ def event_calls(events: Any) -> Any:
     return [event for event in events if isinstance(event, ToolCalls)]
 
 
-@pytest.mark.parametrize("family,text,name,path", [
-    ("deepseek4", DSML, "read", "/tmp/x"),
-    ("glm", GLM_TWO, "first", "1"),
-    ("qwen", QWEN, "read", "/tmp/x"),
-])
-def test_chat_tool_calls_stop_and_emit_before_stopped(workers: Any, family: Any, text: Any, name: Any, path: Any) -> None:
+@pytest.mark.parametrize(
+    "family,text,name,path",
+    [
+        ("deepseek4", DSML, "read", "/tmp/x"),
+        ("glm", GLM_TWO, "first", "1"),
+        ("qwen", QWEN, "read", "/tmp/x"),
+    ],
+)
+def test_chat_tool_calls_stop_and_emit_before_stopped(
+    workers: Any, family: Any, text: Any, name: Any, path: Any
+) -> None:
     events, transcript, stream, _ = run_native(workers, native_for(family, text))
     calls = event_calls(events)
     assert len(calls) == 1 and events[-1] == Stopped("tool_call_complete")
@@ -98,7 +122,10 @@ def test_parser_terminal_overrides_simultaneous_caller_limit(workers: Any) -> No
 
 def test_context_reserve_does_not_finalize_stream(workers: Any) -> None:
     events, _, stream, _ = run_native(
-        workers, native_for("qwen", QWEN), ctx=10, max_tokens=100,
+        workers,
+        native_for("qwen", QWEN),
+        ctx=10,
+        max_tokens=100,
     )
     assert events[-1] == Stopped("context_reserve")
     assert not stream.finalized and stream.snapshot.state != "ERROR"
@@ -108,7 +135,9 @@ def test_context_reserve_does_not_finalize_stream(workers: Any) -> None:
 def test_structural_tokens_switch_actual_sampling_and_values_restore_it(workers: Any) -> None:
     policy = SamplingPolicy(temperature=0.6, top_k=4, top_p=0.9, min_p=0.03)
     events, _, _, worker = run_native(
-        workers, native_for("deepseek4", DSML), policy=policy,
+        workers,
+        native_for("deepseek4", DSML),
+        policy=policy,
     )
     samples = worker.call(lambda e, s: s.samples).result()
     normal = (0.6, 4, 0.9, 0.03)
@@ -116,13 +145,15 @@ def test_structural_tokens_switch_actual_sampling_and_values_restore_it(workers:
     assert events[-1] == Stopped("tool_call_complete")
     assert samples[0] == normal and greedy in samples
     first_greedy = samples.index(greedy)
-    assert normal in samples[first_greedy + 1:]
+    assert normal in samples[first_greedy + 1 :]
 
 
 @pytest.mark.parametrize("family,text", [("deepseek4", DSML), ("glm", GLM_TWO), ("qwen", QWEN)])
 def test_markup_in_thinking_is_parser_error_without_calls(workers: Any, family: Any, text: Any) -> None:
     events, _, _, _ = run_native(
-        workers, native_for(family, text), think=ThinkMode.HIGH,
+        workers,
+        native_for(family, text),
+        think=ThinkMode.HIGH,
     )
     assert events[-1] == Stopped("parser_error")
     assert event_calls(events) == []
@@ -131,7 +162,9 @@ def test_markup_in_thinking_is_parser_error_without_calls(workers: Any, family: 
 def test_tool_markup_after_think_close_is_allowed(workers: Any) -> None:
     for family, text in (("deepseek4", DSML), ("glm", GLM_TWO), ("qwen", QWEN)):
         events, _, _, _ = run_native(
-            workers, native_for(family, "</think>" + text), think=ThinkMode.HIGH,
+            workers,
+            native_for(family, "</think>" + text),
+            think=ThinkMode.HIGH,
         )
         assert events[-1] == Stopped("tool_call_complete")
         assert len(event_calls(events)) == 1
@@ -152,7 +185,7 @@ def test_raw_round_has_no_parser_or_display_events(workers: Any) -> None:
 
 
 class StopEngine:
-    def __init__(self, texts: Any=None) -> None:
+    def __init__(self, texts: Any = None) -> None:
         self.info = FakeNative()._info
         self.texts = texts or {}
         self.raw_stops = []
@@ -175,10 +208,17 @@ class StopSession:
         self.tokens = list(tokens)
         self.seen = []
 
-    def ctx(self) -> int: return 100
-    def pos(self) -> int: return 10
-    def sample(self, *args: Any) -> int: return self.tokens.pop(0)
-    def eval(self, token: Any) -> None: self.seen.append(("eval", token))
+    def ctx(self) -> int:
+        return 100
+
+    def pos(self) -> int:
+        return 10
+
+    def sample(self, *args: Any) -> int:
+        return self.tokens.pop(0)
+
+    def eval(self, token: Any) -> None:
+        self.seen.append(("eval", token))
 
 
 def test_raw_and_chat_use_their_respective_stop_bindings() -> None:
@@ -186,11 +226,19 @@ def test_raw_and_chat_use_their_respective_stop_bindings() -> None:
         engine, session, transcript = StopEngine(), StopSession([0]), Transcript()
         stream = RoundStream(engine.info, ThinkMode.HIGH) if chat else None
         reason = generate(
-            cast(Any, engine), cast(Any, session),
-            GenerateJob(SamplingPolicy(), Rng(1), 5, transcript,
-                        think_mode=ThinkMode.HIGH if chat else None, stream=stream,
-                        control=stream.control if stream is not None else ControlSpan()),
-            cancelled=lambda: False, emit=lambda event: None,
+            cast("Any", engine),
+            cast("Any", session),
+            GenerateJob(
+                SamplingPolicy(),
+                Rng(1),
+                5,
+                transcript,
+                think_mode=ThinkMode.HIGH if chat else None,
+                stream=stream,
+                control=stream.control if stream is not None else ControlSpan(),
+            ),
+            cancelled=lambda: False,
+            emit=lambda event: None,
         )
         assert reason == "stop_token"
         assert bool(engine.chat_stops) == chat
@@ -201,10 +249,7 @@ def test_raw_and_chat_use_their_respective_stop_bindings() -> None:
 
 def test_stream_observe_snapshots_once_per_token() -> None:
     stream = RoundStream(FakeNative()._info, ThinkMode.NONE)
-    prefix = (
-        '<｜DSML｜tool_calls><｜DSML｜invoke name="read">'
-        '<｜DSML｜parameter name="path" string="true">'
-    ).encode()
+    prefix = ('<｜DSML｜tool_calls><｜DSML｜invoke name="read"><｜DSML｜parameter name="path" string="true">').encode()
     for byte in prefix:
         stream.observe(byte, bytes([byte]), lambda event: None)
     assert stream.snapshot.state == "PARAM_VALUE"
@@ -234,9 +279,11 @@ def test_commit_order_is_eval_transcript_token_then_stream_events() -> None:
     session, transcript, observed = StopSession([7, 8, 0]), Transcript(), []
     stream = RoundStream(engine.info, ThinkMode.NONE)
     reason = generate(
-        cast(Any, engine), cast(Any, session),
-        GenerateJob(SamplingPolicy(), Rng(1), 5, transcript,
-                    think_mode=ThinkMode.NONE, stream=stream, control=stream.control),
+        cast("Any", engine),
+        cast("Any", session),
+        GenerateJob(
+            SamplingPolicy(), Rng(1), 5, transcript, think_mode=ThinkMode.NONE, stream=stream, control=stream.control
+        ),
         cancelled=lambda: False,
         emit=lambda event: observed.append((event, transcript.tokens)),
     )
@@ -255,10 +302,13 @@ def test_interruption_does_not_finalize_stream_or_publish_calls() -> None:
     answers = iter([False, False, True, True])
     events = []
     reason = generate(
-        cast(Any, engine), cast(Any, session),
-        GenerateJob(SamplingPolicy(), Rng(1), 5, transcript,
-                    think_mode=ThinkMode.NONE, stream=stream, control=stream.control),
-        cancelled=lambda: next(answers, True), emit=events.append,
+        cast("Any", engine),
+        cast("Any", session),
+        GenerateJob(
+            SamplingPolicy(), Rng(1), 5, transcript, think_mode=ThinkMode.NONE, stream=stream, control=stream.control
+        ),
+        cancelled=lambda: next(answers, True),
+        emit=events.append,
     )
     assert reason == "interrupted" and not stream.finalized
     assert stream.snapshot.state != "ERROR"

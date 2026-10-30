@@ -1,22 +1,31 @@
 """Public token-oriented engine facade and lazy, exclusively owned rounds."""
+
 import operator
 import threading
 from asyncio import AbstractEventLoop
-from collections.abc import Generator, Iterable
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from concurrent.futures import Future
 from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, Iterator, Mapping, Sequence, TypeVar, cast
+from typing import Any, BinaryIO, TypeVar, cast
 from uuid import uuid4
 
 from ds4py._native.api import LibNative
 from ds4py._native.loader import load_library
 from ds4py._native.protocol import EngineConfig, Native, ThinkMode
 from ds4py.errors import EngineError
+
 from . import chat as chat_ops
 from .decode import GenerateJob
 from .events import (
-    Checkpointed, Event, Interrupted, Loaded, ReserveReached, Saved, Stopped, Synced,
+    Checkpointed,
+    Event,
+    Interrupted,
+    Loaded,
+    ReserveReached,
+    Saved,
+    Stopped,
+    Synced,
 )
 from .lifecycle import SessionEvent, SessionLifecycle
 from .logits import LogitsView
@@ -29,17 +38,31 @@ from .stream import RoundStream
 from .tool_prompt import ToolDefinition
 from .transcript import Segment, Transcript, TranscriptView
 from .worker import (
-    CheckpointJob, EngineWorker, Handles, Job, LoadPayloadJob, ResetJob, SavePayloadJob,
+    CheckpointJob,
+    EngineWorker,
+    Handles,
+    Job,
+    LoadPayloadJob,
+    ResetJob,
+    SavePayloadJob,
     SyncJob,
 )
 
 T = TypeVar("T")
 
 
-def open(model: str | Path = "ds4flash.gguf", *, ctx: int = 100_000,
-         backend: str | None = None, think: int = ThinkMode.HIGH,
-         seed: int | None = None, threads: int = 0, lib: str | Path | None = None,
-         native: Native | None = None, cancel: threading.Event | None = None) -> "Engine":
+def open(
+    model: str | Path = "ds4flash.gguf",
+    *,
+    ctx: int = 100_000,
+    backend: str | None = None,
+    think: int = ThinkMode.HIGH,
+    seed: int | None = None,
+    threads: int = 0,
+    lib: str | Path | None = None,
+    native: Native | None = None,
+    cancel: threading.Event | None = None,
+) -> Engine:
     """Open an in-process engine with one worker owning all native handles.
 
     Child inspection provides diagnostics, not containment: inspect_only skips
@@ -58,8 +81,7 @@ def open(model: str | Path = "ds4flash.gguf", *, ctx: int = 100_000,
     native = native or LibNative(load_library(lib))
     if backend is not None and backend != native.backend:
         raise EngineError(
-            f"this libds4 was built for {native.backend}, not {backend}; "
-            f"run ds4py build --backend {backend}"
+            f"this libds4 was built for {native.backend}, not {backend}; run ds4py build --backend {backend}"
         )
     config = EngineConfig(Path(model), ctx, native.backend, threads)
     worker = EngineWorker(native, config, cancel=cancel)
@@ -72,8 +94,9 @@ def open(model: str | Path = "ds4flash.gguf", *, ctx: int = 100_000,
 
 
 class Engine:
-    def __init__(self, native: Native, worker: EngineWorker, config: EngineConfig,
-                 think: int, sampling_defaults: SamplingPolicy) -> None:
+    def __init__(
+        self, native: Native, worker: EngineWorker, config: EngineConfig, think: int, sampling_defaults: SamplingPolicy
+    ) -> None:
         self.native, self._worker = native, worker
         self.info, self.config, self.think = worker.info, config, think
         self.sampling_defaults = sampling_defaults
@@ -104,7 +127,7 @@ class Engine:
     def _eos(self) -> int:
         return self._worker.call(lambda e, s: e.eos()).result()
 
-    def session(self) -> "Session":
+    def session(self) -> Session:
         with self._session_lock:
             if self._session is not None:
                 raise EngineError("one session per engine")
@@ -120,10 +143,10 @@ class Engine:
         finally:
             self._worker.close()
 
-    def __enter__(self) -> "Engine":
+    def __enter__(self) -> Engine:
         return self
 
-    def __exit__(self, *exc: Any) -> None:
+    def __exit__(self, *exc: object) -> None:
         self.close()
 
 
@@ -133,6 +156,7 @@ class Session:
     Chat helpers dispatch rendering/tokenization to the engine worker. Do not
     call these blocking methods from a logits hook or an on_worker callback.
     """
+
     def __init__(self, engine: Engine) -> None:
         self._engine, self._worker = engine, engine._worker
         self._transcript = Transcript()
@@ -168,7 +192,9 @@ class Session:
         return self._worker.call(lambda e, s: s.pos()).result()
 
     def on_event(
-        self, listener: Callable[[SessionEvent], None], *,
+        self,
+        listener: Callable[[SessionEvent], None],
+        *,
         kinds: Iterable[str] | None = None,
     ) -> Callable[[], None]:
         """Subscribe on the consuming thread; the returned call unsubscribes.
@@ -204,7 +230,8 @@ class Session:
             return new
 
     def switch(
-        self, new_id: str,
+        self,
+        new_id: str,
         restore: Callable[[], Mapping[str, Any] | None] | None = None,
         **payload: Any,
     ) -> str:
@@ -228,8 +255,11 @@ class Session:
                 # preserve the original failure for the caller.
                 self._lifecycle.set_id(new_id)
                 self._lifecycle.emit(
-                    "session_start", old=old, new=new_id,
-                    status="error", error=str(error),
+                    "session_start",
+                    old=old,
+                    new=new_id,
+                    status="error",
+                    error=str(error),
                 )
                 raise
             self._lifecycle.set_id(new_id)
@@ -256,7 +286,8 @@ class Session:
             self._require_idle()
             normalized = self._worker.call(
                 lambda e, s: self._engine.native.think_mode_for_context(
-                    mode, self._engine.config.ctx,
+                    mode,
+                    self._engine.config.ctx,
                 )
             ).result()
             self._engine.think = normalized
@@ -286,15 +317,16 @@ class Session:
         self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
         self._transcript.reset()
 
-    def append_tokens(self, tokens: Sequence[int], kind: str,
-                      meta: Mapping | None = None) -> Segment:
+    def append_tokens(self, tokens: Sequence[int], kind: str, meta: Mapping | None = None) -> Segment:
         with self._lock:
             if self._active_round:
                 raise EngineError("a round is open")
             return self._transcript.append(tokens, kind, meta)
 
     def start_chat(
-        self, tools: Iterable[ToolDefinition] = (), instructions: str | None = None,
+        self,
+        tools: Iterable[ToolDefinition] = (),
+        instructions: str | None = None,
     ) -> None:
         """Initialize chat once, between rounds, with tools and optional instructions.
 
@@ -306,7 +338,11 @@ class Session:
             chat_ops.start_chat(self, tools, instructions)
 
     def append_message(
-        self, role: str, text: str, *, images: Sequence[object] = (),
+        self,
+        role: str,
+        text: str,
+        *,
+        images: Sequence[object] = (),
         meta: Mapping[str, object] | None = None,
     ) -> Segment:
         """Append one plain-payload chat message with optional provenance metadata."""
@@ -344,9 +380,7 @@ class Session:
             if self._active_round:
                 raise EngineError("a round is open")
             self.truncate(token_count)
-            self._worker.call(
-                lambda engine, native: native.rewind(token_count)
-            ).result()
+            self._worker.call(lambda engine, native: native.rewind(token_count)).result()
             self._worker.cancel_event.clear()
 
     def append_user(self, text: str, images: Sequence[object] = ()) -> Segment:
@@ -411,13 +445,15 @@ class Session:
         self._lifecycle.emit(type(event).__name__, event=event)
 
     def _reserve_decision(
-        self, job: GenerateJob,
+        self,
+        job: GenerateJob,
     ) -> Generator[Event, None, bool | tuple[str, int]]:
         decision: dict[str, object] = {}
         pause = ReserveReached(
             job.reserve,
             on_resume=lambda reserve: decision.update(
-                action="resume", reserve=reserve,
+                action="resume",
+                reserve=reserve,
             ),
             on_fail=lambda: decision.update(action="fail"),
         )
@@ -430,10 +466,13 @@ class Session:
             self._publish(stopped)
             yield stopped
             return False
-        return "resume", cast(int, decision["reserve"])
+        return "resume", cast("int", decision["reserve"])
 
     def _job_events(
-        self, job: Job, *, pause_on_reserve: bool = False,
+        self,
+        job: Job,
+        *,
+        pause_on_reserve: bool = False,
     ) -> Generator[Event, None, bool | tuple[str, int] | None]:
         # submit may fail before there is an iterator to drain.
         events = self._worker.submit(job)
@@ -447,9 +486,8 @@ class Session:
                 interrupted = isinstance(event, Interrupted) or (
                     isinstance(event, Stopped) and event.reason == "interrupted"
                 )
-                if (pause_on_reserve and isinstance(event, Stopped)
-                        and event.reason == "context_reserve"):
-                    return (yield from self._reserve_decision(cast(GenerateJob, job)))
+                if pause_on_reserve and isinstance(event, Stopped) and event.reason == "context_reserve":
+                    return (yield from self._reserve_decision(cast("GenerateJob", job)))
                 self._publish(event)
                 yield event
             exhausted = True
@@ -473,9 +511,11 @@ class Session:
         return interrupted
 
     def _raw_round(
-        self, max_tokens: int, sampling: SamplingPolicy | None,
+        self,
+        max_tokens: int,
+        sampling: SamplingPolicy | None,
         stop_sequences: Sequence[bytes] = (),
-    ) -> Generator[Event, None, None]:
+    ) -> Generator[Event]:
         resuming = self._paused_control is not None and self._paused_stream is None
         control = resolve_control(self._paused_control if resuming else None, stop_sequences)
         sampled_tokens = self._paused_sampled_tokens if resuming else []
@@ -485,9 +525,13 @@ class Session:
             if (yield from self._job_events(SyncJob(tokens))):
                 return
             job = GenerateJob(
-                sampling or self._engine.sampling_defaults, self._rng,
-                max_tokens, self._transcript,
-                logits_hooks=tuple(self._logits_hooks), control=control, resume=resuming,
+                sampling or self._engine.sampling_defaults,
+                self._rng,
+                max_tokens,
+                self._transcript,
+                logits_hooks=tuple(self._logits_hooks),
+                control=control,
+                resume=resuming,
                 sampled_tokens=sampled_tokens,
             )
             yield from self._job_events(job)
@@ -498,9 +542,9 @@ class Session:
             else:
                 self._paused_control = self._paused_sampled_tokens = None
 
-    def run_round(self, *, max_tokens: int = 50_000,
-                  sampling: SamplingPolicy | None = None,
-                  stop_sequences: Sequence[bytes] = ()) -> Generator[Event, None, None]:
+    def run_round(
+        self, *, max_tokens: int = 50_000, sampling: SamplingPolicy | None = None, stop_sequences: Sequence[bytes] = ()
+    ) -> Generator[Event]:
         """Synchronize and generate on the worker; ownership begins at iteration.
 
         While open, other rounds and caller mutations are refused. A stop
@@ -517,7 +561,10 @@ class Session:
         try:
             if self._transcript.chat:
                 yield from chat_ops.run_round(
-                    self, max_tokens, sampling, stop_sequences,
+                    self,
+                    max_tokens,
+                    sampling,
+                    stop_sequences,
                 )
             else:
                 yield from self._raw_round(max_tokens, sampling, stop_sequences)
