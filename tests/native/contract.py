@@ -28,7 +28,7 @@ def check_common_prefix(engine: Any, prompt: Any) -> None:
     assert prompt[-1] != prompt[0]
     s = engine.create_session(len(prompt) + 64)
     s.sync(prompt)
-    diverged = prompt[:-1] + [prompt[0]]
+    diverged = [*prompt[:-1], prompt[0]]
     assert s.common_prefix(diverged) == len(prompt) - 1
     s.sync(diverged)
     assert s.tokens() == diverged

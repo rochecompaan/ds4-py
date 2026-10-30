@@ -21,7 +21,7 @@ DIGEST_123 = "7b0b5ea3ff36958c8e32ccf24b71da9ac68e51d0881bf75e62b837ec9ea6f3a5"
 
 
 def record(**overrides: Any) -> SaveRecord:
-    fields: dict[str, Any] = dict(
+    fields: dict[str, Any] = dict(  # noqa: C408 - Keyword-built fixture schema is clearer here.
         session_id="session-1",
         conversation_id="conversation-1",
         run_id="session-1.save-2",
@@ -45,7 +45,7 @@ def record(**overrides: Any) -> SaveRecord:
 
 
 def engine_info(**overrides: Any) -> EngineInfo:
-    fields: dict[str, Any] = dict(
+    fields: dict[str, Any] = dict(  # noqa: C408 - Keyword-built fixture schema is clearer here.
         name="fake-model",
         model_id=41,
         family="deepseek41",

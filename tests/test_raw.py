@@ -15,13 +15,15 @@ from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.session import Engine
 from ds4py.raw import Trace, read_trace_tokens, run_raw
 
+_DEFAULT_REPLY = reply(b"ok")
+
 
 def raw(
     prompt: Any = "hi",
     *,
     ctx: Any = 64,
     max_tokens: Any = 50,
-    script: Any = reply(b"ok"),
+    script: Any = _DEFAULT_REPLY,
     trace: Any = None,
     cancel: Any = None,
 ) -> Any:

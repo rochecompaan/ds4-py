@@ -68,6 +68,39 @@ lint.ignore = [
   "TRY003", # Domain exceptions carry their useful context at raise sites.
 ]
 lint.explicit-preview-rules = true
+lint.per-file-ignores."bench/graders/test_ctx_command.py" = [
+  "ANN401", # Grader doubles use dynamic native signatures.
+  "BLE001", # Forbidden grader doubles reject every operation.
+  "FBT001", # Existing grader doubles keep positional booleans.
+  "PT017",  # The grader asserts the expected failure inside except.
+  "S101",   # Grader assertions are intentional.
+  "TID251", # Grader doubles can import Any; TypeGuard has a separate ban.
+]
+lint.per-file-ignores."bench/replay_c_traces.py" = [
+  "FBT003",  # Existing replay helpers keep positional booleans.
+  "PLC0415", # Replay workers import isolation-specific modules lazily.
+  "PLR2004", # Protocol exit codes and token counts are intentional.
+]
+lint.per-file-ignores."bench/report.py" = [
+  "FBT001", # Existing report helpers keep positional booleans for API compatibility.
+  "RUF002", # Protocol examples require fullwidth vertical bars in docstrings.
+]
+lint.per-file-ignores."bench/restore_check.py" = [
+  "FBT003",  # Existing restore helpers keep positional booleans.
+  "PLC0415", # Restore workers import isolation-specific modules lazily.
+  "PLR2004", # Protocol exit codes and token counts are intentional.
+  "S603",    # Restore commands use fixed argument lists without a shell.
+]
+lint.per-file-ignores."bench/run_bakeoff.py" = [
+  "S603", # Bakeoff commands use fixed argument lists without a shell.
+  "S606", # Bakeoff subprocesses never use a shell.
+]
+lint.per-file-ignores."bench/workspaces.py" = [
+  "PLC0415", # Workspace isolation imports task-specific modules lazily.
+  "PLR2004", # Protocol exit codes and attempt counts are intentional.
+  "S603",    # Workspace commands use fixed argument lists without a shell.
+  "S607",    # Git and uv executable names are resolved through PATH.
+]
 lint.per-file-ignores."src/ds4py/_native/**/*.py" = [
   "ANN401", # ctypes signatures remain dynamic at the native boundary.
   "TID251", # Any is isolated to reviewed native signatures.
@@ -141,6 +174,7 @@ lint.per-file-ignores."src/ds4py/tui.py" = [
 ]
 lint.per-file-ignores."tests/**/*.py" = [
   "ANN401",  # Dynamic test doubles can require Any.
+  "DTZ001",  # Naive local-time fixtures are intentional.
   "FBT",     # Boolean test fixtures are intentional.
   "INP001",  # pytest does not require packages for test directories.
   "N806",    # Model and class names can be uppercase in tests.
@@ -153,8 +187,13 @@ lint.per-file-ignores."tests/**/*.py" = [
   "PLR2004", # Expected protocol and payload values can be literals.
   "PLR6301", # Test methods do not need to use self.
   "PT018",   # Composite assertions keep protocol scenarios readable.
+  "RUF001",  # Fullwidth vertical bars are required protocol fixtures.
+  "RUF002",  # Protocol examples require fullwidth vertical bars in docstrings.
   "S",       # Tests intentionally exercise subprocesses and unsafe boundaries.
   "SLF001",  # Tests can inspect private implementation state.
+  "TC001",   # Test fixtures can keep first-party runtime imports.
+  "TC002",   # Test fixtures can keep third-party runtime imports.
+  "TC003",   # Test fixtures can keep standard-library runtime imports.
   "TID251",  # Dynamic test doubles can import Any; TypeGuard has a separate ban.
 ]
 lint.flake8-tidy-imports.banned-api."typing.Any".msg = "Use a precise type; Any requires an approved dynamic boundary."
@@ -168,6 +207,7 @@ reportMissingParameterType = "error"
 
 [tool.ty]
 src.include = [ "bench", "src", "tests" ]
+environment.extra-paths = [ "tests/engine" ]
 environment.python-version = "3.14"
 rules.blanket-ignore-comment = "error"
 rules.disjoint-cast = "error"

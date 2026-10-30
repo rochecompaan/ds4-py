@@ -27,7 +27,7 @@ def test_complete_bakeoff_passes_all_six_gates() -> None:
     model = Path(cast("str", required["DS4_TEST_MODEL"])).expanduser().resolve()
     cli = Path(cast("str", required["DS4_AGENT"])).expanduser().resolve()
     manifest = load_manifest(root / "bench/bakeoff.yaml")
-    common: dict[str, Any] = dict(
+    common: dict[str, Any] = dict(  # noqa: C408 - Keyword-built agent context is clearer here.
         model=str(model),
         backend="cpu",
         ctx=manifest.ctx,

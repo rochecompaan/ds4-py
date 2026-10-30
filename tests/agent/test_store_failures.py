@@ -23,7 +23,7 @@ DIGEST_EMPTY = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 
 
 def record(**overrides: Any) -> SaveRecord:
-    fields: dict[str, Any] = dict(
+    fields: dict[str, Any] = dict(  # noqa: C408 - Keyword-built fixture schema is clearer here.
         session_id="session-1",
         conversation_id="conversation-1",
         run_id="session-1.save-2",
@@ -47,7 +47,7 @@ def record(**overrides: Any) -> SaveRecord:
 
 
 def engine_info(**overrides: Any) -> EngineInfo:
-    fields: dict[str, Any] = dict(
+    fields: dict[str, Any] = dict(  # noqa: C408 - Keyword-built fixture schema is clearer here.
         name="fake-model",
         model_id=41,
         family="deepseek41",
@@ -63,7 +63,7 @@ def engine_info(**overrides: Any) -> EngineInfo:
     return EngineInfo(**fields)
 
 
-def write_raw_record(path: Path, data: dict) -> None:
+def write_raw_record(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data), encoding="utf-8")
 

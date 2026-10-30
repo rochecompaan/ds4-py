@@ -12,7 +12,7 @@ from ds4py.engine.events import Stopped, Synced, Token
 
 @pytest.mark.parametrize("round_open", [False, True])
 @pytest.mark.parametrize(
-    "method,args",
+    ("method", "args"),
     [
         ("append", ([7], "user")),
         ("extend", ([7],)),

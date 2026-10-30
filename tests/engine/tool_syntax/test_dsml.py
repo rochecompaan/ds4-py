@@ -27,7 +27,7 @@ def test_dsml_fixtures(case: Any, chunk_size: Any) -> None:
     assert snapshot.state == case["state"], snapshot.error
     assert observed_calls(snapshot) == case["calls"]
     if case["state"] == "ERROR":
-        assert snapshot.error
+        assert snapshot.error is not None
 
 
 def test_raw_contains_only_the_canonical_tool_stanza() -> None:
