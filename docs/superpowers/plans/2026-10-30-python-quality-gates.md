@@ -45,19 +45,19 @@
 - Consumes: PR #6's existing uv environment and annotation-only Ruff configuration.
 - Produces: Locked `ty`, `prek`, and direct `typing-extensions` dependencies; final Ruff/ty rule configuration; `devenv shell -- uv run --frozen --extra agent prek run --all-files` as the eventual static entry point.
 
-- [ ] **Step 1: Add and lock the required tools**
+- [x] **Step 1: Add and lock the required tools**
 
 Run `devenv shell -- uv add --dev ty==0.0.95 prek==0.5.7` and `devenv shell -- uv add 'typing-extensions>=4.16.0,<5'`. Keep Pyright temporarily so the old gate remains available during migration. Inspect the resolved dependency-group and production dependency versions in `pyproject.toml` and `uv.lock`.
 
-- [ ] **Step 2: Configure Ruff and ty from the spec**
+- [x] **Step 2: Configure Ruff and ty from the spec**
 
 Set Ruff line length 120, `preview = true`, `explicit-preview-rules = true`, the approved category/group selection, `COM812`/`ISC001`/`E501` ignores, and McCabe complexity 15. Add `typing.Any` to `lint.flake8-tidy-imports.banned-api`. Configure ty for all three source roots, Python 3.14, warnings-as-errors, strict analysis, and every approved opt-in rule; leave the three noisy rules disabled.
 
-- [ ] **Step 3: Add prek and YAML configuration**
+- [x] **Step 3: Add prek and YAML configuration**
 
 Add pinned hooks for project-local Ruff and ty commands, `pyproject-fmt` with `--keep-full-version --no-generate-python-version-classifiers`, yamllint, JSON/TOML/YAML checks, general hygiene, `check-github-workflows`, `check-github-workflows-require-timeout`, and official actionlint. Configure yamllint for line length 120, optional document start, and `truthy.check-keys = false`; configure JSON pretty formatting with unsorted keys and preserved Unicode. Add a `pygrep` hook whose regex is `\bTypeGuard\b`, whose message requires `TypeIs`, and which has no per-file exceptions. Exclude `docs/patches/**` from whitespace rewriting and prevent generated-lockfile formatting conflicts.
 
-- [ ] **Step 4: Record the initial diagnostic baseline without modifying files or weakening the rules**
+- [x] **Step 4: Record the initial diagnostic baseline without modifying files or weakening the rules**
 
 Run:
 
@@ -69,7 +69,7 @@ devenv shell -- uv run --frozen --extra agent prek run ty forbid-type-guard acti
 
 Use only non-mutating hooks at this stage; defer formatting and safe-fix hooks to Task 2. Expected: Ruff, ty, and the timeout/schema checks report existing diagnostics; `TypeGuard`, actionlint, and syntax checks execute successfully, and no command is missing. Do not add broad ignores to make this step pass.
 
-- [ ] **Step 5: Commit the toolchain configuration**
+- [x] **Step 5: Commit the toolchain configuration**
 
 ```bash
 git add pyproject.toml uv.lock .pre-commit-config.yaml .yamllint.yaml
