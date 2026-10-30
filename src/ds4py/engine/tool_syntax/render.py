@@ -31,9 +31,7 @@ def _validate_json(value: object) -> None:
                 )
             _validate_json(item)
         return
-    raise ValueError(
-        f"cannot preserve non-JSON value of type {type(value).__name__}"
-    )
+    raise ValueError(f"cannot preserve non-JSON value of type {type(value).__name__}")
 
 
 def _json(value: object) -> str:

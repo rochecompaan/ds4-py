@@ -1,34 +1,24 @@
 """Adapt the ds4 engine facade to Pydantic AI requests and streamed responses."""
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import Buffer
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import math
 import operator
 import sys
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, ClassVar, SupportsFloat, SupportsIndex, cast, override
 from uuid import uuid4
 
 import anyio
-
-from pydantic_ai.messages import (
-    FinishReason,
-    InstructionPart,
-    ModelMessage,
-    ModelResponse,
-    ModelResponseStreamEvent,
-)
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.native_tools import AbstractNativeTool
-from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles import ModelProfile, ToolAdditionMode, ToolDeferralMode
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
-from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
+from typing_extensions import sentinel
 
 from ds4py.binding import MessageBinder
-from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.engine.events import (
     Event,
     Interrupted,
@@ -41,12 +31,25 @@ from ds4py.engine.events import (
     ToolSyntax,
 )
 from ds4py.engine.sampling import SamplingPolicy
-from ds4py.engine.session import Session
 from ds4py.errors import EngineError
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
 
-_END = object()
-T = TypeVar("T")
+    from pydantic_ai.messages import (
+        FinishReason,
+        InstructionPart,
+        ModelMessage,
+        ModelResponse,
+        ModelResponseStreamEvent,
+    )
+    from pydantic_ai.settings import ModelSettings
+    from pydantic_ai.tools import RunContext
+
+    from ds4py.capabilities.system_notes import DS4SystemNotes
+    from ds4py.engine.session import Session
+
+_END = sentinel("_END")
 
 
 class ContextReserveError(EngineError):
@@ -65,7 +68,7 @@ def _context_reserve_message(needed: int | None) -> str:
     return f"context reserve reached with {needed} token(s) needed; M4 compaction is not available in this build"
 
 
-def _next(iterator: Iterator[T]) -> T | object:
+def _next[T](iterator: Iterator[T]) -> T | _END:
     """Keep StopIteration out of the Future used by asyncio.to_thread."""
     try:
         return next(iterator)
@@ -73,18 +76,22 @@ def _next(iterator: Iterator[T]) -> T | object:
         return _END
 
 
-def _integer(value: Any, name: str) -> int:
+def _integer(value: object, name: str) -> int:
     if value is None or isinstance(value, bool):
         raise ValueError(f"{name} must be a concrete integer")
+    if not isinstance(value, SupportsIndex):
+        raise ValueError(f"{name} must be a concrete integer")  # noqa: TRY004 - Preserve settings validation errors.
     try:
         return operator.index(value)
     except TypeError as error:
         raise ValueError(f"{name} must be a concrete integer") from error
 
 
-def _finite(value: Any, name: str) -> float:
+def _finite(value: object, name: str) -> float:
     if value is None or isinstance(value, bool):
         raise ValueError(f"{name} must be a concrete finite number")
+    if not isinstance(value, (str, Buffer, SupportsFloat, SupportsIndex)):
+        raise ValueError(f"{name} must be a concrete finite number")  # noqa: TRY004 - Preserve settings validation errors.
     try:
         value = float(value)
     except (TypeError, ValueError) as error:
@@ -95,7 +102,7 @@ def _finite(value: Any, name: str) -> float:
 
 
 def _instructions(parts: Sequence[InstructionPart] | None) -> str | None:
-    if not parts:
+    if not bool(parts):
         return None
     return "\n\n".join(part.content for part in parts) or None
 
@@ -108,10 +115,10 @@ class DS4Model(Model):
     callback. A response must be drained or closed before the next round.
     """
 
-    supported_tool_addition_modes = frozenset()
-    supported_tool_deferral_modes = frozenset()
+    supported_tool_addition_modes: ClassVar[frozenset[ToolAdditionMode]] = frozenset[ToolAdditionMode]()
+    supported_tool_deferral_modes: ClassVar[frozenset[ToolDeferralMode]] = frozenset[ToolDeferralMode]()
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - Model configuration mirrors the native request surface.
         self,
         session: Session,
         *,
@@ -134,17 +141,21 @@ class DS4Model(Model):
         self.reserve_handler = reserve_handler
 
     @property
+    @override
     def model_name(self) -> str:
         return self.session.engine.info.name
 
     @property
+    @override
     def system(self) -> str:
         return "ds4"
 
     @classmethod
+    @override
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
-        return frozenset()
+        return frozenset[type[AbstractNativeTool]]()
 
+    @override
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         return ModelProfile(
             **{
@@ -186,7 +197,7 @@ class DS4Model(Model):
         messages: list[ModelMessage],
         settings: ModelSettings | None,
         params: ModelRequestParameters,
-    ) -> AsyncIterator["DS4StreamedResponse"]:
+    ) -> AsyncGenerator[DS4StreamedResponse]:
         policy, max_tokens, stop_sequences = self._request_config(settings)
         instruction_parts = self._get_instruction_parts(messages, params)
         self.binder.prepare(
@@ -208,6 +219,7 @@ class DS4Model(Model):
             finally:
                 await response._finish()
 
+    @override
     async def request(
         self,
         messages: list[ModelMessage],
@@ -221,13 +233,14 @@ class DS4Model(Model):
             return stream.get()
 
     @asynccontextmanager
+    @override
     async def request_stream(
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-        run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator["DS4StreamedResponse"]:
+        run_context: RunContext[object] | None = None,
+    ) -> AsyncGenerator[DS4StreamedResponse]:
         settings, params = self.prepare_request(model_settings, model_request_parameters)
         async with self._open_stream(messages, settings, params) as stream:
             yield stream
@@ -267,24 +280,28 @@ class DS4StreamedResponse(StreamedResponse):
         self._tool_index = 0
         self._in_tool_syntax = False
         self._pull_lock = asyncio.Lock()
-        self._pending_pull: asyncio.Future[Any] | None = None
+        self._pending_pull: asyncio.Future[Event | _END] | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
         self._reserve_needed: int | None = None
         self._context_exhausted = False
 
     @property
+    @override
     def model_name(self) -> str:
         return self._model.model_name
 
     @property
+    @override
     def provider_name(self) -> str:
         return "ds4"
 
     @property
+    @override
     def provider_url(self) -> None:
         return None
 
     @property
+    @override
     def timestamp(self) -> datetime:
         return self._timestamp
 
@@ -325,6 +342,7 @@ class DS4StreamedResponse(StreamedResponse):
             self._binder.bind_response(self.get())
         self._bound = True
 
+    @override
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         # The harness wrappers do not propagate aclose() through every nested
         # async generator. This outer boundary owns early-close finalization.
@@ -344,7 +362,9 @@ class DS4StreamedResponse(StreamedResponse):
 
         return iterate()
 
-    def _dispatch(self, event: Event) -> list[ModelResponseStreamEvent]:
+    def _dispatch(  # noqa: PLR0912 - Each facade event has a distinct harness translation.
+        self, event: Event
+    ) -> list[ModelResponseStreamEvent]:
         """Apply one facade event; return harness stream events to publish."""
         outputs: list[ModelResponseStreamEvent] = []
         if isinstance(event, ReserveReached):
@@ -401,12 +421,12 @@ class DS4StreamedResponse(StreamedResponse):
             self._interrupted()
         return outputs
 
-    async def _pull(self) -> Any:
+    async def _pull(self) -> Event | _END:
         async with self._pull_lock:
             if self._round_exhausted:
                 return _END
             self._round_started = True
-            pull = asyncio.get_running_loop().run_in_executor(
+            pull: asyncio.Future[Event | _END] = asyncio.get_running_loop().run_in_executor(
                 None,
                 _next,
                 self._round,
@@ -419,16 +439,17 @@ class DS4StreamedResponse(StreamedResponse):
                 self._pending_pull = pull
                 raise
 
-    async def _drain_locked(self, pull: asyncio.Future[Any] | None) -> None:
+    async def _drain_locked(self, pull: asyncio.Future[Event | _END] | None) -> None:
         """Consume facade events until interruption or facade completion."""
         self._round_started = True
         while not self._round_exhausted:
             if pull is None:
-                pull = asyncio.get_running_loop().run_in_executor(
+                next_pull: asyncio.Future[Event | _END] = asyncio.get_running_loop().run_in_executor(
                     None,
                     _next,
                     self._round,
                 )
+                pull = next_pull
             try:
                 event = await asyncio.shield(pull)
             except asyncio.CancelledError:
@@ -495,6 +516,7 @@ class DS4StreamedResponse(StreamedResponse):
             if not primary:
                 raise
 
+    @override
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         try:
             while True:
@@ -523,6 +545,7 @@ class DS4StreamedResponse(StreamedResponse):
         finally:
             await self._finish()
 
+    @override
     async def close_stream(self) -> None:
         self._cancelled = True
         self._interrupted()

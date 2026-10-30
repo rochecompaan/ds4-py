@@ -1,6 +1,12 @@
+from types import MappingProxyType
+from typing import TYPE_CHECKING
+
 import pytest
 
-from ds4py._json import JsonObject, JsonValue, is_json_object, is_json_value
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+from ds4py._json import JsonObject, JsonValue, is_json_object, is_json_value, is_string_key_mapping
 
 
 @pytest.mark.parametrize("value", [None, True, False, 0, 1, -1, 0.5, "", "text"])
@@ -59,3 +65,23 @@ def test_typeis_validators_narrow_objects_for_json_consumers() -> None:
     assert _narrow_json_object(value) == value
     assert _narrow_json(object()) is None
     assert _narrow_json_object([1, 2]) is None
+
+
+def _accept_string_mapping(value: Mapping[str, object]) -> Mapping[str, object]:
+    return value
+
+
+def _narrow_string_mapping(value: object) -> Mapping[str, object] | None:
+    if is_string_key_mapping(value):
+        return _accept_string_mapping(value)
+    return None
+
+
+def test_string_key_mapping_validator_accepts_mapping_implementations() -> None:
+    value = MappingProxyType({"name": "ds4py", "schema": {"type": "object"}})
+    assert _narrow_string_mapping(value) == value
+
+
+def test_string_key_mapping_validator_rejects_other_values() -> None:
+    assert _narrow_string_mapping({1: "not a string key"}) is None
+    assert _narrow_string_mapping([("name", "ds4py")]) is None
