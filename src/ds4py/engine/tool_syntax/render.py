@@ -10,12 +10,9 @@ from .text import escape_tool_text
 def _arguments(args: Mapping[str, object] | str | None) -> dict[str, object]:
     if args is None:
         return {}
-    if isinstance(args, str):
-        value = json.loads(args)
-    else:
-        value = args
+    value = json.loads(args) if isinstance(args, str) else args
     if not isinstance(value, Mapping):
-        raise ValueError("tool call arguments must be a mapping")
+        raise ValueError("tool call arguments must be a mapping")  # noqa: TRY004 - Preserve the renderer's ValueError contract.
     return dict(value)
 
 
@@ -29,10 +26,14 @@ def _validate_json(value: object) -> None:
     if type(value) is dict:
         for key, item in value.items():
             if not isinstance(key, str):
-                raise ValueError(f"JSON object keys must be strings, got {type(key).__name__}")
+                raise ValueError(  # noqa: TRY004 - Preserve the renderer's ValueError contract.
+                    f"JSON object keys must be strings, got {type(key).__name__}"
+                )
             _validate_json(item)
         return
-    raise ValueError(f"cannot preserve non-JSON value of type {type(value).__name__}")
+    raise ValueError(
+        f"cannot preserve non-JSON value of type {type(value).__name__}"
+    )
 
 
 def _json(value: object) -> str:
@@ -79,7 +80,9 @@ def _glm(name: str, args: Mapping[str, object]) -> str:
     spans = [f"<tool_call>{name}"]
     for key, value in args.items():
         if not isinstance(value, str):
-            raise ValueError(f"GLM cannot preserve non-string argument {key!r}")
+            raise ValueError(  # noqa: TRY004 - Preserve the renderer's ValueError contract.
+                f"GLM cannot preserve non-string argument {key!r}"
+            )
         key_text = escape_tool_text(str(key), "</arg_key>")
         spans.append(f"<arg_key>{key_text}</arg_key><arg_value>{escape_tool_text(value, '</arg_value>')}</arg_value>")
     spans.append("</tool_call>")

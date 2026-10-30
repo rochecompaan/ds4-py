@@ -3,7 +3,7 @@
 import json
 from copy import deepcopy
 from types import MappingProxyType
-from typing import Never
+from typing import Never, override
 
 from .base import ToolParser
 from .model import ToolArgument, ToolCall
@@ -35,6 +35,7 @@ class Dsml(ToolParser):
         self._param_scan_pos = 0
         super().__init__()
 
+    @override
     def _opening_forms(self) -> tuple[tuple[bytes, bool], ...]:
         missing_bar = f"<DSML｜{self._calls_name}>".encode()
         invoke_missing_bar = f"<DSML｜{self._invoke_name}".encode()
@@ -45,6 +46,7 @@ class Dsml(ToolParser):
             (invoke_missing_bar, True),
         )
 
+    @override
     def _start(self, implicit_invoke: bool) -> None:
         self.state = "STRUCTURAL"
         self._active = True
@@ -109,6 +111,7 @@ class Dsml(ToolParser):
         self._args = {}
         self._param_name = None
 
+    @override
     def _parse(self) -> None:
         while self.state in ("STRUCTURAL", "PARAM_VALUE"):
             if self.state == "PARAM_VALUE":
@@ -152,7 +155,7 @@ class Dsml(ToolParser):
     def _parse_invoke(self, tag: bytes, end: int) -> None:
         name = self._attr(tag, "name")
         name = self._decode(name, "tool invoke name") if name is not None else None
-        if not name:
+        if name is None or name == "":
             self._fail("tool invoke without name")
             return
         self._call_start = self.parse_pos
@@ -163,7 +166,7 @@ class Dsml(ToolParser):
     def _parse_parameter(self, tag: bytes, end: int) -> None:
         name = self._attr(tag, "name")
         name = self._decode(name, "tool parameter name") if name is not None else None
-        if not name:
+        if name is None or name == "":
             self._fail("tool parameter without name")
             return
         self._param_name = name
@@ -206,7 +209,8 @@ class Dsml(ToolParser):
                 self._fail(f"tool parameter {self._param_name!r} requires valid JSON")
                 return True
         param_name = self._param_name
-        assert param_name is not None
+        if param_name is None:
+            raise AssertionError("completed DSML parameter requires a name")
         self._args[param_name] = ToolArgument(param_name, value, self._param_is_string)
         self._param_name = None
         self.param_close_prefix = False
@@ -218,6 +222,7 @@ class Dsml(ToolParser):
     def _reject_json_constant(value: str) -> Never:
         raise ValueError(f"invalid JSON constant: {value}")
 
+    @override
     def _update_param_close_prefix(self) -> None:
         tail = bytes(self.raw[-64:])
         start = tail.rfind(b"<")

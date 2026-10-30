@@ -1,22 +1,23 @@
 """Session-level chat helpers; these functions own transcript mutations."""
 
-from collections.abc import Generator, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, cast
 
 from ds4py.errors import EngineError
 from .decode import GenerateJob
-from .events import Event
 from .pause import resolve_control
-from .prefix import PrefixTurn
 from .prompt import PromptBuilder
-from .sampling import SamplingPolicy
 from .stream import RoundStream
-from .tool_prompt import ToolDefinition
-from .transcript import Segment
 from .worker import SyncJob
 
 if TYPE_CHECKING:
+    from collections.abc import Generator, Iterable, Mapping, Sequence
+
+    from .events import Event
+    from .prefix import PrefixTurn
+    from .sampling import SamplingPolicy
     from .session import Session
+    from .tool_prompt import ToolDefinition
+    from .transcript import Segment
 
 
 def _append(
@@ -110,9 +111,10 @@ def run_round(
         last_tokens: tuple[int, ...] | None = None
         while True:
             tokens = session._transcript.tokens
-            if tokens != last_tokens or len(tokens) < session._engine.config.ctx:
-                if (yield from session._job_events(SyncJob(tokens))):
-                    return
+            if (tokens != last_tokens or len(tokens) < session._engine.config.ctx) and bool(
+                (yield from session._job_events(SyncJob(tokens)))
+            ):
+                return
             # An unchanged full session is already synced. Generate again so a
             # zero reserve reports another pause instead of failing the sync.
             sampled_before = len(stream.sampled_tokens)
@@ -138,7 +140,7 @@ def run_round(
             reserve = action[1]
             resuming = True
     finally:
-        if stream is not None and stream.stop_sequence is not None:
+        if stream.stop_sequence is not None:
             session._paused_stream = stream
             session._paused_control = stream.control
         else:

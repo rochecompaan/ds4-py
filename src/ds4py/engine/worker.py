@@ -7,7 +7,9 @@ from concurrent.futures import Future
 from contextlib import ExitStack
 from dataclasses import dataclass
 from queue import Empty, SimpleQueue
-from typing import Any, BinaryIO, Generic, TypeVar
+from typing import TYPE_CHECKING, BinaryIO, cast, override
+
+from typing_extensions import sentinel
 
 from ds4py._native.protocol import (
     EngineConfig,
@@ -33,12 +35,13 @@ from .events import (
     Synced,
 )
 from .plan import Plan, plan_sync
-from .transcript import Transcript
+
+if TYPE_CHECKING:
+    from .transcript import Transcript
 
 SYSTEM = "system"
-T = TypeVar("T")
-_END = object()
-_STOP = object()
+_END = sentinel("_END")
+_STOP = sentinel("_STOP")
 
 
 @dataclass(frozen=True)
@@ -67,7 +70,7 @@ class SavePayloadJob:
 
     def __post_init__(self) -> None:
         if not isinstance(self.header, bytes):
-            raise ValueError("payload header must be bytes")
+            raise ValueError("payload header must be bytes")  # noqa: TRY004 - Preserve the job validation contract.
 
 
 @dataclass(frozen=True)
@@ -92,10 +95,11 @@ class _JobEvents(Iterator[Event]):
     """A resumable event channel with an independent native-completion barrier."""
 
     def __init__(self) -> None:
-        self.queue: SimpleQueue[Any] = SimpleQueue()
+        self.queue: SimpleQueue[Event | BaseException | _END] = SimpleQueue()
         self.finished = threading.Event()
         self._exhausted = False
 
+    @override
     def __next__(self) -> Event:
         if self._exhausted:
             raise StopIteration
@@ -142,13 +146,13 @@ class _Submission:
 
 
 @dataclass(frozen=True)
-class _Call(Generic[T]):
-    fn: Callable[[EngineHandle, SessionHandle], T]
-    future: Future[T]
+class _Call:
+    fn: Callable[[EngineHandle, SessionHandle], object]
+    future: Future[object]
 
 
 class EngineWorker:
-    def __init__(
+    def __init__(  # noqa: PLR0913 - Worker configuration mirrors native execution needs.
         self,
         native: Native,
         config: EngineConfig,
@@ -168,7 +172,7 @@ class EngineWorker:
         self._clock, self._throttle = clock, throttle
         self._checkpoint_budget_bytes = checkpoint_budget_bytes
         self._checkpoints: dict[str, tuple[tuple[int, ...], Snapshot]] = {}
-        self._queue: SimpleQueue[Any] = SimpleQueue()
+        self._queue: SimpleQueue[_Submission | _Call | _STOP] = SimpleQueue()
         self._lock = threading.Lock()
         self._closed = False
         ready: Future[EngineInfo] = Future()
@@ -182,7 +186,7 @@ class EngineWorker:
             self.close()
             raise
 
-    def _enqueue(self, item: object) -> None:
+    def _enqueue(self, item: _Submission | _Call | _STOP) -> None:
         # Serialize admission with the stop marker, including concurrent close().
         with self._lock:
             if self._closed:
@@ -194,9 +198,9 @@ class EngineWorker:
         self._enqueue(_Submission(job, events))
         return events
 
-    def call(self, fn: Callable[[EngineHandle, SessionHandle], T]) -> Future[T]:
-        future = Future()
-        self._enqueue(_Call(fn, future))
+    def call[T](self, fn: Callable[[EngineHandle, SessionHandle], T]) -> Future[T]:
+        future: Future[T] = Future()
+        self._enqueue(_Call(fn, cast("Future[object]", future)))
         return future
 
     def plan(self, tokens: Sequence[int]) -> Plan:
@@ -225,7 +229,7 @@ class EngineWorker:
                 cleanup.callback(session.close)
                 cleanup.callback(self._close_checkpoints)
                 ready.set_result(engine.info())
-            except BaseException as error:
+            except BaseException as error:  # noqa: BLE001 - Report every startup failure to the caller.
                 ready.set_exception(error)
                 return
             while True:
@@ -237,14 +241,14 @@ class EngineWorker:
                         continue
                     try:
                         result = item.fn(engine, session)
-                    except BaseException as error:
+                    except BaseException as error:  # noqa: BLE001 - Transfer every call failure to its Future.
                         item.future.set_exception(error)
                     else:
                         item.future.set_result(result)
                 else:
                     try:
                         self._execute(engine, session, item.job, item.events.queue.put)
-                    except BaseException as error:
+                    except BaseException as error:  # noqa: BLE001 - Publish every job failure on its event channel.
                         item.events.queue.put(error)
                     finally:
                         item.events.queue.put(_END)
@@ -295,7 +299,8 @@ class EngineWorker:
         if not plan.fits:
             raise EngineError(f"prompt of {len(tokens)} tokens does not fit a context of {session.ctx()}")
         if plan.kind == "restore":
-            assert plan.checkpoint is not None
+            if plan.checkpoint is None:
+                raise AssertionError("restore plan requires a checkpoint")
             session.load_snapshot(self._checkpoints[plan.checkpoint][1])
         common = session.common_prefix(tokens)
         cached = common if common == session.pos() else 0

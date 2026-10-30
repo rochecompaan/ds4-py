@@ -1,6 +1,9 @@
 """Bounded UTF-8 stop matching and resumable control-span state."""
 
-from collections.abc import Iterable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 def _failure_table(sequence: bytes) -> tuple[int, ...]:
@@ -20,8 +23,8 @@ class StopSequenceMatcher:
 
     def __init__(self, sequences: Iterable[bytes] = ()) -> None:
         normalized = []
-        for sequence in sequences:
-            sequence = bytes(sequence)
+        for raw in sequences:
+            sequence = bytes(raw)
             if not sequence:
                 raise ValueError("stop sequences must not be empty")
             sequence.decode("utf-8")

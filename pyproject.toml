@@ -88,6 +88,30 @@ lint.per-file-ignores."src/ds4py/abi/build.py" = [
 lint.per-file-ignores."src/ds4py/abi/probe.py" = [
   "S603", # Compiler probes use fixed argument lists without a shell.
 ]
+lint.per-file-ignores."src/ds4py/engine/decoder.py" = [
+  "FBT001", # Existing decoder options keep positional booleans for API compatibility.
+]
+lint.per-file-ignores."src/ds4py/engine/tool_prompt.py" = [
+  "FBT003", # Existing prompt helpers keep positional booleans for API compatibility.
+  "RUF001", # Fullwidth vertical bars are required DSML protocol markers.
+]
+lint.per-file-ignores."src/ds4py/engine/tool_syntax/base.py" = [
+  "FBT001", # Existing parser hooks keep positional booleans for API compatibility.
+  "RUF001", # Fullwidth vertical bars are required DSML protocol markers.
+]
+lint.per-file-ignores."src/ds4py/engine/tool_syntax/delimiter.py" = [
+  "FBT001", # Existing parser hooks keep positional booleans for API compatibility.
+]
+lint.per-file-ignores."src/ds4py/engine/tool_syntax/dsml.py" = [
+  "FBT001", # Existing parser hooks keep positional booleans for API compatibility.
+  "RUF001", # Fullwidth vertical bars are required DSML protocol markers.
+]
+lint.per-file-ignores."src/ds4py/engine/tool_syntax/glm.py" = [
+  "FBT003", # Existing parser calls keep positional booleans for API compatibility.
+]
+lint.per-file-ignores."src/ds4py/engine/tool_syntax/render.py" = [
+  "RUF001", # Fullwidth vertical bars are required DSML protocol markers.
+]
 lint.per-file-ignores."tests/**/*.py" = [
   "ANN401",  # Dynamic test doubles can require Any.
   "FBT",     # Boolean test fixtures are intentional.

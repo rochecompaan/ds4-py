@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from types import MappingProxyType
+from typing import override
 
 from .base import ToolParser
 from .model import ToolArgument, ToolCall
@@ -27,9 +28,11 @@ class DelimiterParser(ToolParser):
         self._param_scan_pos = 0
         super().__init__()
 
+    @override
     def _opening_forms(self) -> tuple[tuple[bytes, bool], ...]:
         return ((_START, False),)
 
+    @override
     def _start(self, implicit_invoke: bool) -> None:
         self.state = "STRUCTURAL"
         self._active = True
@@ -63,7 +66,10 @@ class DelimiterParser(ToolParser):
         self._args = {}
         self._param_name = None
 
-    def _parse(self) -> None:
+    @override
+    def _parse(  # noqa: PLR0911 - Parser states have distinct return protocols.
+        self,
+    ) -> None:
         while self.state in ("STRUCTURAL", "PARAM_VALUE"):
             if self.state == "PARAM_VALUE":
                 if not self._parse_parameter_value():
@@ -74,7 +80,7 @@ class DelimiterParser(ToolParser):
                 return
             if self._after_call:
                 self._parse_after_call()
-                if self.state != "STRUCTURAL" or self._after_call:
+                if self.state != "STRUCTURAL" or self._after_call:  # ty: ignore[redundant-condition-strict]  # The parser callback can reset both fields.
                     return
                 continue
             if self._current_name is None:
@@ -117,11 +123,13 @@ class DelimiterParser(ToolParser):
         del self.raw[self.parse_pos :]
         self.state = "DONE"
 
+    @override
     def _update_param_close_prefix(self) -> None:
         tail = bytes(self.raw[-len(self._parameter_close) :])
         start = tail.rfind(b"<")
         self.param_close_prefix = start >= 0 and self._parameter_close.startswith(tail[start:])
 
+    @override
     def _finish_active(self) -> None:
         trailing = self.raw[self.parse_pos :]
         if self._after_call and all(byte in _ASCII_SPACE for byte in trailing):

@@ -1,9 +1,12 @@
 """Lazy, reusable access to the live logits and committed decode metadata."""
 
 from array import array
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
-from ds4py._native.protocol import SessionHandle
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from ds4py._native.protocol import SessionHandle
 
 
 class LogitsView:
