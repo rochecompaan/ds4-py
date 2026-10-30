@@ -18,6 +18,7 @@ from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeEngine, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.binding import MessageBinder
+from ds4py.engine.events import STOP_REASONS
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.session import Engine
 from ds4py.engine.worker import SyncJob
@@ -78,6 +79,16 @@ def test_empty_output_and_zero_prefill_have_zero_usage(monkeypatch: pytest.Monke
             assert response.usage.details == {"prefill_tokens": 0}
             assert response.usage.requests == 1
             assert response.usage.total_tokens == 0
+
+    asyncio.run(scenario())
+
+
+def test_stop_sequence_finishes_as_a_normal_stop() -> None:
+    async def scenario() -> None:
+        with fake_engine(script=scripted_text("stop")) as engine:
+            response, _ = await collect(make_model(engine.session()), [user()], {"stop_sequences": [b"stop"]})
+            assert response.finish_reason == "stop"
+            assert "stop_sequence" in STOP_REASONS
 
     asyncio.run(scenario())
 

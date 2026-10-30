@@ -127,6 +127,7 @@ class ToolCalls:
 
 STOP_REASONS = (
     "stop_token",
+    "stop_sequence",
     "tool_call_complete",
     "max_tokens",
     "context_reserve",

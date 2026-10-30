@@ -7,13 +7,24 @@ type JsonValue = str | int | float | bool | list[JsonValue] | dict[str, JsonValu
 type JsonObject = dict[str, JsonValue]
 
 
-def is_json_value(value: object) -> TypeIs[JsonValue]:
+def is_json_value(value: object, _seen: set[int] | None = None) -> TypeIs[JsonValue]:
     """Return whether *value* contains only JSON-shaped runtime values."""
     if value is None or isinstance(value, str | int | float | bool):
         return True
-    if isinstance(value, list):
-        return all(is_json_value(item) for item in value)
-    return is_json_object(value)
+    if _seen is None:
+        _seen = set()
+    identity = id(value)
+    if identity in _seen:
+        return False
+    _seen.add(identity)
+    try:
+        if isinstance(value, list):
+            return all(is_json_value(item, _seen) for item in value)
+        if isinstance(value, dict):
+            return all(isinstance(key, str) and is_json_value(item, _seen) for key, item in value.items())
+        return False
+    finally:
+        _seen.remove(identity)
 
 
 def is_string_key_mapping(value: object) -> TypeIs[Mapping[str, object]]:
@@ -21,6 +32,17 @@ def is_string_key_mapping(value: object) -> TypeIs[Mapping[str, object]]:
     return isinstance(value, Mapping) and all(isinstance(key, str) for key in value)
 
 
-def is_json_object(value: object) -> TypeIs[JsonObject]:
+def is_json_object(value: object, _seen: set[int] | None = None) -> TypeIs[JsonObject]:
     """Return whether *value* is a string-keyed JSON object."""
-    return isinstance(value, dict) and all(isinstance(key, str) and is_json_value(item) for key, item in value.items())
+    if not isinstance(value, dict):
+        return False
+    if _seen is None:
+        _seen = set()
+    identity = id(value)
+    if identity in _seen:
+        return False
+    _seen.add(identity)
+    try:
+        return all(isinstance(key, str) and is_json_value(item, _seen) for key, item in value.items())
+    finally:
+        _seen.remove(identity)

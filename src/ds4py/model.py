@@ -306,6 +306,7 @@ class DS4StreamedResponse(StreamedResponse):
             "FinishReason | None",
             {
                 "stop_token": "stop",
+                "stop_sequence": "stop",
                 "max_tokens": "length",
                 "tool_call_complete": "tool_call",
                 "parser_error": "error",
