@@ -68,6 +68,40 @@ def test_basic_trace_rebuilds_rounds_eos_tool_results_and_rewinds() -> None:
     assert [round.prefix_only for round in trace.rounds] == [False] * 4
 
 
+def test_c_trace_with_split_utf8_token_bytes_preserves_replay_ids(tmp_path: Path) -> None:
+    data = BASIC.read_bytes()
+    replacements = (
+        (
+            b'token index=1 id=20 bytes=1 text="a" hex=61',
+            b'token index=1 id=20 bytes=2 text="' + b"\xe2\x99" + b'" hex=e299',
+        ),
+        (
+            b'token index=2 id=21 bytes=1 text="\\t" hex=09',
+            b'token index=2 id=21 bytes=1 text="' + b"\xaf" + b'" hex=af',
+        ),
+        (
+            b'token index=1 id=40 bytes=1 text="x" hex=78',
+            b'token index=1 id=40 bytes=2 text="' + b"\xe1\xbb" + b'" hex=e1bb',
+        ),
+        (
+            b'token index=8 id=50 bytes=1 text="2" hex=32',
+            b'token index=8 id=50 bytes=1 text="' + b"\x9d" + b'" hex=9d',
+        ),
+    )
+    for old, new in replacements:
+        assert old in data
+        data = data.replace(old, new, 1)
+    path = tmp_path / "split-utf8.trace"
+    path.write_bytes(data)
+
+    expected = read(BASIC)
+    actual = read(path)
+
+    assert [(round.prompt, round.sampled) for round in actual.rounds] == [
+        (round.prompt, round.sampled) for round in expected.rounds
+    ]
+
+
 def test_compaction_replaces_the_base_and_records_context_limit() -> None:
     trace = read(COMPACTED)
 

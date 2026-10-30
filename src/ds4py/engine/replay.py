@@ -61,7 +61,7 @@ def _think_mode(value: str, reader: "_Reader", line: int) -> int:
 def read_replay(path: str | Path) -> ReplayTrace:
     """Parse a C text trace or ds4-py JSONL prefill records."""
     path = Path(path)
-    text = path.read_text(encoding="utf-8")
+    text = path.read_bytes().decode("utf-8", errors="surrogateescape")
     if text.lstrip().startswith("{"):
         return read_ds4py(path, text)
     return _Reader(path).read(text)
@@ -84,7 +84,7 @@ class _Reader:
 
     def read(self, text: str | None = None) -> ReplayTrace:
         if text is None:
-            text = self.path.read_text(encoding="utf-8")
+            text = self.path.read_bytes().decode("utf-8", errors="surrogateescape")
         lines = text.splitlines()
         for number, raw in enumerate(lines, 1):
             self.line = number
