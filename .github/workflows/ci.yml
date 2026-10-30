@@ -13,16 +13,17 @@ defaults:
     shell: bash          # adds -o pipefail
 
 jobs:
-  typing:
+  quality:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.14"
-      - run: uv run --frozen --extra agent ty check
-      - run: uv run --frozen --extra agent ruff check src bench tests
+      - run: uv run --frozen --extra agent prek run --all-files --show-diff-on-failure
 
   unit:
     timeout-minutes: 20
@@ -35,11 +36,13 @@ jobs:
           - { os: macos-latest, python: "3.14" }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: ${{ matrix.python }}
-      - run: uv run --extra agent pytest -m "not build and not live" -v
+      - run: uv run --frozen --extra agent pytest -m "not build and not live" -v
       - name: The wheel carries Makefile.lib
         run: |
           uv build --wheel
@@ -57,8 +60,10 @@ jobs:
     env:
       PIN: ${{ matrix.pin }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.14"
       - name: Read the pin
@@ -71,16 +76,16 @@ jobs:
           print("repo=" + pin.repo.removeprefix("https://github.com/").removesuffix(".git"))
           print("commit=" + pin.commit)
           EOF
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ steps.pin.outputs.repo }}
           ref: ${{ steps.pin.outputs.commit }}
           path: ds4-src
           persist-credentials: false
       - name: Build tests
-        run: env "${{ matrix.src_var }}=$GITHUB_WORKSPACE/ds4-src" uv run --extra agent pytest -m build -v
+        run: env "${{ matrix.src_var }}=$GITHUB_WORKSPACE/ds4-src" uv run --frozen --extra agent pytest -m build -v
       - name: ds4py build and ds4py check
         run: |
           if [ "$PIN" = fork ]; then export PYTHONPATH="$GITHUB_WORKSPACE/tests/fixtures/ext_site"; fi
-          uv run ds4py build --src ds4-src --backend cpu --out out
-          uv run ds4py check --lib out/libds4.so
+          uv run --frozen ds4py build --src ds4-src --backend cpu --out out
+          uv run --frozen ds4py check --lib out/libds4.so
