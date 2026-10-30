@@ -1,10 +1,10 @@
 import threading
 from array import array
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, override
 
 import pytest
 
@@ -22,7 +22,7 @@ def scripted(*tokens: Any) -> Any:
 
 
 @contextmanager
-def fake_session(script: Any, *, chat: Any = False, think: Any = ThinkMode.HIGH) -> Iterator[Any]:
+def fake_session(script: Any, *, chat: Any = False, think: Any = ThinkMode.HIGH) -> Generator[Any]:
     with ds4py.open(
         Path("f.gguf"),
         ctx=1024,
@@ -53,17 +53,20 @@ def test_no_hooks_never_copy_logits() -> None:
 
 
 def test_sampled_tokens_materialize_only_on_access() -> None:
-    class CountingSequence(Sequence):
+    class CountingSequence(Sequence[Any]):
         def __init__(self, values: Any) -> None:
             self.values = values
             self.iterations = 0
 
+        @override
         def __len__(self) -> int:
             return len(self.values)
 
+        @override
         def __getitem__(self, index: Any) -> Any:
             return self.values[index]
 
+        @override
         def __iter__(self) -> Any:
             self.iterations += 1
             return iter(self.values)

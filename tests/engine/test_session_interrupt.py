@@ -141,6 +141,7 @@ def test_caller_sigint_drains_before_releasing_round(phase: Any, signals: Any) -
         capture_output=True,
         text=True,
         timeout=15,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == f"SIGINT drain OK {phase} {signals}"
@@ -210,6 +211,7 @@ def test_interrupt_after_end_dequeue_releases_round(phase: Any) -> None:
         capture_output=True,
         text=True,
         timeout=5,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == f"lost END recovered {phase}"
@@ -261,6 +263,7 @@ def test_lost_end_with_completion_after_receive_wait_still_terminates() -> None:
         capture_output=True,
         text=True,
         timeout=5,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == "late completion recovered"

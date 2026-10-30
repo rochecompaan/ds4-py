@@ -5,14 +5,33 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol
 
-if TYPE_CHECKING:
-    from bench.run_bakeoff import AgentConfig, TaskRunResult
+
+class ReplayConfig(Protocol):
+    @property
+    def model(self) -> str: ...
+
+    @property
+    def backend(self) -> str: ...
+
+
+class ReplayTaskResult(Protocol):
+    @property
+    def task_id(self) -> str: ...
+
+    @property
+    def agent(self) -> str: ...
+
+    @property
+    def attempts(self) -> int: ...
+
+    @property
+    def attempt_trace_paths(self) -> tuple[Path, ...]: ...
+
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -21,15 +40,19 @@ import ds4py
 from ds4py.engine.decode import GenerateJob
 from ds4py.engine.events import Event, Stopped, Token
 from ds4py.engine.replay import read_replay
-from ds4py.engine.replay_types import ReplayRound, ReplayTrace
 from ds4py.engine.sampling import Rng, SamplingPolicy
-from ds4py.engine.session import Engine
 from ds4py.engine.stream import RoundStream
 from ds4py.engine.tool_syntax import make_parser
-from ds4py.engine.tool_syntax.model import Snapshot
 from ds4py.engine.transcript import Transcript
 from ds4py.engine.worker import SyncJob
 from ds4py.errors import Ds4pyError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+
+    from ds4py.engine.replay_types import ReplayRound, ReplayTrace
+    from ds4py.engine.session import Engine
+    from ds4py.engine.tool_syntax.model import Snapshot
 
 
 class ReplayMismatch(AssertionError):
@@ -53,7 +76,7 @@ class ReplayResult:
 
 
 def select_c_traces(
-    task_results: Iterable[TaskRunResult],
+    task_results: Iterable[ReplayTaskResult],
     *,
     expected_tasks: int = 12,
 ) -> list[tuple[str, Path]]:
@@ -65,9 +88,9 @@ def select_c_traces(
     selected = []
     for item in tasks:
         paths = item.attempt_trace_paths
-        if len(paths) != item.attempts or any(path is None for path in paths):
+        if len(paths) != item.attempts:
             raise ReplaySelectionError(f"{item.task_id}: {len(paths)}/{item.attempts} C attempt traces are present")
-        selected.extend((item.task_id, Path(path)) for path in paths if path is not None)
+        selected.extend((item.task_id, Path(path)) for path in paths)
     return selected
 
 
@@ -98,7 +121,7 @@ def _token_description(
     return f"id={tokens[index]} bytes={engine.token_text(tokens[index])!r}"
 
 
-def _assert_tokens(
+def _assert_tokens(  # noqa: PLR0913, PLR0917 - Token mismatch reporting needs full trace context.
     engine: Engine,
     task_id: str,
     ordinal: int,
@@ -122,7 +145,7 @@ def _assert_tokens(
     )
 
 
-def _check_round(
+def _check_round(  # noqa: PLR0913, PLR0917 - Round validation needs full replay context.
     engine: Engine,
     task_id: str,
     ordinal: int,
@@ -182,7 +205,7 @@ def generation_limit(engine: Engine, round_: ReplayRound) -> int:
     return len(round_.sampled) if round_.prefix_only or round_.context_limited else len(round_.sampled) + 1
 
 
-def replay_round(
+def replay_round(  # noqa: PLR0913, PLR0917 - Replay needs the complete native round context.
     engine: Engine,
     policy: SamplingPolicy,
     rng: Rng,
@@ -268,8 +291,8 @@ def replay_with_engine(
         _validate_selection(selected)
     model = Path(engine.config.model).expanduser().resolve()
     results: list[ReplayResult] = []
-    for task_id, path in selected:
-        path = Path(path)
+    for task_id, selected_path in selected:
+        path = Path(selected_path)
         try:
             trace = read_replay(path)
             if trace.model is None or trace.ctx is None:
@@ -309,7 +332,7 @@ def replay_with_engine(
                     str(error),
                     trace_path=path,
                 )
-            results.append(ReplayResult(**{**result.__dict__, "trace_path": path}))
+            results.append(replace(result, trace_path=path))
     if require_full_set and not any(result.tool_call for result in results):
         results.append(
             ReplayResult(
@@ -323,7 +346,7 @@ def replay_with_engine(
 
 
 def replay_c_traces(
-    task_results: Iterable[TaskRunResult],
+    task_results: Iterable[ReplayTaskResult],
     model: str | Path,
     *,
     lib: str | Path | None = None,
@@ -341,8 +364,8 @@ def replay_c_traces(
 
 
 def replay_task_results(
-    task_results: Iterable[TaskRunResult],
-    config: AgentConfig,
+    task_results: Iterable[ReplayTaskResult],
+    config: ReplayConfig,
     *,
     lib: str | Path | None = None,
 ) -> tuple[ReplayResult, ...]:
@@ -374,11 +397,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     import json
 
     data = json.loads(report_path.read_text())
-    tasks = cast(
-        "list[TaskRunResult]",
-        [SimpleNamespace(**item) for item in data.get("tasks", [])],
-    )
-    config = cast("AgentConfig", SimpleNamespace(model=args.model, backend=args.backend))
+    tasks = [SimpleNamespace(**item) for item in data.get("tasks", [])]
+    config = SimpleNamespace(model=args.model, backend=args.backend)
     results = replay_task_results(tasks, config, lib=args.lib)
     gate = update_replay_report(report_path, results)
     for result in results:

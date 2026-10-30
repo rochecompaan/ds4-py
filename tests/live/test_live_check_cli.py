@@ -19,8 +19,9 @@ def test_check_live_records_its_results(live_lib: Any, tmp_path: Path) -> None:
         [sys.executable, "-m", "ds4py", "check", "--live", "--lib", str(lib), "--model", os.environ["DS4_TEST_MODEL"]],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert r.returncode == 0, r.stdout + r.stderr
     assert "sync:     ok" in r.stdout and "restore:  not verified" not in r.stdout
     checks = Manifest.read(manifest_path(lib)).live_checks
-    assert checks["sync_plans"]["ok"] and isinstance(checks["restore"]["ok"], bool)
+    assert bool(checks["sync_plans"]["ok"]) and isinstance(checks["restore"]["ok"], bool)

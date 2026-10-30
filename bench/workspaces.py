@@ -9,12 +9,15 @@ import shutil
 import subprocess
 import sys
 import tarfile
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ds4py._json import JsonValue
 
 
 class BenchError(RuntimeError):
@@ -47,7 +50,7 @@ class Manifest:
     seed: int
     max_attempts: int
     exercises: tuple[str, ...]
-    repository_tasks: tuple[dict[str, Any], ...]
+    repository_tasks: tuple[dict[str, JsonValue], ...]
 
 
 @dataclass(frozen=True)
@@ -64,7 +67,7 @@ class Workspace:
             raise ValueError("Bakeoff workspaces allow one or two attempts")
 
 
-CommandRunner = Callable[[Sequence[str], Path, Mapping[str, str]], subprocess.CompletedProcess[Any]]
+CommandRunner = Callable[[Sequence[str], Path, Mapping[str, str]], subprocess.CompletedProcess[str]]
 
 
 def _reset_directory(path: str | Path) -> None:
@@ -129,8 +132,8 @@ def archive_repository(repo_root: str | Path, destination: str | Path) -> None:
     result = subprocess.run(
         ["git", "archive", "HEAD"],
         cwd=repo_root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
+        check=False,
     )
     if result.returncode:
         raise PreparationError(f"git archive HEAD failed in {repo_root}: {result.stderr.decode(errors='replace')}")
@@ -140,7 +143,7 @@ def archive_repository(repo_root: str | Path, destination: str | Path) -> None:
         archive.extractall(destination, filter="data")
 
 
-def prepare_repository_task(
+def prepare_repository_task(  # noqa: PLR0913 - Repository tasks carry complete grading context.
     repo_root: str | Path,
     destination: str | Path,
     *,
@@ -167,6 +170,7 @@ def prepare_repository_task(
             cwd=agent_dir,
             capture_output=True,
             text=True,
+            check=False,
         )
         if result.returncode:
             raise PreparationError(f"could not apply {patch} to {task_id}: {result.stdout}{result.stderr}")
@@ -208,7 +212,7 @@ def clone_workspace(workspace: Workspace, destination: str | Path) -> Workspace:
 
 
 @contextmanager
-def _mounted_tests(workspace: Workspace) -> Iterator[None]:
+def _mounted_tests(workspace: Workspace) -> Generator[None]:
     backups: dict[Path, bytes | None] = {}
     mounted: list[Path] = []
     try:
@@ -239,13 +243,15 @@ def _mounted_tests(workspace: Workspace) -> Iterator[None]:
                 parent = parent.parent
 
 
-def _combined_output(completed: subprocess.CompletedProcess[Any]) -> str:
+def _combined_output(completed: subprocess.CompletedProcess[str]) -> str:
     stdout = completed.stdout or ""
     stderr = completed.stderr or ""
     if isinstance(stdout, bytes):
         stdout = stdout.decode(errors="replace")
     if isinstance(stderr, bytes):
         stderr = stderr.decode(errors="replace")
+    if not isinstance(stdout, str) or not isinstance(stderr, str):
+        raise PreparationError("grading output must be text")
     separator = "\n" if stdout and stderr and not stdout.endswith("\n") else ""
     return stdout + separator + stderr
 
@@ -297,8 +303,8 @@ def grade_workspace(
             command: Sequence[str],
             cwd: Path,
             env: Mapping[str, str],
-        ) -> subprocess.CompletedProcess[Any]:
-            return subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, check=False)
 
         command_runner = default_runner
     with _mounted_tests(workspace):
@@ -332,6 +338,7 @@ def verify_benchmark(benchmark: str | Path, expected_commit: str) -> str:
         cwd=benchmark,
         capture_output=True,
         text=True,
+        check=False,
     )
     if result.returncode:
         raise BenchmarkError(f"{benchmark}: not a readable git checkout: {result.stderr.strip()}")
@@ -393,6 +400,18 @@ def validate_manifest_sources(manifest: Manifest, benchmark: str | Path) -> None
             raise PreparationError(f"{source}: no Python exercise tests found")
 
 
+def _text(value: object, name: str) -> str:
+    if not isinstance(value, str):
+        raise PreparationError(f"{name} must be a string")
+    return value
+
+
+def _optional_text(value: object, name: str) -> str | None:
+    if value is None:
+        return None
+    return _text(value, name)
+
+
 def prepare_manifest(
     manifest: Manifest,
     output: str | Path,
@@ -413,17 +432,20 @@ def prepare_manifest(
             )
         )
     for spec in manifest.repository_tasks:
-        patch = spec.get("patch")
-        grader = spec.get("grader")
+        task_id = _text(spec["id"], "repository task id")
+        prompt = _text(spec["prompt"], f"{task_id} prompt")
+        patch = _optional_text(spec.get("patch"), f"{task_id} patch")
+        grader = _optional_text(spec.get("grader"), f"{task_id} grader")
+        visible_test = _optional_text(spec.get("visible_test"), f"{task_id} visible test")
         workspaces.append(
             prepare_repository_task(
                 repo_root,
-                output / spec["id"],
-                task_id=spec["id"],
-                prompt=spec["prompt"],
-                patch=manifest.path.parent / patch if patch else None,
-                visible_test=spec.get("visible_test"),
-                grader=manifest.path.parent / grader if grader else None,
+                output / task_id,
+                task_id=task_id,
+                prompt=prompt,
+                patch=manifest.path.parent / patch if patch is not None and patch != "" else None,
+                visible_test=visible_test,
+                grader=manifest.path.parent / grader if grader is not None and grader != "" else None,
                 max_attempts=manifest.max_attempts,
             )
         )

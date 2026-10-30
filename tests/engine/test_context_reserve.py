@@ -1,5 +1,5 @@
 import threading
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
@@ -40,7 +40,7 @@ def scripted(*tokens: Any) -> Any:
 
 
 @contextmanager
-def chat_session(*tokens: Any, ctx: Any = 347, cancel: Any = None, think: Any = ThinkMode.NONE) -> Iterator[Any]:
+def chat_session(*tokens: Any, ctx: Any = 347, cancel: Any = None, think: Any = ThinkMode.NONE) -> Generator[Any]:
     # The default fake chat prompt plus assistant prefix is 345 tokens.
     with ds4py.open(
         "f.gguf",
@@ -170,7 +170,7 @@ def test_second_decision_cannot_change_an_inflight_continuation() -> None:
         make_room(session)
         pause.resume(0)
         next(round_)
-        with pytest.raises(EngineError, match="already|decision"):
+        with pytest.raises(EngineError, match=r"already|decision"):
             pause.fail()
         remainder = list(round_)
         assert remainder[-1] == Stopped("stop_token")

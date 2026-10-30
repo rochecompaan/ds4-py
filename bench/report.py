@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from ds4py._json import is_json_object
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+
     from bench.replay_c_traces import ReplayResult
     from bench.restore_check import RestoreResult, RestoreSummary
     from bench.run_bakeoff import TaskRunResult
+    from ds4py._json import JsonValue
 
 
 METRICS = (
@@ -41,8 +45,8 @@ class BakeoffReport:
     def passed(self) -> bool:
         return all(gate.passed for gate in self.gates.values())
 
-    def to_dict(self) -> dict[str, Any]:
-        return _json(
+    def to_dict(self) -> dict[str, JsonValue]:
+        result = _json(
             {
                 "tasks": self.tasks,
                 "restore": self.restore,
@@ -50,6 +54,9 @@ class BakeoffReport:
                 "replay": self.replay,
             }
         )
+        if not is_json_object(result):
+            raise TypeError("report must serialize to a JSON object")
+        return result
 
     def write_json(self, path: str | Path) -> Path:
         path = Path(path)
@@ -78,7 +85,7 @@ class BakeoffReport:
 RunReport = BakeoffReport
 
 
-def _json(value: Any) -> Any:
+def _json(value: object) -> JsonValue:
     if is_dataclass(value) and not isinstance(value, type):
         return _json(asdict(value))
     if isinstance(value, dict):
@@ -87,7 +94,9 @@ def _json(value: Any) -> Any:
         return [_json(item) for item in value]
     if isinstance(value, Path):
         return str(value)
-    return value
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
 
 
 def _number(value: float | None) -> str:

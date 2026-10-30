@@ -1,5 +1,5 @@
 import ctypes
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -8,7 +8,7 @@ from ds4py.errors import TypeMapError
 
 
 @pytest.mark.parametrize(
-    "text, normal",
+    ("text", "normal"),
     [
         (
             "int ds4_session_eval(ds4_session *s, int token, char *err, size_t errlen)",
@@ -63,7 +63,7 @@ def test_struct_layout_walks_nested_fields() -> None:
 
 
 @pytest.mark.parametrize(
-    "c_type, expected",
+    ("c_type", "expected"),
     [
         ("int", ctypes.c_int),
         ("unsigned int", ctypes.c_uint),
@@ -93,11 +93,14 @@ def test_struct_layout_walks_nested_fields() -> None:
 )
 def test_scalar_and_scalar_pointer_mapping(c_type: Any, expected: Any) -> None:
     proto = typemap.parse_prototype(f"{c_type} f({c_type} *value)")
-    assert typemap.ctypes_signature(proto) == (expected, [ctypes.POINTER(expected)])
+    assert typemap.ctypes_signature(proto) == (
+        expected,
+        [ctypes.POINTER(cast("type[ctypes._SimpleCData[object]]", expected))],
+    )
 
 
 @pytest.mark.parametrize(
-    "c_type, expected",
+    ("c_type", "expected"),
     [
         ("const char *", ctypes.c_char_p),
         ("char *", ctypes.POINTER(ctypes.c_char)),

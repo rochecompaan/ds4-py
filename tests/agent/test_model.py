@@ -56,13 +56,16 @@ def make_model(session: Any, **kwargs: Any) -> DS4Model:
 
 
 def request(model: Any, messages: Any = None, settings: Any = None, params: Any = None) -> ModelResponse:
-    return asyncio.run(
+    response = asyncio.run(
         model.request(
             list(messages or [user()]),
             settings,
             params or ModelRequestParameters(),
         )
     )
+    if not isinstance(response, ModelResponse):
+        raise TypeError("model did not return ModelResponse")
+    return response
 
 
 def native_calls(session: Any) -> list[Any]:
@@ -114,7 +117,7 @@ def test_request_prepares_settings_and_uses_concrete_sampling_policy() -> None:
 
 
 @pytest.mark.parametrize(
-    "field,value",
+    ("field", "value"),
     [
         ("temperature", None),
         ("temperature", math.nan),

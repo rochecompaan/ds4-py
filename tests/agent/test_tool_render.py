@@ -48,7 +48,7 @@ def parse(data: Any, engine: Any, *, bytewise: Any = False) -> Any:
     parser = make_parser(engine.info)
     if bytewise:
         for byte in data:
-            snapshot = parser.feed(bytes([byte]))
+            parser.feed(bytes([byte]))
     else:
         parser.feed(data)
     return parser.finish()
@@ -234,7 +234,7 @@ def test_structured_arguments_safely_preserve_nested_closing_delimiters(family: 
 
 
 @pytest.mark.parametrize(
-    "family,args",
+    ("family", "args"),
     [
         (
             "glm",
@@ -261,7 +261,7 @@ def test_canonical_arguments_preserve_types_and_json_looking_strings(family: Any
 
 
 @pytest.mark.parametrize(
-    "family,value",
+    ("family", "value"),
     [
         ("glm", 1),
         ("glm", {"nested": True}),
@@ -284,7 +284,7 @@ def test_render_tool_call_rejects_unrepresentable_argument_values(family: Any, v
     ],
 )
 def test_recursive_non_json_arguments_are_rejected(family: Any, value: Any) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"JSON|mapping|preserve"):
         render_tool_call(family, "typed", {"value": value})
 
 
@@ -350,7 +350,7 @@ def test_glm_argument_key_uses_existing_closing_tag_escaping(bytewise: Any) -> N
 
 
 @pytest.mark.parametrize(
-    "family,name,key",
+    ("family", "name", "key"),
     [
         *[
             case

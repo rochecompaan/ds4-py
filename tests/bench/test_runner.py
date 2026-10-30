@@ -25,6 +25,7 @@ from bench.run_bakeoff import (
     run_tasks_sequentially,
 )
 from bench.workspaces import prepare_exercise
+from ds4py._json import is_json_object
 
 
 def config(tmp_path: Path, agent: Any = "ds4py") -> Any:
@@ -46,7 +47,7 @@ def config(tmp_path: Path, agent: Any = "ds4py") -> Any:
 def result(task_id: Any = "task", agent: Any = "ds4py", **changes: Any) -> Any:
     save = Path("/saves") / task_id / agent
     trace = Path("/traces") / task_id / agent
-    metric_values: dict[str, Any] = dict(
+    metric_values: dict[str, Any] = dict(  # noqa: C408 - Keyword-built metric schema is clearer here.
         wall_seconds=10,
         progress_events=3,
         tokens=20,
@@ -58,7 +59,7 @@ def result(task_id: Any = "task", agent: Any = "ds4py", **changes: Any) -> Any:
     for name in EventSummary.__dataclass_fields__:
         if name in changes:
             metric_values[name] = changes.pop(name)
-    values = dict(
+    base = TaskRunResult(
         task_id=task_id,
         agent=agent,
         passed=True,
@@ -68,8 +69,7 @@ def result(task_id: Any = "task", agent: Any = "ds4py", **changes: Any) -> Any:
         attempt_trace_paths=(trace,),
         grader_outputs=("grader secret output",),
     )
-    values.update(changes)
-    return TaskRunResult(**values)
+    return replace(base, **changes)
 
 
 def with_summary(item: Any, **changes: Any) -> Any:
@@ -108,8 +108,17 @@ def test_task_result_preserves_summary_evidence_and_derives_last_attempt_paths()
     assert run.save_dir == last_save
     assert run.trace_path == last_trace
     data = build_report([run], RestoreSummary()).to_dict()
-    assert data["tasks"][0]["summary"]["non_extension_reasons"] == ["compaction"]
-    assert data["tasks"][0]["summary"]["reuse_ratios"] == [0.5, 0.75]
+    assert is_json_object(data)
+    tasks = data["tasks"]
+    assert isinstance(tasks, list) and all(is_json_object(item) for item in tasks)
+    first = tasks[0]
+    if not is_json_object(first):
+        raise AssertionError("task record must be an object")
+    summary = first["summary"]
+    if not is_json_object(summary):
+        raise AssertionError("task summary must be an object")
+    assert summary["non_extension_reasons"] == ["compaction"]
+    assert summary["reuse_ratios"] == [0.5, 0.75]
 
 
 def healthy_restore(results: Any) -> Any:
@@ -300,7 +309,12 @@ def test_report_json_has_attempt_feedback_and_table_has_six_deltas_not_logs() ->
     report = build_report([c, python], healthy_restore([c, python]))
 
     data = report.to_dict()
-    python_data = next(item for item in data["tasks"] if item["agent"] == "ds4py")
+    assert is_json_object(data)
+    tasks = data["tasks"]
+    assert isinstance(tasks, list) and all(is_json_object(item) for item in tasks)
+    python_data = next(item for item in tasks if is_json_object(item) and item["agent"] == "ds4py")
+    if not is_json_object(python_data):
+        raise AssertionError("ds4py task record must be an object")
     assert python_data["grader_outputs"] == ["grader secret output"]
     table = report.compact_table()
     for metric in (

@@ -234,7 +234,7 @@ def test_restore_token_mismatch_fails_with_index(tmp_path: Path) -> None:
     assert "token 1" in result.detail
 
 
-@pytest.mark.parametrize("case1_prefill,case2_prefill", [(1, 12), (0, 0)])
+@pytest.mark.parametrize(("case1_prefill", "case2_prefill"), [(1, 12), (0, 0)])
 def test_restore_requires_no_case1_prefill_and_real_case2_prefill(
     tmp_path: Path,
     case1_prefill: Any,

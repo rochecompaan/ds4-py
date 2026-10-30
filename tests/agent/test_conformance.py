@@ -227,7 +227,7 @@ def test_scoped_state_survives_prompts_and_fork_but_not_replacement(tmp_path: Pa
             forked = asyncio.run(runtime.fork())
 
             assert forked != old_id == saved.session_id
-            assert session.state("extension", lambda: CloseState()) is final_state
+            assert session.state("extension", CloseState) is final_state
             assert not final_state.closed
             assert session.state("step_store", lambda: None) is holder
             assert session.transcript.tokens == old_tokens

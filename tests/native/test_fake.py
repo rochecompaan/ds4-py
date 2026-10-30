@@ -148,11 +148,9 @@ def test_invalid_checkpoint_operations_leave_state_unchanged(state: Any, operati
             s.rewind(2)
     tokens, calls = s.tokens(), list(s.calls)
     assert not s.checkpoint_valid()
+    operations = {"eval": lambda: s.eval(4), "save_snapshot": s.save_snapshot}
     with pytest.raises(EngineError):
-        if operation == "eval":
-            s.eval(4)
-        else:
-            s.save_snapshot()
+        operations[operation]()
     assert s.tokens() == tokens and s.calls == calls
     assert not s.checkpoint_valid()
 
@@ -185,7 +183,7 @@ def test_bind(ext_site: Any) -> None:
 
 
 @pytest.mark.parametrize(
-    "text, expected",
+    ("text", "expected"),
     [
         ("0", 1000),
         ("100", 1100),

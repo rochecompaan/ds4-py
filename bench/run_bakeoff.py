@@ -11,10 +11,13 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -22,6 +25,7 @@ if __package__ in {None, ""}:
 from bench.metrics import (
     EventSummary,
     MetricError,
+    ToolAccounting,
     combine_summaries,
     metrics_from_trace,
     summarize_events,
@@ -38,8 +42,12 @@ from bench.workspaces import (
     load_manifest,
     prepare_manifest,
 )
+from ds4py._json import is_json_object
 from ds4py.engine.replay import read_replay
-from ds4py.engine.replay_types import ReplayTrace
+
+if TYPE_CHECKING:
+    from ds4py._json import JsonValue
+    from ds4py.engine.replay_types import ReplayTrace
 
 
 @dataclass(frozen=True)
@@ -87,7 +95,55 @@ class TaskRunResult:
         if reuse is not None and not 0 <= reuse <= 1:
             raise ValueError("avg_prefill_reuse must be in [0,1]")
 
-    def __getattr__(self, name: str) -> Any:
+    @property
+    def wall_seconds(self) -> float:
+        return self.summary.wall_seconds
+
+    @property
+    def progress_events(self) -> int:
+        return self.summary.progress_events
+
+    @property
+    def tokens(self) -> int:
+        return self.summary.tokens
+
+    @property
+    def tool_calls(self) -> int:
+        return self.summary.tool_calls
+
+    @property
+    def avg_prefill_reuse(self) -> float | None:
+        return self.summary.avg_prefill_reuse
+
+    @property
+    def non_extend_rounds(self) -> int:
+        return self.summary.non_extend_rounds
+
+    @property
+    def invalid_non_extend_rounds(self) -> int:
+        return self.summary.invalid_non_extend_rounds
+
+    @property
+    def allowed_non_extend_rounds(self) -> int:
+        return self.summary.allowed_non_extend_rounds
+
+    @property
+    def non_extension_reasons(self) -> tuple[str, ...]:
+        return self.summary.non_extension_reasons
+
+    @property
+    def parser_errors(self) -> int:
+        return self.summary.parser_errors
+
+    @property
+    def tool_accounting(self) -> ToolAccounting | None:
+        return self.summary.tool_accounting
+
+    @property
+    def reuse_ratios(self) -> tuple[float, ...]:
+        return self.summary.reuse_ratios
+
+    def __getattr__(self, name: str) -> object:
         if name in _SUMMARY_FIELDS:
             return getattr(self.summary, name)
         raise AttributeError(f"{type(self).__name__} has no attribute {name!r}")
@@ -137,7 +193,7 @@ def build_agent_command(
     return command
 
 
-def drive_pty(
+def drive_pty(  # noqa: C901, PLR0912, PLR0915 - PTY handling covers expect, exit, timeout, and cleanup states.
     command: Sequence[str],
     *,
     steps: Iterable[tuple[str, str | None]],
@@ -154,7 +210,7 @@ def drive_pty(
             if cwd is not None:
                 os.chdir(cwd)
             os.execvpe(command[0], list(command), os.environ.copy() if env is None else env)
-        except BaseException as error:
+        except BaseException as error:  # noqa: BLE001 - Child exec failures must exit through the PTY error path.
             print(f"PTY exec failed: {error}", file=sys.stderr)
             os._exit(127)
     wait_status = None
@@ -191,7 +247,9 @@ def drive_pty(
                 done, status = os.waitpid(pid, os.WNOHANG)
                 if done:
                     wait_status = status
-                    raise RuntimeError(f"process exited while waiting for {pattern!r}")
+                    raise RuntimeError(  # noqa: TRY301 - Keep early process failure in the PTY cleanup boundary.
+                        f"process exited while waiting for {pattern!r}"
+                    )
                 read_available(remaining())
             if response is not None:
                 os.write(master, response.encode("utf-8"))
@@ -213,21 +271,17 @@ def drive_pty(
         output.extend(f"\nPTY driver: {error}".encode())
         passed = False
         if wait_status is None:
-            try:
+            with suppress(ProcessLookupError):
                 os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            try:
+            with suppress(ChildProcessError):
                 _, wait_status = os.waitpid(pid, 0)
-            except ChildProcessError:
-                pass
     finally:
         os.close(master)
     detail = output.decode("utf-8", errors="replace")[-8000:]
     return CheckResult(passed, detail)
 
 
-def load_events(path: str | Path) -> list[dict[str, Any]]:
+def load_events(path: str | Path) -> list[dict[str, JsonValue]]:
     path = Path(path)
     if not path.is_file():
         raise MetricError(f"missing event stream: {path}")
@@ -239,7 +293,7 @@ def load_events(path: str | Path) -> list[dict[str, Any]]:
             record = json.loads(line)
         except json.JSONDecodeError as error:
             raise MetricError(f"{path}:{line_number}: invalid JSON: {error.msg}") from error
-        if not isinstance(record, dict):
+        if not is_json_object(record):
             raise MetricError(f"{path}:{line_number}: event must be an object")
         records.append(record)
     if not records:
@@ -342,6 +396,7 @@ def run_task(
             env=environment,
             capture_output=True,
             text=True,
+            check=False,
         )
         wall_seconds = clock() - started
         log_text = (completed.stdout or "") + (completed.stderr or "")
@@ -446,7 +501,7 @@ def interruption_acceptance(
     return CheckResult(result.passed and "interrupted" in result.detail.lower(), result.detail)
 
 
-def run_bakeoff(
+def run_bakeoff(  # noqa: PLR0913 - Bakeoff execution needs the complete task and agent context.
     manifest_path: str | Path,
     benchmark: str | Path,
     repo_root: str | Path,
@@ -498,20 +553,26 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     manifest = load_manifest(args.manifest)
-    common = dict(
-        model=args.model,
-        backend=args.backend,
-        ctx=manifest.ctx,
-        temperature=manifest.temperature,
-        seed=manifest.seed,
-        tokens=args.tokens,
-    )
     configs = [
-        AgentConfig("c", (args.agent,), **common),
+        AgentConfig(
+            "c",
+            (args.agent,),
+            model=args.model,
+            backend=args.backend,
+            ctx=manifest.ctx,
+            temperature=manifest.temperature,
+            seed=manifest.seed,
+            tokens=args.tokens,
+        ),
         AgentConfig(
             "ds4py",
             (sys.executable, str(Path(__file__).with_name("restore_check.py")), "attempt"),
-            **common,
+            model=args.model,
+            backend=args.backend,
+            ctx=manifest.ctx,
+            temperature=manifest.temperature,
+            seed=manifest.seed,
+            tokens=args.tokens,
         ),
     ]
     report = run_bakeoff(

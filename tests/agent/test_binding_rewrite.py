@@ -1,6 +1,7 @@
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
+from itertools import pairwise
 from typing import Any, cast
 
 import pytest
@@ -87,7 +88,9 @@ def test_changed_message_renders_only_from_its_segment_start() -> None:
         old_tokens = session.transcript.tokens
         old_provenance = binder.export_segments()
         first_start = next(p.start for p in old_provenance if p.kind == "user")
-        later_key = original[2].metadata["ds4.key"]
+        metadata = original[2].metadata
+        assert metadata is not None
+        later_key = metadata["ds4.key"]
         old_later_start = next(p.start for p in old_provenance if p.key == later_key)
 
         changed = deepcopy(original)
@@ -126,15 +129,17 @@ def test_runtime_ids_and_timestamps_do_not_invalidate_unchanged_rendered_content
         binder.prepare(original)
         before = session.transcript.tokens
         changed = deepcopy(original)
-        changed[0].run_id = "new-run"
-        changed[0].conversation_id = "new-conversation"
-        changed[0].timestamp = datetime.now(UTC)
-        changed[0].parts[0].timestamp = datetime.now(UTC)
-        changed[1].run_id = "another-run"
-        changed[1].timestamp = datetime.now(UTC)
-        changed[1].usage = RequestUsage(input_tokens=999, output_tokens=888)
-        changed[1].history_digest = "different"
-        changed[1].provider_response_id = "different"
+        request = cast("ModelRequest", changed[0])
+        request.run_id = "new-run"
+        request.conversation_id = "new-conversation"
+        request.timestamp = datetime.now(UTC)
+        cast("UserPromptPart", request.parts[0]).timestamp = datetime.now(UTC)
+        response = cast("ModelResponse", changed[1])
+        response.run_id = "another-run"
+        response.timestamp = datetime.now(UTC)
+        response.usage = RequestUsage(input_tokens=999, output_tokens=888)
+        response.history_digest = "different"
+        response.provider_response_id = "different"
 
         change = binder.prepare(changed)
 
@@ -209,7 +214,7 @@ def test_provenance_covers_every_token_and_marks_sampled_response() -> None:
         assert session.transcript.tokens == before
         assert provenance[0].start == 0
         assert provenance[-1].end == len(before)
-        assert all(left.end == right.start for left, right in zip(provenance, provenance[1:]))
+        assert all(left.end == right.start for left, right in pairwise(provenance))
         sampled = [p for p in provenance if p.source == "sampled"]
         assert [p.kind for p in sampled] == ["assistant", "eos"]
         assert {p.key for p in sampled} == {cast("Any", response.metadata)["ds4.key"]}
@@ -287,7 +292,7 @@ def test_completed_pause_resume_refreshes_eos_provenance_and_bound_end() -> None
         assert len(binder._records) == 3
         assert provenance[0].start == 0
         assert provenance[-1].end == len(session.transcript)
-        assert all(left.end == right.start for left, right in zip(provenance, provenance[1:]))
+        assert all(left.end == right.start for left, right in pairwise(provenance))
         old_tokens = session.transcript.tokens
         later_start = next(p.start for p in provenance if p.key == cast("Any", later.metadata)["ds4.key"])
 
@@ -328,7 +333,7 @@ def test_append_suffix_retires_paused_response_with_sampled_eos_provenance() -> 
         assert eos.source == "sampled"
         assert provenance[0].start == 0
         assert provenance[-1].end == len(session.transcript)
-        assert all(left.end == right.start for left, right in zip(provenance, provenance[1:]))
+        assert all(left.end == right.start for left, right in pairwise(provenance))
         list(session.run_round(max_tokens=10, stop_sequences=[b"ok"]))
         assert [s.kind for s in session.transcript.segments][-2:] == [
             "assistant_prefix",
@@ -362,7 +367,7 @@ def test_truncate_drops_only_checkpoints_beyond_the_cut() -> None:
 
 
 @pytest.mark.parametrize(
-    "family,parts",
+    ("family", "parts"),
     [
         ("qwen", [ToolCallPart("typed", {"value": 10**100})]),
         *[
@@ -398,7 +403,7 @@ def test_rejected_replacement_is_atomic(family: Any, parts: Any) -> None:
         changed = deepcopy(original)
         changed[1].parts = deepcopy(parts)
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"cannot|JSON"):
             binder.prepare(changed)
 
         assert session.transcript.tokens == before_tokens

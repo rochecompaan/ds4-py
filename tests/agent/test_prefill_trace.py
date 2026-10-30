@@ -146,7 +146,7 @@ def test_writer_rejects_an_existing_c_text_trace(tmp_path: Path) -> None:
     path.write_bytes(Path("tests/fixtures/replay/basic.trace").read_bytes())
     session: Any = TraceSession([1, 2, 3, 4])
 
-    with pytest.raises(ReplayError, match="invalid JSON|missing field"):
+    with pytest.raises(ReplayError, match=r"invalid JSON|missing field"):
         PrefillTraceWriter(session, path, think=1)
 
 
@@ -194,7 +194,7 @@ def write_record(tmp_path: Path, value: Any) -> Any:
 
 
 @pytest.mark.parametrize(
-    "mutate,fragment",
+    ("mutate", "fragment"),
     [
         (lambda value: value.pop("prompt"), "missing field"),
         (lambda value: value.update(cached=2), r"cached \+ prefill_suffix"),

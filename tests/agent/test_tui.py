@@ -100,11 +100,15 @@ def test_ctrl_c_cancels_without_touching_partial_text_and_ctrl_d_exits() -> None
     assert runtime.calls == [("cancel",)]
 
     exits = []
+
+    def record_exit(exception: BaseException) -> None:
+        exits.append(exception)
+
     ctrl_d = tui.key_bindings.get_bindings_for_keys((Keys.ControlD,))[0]
     cast("Any", ctrl_d.handler)(
         SimpleNamespace(
             app=SimpleNamespace(
-                exit=lambda exception: exits.append(exception),
+                exit=record_exit,
             )
         )
     )
@@ -113,7 +117,7 @@ def test_ctrl_c_cancels_without_touching_partial_text_and_ctrl_d_exits() -> None
 
 
 def fragment_text(fragments: Any) -> str:
-    return "".join(text for _style, text in fragments)
+    return "".join(str(text) for _style, text in fragments)
 
 
 def test_text_and_thinking_deltas_have_distinct_styles() -> None:

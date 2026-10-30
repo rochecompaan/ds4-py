@@ -1,5 +1,6 @@
 import asyncio
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
 
@@ -150,10 +151,8 @@ def test_close_kills_a_term_ignoring_process_group(tmp_path: Path) -> None:
         else:
             raise AssertionError("supervisor process survived close")
     finally:
-        try:
+        with suppress(ProcessLookupError):
             os.killpg(group, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
 
 
 def test_switch_and_exit_stop_a_term_ignoring_job(tmp_path: Path) -> None:
@@ -223,10 +222,8 @@ def test_switch_and_exit_stop_a_term_ignoring_job(tmp_path: Path) -> None:
         wait_gone(pid, group)
     finally:
         for _, group in groups:
-            try:
+            with suppress(ProcessLookupError):
                 os.killpg(group, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
         engine.close()
 
 
@@ -273,8 +270,7 @@ def test_close_kills_background_child_after_wrapper_publishes_exit(tmp_path: Pat
 
     job_id = next(iter(session.states["shell_jobs"].job_ids))
     base = tmp_path / ".pydantic-ai-harness" / "shell" / job_id
-    pid_text, group_text = (base / "handle").read_text().split()
-    pid = int(pid_text)
+    _, group_text = (base / "handle").read_text().split()
     group = int(group_text)
 
     try:
@@ -293,7 +289,5 @@ def test_close_kills_background_child_after_wrapper_publishes_exit(tmp_path: Pat
         else:
             raise AssertionError("orphaned background child survived close")
     finally:
-        try:
+        with suppress(ProcessLookupError):
             os.killpg(group, signal.SIGKILL)
-        except ProcessLookupError:
-            pass

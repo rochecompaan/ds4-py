@@ -42,7 +42,7 @@ def test_control_span_stops_and_resumes_with_matcher_state() -> None:
 
 
 def test_empty_sequences_are_rejected_and_empty_region_has_no_active_list() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="empty"):
         StopSequenceMatcher([b""])
     with pytest.raises(UnicodeDecodeError):
         StopSequenceMatcher([b"\xff"])

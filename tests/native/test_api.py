@@ -79,12 +79,10 @@ def test_open_failures_become_exceptions(
     for model, text in [("missing.gguf", "cannot open model"), ("v0.gguf", "only GGUF v3")]:
         with pytest.raises(ModelFileError, match=text):  # ds4 exit()s; only the child dies
             native.open_engine(EngineConfig(tmp_path / model))
-    with InstanceLock.acquire(lock):  # another holder of the real lock
-        with pytest.raises(EngineLockedError):
-            native.open_engine(EngineConfig(tmp_path / "v0.gguf"))
-    with InstanceLock.acquire(engine_lock_path()):  # ds4's own lock: the child exits 2
-        with pytest.raises(EngineLockedError, match="already running"):
-            native.open_engine(EngineConfig(tmp_path / "v0.gguf"))
+    with InstanceLock.acquire(lock), pytest.raises(EngineLockedError):  # another holder of the real lock
+        native.open_engine(EngineConfig(tmp_path / "v0.gguf"))
+    with InstanceLock.acquire(engine_lock_path()), pytest.raises(EngineLockedError, match="already running"):
+        native.open_engine(EngineConfig(tmp_path / "v0.gguf"))
     InstanceLock.acquire(lock).close()  # the failed opens released it
 
 
@@ -99,7 +97,7 @@ def test_contract_live(live_engine: Any, check: Any) -> None:
 @pytest.fixture(scope="module")
 def live_engine() -> Iterator[Any]:
     model = os.environ.get("DS4_TEST_MODEL")
-    if not model:
+    if model is None or model == "":
         pytest.skip("DS4_TEST_MODEL is not set")
     native = LibNative(load_library())
     previous = os.environ.get("DS4_LOCK_FILE")
@@ -197,7 +195,7 @@ def test_callbacks_errors_and_thread_confinement(stub_engine: Any) -> None:
     for kind in ("progress", "cancel"):
         error = RuntimeError(kind)
 
-        def fail(*args: Any) -> Never:
+        def fail(*args: Any, error: RuntimeError = error) -> Never:
             raise error
 
         with pytest.raises(RuntimeError) as caught:
@@ -428,7 +426,7 @@ def test_failed_snapshot_save_frees_partial_allocation(stub_engine: Any) -> None
     engine, c = stub_engine
     session = engine.create_session(64)
     c.stub_fail_snapshot(1)
-    with pytest.raises(EngineError, match="^snapshot write rejected$"):
+    with pytest.raises(EngineError, match=r"^snapshot write rejected$"):
         session.save_snapshot()
     assert c.stub_snapshots() == 1
     c.stub_fail_snapshot(0)

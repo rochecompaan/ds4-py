@@ -47,7 +47,7 @@ def stub_dlopen(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 @pytest.mark.parametrize(
-    "root, expected",
+    ("root", "expected"),
     [
         (None, ".ds4py/lib"),
         ("", ".ds4py/lib"),
@@ -100,7 +100,7 @@ def test_missing_library_says_how_to_build(tmp_path: Path, monkeypatch: pytest.M
 def test_missing_manifest_is_refused_before_dlopen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / LIB_NAME).write_bytes(b"x")
     monkeypatch.setattr(loader, "_dlopen", lambda p: pytest.fail("dlopen called"))
-    with pytest.raises(AbiMismatch, match="libds4.abi.json"):
+    with pytest.raises(AbiMismatch, match=r"libds4.abi.json"):
         load_library(tmp_path / LIB_NAME)
 
 
@@ -223,7 +223,7 @@ def test_missing_symbol_refuses_without_caching(
     lib, m = make_manifest(tmp_path, upstream_headers)
     m.write(manifest_path(lib))
     monkeypatch.setattr(loader, "_dlopen", lambda p: object())
-    with pytest.raises(AbiMismatch, match="ds4_engine_open.*ds4py build"):
+    with pytest.raises(AbiMismatch, match=r"ds4_engine_open.*ds4py build"):
         load_library(lib)
     assert loader._loaded is None
 
@@ -257,7 +257,7 @@ def test_serialized_non_boolean_probe_result_is_refused_before_dlopen(
     m.bindings["ds4_session_eval"].ok = ok
     m.write(manifest_path(lib))
     monkeypatch.setattr(loader, "_dlopen", lambda p: pytest.fail("dlopen called"))
-    with pytest.raises(AbiMismatch, match="ds4_session_eval.*boolean.*ds4py build"):
+    with pytest.raises(AbiMismatch, match=r"ds4_session_eval.*boolean.*ds4py build"):
         load_library(lib)
     assert loader._loaded is None
 
