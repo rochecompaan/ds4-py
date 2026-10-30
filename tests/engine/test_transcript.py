@@ -36,7 +36,7 @@ def test_snapshots_and_metadata_do_not_change_when_transcript_changes() -> None:
     assert old_segments == (segment,)
     assert segment.end == 1 and segment.meta == {"turn": 1}
     with pytest.raises(TypeError):
-        cast(Any, t.segments[0].meta)["turn"] = 2
+        cast("Any", t.segments[0].meta)["turn"] = 2
     assert t.tokens == (1, 2)
 
 

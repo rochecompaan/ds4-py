@@ -86,17 +86,19 @@ class PrefillTraceWriter:
             return
         current = self._current
         self._current = None
-        self.append(PrefillTraceRecord(
-            session_id=session_id,
-            run_id=cast(str, self._run_id),
-            step_index=self._step_index,
-            round_index=self.round_index,
-            prompt=current["prompt"],
-            think=self.think,
-            cached=current["cached"],
-            prefill_suffix=current["prefill_suffix"],
-            sampled=tuple(current["sampled"]),
-        ))
+        self.append(
+            PrefillTraceRecord(
+                session_id=session_id,
+                run_id=cast(str, self._run_id),
+                step_index=self._step_index,
+                round_index=self.round_index,
+                prompt=current["prompt"],
+                think=self.think,
+                cached=current["cached"],
+                prefill_suffix=current["prefill_suffix"],
+                sampled=tuple(current["sampled"]),
+            )
+        )
         self._step_index += 1
         self.round_index += 1
 
@@ -123,7 +125,7 @@ class PrefillTraceWriter:
                 # A reserve resume syncs the same model round again. Its prompt
                 # contains tokens already committed to this record's sample.
                 return
-            prompt = tuple(self.session.transcript.tokens[:engine_event.pos])
+            prompt = tuple(self.session.transcript.tokens[: engine_event.pos])
             cached = engine_event.plan.reused
             self._current = {
                 "prompt": prompt,

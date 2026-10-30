@@ -1,4 +1,5 @@
 """Match saved records to snapshots and restore native or rendered state."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -33,7 +34,9 @@ class RestorePlan:
 
 
 def plan_restore(
-    record: SaveRecord, session_dir: Path, store: SessionStore,
+    record: SaveRecord,
+    session_dir: Path,
+    store: SessionStore,
 ) -> RestorePlan:
     """Select KV loading only when the declared payload is present and complete."""
     kv_path = session_dir / "session.kv"
@@ -44,9 +47,9 @@ def plan_restore(
     declared = store.read_kv_header(kv_path)
     if declared != record.payload_bytes:
         return RestorePlan(
-            "render", None,
-            f"{kv_path}: the KV payload is {declared} bytes, "
-            f"the save record declares {record.payload_bytes}",
+            "render",
+            None,
+            f"{kv_path}: the KV payload is {declared} bytes, the save record declares {record.payload_bytes}",
         )
     return RestorePlan("kv", declared, None)
 
@@ -62,9 +65,7 @@ def validate_restore_snapshot(
     try:
         binder.validate_restore(snapshot.messages, record.segments)
     except EngineError as error:
-        raise StoreError(
-            f"{session_dir / 'save.json'}: cannot restore: {error}"
-        ) from error
+        raise StoreError(f"{session_dir / 'save.json'}: cannot restore: {error}") from error
 
 
 def restore_snapshot(
@@ -86,22 +87,17 @@ def restore_snapshot(
             loaded = session.load_payload(file, payload_bytes=plan.payload_bytes)
         if len(loaded) != record.tokens:
             outcome["rejected"] = (
-                f"the loaded payload has {len(loaded)} tokens, "
-                f"the save record declares {record.tokens}"
+                f"the loaded payload has {len(loaded)} tokens, the save record declares {record.tokens}"
             )
         elif token_digest(loaded) != record.tokens_sha256:
-            outcome["rejected"] = (
-                "the loaded payload token hash does not match the save record"
-            )
+            outcome["rejected"] = "the loaded payload token hash does not match the save record"
         if "rejected" in outcome:
             loaded = None
     if loaded is not None:
         try:
             binder.restore(snapshot.messages, record.segments)
         except EngineError as error:
-            raise StoreError(
-                f"{session_dir / 'save.json'}: cannot restore: {error}"
-            ) from error
+            raise StoreError(f"{session_dir / 'save.json'}: cannot restore: {error}") from error
         if notes is not None:
             notes.restore_from_segments(session.transcript.segments)
     else:
@@ -113,7 +109,5 @@ def restore_snapshot(
     return {
         **outcome,
         "restore_path": "kv" if loaded is not None else "render",
-        "mismatch": (
-            None if loaded is not None else outcome.get("rejected", plan.mismatch)
-        ),
+        "mismatch": (None if loaded is not None else outcome.get("rejected", plan.mismatch)),
     }

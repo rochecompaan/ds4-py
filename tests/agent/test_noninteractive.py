@@ -16,7 +16,9 @@ from typing import Never
 
 
 class FakeRunRuntime:
-    def __init__(self, *, output: Any="answer", run_error: Any=None, save_error: Any=None) -> None:
+    def __init__(
+        self, *, output: Any = "answer", run_error: Any = None, save_error: Any = None
+    ) -> None:
         self.output = output
         self.run_error = run_error
         self.save_error = save_error
@@ -45,12 +47,17 @@ def test_noninteractive_prints_only_the_final_answer_and_saves() -> None:
     assert runtime.saves == 1
 
 
-@pytest.mark.parametrize(("error", "code", "message"), [
-    (RuntimeError("run failed"), 1, "run failed"),
-    (asyncio.CancelledError(), 130, "interrupted"),
-    (KeyboardInterrupt(), 130, "interrupted"),
-])
-def test_noninteractive_saves_on_run_failure_and_interruption(error: Any, code: Any, message: Any) -> None:
+@pytest.mark.parametrize(
+    ("error", "code", "message"),
+    [
+        (RuntimeError("run failed"), 1, "run failed"),
+        (asyncio.CancelledError(), 130, "interrupted"),
+        (KeyboardInterrupt(), 130, "interrupted"),
+    ],
+)
+def test_noninteractive_saves_on_run_failure_and_interruption(
+    error: Any, code: Any, message: Any
+) -> None:
     runtime = FakeRunRuntime(run_error=error)
     actual, out, err = invoke(runtime)
     assert actual == code and out == "" and message in err
@@ -59,7 +66,9 @@ def test_noninteractive_saves_on_run_failure_and_interruption(error: Any, code: 
 
 def test_noninteractive_save_failure_is_nonzero() -> None:
     assert invoke(FakeRunRuntime(save_error=OSError("disk full"))) == (
-        1, "answer\n", "ds4py: save failed: disk full\n",
+        1,
+        "answer\n",
+        "ds4py: save failed: disk full\n",
     )
 
 
@@ -70,9 +79,14 @@ def test_noninteractive_saves_and_reports_save_failure_after_output_failure() ->
 
     runtime = FakeRunRuntime(save_error=OSError("disk full"))
     err = io.StringIO()
-    code = asyncio.run(run_noninteractive(
-        cast(Any, runtime), "prompt", out=cast(Any, BrokenOutput()), err=err,
-    ))
+    code = asyncio.run(
+        run_noninteractive(
+            cast(Any, runtime),
+            "prompt",
+            out=cast(Any, BrokenOutput()),
+            err=err,
+        )
+    )
 
     assert code == 1
     assert runtime.saves == 1
@@ -81,24 +95,34 @@ def test_noninteractive_saves_and_reports_save_failure_after_output_failure() ->
 
 
 def test_noninteractive_reports_both_run_and_save_failures() -> None:
-    code, out, err = invoke(FakeRunRuntime(
-        run_error=RuntimeError("run failed"), save_error=OSError("disk full"),
-    ))
+    code, out, err = invoke(
+        FakeRunRuntime(
+            run_error=RuntimeError("run failed"),
+            save_error=OSError("disk full"),
+        )
+    )
     assert code == 1 and out == ""
     assert "run failed" in err and "save failed: disk full" in err
 
 
-@pytest.mark.parametrize("argv", [
-    ["--non-interactive"],
-    ["--non-interactive", "--prompt", "x", "--prompt-file", "x.txt"],
-    ["--non-interactive", "--prompt", "x", "--edit-upto", "1"],
-])
-def test_agent_cli_validates_noninteractive_prompt_and_supported_flags(argv: Any) -> None:
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--non-interactive"],
+        ["--non-interactive", "--prompt", "x", "--prompt-file", "x.txt"],
+        ["--non-interactive", "--prompt", "x", "--edit-upto", "1"],
+    ],
+)
+def test_agent_cli_validates_noninteractive_prompt_and_supported_flags(
+    argv: Any,
+) -> None:
     with pytest.raises(SystemExit):
         cli.main(argv)
 
 
-def test_agent_cli_reports_value_errors_without_a_traceback(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_agent_cli_reports_value_errors_without_a_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     import ds4py.agent_cli as agent_cli
 
     def fail(_args: Any) -> Never:
@@ -110,7 +134,9 @@ def test_agent_cli_reports_value_errors_without_a_traceback(monkeypatch: pytest.
     assert capsys.readouterr().err == "ds4py: invalid prefix\n"
 
 
-def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     import ds4py.model as model_module
     import ds4py.noninteractive as noninteractive_module
     import ds4py.runtime as runtime_module
@@ -169,19 +195,50 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(monkeypatch
     prefix = tmp_path / "prefix.txt"
     prefix.write_text("USER: earlier\nASSISTANT: answer\n")
 
-    assert cli.main([
-        "--non-interactive", "--prompt", "hello", "--model", "m.gguf",
-        "--ctx", "100000", "--tokens", "123", "--temp", "0", "--top-p", "0.8",
-        "--min-p", "0", "--seed", "1", "--think-level", "25", "--cpu",
-        "--threads", "2", "--system", "persistent rules", "--prefix-file", str(prefix),
-        "--read-only",
-    ]) == 0
+    assert (
+        cli.main(
+            [
+                "--non-interactive",
+                "--prompt",
+                "hello",
+                "--model",
+                "m.gguf",
+                "--ctx",
+                "100000",
+                "--tokens",
+                "123",
+                "--temp",
+                "0",
+                "--top-p",
+                "0.8",
+                "--min-p",
+                "0",
+                "--seed",
+                "1",
+                "--think-level",
+                "25",
+                "--cpu",
+                "--threads",
+                "2",
+                "--system",
+                "persistent rules",
+                "--prefix-file",
+                str(prefix),
+                "--read-only",
+            ]
+        )
+        == 0
+    )
 
     opened = next(item for item in created if item.kind == "open")
     assert opened.model == "m.gguf"
     assert opened.kwargs == {
-        "ctx": 100000, "backend": "cpu", "think": 1025, "seed": 1,
-        "threads": 2, "lib": None,
+        "ctx": 100000,
+        "backend": "cpu",
+        "think": 1025,
+        "seed": 1,
+        "threads": 2,
+        "lib": None,
     }
     made = next(item for item in created if item.kind == "model").model
     assert made.kwargs == {
@@ -190,19 +247,26 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(monkeypatch
     }
     runtime = next(item for item in created if isinstance(item, Runtime))
     assert runtime.kwargs == {
-        "read_only": True, "system": "persistent rules",
-        "interactive": False, "question_answerer": None,
+        "read_only": True,
+        "system": "persistent rules",
+        "interactive": False,
+        "question_answerer": None,
     }
     assert [(turn.role, turn.content) for turn in cast(Any, runtime.loaded)] == [
-        ("user", "earlier"), ("assistant", "answer"),
+        ("user", "earlier"),
+        ("assistant", "answer"),
     ]
     run = next(item for item in created if getattr(item, "kind", None) == "run")
     assert run.runtime is runtime and run.prompt == "hello"
     assert runtime.closed
-    assert next(item for item in created if getattr(item, "kind", None) == "engine").engine.exited
+    assert next(
+        item for item in created if getattr(item, "kind", None) == "engine"
+    ).engine.exited
 
 
-def test_agent_cli_interactive_constructs_and_runs_tui(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_agent_cli_interactive_constructs_and_runs_tui(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import ds4py.model as model_module
     import ds4py.runtime as runtime_module
     import ds4py.tui as tui_module
@@ -262,16 +326,26 @@ def test_agent_cli_rejects_removed_yolo_flag() -> None:
         agent_cli.parser().parse_args(["--yolo"])
 
 
-def test_agent_cli_question_answerer_returns_a_typed_response(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_agent_cli_question_answerer_returns_a_typed_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from ds4py import agent_cli
     from pydantic_ai_harness.ask_user import (
-        AskUserRequest, AskUserResponse, Question, QuestionOption,
+        AskUserRequest,
+        AskUserResponse,
+        Question,
+        QuestionOption,
     )
 
-    request = AskUserRequest(questions=(Question(
-        header="next", question="What next?",
-        options=(QuestionOption(label="one"), QuestionOption(label="two")),
-    ),))
+    request = AskUserRequest(
+        questions=(
+            Question(
+                header="next",
+                question="What next?",
+                options=(QuestionOption(label="one"), QuestionOption(label="two")),
+            ),
+        )
+    )
     monkeypatch.setattr(sys.stdin, "readline", lambda: "2\n")
 
     response = asyncio.run(agent_cli._question_answerer(request))
@@ -305,13 +379,21 @@ def test_run_tui_binds_questions_to_the_tui(monkeypatch: pytest.MonkeyPatch) -> 
     assert questions.answerer == created[0].ask
 
 
-def test_raw_alias_and_core_commands_do_not_import_the_harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_raw_alias_and_core_commands_do_not_import_the_harness(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     import ds4py.raw as raw_module
 
     calls = []
-    monkeypatch.setattr(raw_module, "command", lambda args: calls.append(args.command) or 0)
-    monkeypatch.setattr(cli, "build_library", lambda *args, **kwargs: tmp_path / "libds4.so")
-    monkeypatch.setattr(cli, "check_library", lambda lib: SimpleNamespace(manifest=None, error=None))
+    monkeypatch.setattr(
+        raw_module, "command", lambda args: calls.append(args.command) or 0
+    )
+    monkeypatch.setattr(
+        cli, "build_library", lambda *args, **kwargs: tmp_path / "libds4.so"
+    )
+    monkeypatch.setattr(
+        cli, "check_library", lambda lib: SimpleNamespace(manifest=None, error=None)
+    )
     monkeypatch.setattr(cli, "format_report", lambda report: "ABI ok")
     real_import = builtins.__import__
 

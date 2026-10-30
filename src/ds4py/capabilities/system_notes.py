@@ -4,8 +4,6 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Any
 
-from ds4py.engine.lifecycle import SessionEvent
-from ds4py.engine.session import Session
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     ModelMessage,
@@ -14,6 +12,9 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+
+from ds4py.engine.lifecycle import SessionEvent
+from ds4py.engine.session import Session
 
 DATE_PREFIX = "Current local date and time at session start: "
 DATE_SUFFIX = ". Use this only when date or time matters."
@@ -31,10 +32,7 @@ HINTS_FULL = (
     "hints; follow the latest setting.\n"
 )
 HINTS_ON = "The user enabled programming hints. Produce them from now on.\n"
-HINTS_OFF = (
-    "Programming hints are disabled. Do not produce teaching asides; "
-    "continue the task normally.\n"
-)
+HINTS_OFF = "Programming hints are disabled. Do not produce teaching asides; continue the task normally.\n"
 
 _UNSET = object()
 _UNKNOWN = object()
@@ -44,8 +42,11 @@ class DS4SystemNotes(AbstractCapability):
     """Tracks date and hints notes and asks the binder to append them."""
 
     def __init__(
-        self, session: Session, *,
-        clock: Callable[[], datetime | str] | None = None, hints: bool = False,
+        self,
+        session: Session,
+        *,
+        clock: Callable[[], datetime | str] | None = None,
+        hints: bool = False,
     ) -> None:
         self.session = session
         self.clock = clock or (lambda: datetime.now().astimezone())
@@ -78,11 +79,11 @@ class DS4SystemNotes(AbstractCapability):
         if self.hints_enabled and not self._hints_full_emitted:
             result.append((HINTS_FULL, "hints_full"))
         elif self._hints_applied is not _UNSET and (
-            self._hints_applied is _UNKNOWN
-            or self._hints_applied != self.hints_enabled
+            self._hints_applied is _UNKNOWN or self._hints_applied != self.hints_enabled
         ):
-            result.append((HINTS_ON if self.hints_enabled else HINTS_OFF,
-                           "hints_on" if self.hints_enabled else "hints_off"))
+            result.append(
+                (HINTS_ON if self.hints_enabled else HINTS_OFF, "hints_on" if self.hints_enabled else "hints_off")
+            )
         return result
 
     def notes(self, messages: Sequence[ModelMessage]) -> list[tuple[str, str]]:

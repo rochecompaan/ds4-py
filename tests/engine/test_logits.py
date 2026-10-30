@@ -1,11 +1,10 @@
-from typing import Any, cast
-from collections.abc import Iterator
 import threading
 from array import array
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -13,19 +12,17 @@ import ds4py
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
-from ds4py.engine.events import Stopped, Token, ToolCalls, Thinking
+from ds4py.engine.events import Stopped, Thinking, Token, ToolCalls
 from ds4py.engine.logits import LogitsView
 from ds4py.errors import EngineError
 
 
 def scripted(*tokens: Any) -> Any:
-    return lambda prompt, generated: (
-        tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
-    )
+    return lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
 
 @contextmanager
-def fake_session(script: Any, *, chat: Any=False, think: Any=ThinkMode.HIGH) -> Iterator[Any]:
+def fake_session(script: Any, *, chat: Any = False, think: Any = ThinkMode.HIGH) -> Iterator[Any]:
     with ds4py.open(
         Path("f.gguf"),
         ctx=1024,
@@ -72,9 +69,12 @@ def test_sampled_tokens_materialize_only_on_access() -> None:
             return iter(self.values)
 
     tokens = CountingSequence([7, 8, 9])
-    view = LogitsView(cast(Any, object()), vocab_size=1)
+    view = LogitsView(cast("Any", object()), vocab_size=1)
     view._update(
-        position=3, in_think=False, think_tokens=0, parser_state=None,
+        position=3,
+        in_think=False,
+        think_tokens=0,
+        parser_state=None,
         sampled_tokens=tokens,
     )
     assert tokens.iterations == 0
@@ -134,22 +134,19 @@ def test_raw_sampled_tokens_survive_stop_sequence_resume() -> None:
     following = (111, 102, 121, 117)
 
     def script(prompt: Any, generated: Any) -> Any:
-        tokens = following if any(
-            tuple(prompt[index:index + len(stop)]) == stop
-            for index in range(len(prompt) - len(stop) + 1)
-        ) else stop
+        tokens = (
+            following
+            if any(tuple(prompt[index : index + len(stop)]) == stop for index in range(len(prompt) - len(stop) + 1))
+            else stop
+        )
         return tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
     states = []
     with fake_session(script, think=ThinkMode.NONE) as session:
-        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped(
-            "stop_sequence"
-        )
+        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped("stop_sequence")
         # Registration after the pause proves the round owns this history.
         session.add_logits_hook(lambda view: states.append(view.sampled_tokens))
-        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped(
-            "stop_token"
-        )
+        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped("stop_token")
 
     assert states[0] == stop
     assert states[-1] == stop + following
@@ -166,9 +163,7 @@ def test_hook_state_tracks_only_committed_tokens() -> None:
         prompt_length = len(session.transcript.tokens)
         # run_round appends the assistant prefix before the first hook.
         assistant_prefix = session._worker.call(
-            lambda engine, native: engine.assistant_prefix(
-                session._transcript.tokens, ThinkMode.NONE
-            )
+            lambda engine, native: engine.assistant_prefix(session._transcript.tokens, ThinkMode.NONE)
         ).result()
         initial_position = prompt_length + len(assistant_prefix)
         states = []
@@ -187,9 +182,7 @@ def test_hook_state_tracks_only_committed_tokens() -> None:
         session.add_logits_hook(hook)
         events = list(session.run_round())
         assert emitted_ids(events) == tokens
-        assert [state[0] for state in states] == [
-            initial_position + index for index in range(len(tokens) + 1)
-        ]
+        assert [state[0] for state in states] == [initial_position + index for index in range(len(tokens) + 1)]
         assert [state[1] for state in states] == [
             True,
             True,
@@ -202,9 +195,7 @@ def test_hook_state_tracks_only_committed_tokens() -> None:
         ]
         assert [state[2] for state in states] == [0, 1, 2, 0, 0, 1, 2, 0]
         assert [state[3] for state in states] == ["SEARCH"] * (len(tokens) + 1)
-        assert [state[4] for state in states] == [
-            tuple(tokens[:index]) for index in range(len(tokens) + 1)
-        ]
+        assert [state[4] for state in states] == [tuple(tokens[:index]) for index in range(len(tokens) + 1)]
 
 
 def test_hooks_share_a_view_and_run_in_order_on_the_worker_thread() -> None:
@@ -219,9 +210,7 @@ def test_hooks_share_a_view_and_run_in_order_on_the_worker_thread() -> None:
         views.append(view)
 
     with fake_session(scripted(7, FAKE_EOS)) as session:
-        worker_thread = session.on_worker(
-            lambda handles: threading.get_ident()
-        ).result()
+        worker_thread = session.on_worker(lambda handles: threading.get_ident()).result()
         session.add_logits_hook(first)
         session.add_logits_hook(second)
         list(session.run_round())
@@ -263,19 +252,21 @@ def test_installing_a_hook_during_an_active_round_is_refused() -> None:
 
 
 def test_literal_think_in_tool_argument_does_not_change_hook_control_state() -> None:
-    text = '<tool_call>read<arg_key>path</arg_key><arg_value><think>x</arg_value></tool_call>'
+    text = "<tool_call>read<arg_key>path</arg_key><arg_value><think>x</arg_value></tool_call>"
     tokens = [byte + 1 for byte in text.encode()]
     states = []
-    with ds4py.open('f.gguf', think=ThinkMode.NONE,
-                    native=FakeNative(script=scripted(*tokens), info=replace(
-                        FakeNative()._info, family='glm', is_glm_dsa=True))) as engine:
+    with ds4py.open(
+        "f.gguf",
+        think=ThinkMode.NONE,
+        native=FakeNative(script=scripted(*tokens), info=replace(FakeNative()._info, family="glm", is_glm_dsa=True)),
+    ) as engine:
         session = engine.session()
-        session.append_user('read')
+        session.append_user("read")
         session.add_logits_hook(lambda view: states.append((view.in_think, view.think_tokens)))
         events = list(session.run_round())
-    assert events[-1] == Stopped('tool_call_complete')
+    assert events[-1] == Stopped("tool_call_complete")
     assert len(states) == len(tokens) + 1
     assert all(state == (False, 0) for state in states)
     assert not any(isinstance(event, Thinking) for event in events)
     calls = next(event.calls for event in events if isinstance(event, ToolCalls))
-    assert calls[0].args == {'path': '<think>x'} and calls[0].raw == text
+    assert calls[0].args == {"path": "<think>x"} and calls[0].raw == text

@@ -3,6 +3,7 @@
 from collections.abc import Callable, Iterable
 
 from ds4py._native.protocol import EngineInfo
+
 from .decoder import Decoder
 from .events import Event, TextDelta, Thinking, ToolCalls, ToolSyntax
 from .pause import ControlSpan
@@ -11,7 +12,11 @@ from .tool_syntax import make_parser
 
 class RoundStream:
     def __init__(
-        self, info: EngineInfo, think_mode: int, *, control: ControlSpan | None = None,
+        self,
+        info: EngineInfo,
+        think_mode: int,
+        *,
+        control: ControlSpan | None = None,
     ) -> None:
         thinking = int(think_mode) in (1, 2, 3, 4) or 1001 <= int(think_mode) <= 1100
         self.parser = make_parser(info)
@@ -36,7 +41,9 @@ class RoundStream:
         return self.control.stop_sequence
 
     def _publish(
-        self, deltas: Iterable[TextDelta], emit: Callable[[Event], None],
+        self,
+        deltas: Iterable[TextDelta],
+        emit: Callable[[Event], None],
     ) -> None:
         if self.snapshot.in_think != self._last_thinking:
             self._last_thinking = self.snapshot.in_think

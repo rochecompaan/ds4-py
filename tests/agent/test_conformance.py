@@ -1,29 +1,12 @@
 """Agent extension conformance on the deterministic native test double."""
-from typing import Any, cast
 
 import asyncio
-from dataclasses import replace
+import threading
 from pathlib import Path
 from types import SimpleNamespace
-import threading
+from typing import Any, cast
 
 import pytest
-
-import ds4py
-from ds4py.engine.session import Engine
-from ds4py import ThinkMode
-from ds4py._native.fake import FAKE_EOS, FakeNative
-from ds4py._native.fake_chat import tokenize_rendered
-from ds4py.binding import MessageBinder
-from ds4py.engine.events import Synced
-from ds4py.engine.sampling import SamplingPolicy
-from ds4py.engine.worker import SyncJob
-from ds4py.errors import CheckpointError
-from ds4py.model import DS4Model
-from ds4py.runtime import AgentRuntime
-from ds4py.store import SessionStore
-from ds4py.tui_commands import SlashCommandRegistry
-from ds4py.tui_render import FooterModel
 from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -34,16 +17,30 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai_harness.step_persistence import FileStepStore
 
+import ds4py
+from ds4py import ThinkMode
+from ds4py._native.fake import FAKE_EOS, FakeNative
+from ds4py._native.fake_chat import tokenize_rendered
+from ds4py.binding import MessageBinder
+from ds4py.engine.events import Synced
+from ds4py.engine.sampling import SamplingPolicy
+from ds4py.engine.session import Engine
+from ds4py.engine.worker import SyncJob
+from ds4py.errors import CheckpointError
+from ds4py.model import DS4Model
+from ds4py.runtime import AgentRuntime
+from ds4py.store import SessionStore
+from ds4py.tui_commands import SlashCommandRegistry
+from ds4py.tui_render import FooterModel
 
-def fake_engine(*, script: Any=None, ctx: Any=8192) -> Engine:
+
+def fake_engine(*, script: Any = None, ctx: Any = 8192) -> Engine:
     native = FakeNative() if script is None else FakeNative(script=script)
     return ds4py.open("f.gguf", ctx=ctx, think=ThinkMode.NONE, native=native)
 
 
 def reserialize(messages: Any) -> list[Any]:
-    return ModelMessagesTypeAdapter.validate_json(
-        ModelMessagesTypeAdapter.dump_json(messages)
-    )
+    return ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
 
 
 def sync(session: Any) -> Any:
@@ -81,12 +78,14 @@ class CloseState:
 def test_binding_rewrite_keeps_prefix_and_checkpoint_boundary() -> None:
     """Conformance 1: reserialized views share content, not object identity."""
     system = ModelRequest([SystemPromptPart("extension rules")])
-    original = reserialize([
-        system,
-        user("first"),
-        ModelResponse([TextPart("unchanged answer")]),
-        user("unchanged later request"),
-    ])
+    original = reserialize(
+        [
+            system,
+            user("first"),
+            ModelResponse([TextPart("unchanged answer")]),
+            user("unchanged later request"),
+        ]
+    )
     with fake_engine() as engine:
         session = engine.session()
         binder = MessageBinder(session)
@@ -109,7 +108,7 @@ def test_binding_rewrite_keeps_prefix_and_checkpoint_boundary() -> None:
         assert change.kind == "rewrite"
         assert change.start == cut == before_checkpoint.tokens
         assert session.transcript.tokens[:cut] == old_tokens[:cut]
-        assert binder.export_segments()[:len(prefix_segments)] == prefix_segments
+        assert binder.export_segments()[: len(prefix_segments)] == prefix_segments
         with pytest.raises(CheckpointError, match="after-cut"):
             session.drop_checkpoint("after-cut")
 
@@ -117,9 +116,7 @@ def test_binding_rewrite_keeps_prefix_and_checkpoint_boundary() -> None:
         assert synced.plan.kind == "restore"
         assert synced.plan.checkpoint == "before-cut"
         assert synced.plan.reused == cut
-        assert b"longer replacement" in b"".join(
-            engine.token_text(token) for token in session.transcript.tokens[cut:]
-        )
+        assert b"longer replacement" in b"".join(engine.token_text(token) for token in session.transcript.tokens[cut:])
 
 
 def test_extension_command_and_status_use_existing_registries(tmp_path: Path) -> None:
@@ -134,12 +131,17 @@ def test_extension_command_and_status_use_existing_registries(tmp_path: Path) ->
             return f"extension:{value}"
 
         commands.register(
-            "stub", extension_command, description="Extension command", usage="/stub VALUE",
+            "stub",
+            extension_command,
+            description="Extension command",
+            usage="/stub VALUE",
         )
         runtime = SimpleNamespace(
-            context_size=1000, project_dir=tmp_path, on_event=session.on_event,
+            context_size=1000,
+            project_dir=tmp_path,
+            on_event=session.on_event,
         )
-        footer = FooterModel(cast(Any, runtime))
+        footer = FooterModel(cast("Any", runtime))
         try:
             session.emit("status", key="extension", text="ready")
             result = asyncio.run(commands.execute("/stub value"))
@@ -156,21 +158,26 @@ def test_extension_command_and_status_use_existing_registries(tmp_path: Path) ->
 def test_declared_native_binding_is_called_on_worker(ext_site: Any) -> None:
     """Conformance 7: declarations pass discovery and handles stay on-worker."""
     import importlib
+
     ds4py_test_ext = importlib.import_module("ds4py_test_ext")
     from ds4py._native.bindings import all_bindings
 
-    assert "ds4_engine_layer_count" in {
-        binding.name for binding in ds4py_test_ext.BINDINGS
-    }
+    assert "ds4_engine_layer_count" in {binding.name for binding in ds4py_test_ext.BINDINGS}
     assert "ds4_engine_layer_count" in {binding.name for binding in all_bindings()}
     native = FakeNative(bindings={"ds4_engine_layer_count": lambda engine_ptr: 43})
     with ds4py.open("f.gguf", ctx=64, native=native) as engine:
         layer_count = engine.native.bind("ds4_engine_layer_count")
-        count, session_ptr, worker_thread = engine.session().on_worker(
-            lambda handles: (
-                layer_count(handles.engine), handles.session, threading.get_ident(),
+        count, session_ptr, worker_thread = (
+            engine.session()
+            .on_worker(
+                lambda handles: (
+                    layer_count(handles.engine),
+                    handles.session,
+                    threading.get_ident(),
+                )
             )
-        ).result()
+            .result()
+        )
 
         assert count == 43
         assert isinstance(session_ptr, int) and session_ptr
@@ -193,9 +200,7 @@ def test_scoped_state_survives_prompts_and_fork_but_not_replacement(tmp_path: Pa
             first_state = CloseState()
             assert session.state("extension", lambda: first_state) is first_state
             asyncio.run(runtime.run("two"))
-            assert session.state(
-                "extension", lambda: (_ for _ in ()).throw(AssertionError("recreated"))
-            ) is first_state
+            assert session.state("extension", lambda: (_ for _ in ()).throw(AssertionError("recreated"))) is first_state
             saved = asyncio.run(runtime.save())
             saved_dir = store.session_dir(saved.session_id)
 
@@ -209,13 +214,14 @@ def test_scoped_state_survives_prompts_and_fork_but_not_replacement(tmp_path: Pa
             final_state = CloseState()
             session.state("extension", lambda: final_state)
             asyncio.run(runtime.save())
-            holder = cast(Any, session.state("step_store", lambda: None))
+            holder = cast("Any", session.state("step_store", lambda: None))
             assert isinstance(holder.current, FileStepStore)
             old_id = runtime.session_id
             old_tokens = session.transcript.tokens
             synced_events = []
             session.on_event(
-                lambda event: synced_events.append(event.payload["event"]), kinds={"Synced"},
+                lambda event: synced_events.append(event.payload["event"]),
+                kinds={"Synced"},
             )
 
             forked = asyncio.run(runtime.fork())

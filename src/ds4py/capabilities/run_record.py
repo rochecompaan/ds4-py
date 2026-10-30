@@ -1,17 +1,17 @@
 """Append harness and engine events to a JSONL telemetry file."""
 
+import json
 from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
-from datetime import datetime, timezone
-import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from ds4py.engine.lifecycle import SessionEvent
-from ds4py.engine.session import Session
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandStartedEvent
 
+from ds4py.engine.lifecycle import SessionEvent
+from ds4py.engine.session import Session
 
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
@@ -25,10 +25,7 @@ def _json_safe(value: object) -> JsonValue:
     if isinstance(value, (list, tuple, set, frozenset)):
         return [_json_safe(item) for item in value]
     if is_dataclass(value) and not isinstance(value, type):
-        return {
-            field.name: _json_safe(getattr(value, field.name))
-            for field in fields(value)
-        }
+        return {field.name: _json_safe(getattr(value, field.name)) for field in fields(value)}
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return str(value)
@@ -67,7 +64,7 @@ class DS4RunRecord(AbstractCapability):
         """Point later lines at another session directory."""
         self.path = Path(path)
 
-    async def for_run(self, ctx: Any) -> "DS4RunRecord":
+    async def for_run(self, ctx: Any) -> DS4RunRecord:
         if not self._subscribed and hasattr(self.session, "on_event"):
             self.session.on_event(self._on_engine_event)
             self._subscribed = True
@@ -84,9 +81,9 @@ class DS4RunRecord(AbstractCapability):
             raise
 
     def _line(self, kind: str, payload: Mapping[str, object]) -> dict[str, object]:
-        values = cast(dict[str, JsonValue], _json_safe(dict(payload)))
+        values = cast("dict[str, JsonValue]", _json_safe(dict(payload)))
         return {
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": datetime.now(UTC).isoformat(),
             "kind": kind,
             "session_id": getattr(self.session, "id", None),
             "run_id": values.pop("run_id", self._run_id),
@@ -110,7 +107,7 @@ class DS4RunRecord(AbstractCapability):
                 # Rollback must not replace the original terminal write error.
                 pass
             raise
-        written_payload = cast(dict[str, JsonValue], line["payload"])
+        written_payload = cast("dict[str, JsonValue]", line["payload"])
         self._written_run_end = (line["run_id"], written_payload.get("status"))
 
     def _on_engine_event(self, event: SessionEvent) -> None:
@@ -140,7 +137,10 @@ class DS4RunRecord(AbstractCapability):
         self.session.emit("agent_event", event=event)
         if isinstance(event, CommandStartedEvent):
             self.session.emit(
-                "service_started", service="shell", pid=event.pid, status="running",
+                "service_started",
+                service="shell",
+                pid=event.pid,
+                status="running",
             )
         elif isinstance(event, CommandFinishedEvent):
             running = event.exit_code is None

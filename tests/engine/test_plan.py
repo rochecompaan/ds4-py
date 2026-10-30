@@ -1,4 +1,5 @@
 from typing import Any
+
 import pytest
 
 from ds4py.engine.plan import Plan, plan_sync
@@ -6,9 +7,8 @@ from ds4py.engine.plan import Plan, plan_sync
 P = list(range(1, 21))
 
 
-def plan(tokens: Any, live: Any=(), valid: Any=True, cps: Any=None, ctx: Any=100, restore: Any=True) -> Any:
-    return plan_sync(tokens, live=list(live), live_valid=valid, checkpoints=cps or {},
-                     ctx=ctx, restore_enabled=restore)
+def plan(tokens: Any, live: Any = (), valid: Any = True, cps: Any = None, ctx: Any = 100, restore: Any = True) -> Any:
+    return plan_sync(tokens, live=list(live), live_valid=valid, checkpoints=cps or {}, ctx=ctx, restore_enabled=restore)
 
 
 def test_extend() -> None:

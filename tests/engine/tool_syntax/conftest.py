@@ -1,6 +1,6 @@
-from typing import Any
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -18,11 +18,13 @@ def load_cases() -> Any:
             cases.append(item)
     for syntax in ("dsml", "glm", "qwen"):
         valid = next(case for case in cases if case["syntax"] == syntax and case["state"] == "DONE")
-        cases.append(dict(
-            valid,
-            id=f"{syntax}-think-marker-splits",
-            input="<think>reason</think>" + valid["input"],
-        ))
+        cases.append(
+            dict(
+                valid,
+                id=f"{syntax}-think-marker-splits",
+                input="<think>reason</think>" + valid["input"],
+            )
+        )
     return tuple(cases)
 
 
@@ -58,20 +60,22 @@ def run_chunks(case: Any, chunks: Any) -> Any:
     }
 
 
-def simple_case(syntax: Any, v41: Any=False) -> dict[str, Any]:
+def simple_case(syntax: Any, v41: Any = False) -> dict[str, Any]:
     return {"syntax": syntax, "v41": v41, "id": f"simple-{syntax}-{v41}"}
 
 
-def simple_stanza(syntax: Any, v41: Any=False, value: Any="abc") -> str:
+def simple_stanza(syntax: Any, v41: Any = False, value: Any = "abc") -> str:
     if syntax == "glm":
         return f"<tool_call>echo<arg_key>value</arg_key><arg_value>{value}</arg_value></tool_call>"
     if syntax == "qwen":
         return f"<tool_call><function=echo><parameter=value>{value}</parameter></function></tool_call>"
     tags = (" calls", " invoke", " parameter") if v41 else ("tool_calls", "invoke", "parameter")
     calls, invoke, parameter = tags
-    return (f"<｜DSML｜{calls}><｜DSML｜{invoke} name=\"echo\">"
-            f"<｜DSML｜{parameter} name=\"value\" string=\"true\">{value}</｜DSML｜{parameter}>"
-            f"</｜DSML｜{invoke}></｜DSML｜{calls}>")
+    return (
+        f'<｜DSML｜{calls}><｜DSML｜{invoke} name="echo">'
+        f'<｜DSML｜{parameter} name="value" string="true">{value}</｜DSML｜{parameter}>'
+        f"</｜DSML｜{invoke}></｜DSML｜{calls}>"
+    )
 
 
 @pytest.fixture(params=load_cases(), ids=lambda case: case["id"])

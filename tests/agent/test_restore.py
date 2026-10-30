@@ -1,40 +1,36 @@
 """Save, switch, new, fork, and close behavior (Task 9)."""
-from typing import Any, cast
 
 import asyncio
 import json
 import shutil
 from copy import deepcopy
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, Never, cast
 
 import pytest
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, ModelResponse, TextPart
 
 import ds4py
-from ds4py.engine.session import Engine
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.engine.sampling import SamplingPolicy
+from ds4py.engine.session import Engine
 from ds4py.errors import EngineError, StoreError
 from ds4py.model import DS4Model
 from ds4py.runtime import AgentRuntime
 from ds4py.store import KV_HEADER, KV_MAGIC, KV_VERSION, SessionStore, token_digest
-from typing import Never
 
-READ_CALL = (
-    "<tool_call><function=read_file><parameter=path>hello.txt</parameter>"
-    "</function></tool_call>"
-)
+READ_CALL = "<tool_call><function=read_file><parameter=path>hello.txt</parameter></function></tool_call>"
 
 
 def fixed_clock() -> datetime:
-    return datetime(2026, 10, 21, 9, 30, 0, tzinfo=timezone.utc)
+    return datetime(2026, 10, 21, 9, 30, 0, tzinfo=UTC)
 
 
-def fake_engine(*, script: Any=None, family: Any="qwen", model_id: Any=7, quant_bits: Any=None) -> Engine:
+def fake_engine(*, script: Any = None, family: Any = "qwen", model_id: Any = 7, quant_bits: Any = None) -> Engine:
     info = replace(
         FakeNative()._info,
         name="fake-ds4",
@@ -96,7 +92,7 @@ def read_events(path: Any) -> Any:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
-def saved_session(tmp_path: Path, script: Any=(READ_CALL, "first answer"), *, hints: Any=False) -> Any:
+def saved_session(tmp_path: Path, script: Any = (READ_CALL, "first answer"), *, hints: Any = False) -> Any:
     """Run one prompt and save; return the runtime parts still needed."""
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
@@ -105,7 +101,7 @@ def saved_session(tmp_path: Path, script: Any=(READ_CALL, "first answer"), *, hi
     with fake_engine(script=scripted_rounds(*script)) as engine:
         model = make_model(engine)
         runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
-        cast(Any, runtime._notes).hints_enabled = hints
+        cast("Any", runtime._notes).hints_enabled = hints
         try:
             asyncio.run(runtime.run("read hello"))
             record = asyncio.run(runtime.save())
@@ -119,16 +115,14 @@ def saved_session(tmp_path: Path, script: Any=(READ_CALL, "first answer"), *, hi
     return project, store, record, state
 
 
-def test_save_and_switch_with_skill_history_preserves_provenance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_save_and_switch_with_skill_history_preserves_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     home = tmp_path / "home"
     skill = home / ".claude" / "skills" / "test-skill" / "SKILL.md"
     skill.parent.mkdir(parents=True)
     skill.write_text(
-        "---\n"
-        "name: test-skill\n"
-        "description: Exercise deferred capability instructions.\n"
-        "---\n"
-        "Use the test skill.\n"
+        "---\nname: test-skill\ndescription: Exercise deferred capability instructions.\n---\nUse the test skill.\n"
     )
     monkeypatch.setenv("HOME", str(home))
     project, store, record, saved = saved_session(tmp_path, script=("first answer",))
@@ -154,18 +148,11 @@ def test_partial_response_does_not_replace_bound_history_in_saved_snapshot(tmp_p
             asyncio.run(runtime.switch(record.session_id))
             steps = _steps(store.session_dir(record.session_id))
             snapshot = asyncio.run(steps.latest_snapshot(run_id=record.run_id))
-            response = next(
-                message
-                for message in snapshot.messages
-                if isinstance(message, ModelResponse)
-            )
+            response = next(message for message in snapshot.messages if isinstance(message, ModelResponse))
             partial = deepcopy(response)
             partial.parts = partial.parts[:1]
-            cast(TextPart, partial.parts[0]).content = "partial"
-            candidates = [
-                partial if message is response else message
-                for message in snapshot.messages
-            ]
+            cast("TextPart", partial.parts[0]).content = "partial"
+            candidates = [partial if message is response else message for message in snapshot.messages]
             snapshot.messages = candidates
             asyncio.run(runtime._adopt_history(record.run_id, candidates, snapshot))
             updated = asyncio.run(runtime.save())
@@ -208,31 +195,40 @@ def test_valid_kv_switch_restores_binding_without_prefill(tmp_path: Path) -> Non
             assert len(loaded) == record.tokens
             assert token_digest(loaded) == record.tokens_sha256
             assert dump(runtime.messages) == dump(saved["messages"])
-            assert all(cast(Any, message.metadata)["ds4.key"] for message in runtime.messages)
+            assert all(cast("Any", message.metadata)["ds4.key"] for message in runtime.messages)
 
             # Every saved provenance range is installed on the loaded transcript
             # and every keyed range still names its snapshot message.
             def installed_view(segments: Any) -> Any:
                 return [
-                    (segment.start, segment.end,
-                     "note" if segment.kind.startswith("system_note") else segment.kind,
-                     segment.key, segment.content_hash, segment.source)
+                    (
+                        segment.start,
+                        segment.end,
+                        "note" if segment.kind.startswith("system_note") else segment.kind,
+                        segment.key,
+                        segment.content_hash,
+                        segment.source,
+                    )
                     for segment in segments
                 ]
 
             installed = [
-                (segment.start, segment.end, segment.kind,
-                 segment.meta.get("key"), segment.meta.get("content_hash"),
-                 segment.meta.get("source"))
+                (
+                    segment.start,
+                    segment.end,
+                    segment.kind,
+                    segment.meta.get("key"),
+                    segment.meta.get("content_hash"),
+                    segment.meta.get("source"),
+                )
                 for segment in model.session.transcript.segments
             ]
             assert installed == installed_view(record.segments)
             assert [
-                segment.meta.get("subtype")
-                for segment in model.session.transcript.segments if segment.kind == "note"
+                segment.meta.get("subtype") for segment in model.session.transcript.segments if segment.kind == "note"
             ] == ["date"]
             responses = [m for m in runtime.messages if isinstance(m, ModelResponse)]
-            assert responses and all(cast(Any, m.metadata)["ds4.key"] for m in responses)
+            assert responses and all(cast("Any", m.metadata)["ds4.key"] for m in responses)
             keyed = [segment for segment in record.segments if segment.key]
             assert keyed and all(segment.key for segment in keyed)
 
@@ -303,7 +299,7 @@ def test_stripped_payload_switch_renders_fresh_with_full_prefill(tmp_path: Path,
             assert len(model.session.transcript) == 0
             assert not model.session.transcript.chat
             assert dump(runtime.messages) == dump(saved["messages"])
-            assert cast(Any, runtime._notes).hints_enabled is hints
+            assert cast("Any", runtime._notes).hints_enabled is hints
 
             requests = capture(runtime, {"Synced"})
             output = asyncio.run(runtime.run("second answer")).output
@@ -313,9 +309,7 @@ def test_stripped_payload_switch_renders_fresh_with_full_prefill(tmp_path: Path,
             rebuilt = list(model.session.transcript.tokens[: len(saved["tokens"])])
             assert rebuilt == saved["tokens"]
             note_subtypes = [
-                segment.meta.get("subtype")
-                for segment in model.session.transcript.segments
-                if segment.kind == "note"
+                segment.meta.get("subtype") for segment in model.session.transcript.segments if segment.kind == "note"
             ]
             assert note_subtypes == (["date", "hints_full"] if hints else ["date"])
             assert dump(runtime.messages[: len(saved["messages"])]) == dump(saved["messages"])
@@ -347,14 +341,15 @@ def test_newer_kv_than_record_takes_the_render_path_and_reports_the_mismatch(tmp
             asyncio.run(runtime.close())
 
     switched = [
-        line for line in read_events(store.session_dir(session_id) / "events.jsonl")
-        if line["kind"] == "switched"
+        line for line in read_events(store.session_dir(session_id) / "events.jsonl") if line["kind"] == "switched"
     ]
     assert switched[-1]["payload"]["restore_path"] == "render"
     assert str(record.payload_bytes) in switched[-1]["payload"]["mismatch"]
 
 
-def test_token_hash_mismatch_renders_and_reports_the_actual_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_token_hash_mismatch_renders_and_reports_the_actual_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     project, store, _record, saved = saved_session(tmp_path)
     session_id = saved["session_id"]
 
@@ -379,8 +374,7 @@ def test_token_hash_mismatch_renders_and_reports_the_actual_path(tmp_path: Path,
             asyncio.run(runtime.close())
 
     switched = [
-        line for line in read_events(store.session_dir(session_id) / "events.jsonl")
-        if line["kind"] == "switched"
+        line for line in read_events(store.session_dir(session_id) / "events.jsonl") if line["kind"] == "switched"
     ]
     assert switched[-1]["payload"]["restore_path"] == "render"
     assert "hash" in switched[-1]["payload"]["mismatch"]
@@ -430,7 +424,9 @@ def test_invalid_snapshot_does_not_commit_switch_or_overwrite_target(tmp_path: P
             asyncio.run(runtime.close())
 
 
-def test_native_restore_failure_never_saves_old_history_under_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_native_restore_failure_never_saves_old_history_under_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     project, store, _record, saved = saved_session(tmp_path)
     target_path = store.session_dir(saved["session_id"]) / "save.json"
     target_before = target_path.read_bytes()
@@ -486,10 +482,7 @@ def test_missing_segment_key_fails_with_the_key(tmp_path: Path, restore_path: An
     keyed = [index for index, segment in enumerate(record.segments) if segment.key]
     assert keyed
     target_key = record.segments[keyed[-1]].key
-    changed = [
-        replace(segment, key="0" * 32) if segment.key == target_key else segment
-        for segment in record.segments
-    ]
+    changed = [replace(segment, key="0" * 32) if segment.key == target_key else segment for segment in record.segments]
     broken = replace(record, segments=tuple(changed))
     store.write_record_atomic(store.session_dir(saved["session_id"]) / "save.json", broken)
 
@@ -510,10 +503,7 @@ def test_first_request_key_tamper_is_rejected(tmp_path: Path, restore_path: Any)
     if restore_path == "render":
         zero_payload_kv(store, saved["session_id"])
     first_key = next(segment.key for segment in record.segments if segment.key)
-    changed = [
-        replace(segment, key="0" * 32) if segment.key == first_key else segment
-        for segment in record.segments
-    ]
+    changed = [replace(segment, key="0" * 32) if segment.key == first_key else segment for segment in record.segments]
     store.write_record_atomic(
         store.session_dir(saved["session_id"]) / "save.json",
         replace(record, segments=tuple(changed)),
@@ -557,14 +547,12 @@ def test_reordered_requests_are_rejected(tmp_path: Path, restore_path: Any) -> N
         zero_payload_kv(store, saved["session_id"])
     steps = _steps(store.session_dir(saved["session_id"]))
     snapshot = asyncio.run(steps.latest_snapshot(run_id=record.run_id))
-    request_indexes = [
-        index for index, message in enumerate(snapshot.messages)
-        if isinstance(message, ModelRequest)
-    ]
+    request_indexes = [index for index, message in enumerate(snapshot.messages) if isinstance(message, ModelRequest)]
     assert len(request_indexes) >= 2
     first, second = request_indexes[:2]
     snapshot.messages[first], snapshot.messages[second] = (
-        snapshot.messages[second], snapshot.messages[first],
+        snapshot.messages[second],
+        snapshot.messages[first],
     )
     _replace_snapshot(steps, snapshot)
 
@@ -680,18 +668,14 @@ def test_save_writes_kv_then_complete_snapshot_then_record(tmp_path: Path, monke
     assert record.created_at and record.last_used
     assert record.segments
 
-    snapshot = asyncio.run(
-        _steps(store.session_dir(session_id)).latest_snapshot(run_id=record.run_id)
-    )
+    snapshot = asyncio.run(_steps(store.session_dir(session_id)).latest_snapshot(run_id=record.run_id))
     assert snapshot is not None
     assert snapshot.state == "complete"
     assert snapshot.step_index == record.step_index
     assert any(segment.key for segment in record.segments)
-    assert all(
-        segment.key for segment in record.segments if segment.kind in ("user", "assistant", "tool")
-    )
+    assert all(segment.key for segment in record.segments if segment.kind in ("user", "assistant", "tool"))
 
-    header = (store.session_dir(session_id) / "session.kv").read_bytes()[:KV_HEADER.size]
+    header = (store.session_dir(session_id) / "session.kv").read_bytes()[: KV_HEADER.size]
     magic, version, payload_bytes = KV_HEADER.unpack(header)
     assert (magic, version, payload_bytes) == (KV_MAGIC, KV_VERSION, record.payload_bytes)
 
@@ -732,7 +716,7 @@ def test_new_clears_live_history_and_keeps_old_files(tmp_path: Path) -> None:
             record = asyncio.run(runtime.save())
             old_id = runtime.session_id
             old_dir = store.session_dir(old_id)
-            holder = cast(Any, model.session.state("step_store", lambda: None))
+            holder = cast("Any", model.session.state("step_store", lambda: None))
             sentry = model.session.state("sentry", Sentry)
 
             new_id = asyncio.run(runtime.new())
@@ -763,7 +747,7 @@ def test_fork_keeps_live_state_and_writes_the_new_directory(tmp_path: Path) -> N
             segments = model.session.transcript.segments
             old_id = runtime.session_id
             old_dir = store.session_dir(old_id)
-            holder = cast(Any, model.session.state("step_store", lambda: None))
+            holder = cast("Any", model.session.state("step_store", lambda: None))
 
             forked = asyncio.run(runtime.fork())
 
@@ -800,7 +784,7 @@ def test_close_closes_step_stores_and_scoped_state(tmp_path: Path) -> None:
         model = make_model(engine)
         runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
         asyncio.run(runtime.run("read hello"))
-        holder = cast(Any, model.session.state("step_store", lambda: None))
+        holder = cast("Any", model.session.state("step_store", lambda: None))
         sentry = model.session.state("sentry", Sentry)
 
         asyncio.run(runtime.close())

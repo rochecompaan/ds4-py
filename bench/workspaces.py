@@ -4,16 +4,16 @@ Agents see only ``Workspace.agent_dir``. Test files live in the separate
 ``grader_dir`` and are mounted only for the duration of one grading call.
 """
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
-from dataclasses import dataclass, replace
-from io import BytesIO
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tarfile
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
+from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 
@@ -64,9 +64,7 @@ class Workspace:
             raise ValueError("Bakeoff workspaces allow one or two attempts")
 
 
-CommandRunner = Callable[
-    [Sequence[str], Path, Mapping[str, str]], subprocess.CompletedProcess[Any]
-]
+CommandRunner = Callable[[Sequence[str], Path, Mapping[str, str]], subprocess.CompletedProcess[Any]]
 
 
 def _reset_directory(path: str | Path) -> None:
@@ -78,9 +76,7 @@ def _reset_directory(path: str | Path) -> None:
 
 def _is_test_file(path: Path) -> bool:
     name = path.name
-    return path.suffix == ".py" and (
-        name.endswith("_test.py") or name.startswith("test_") or name == "tests.py"
-    )
+    return path.suffix == ".py" and (name.endswith("_test.py") or name.startswith("test_") or name == "tests.py")
 
 
 def _copy_file(source: str | Path, destination: Path) -> None:
@@ -89,7 +85,10 @@ def _copy_file(source: str | Path, destination: Path) -> None:
 
 
 def prepare_exercise(
-    source: str | Path, destination: str | Path, *, max_attempts: int = 2,
+    source: str | Path,
+    destination: str | Path,
+    *,
+    max_attempts: int = 2,
 ) -> Workspace:
     """Stage one Exercism task with its tests held outside the agent view."""
     source = Path(source)
@@ -116,20 +115,25 @@ def prepare_exercise(
         raise PreparationError(f"{source}: no Python exercise tests found")
     (agent_dir / "TASK.md").write_text(instructions.read_text())
     return Workspace(
-        source.name, agent_dir, grader_dir, tuple(hidden), tuple(hidden), max_attempts,
+        source.name,
+        agent_dir,
+        grader_dir,
+        tuple(hidden),
+        tuple(hidden),
+        max_attempts,
     )
 
 
 def archive_repository(repo_root: str | Path, destination: str | Path) -> None:
     """Copy the current committed repository state without its ``.git`` directory."""
     result = subprocess.run(
-        ["git", "archive", "HEAD"], cwd=repo_root,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        ["git", "archive", "HEAD"],
+        cwd=repo_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     if result.returncode:
-        raise PreparationError(
-            f"git archive HEAD failed in {repo_root}: {result.stderr.decode(errors='replace')}"
-        )
+        raise PreparationError(f"git archive HEAD failed in {repo_root}: {result.stderr.decode(errors='replace')}")
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     with tarfile.open(fileobj=BytesIO(result.stdout), mode="r:") as archive:
@@ -137,9 +141,15 @@ def archive_repository(repo_root: str | Path, destination: str | Path) -> None:
 
 
 def prepare_repository_task(
-    repo_root: str | Path, destination: str | Path, *, task_id: str, prompt: str,
-    patch: str | Path | None = None, visible_test: str | None = None,
-    grader: str | Path | None = None, max_attempts: int = 2,
+    repo_root: str | Path,
+    destination: str | Path,
+    *,
+    task_id: str,
+    prompt: str,
+    patch: str | Path | None = None,
+    visible_test: str | None = None,
+    grader: str | Path | None = None,
+    max_attempts: int = 2,
 ) -> Workspace:
     """Stage a repository task from ``HEAD`` and optionally plant one patch."""
     destination = Path(destination)
@@ -153,13 +163,13 @@ def prepare_repository_task(
     if patch is not None:
         patch = Path(patch).resolve()
         result = subprocess.run(
-            ["git", "apply", "--whitespace=error", str(patch)], cwd=agent_dir,
-            capture_output=True, text=True,
+            ["git", "apply", "--whitespace=error", str(patch)],
+            cwd=agent_dir,
+            capture_output=True,
+            text=True,
         )
         if result.returncode:
-            raise PreparationError(
-                f"could not apply {patch} to {task_id}: {result.stdout}{result.stderr}"
-            )
+            raise PreparationError(f"could not apply {patch} to {task_id}: {result.stdout}{result.stderr}")
     (agent_dir / "TASK.md").write_text(prompt)
     hidden = []
     if grader is not None:
@@ -175,7 +185,12 @@ def prepare_repository_task(
     if not test_paths:
         raise PreparationError(f"{task_id}: no grading tests configured")
     return Workspace(
-        task_id, agent_dir, grader_dir, tuple(test_paths), tuple(hidden), max_attempts,
+        task_id,
+        agent_dir,
+        grader_dir,
+        tuple(test_paths),
+        tuple(hidden),
+        max_attempts,
     )
 
 
@@ -202,9 +217,7 @@ def _mounted_tests(workspace: Workspace) -> Iterator[None]:
             destination = workspace.agent_dir / name
             if not source.is_file():
                 raise PreparationError(f"{workspace.task_id}: hidden test is missing: {name}")
-            if destination.is_symlink() or not destination.resolve().is_relative_to(
-                workspace.agent_dir.resolve()
-            ):
+            if destination.is_symlink() or not destination.resolve().is_relative_to(workspace.agent_dir.resolve()):
                 raise PreparationError(f"{workspace.task_id}: unsafe test mount: {name}")
             backups[destination] = destination.read_bytes() if destination.is_file() else None
             _copy_file(source, destination)
@@ -238,7 +251,9 @@ def _combined_output(completed: subprocess.CompletedProcess[Any]) -> str:
 
 
 def grade_workspace(
-    workspace: Workspace, *, runner: CommandRunner | None = None,
+    workspace: Workspace,
+    *,
+    runner: CommandRunner | None = None,
 ) -> GradeResult:
     """Mount hidden tests, capture one grading result, then unmount them."""
     if not workspace.test_paths:
@@ -248,21 +263,27 @@ def grade_workspace(
     # Import pytest before adding the workspace package path. In particular,
     # Python must not import an agent-provided sitecustomize during startup.
     bootstrap = (
-        "import sys; import pytest; "
-        "sys.path.insert(0, sys.argv.pop(1)); "
-        "raise SystemExit(pytest.main(sys.argv[1:]))"
+        "import sys; import pytest; sys.path.insert(0, sys.argv.pop(1)); raise SystemExit(pytest.main(sys.argv[1:]))"
     )
     command = [
-        sys.executable, "-c", bootstrap, str(workspace.agent_dir / "src"),
-        "-q", "-c", str(grader_config),
-        f"--rootdir={workspace.grader_dir}", "--noconftest",
-        "-p", "no:cacheprovider",
+        sys.executable,
+        "-c",
+        bootstrap,
+        str(workspace.agent_dir / "src"),
+        "-q",
+        "-c",
+        str(grader_config),
+        f"--rootdir={workspace.grader_dir}",
+        "--noconftest",
+        "-p",
+        "no:cacheprovider",
         *(str(workspace.agent_dir / name) for name in workspace.test_paths),
     ]
     environment = os.environ.copy()
     agent_src = (workspace.agent_dir / "src").resolve()
     pythonpath = [
-        entry for entry in environment.get("PYTHONPATH", "").split(os.pathsep)
+        entry
+        for entry in environment.get("PYTHONPATH", "").split(os.pathsep)
         if entry and Path(entry).resolve() != agent_src
     ]
     if pythonpath:
@@ -271,10 +292,14 @@ def grade_workspace(
         environment.pop("PYTHONPATH", None)
     command_runner = runner
     if command_runner is None:
+
         def default_runner(
-            command: Sequence[str], cwd: Path, env: Mapping[str, str],
+            command: Sequence[str],
+            cwd: Path,
+            env: Mapping[str, str],
         ) -> subprocess.CompletedProcess[Any]:
             return subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
+
         command_runner = default_runner
     with _mounted_tests(workspace):
         completed = command_runner(command, workspace.grader_dir, environment)
@@ -282,7 +307,9 @@ def grade_workspace(
 
 
 def run_attempts(
-    workspace: Workspace, agent: Callable[[Path, int, str], None], *,
+    workspace: Workspace,
+    agent: Callable[[Path, int, str], None],
+    *,
     runner: CommandRunner | None = None,
 ) -> list[GradeResult]:
     """Run at most two agent/grade rounds, feeding failure output to the next call."""
@@ -301,15 +328,16 @@ def run_attempts(
 def verify_benchmark(benchmark: str | Path, expected_commit: str) -> str:
     """Require the existing external checkout to be at the pinned commit."""
     result = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=benchmark, capture_output=True, text=True,
+        ["git", "rev-parse", "HEAD"],
+        cwd=benchmark,
+        capture_output=True,
+        text=True,
     )
     if result.returncode:
         raise BenchmarkError(f"{benchmark}: not a readable git checkout: {result.stderr.strip()}")
     actual = result.stdout.strip()
     if actual != expected_commit:
-        raise BenchmarkError(
-            f"benchmark commit mismatch: expected {expected_commit}, got {actual}"
-        )
+        raise BenchmarkError(f"benchmark commit mismatch: expected {expected_commit}, got {actual}")
     return actual
 
 
@@ -322,8 +350,16 @@ def load_manifest(path: str | Path) -> Manifest:
     if not isinstance(data, dict):
         raise PreparationError(f"{path}: manifest must contain a mapping")
     required = {
-        "repository", "commit", "selection_seed", "model", "ctx", "temperature",
-        "seed", "max_attempts", "exercises", "repository_tasks",
+        "repository",
+        "commit",
+        "selection_seed",
+        "model",
+        "ctx",
+        "temperature",
+        "seed",
+        "max_attempts",
+        "exercises",
+        "repository_tasks",
     }
     missing = sorted(required - data.keys())
     if missing:
@@ -358,7 +394,10 @@ def validate_manifest_sources(manifest: Manifest, benchmark: str | Path) -> None
 
 
 def prepare_manifest(
-    manifest: Manifest, output: str | Path, benchmark: str | Path, repo_root: str | Path,
+    manifest: Manifest,
+    output: str | Path,
+    benchmark: str | Path,
+    repo_root: str | Path,
 ) -> list[Workspace]:
     """Materialize all twelve pinned tasks in manifest order."""
     validate_manifest_sources(manifest, benchmark)
@@ -366,18 +405,26 @@ def prepare_manifest(
     _reset_directory(output)
     workspaces = []
     for exercise in manifest.exercises:
-        workspaces.append(prepare_exercise(
-            Path(benchmark) / exercise, output / Path(exercise).name,
-            max_attempts=manifest.max_attempts,
-        ))
+        workspaces.append(
+            prepare_exercise(
+                Path(benchmark) / exercise,
+                output / Path(exercise).name,
+                max_attempts=manifest.max_attempts,
+            )
+        )
     for spec in manifest.repository_tasks:
         patch = spec.get("patch")
         grader = spec.get("grader")
-        workspaces.append(prepare_repository_task(
-            repo_root, output / spec["id"], task_id=spec["id"], prompt=spec["prompt"],
-            patch=manifest.path.parent / patch if patch else None,
-            visible_test=spec.get("visible_test"),
-            grader=manifest.path.parent / grader if grader else None,
-            max_attempts=manifest.max_attempts,
-        ))
+        workspaces.append(
+            prepare_repository_task(
+                repo_root,
+                output / spec["id"],
+                task_id=spec["id"],
+                prompt=spec["prompt"],
+                patch=manifest.path.parent / patch if patch else None,
+                visible_test=spec.get("visible_test"),
+                grader=manifest.path.parent / grader if grader else None,
+                max_attempts=manifest.max_attempts,
+            )
+        )
     return workspaces

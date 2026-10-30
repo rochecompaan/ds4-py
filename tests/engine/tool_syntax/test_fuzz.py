@@ -1,5 +1,5 @@
-from typing import Any
 import random
+from typing import Any
 
 import pytest
 
@@ -34,10 +34,12 @@ def make_stanza(syntax: Any, v41: Any, value: Any) -> str:
         return f"<tool_call>echo<arg_key>value</arg_key><arg_value>{escaped}</arg_value></tool_call>"
     if syntax == "qwen":
         return f"<tool_call><function=echo><parameter=value>{escaped}</parameter></function></tool_call>"
-    calls, invoke, parameter = ((" calls", " invoke", " parameter") if v41 else ("tool_calls", "invoke", "parameter"))
-    return (f"<｜DSML｜{calls}><｜DSML｜{invoke} name=\"echo\">"
-            f"<｜DSML｜{parameter} name=\"value\" string=\"true\">{escaped}</｜DSML｜{parameter}>"
-            f"</｜DSML｜{invoke}></｜DSML｜{calls}>")
+    calls, invoke, parameter = (" calls", " invoke", " parameter") if v41 else ("tool_calls", "invoke", "parameter")
+    return (
+        f'<｜DSML｜{calls}><｜DSML｜{invoke} name="echo">'
+        f'<｜DSML｜{parameter} name="value" string="true">{escaped}</｜DSML｜{parameter}>'
+        f"</｜DSML｜{invoke}></｜DSML｜{calls}>"
+    )
 
 
 def partitions(data: Any, rng: Any) -> Any:
@@ -48,10 +50,28 @@ def partitions(data: Any, rng: Any) -> Any:
 
 @pytest.mark.parametrize("syntax,v41", FAMILIES)
 @pytest.mark.parametrize("iteration", range(25))
-def test_seeded_valid_calls_roundtrip_and_match_random_chunking(parse_chunks: Any, syntax: Any, v41: Any, iteration: Any) -> None:
+def test_seeded_valid_calls_roundtrip_and_match_random_chunking(
+    parse_chunks: Any, syntax: Any, v41: Any, iteration: Any
+) -> None:
     rng = random.Random(f"0:valid:{syntax}:{v41}:{iteration}")
-    tokens = ("a", "Z", "0", "α", "雪", "🙂", "<", ">", "&", "\n", "\t", " ",
-              "&lt;", "</tool_call>", "</think>", closing_tag(syntax, v41))
+    tokens = (
+        "a",
+        "Z",
+        "0",
+        "α",
+        "雪",
+        "🙂",
+        "<",
+        ">",
+        "&",
+        "\n",
+        "\t",
+        " ",
+        "&lt;",
+        "</tool_call>",
+        "</think>",
+        closing_tag(syntax, v41),
+    )
     body = "".join(rng.choice(tokens) for _ in range(rng.randint(0, 30)))
     expected_value = "α" + body + "ω"
     case = {"syntax": syntax, "v41": v41}
@@ -67,8 +87,7 @@ def test_seeded_valid_calls_roundtrip_and_match_random_chunking(parse_chunks: An
 def test_seeded_plain_prose_never_becomes_executable(parse_chunks: Any, syntax: Any, v41: Any) -> None:
     rng = random.Random(f"0:prose:{syntax}:{v41}")
     tokens = ("word", "α", "1 < 2", "</", "<thinking>", "&amp;", "DSML", "|", "｜", "\n")
-    markers = ("<tool_call>", "<｜DSML｜", "<DSML｜", "｜DSML｜", "|DSML|",
-               "</DSML｜", "<think>", "</think>")
+    markers = ("<tool_call>", "<｜DSML｜", "<DSML｜", "｜DSML｜", "|DSML|", "</DSML｜", "<think>", "</think>")
     for _ in range(40):
         text = "".join(rng.choice(tokens) for _ in range(30))
         for marker in markers:

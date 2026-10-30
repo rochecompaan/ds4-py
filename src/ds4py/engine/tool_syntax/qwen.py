@@ -1,11 +1,12 @@
 """Incremental Qwen function/parameter tool-call parser."""
+
 import json
 import re
+from typing import Never
 
 from .delimiter import DelimiterParser
 from .model import ToolArgument
 from .text import unescape_tool_text
-from typing import Never
 
 _ASCII_SPACE = b" \t\r\n"
 _CLOSE = b"</tool_call>"
@@ -31,8 +32,7 @@ def value_is_json(value: bytes) -> bool:
     trimmed = value[start:end]
     if not trimmed:
         return False
-    if ((trimmed.startswith(b"{") and trimmed.endswith(b"}"))
-            or (trimmed.startswith(b"[") and trimmed.endswith(b"]"))):
+    if (trimmed.startswith(b"{") and trimmed.endswith(b"}")) or (trimmed.startswith(b"[") and trimmed.endswith(b"]")):
         return True
     if trimmed in (b"true", b"false", b"null"):
         return True
@@ -56,9 +56,7 @@ class Qwen(DelimiterParser):
         end = self.raw.find(b">", start)
         if end < 0:
             return False
-        name = self._decode(
-            self.raw[start:end].strip(_ASCII_SPACE), "Qwen function name"
-        )
+        name = self._decode(self.raw[start:end].strip(_ASCII_SPACE), "Qwen function name")
         if not name:
             if self.state != "ERROR":
                 self._fail("Qwen tool call without function name")
@@ -89,9 +87,7 @@ class Qwen(DelimiterParser):
         end = self.raw.find(b">", start)
         if end < 0:
             return
-        name = self._decode(
-            self.raw[start:end].strip(_ASCII_SPACE), "Qwen parameter name"
-        )
+        name = self._decode(self.raw[start:end].strip(_ASCII_SPACE), "Qwen parameter name")
         if not name:
             if self.state != "ERROR":
                 self._fail("empty <parameter=> name in Qwen tool call")
@@ -105,9 +101,7 @@ class Qwen(DelimiterParser):
     def _parse_parameter_value(self) -> bool:
         end = self.raw.find(_PARAMETER_CLOSE, self._param_scan_pos)
         if end < 0:
-            self._param_scan_pos = max(
-                self._param_value_start, len(self.raw) - len(_PARAMETER_CLOSE) + 1
-            )
+            self._param_scan_pos = max(self._param_value_start, len(self.raw) - len(_PARAMETER_CLOSE) + 1)
             return False
         close_start = end
         start = self._param_value_start
@@ -127,7 +121,7 @@ class Qwen(DelimiterParser):
                     value = _parse_number(number)
                 else:
                     value = json.loads(text, parse_constant=self._reject_json_constant)
-            except (json.JSONDecodeError, ValueError):
+            except json.JSONDecodeError, ValueError:
                 self._fail(f"Qwen parameter {self._param_name!r} contains malformed JSON")
                 return True
         else:

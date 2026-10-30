@@ -1,6 +1,7 @@
 """Immutable tool-parser results and internal argument values."""
+
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 
 @dataclass(frozen=True)
@@ -10,6 +11,7 @@ class ToolCall:
     DSML raw contains only its invoke stanza; GLM/Qwen include tool_call tags.
     Payload spelling is preserved, while args contains unescaped/typed values.
     """
+
     name: str
     args: Mapping[str, object]
     raw: str
@@ -18,6 +20,7 @@ class ToolCall:
 @dataclass(frozen=True)
 class ToolArgument:
     """Internal parsed argument value and its string/JSON classification."""
+
     name: str
     value: object
     is_string: bool
@@ -26,6 +29,7 @@ class ToolArgument:
 @dataclass(frozen=True)
 class Snapshot:
     """Immutable parser snapshot, including the entire canonical block as bytes."""
+
     state: str
     raw: bytes
     calls: tuple[ToolCall, ...]

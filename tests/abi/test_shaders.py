@@ -1,16 +1,14 @@
-from typing import Any
-from pathlib import Path
 import hashlib
 import os
 import shutil
+from pathlib import Path
+from typing import Any, Never
 
 import pytest
 
+from ds4py.abi.shaders import copy_metal_sources as copy_sources
+from ds4py.abi.shaders import metal_source_env as source_env
 from ds4py.errors import AbiMismatch, BuildError
-
-
-from ds4py.abi.shaders import copy_metal_sources as copy_sources, metal_source_env as source_env
-from typing import Never
 
 
 def make_source(root: Any) -> Any:
@@ -63,13 +61,23 @@ def test_bad_bundled_files_require_rebuild(tmp_path: Path, damage: Any) -> None:
         source_env(bundle, hashes)
 
 
-@pytest.mark.parametrize("hashes", [
-    {}, None, [], {"metal/dense.metal": "bad"}, {"metal/dense.metal": None},
-    {"/metal/dense.metal": "0" * 64}, {"../dense.metal": "0" * 64},
-    {"metal/../dense.metal": "0" * 64}, {"metal/nested/dense.metal": "0" * 64},
-    {"metal//dense.metal": "0" * 64}, {"metal/dense.txt": "0" * 64},
-    {1: "0" * 64},
-])
+@pytest.mark.parametrize(
+    "hashes",
+    [
+        {},
+        None,
+        [],
+        {"metal/dense.metal": "bad"},
+        {"metal/dense.metal": None},
+        {"/metal/dense.metal": "0" * 64},
+        {"../dense.metal": "0" * 64},
+        {"metal/../dense.metal": "0" * 64},
+        {"metal/nested/dense.metal": "0" * 64},
+        {"metal//dense.metal": "0" * 64},
+        {"metal/dense.txt": "0" * 64},
+        {1: "0" * 64},
+    ],
+)
 def test_malformed_records_require_rebuild(tmp_path: Path, hashes: Any) -> None:
     with pytest.raises(AbiMismatch, match="ds4py build"):
         source_env(tmp_path, hashes)
@@ -110,8 +118,11 @@ def test_empty_shader_override_is_not_silently_ignored(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("override", [False, True])
-def test_nonregular_shader_files_are_refused_without_reading_them(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: Any) -> None:
+def test_nonregular_shader_files_are_refused_without_reading_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: Any
+) -> None:
     from ds4py.abi import shaders
+
     src = make_source(tmp_path / "source")
     bundle = tmp_path / "bundle"
     hashes = copy_sources(src, bundle)
@@ -119,10 +130,12 @@ def test_nonregular_shader_files_are_refused_without_reading_them(tmp_path: Path
     fifo.unlink(missing_ok=True)
     os.mkfifo(fifo)
     original_hash = shaders.file_sha256
+
     def guarded_hash(path: Any) -> Any:
         if not path.is_file():
             pytest.fail("resolver attempted to read a nonregular file; a FIFO would block")
         return original_hash(path)
+
     monkeypatch.setattr(shaders, "file_sha256", guarded_hash)
     overrides = {"DS4_METAL_DENSE_SOURCE": str(fifo)} if override else None
     with pytest.raises(AbiMismatch, match="regular.*ds4py build"):
@@ -136,8 +149,10 @@ def test_copy_reports_missing_sources(tmp_path: Path) -> None:
 
 def test_copy_reports_io_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     src = make_source(tmp_path / "source")
+
     def fail(*args: Any, **kwargs: Any) -> Never:
         raise OSError("disk full")
+
     monkeypatch.setattr(shutil, "copy2", fail)
     with pytest.raises(BuildError, match="disk full.*ds4py build"):
         copy_sources(src, tmp_path / "bundle")

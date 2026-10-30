@@ -2,12 +2,19 @@
 
 import ctypes
 from ctypes import (
-    CFUNCTYPE, POINTER, c_bool, c_char_p, c_float, c_int,
-    c_uint8, c_uint32, c_uint64, c_void_p,
+    CFUNCTYPE,
+    POINTER,
+    c_bool,
+    c_char_p,
+    c_float,
+    c_int,
+    c_uint8,
+    c_uint32,
+    c_uint64,
+    c_void_p,
 )
 from dataclasses import dataclass
 from typing import Any
-
 
 PROGRESS_FN = CFUNCTYPE(None, c_void_p, c_char_p, c_int, c_int)
 CANCEL_FN = CFUNCTYPE(c_bool, c_void_p)
@@ -153,6 +160,7 @@ STRUCTS: dict[str, type[ctypes.Structure]] = {
     "ds4_tp_options": TpOptions,
     "ds4_engine_options": EngineOptions,
 }
+
 
 @dataclass(frozen=True)
 class StructLayout:

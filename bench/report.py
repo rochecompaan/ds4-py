@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, is_dataclass
 import json
-from pathlib import Path
 from collections.abc import Iterable, Sequence
+from dataclasses import asdict, dataclass, is_dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -15,8 +15,12 @@ if TYPE_CHECKING:
 
 
 METRICS = (
-    "wall_seconds", "progress_events", "tokens", "tool_calls",
-    "avg_prefill_reuse", "non_extend_rounds",
+    "wall_seconds",
+    "progress_events",
+    "tokens",
+    "tool_calls",
+    "avg_prefill_reuse",
+    "non_extend_rounds",
 )
 
 
@@ -38,12 +42,14 @@ class BakeoffReport:
         return all(gate.passed for gate in self.gates.values())
 
     def to_dict(self) -> dict[str, Any]:
-        return _json({
-            "tasks": self.tasks,
-            "restore": self.restore,
-            "gates": self.gates,
-            "replay": self.replay,
-        })
+        return _json(
+            {
+                "tasks": self.tasks,
+                "restore": self.restore,
+                "gates": self.gates,
+                "replay": self.replay,
+            }
+        )
 
     def write_json(self, path: str | Path) -> Path:
         path = Path(path)
@@ -54,8 +60,7 @@ class BakeoffReport:
     def compact_table(self) -> str:
         lines = ["GATES"]
         lines.extend(
-            f"{name}: {'PASS' if gate.passed else 'FAIL'} — {gate.detail}"
-            for name, gate in self.gates.items()
+            f"{name}: {'PASS' if gate.passed else 'FAIL'} — {gate.detail}" for name, gate in self.gates.items()
         )
         lines.append("")
         lines.append("task | metric | C | ds4py | delta")
@@ -66,9 +71,7 @@ class BakeoffReport:
             for metric in METRICS:
                 left, right = getattr(c, metric), getattr(python, metric)
                 delta = right - left if left is not None and right is not None else None
-                lines.append(
-                    f"{task_id} | {metric} | {_number(left)} | {_number(right)} | {_number(delta)}"
-                )
+                lines.append(f"{task_id} | {metric} | {_number(left)} | {_number(right)} | {_number(delta)}")
         return "\n".join(lines) + "\n"
 
 
@@ -87,7 +90,7 @@ def _json(value: Any) -> Any:
     return value
 
 
-def _number(value: int | float | None) -> str:
+def _number(value: float | None) -> str:
     if value is None:
         return "n/a"
     if isinstance(value, float):
@@ -96,7 +99,9 @@ def _number(value: int | float | None) -> str:
 
 
 def _task(
-    tasks: Sequence[TaskRunResult], task_id: str, agent: str,
+    tasks: Sequence[TaskRunResult],
+    task_id: str,
+    agent: str,
 ) -> TaskRunResult:
     return next(item for item in tasks if item.task_id == task_id and item.agent == agent)
 
@@ -118,15 +123,20 @@ def replay_gate(replay_results: Iterable[ReplayResult] | None) -> GateResult:
     values = None if replay_results is None else tuple(replay_results)
     coverage = any(item.tool_call for item in values or ())
     passed = bool(values) and all(item.passed for item in values) and coverage
-    detail = "not run" if values is None else (
-        f"{sum(item.passed for item in values)}/{len(values)} replay checks passed; "
-        f"tool-call round {'present' if coverage else 'missing'}"
+    detail = (
+        "not run"
+        if values is None
+        else (
+            f"{sum(item.passed for item in values)}/{len(values)} replay checks passed; "
+            f"tool-call round {'present' if coverage else 'missing'}"
+        )
     )
     return GateResult(passed, detail)
 
 
 def update_replay_report(
-    path: str | Path, replay_results: Iterable[ReplayResult],
+    path: str | Path,
+    replay_results: Iterable[ReplayResult],
 ) -> GateResult:
     """Replace only replay evidence and gate 6 in an existing six-gate report."""
     path = Path(path)
@@ -144,7 +154,8 @@ def _restore_runs(restore: RestoreSummary) -> dict[Path, RestoreResult]:
 
 
 def build_report(
-    task_results: Iterable[TaskRunResult], restore_results: RestoreSummary,
+    task_results: Iterable[TaskRunResult],
+    restore_results: RestoreSummary,
     replay_results: Iterable[ReplayResult] | None = None,
 ) -> BakeoffReport:
     """Build gates 1–5 and reserve gate 6 for the C replay phase."""
@@ -156,12 +167,15 @@ def build_report(
     python_passes = sum(item.passed for item in python)
     complete_pairs = bool(common) and c_ids == python_ids and len(c) == len(python) == len(common)
     gate1 = complete_pairs and python_passes >= c_passes - 1
-    gates = [_gate(
-        "gate-1", gate1,
-        f"passes C={c_passes}/{len(c)} ds4py={python_passes}/{len(python)}; "
-        f"attempts C={sum(item.attempts for item in c)} "
-        f"ds4py={sum(item.attempts for item in python)}; common tasks={len(common)}",
-    )]
+    gates = [
+        _gate(
+            "gate-1",
+            gate1,
+            f"passes C={c_passes}/{len(c)} ds4py={python_passes}/{len(python)}; "
+            f"attempts C={sum(item.attempts for item in c)} "
+            f"ds4py={sum(item.attempts for item in python)}; common tasks={len(common)}",
+        )
+    ]
 
     tool_failures = []
     for item in python:
@@ -172,18 +186,20 @@ def build_report(
         if accounting is None:
             reasons.append("tool outcome accounting unavailable")
         elif not accounting.complete:
-            reasons.append(
-                f"tool outcomes {accounting.accounted}/{accounting.parsed} accounted"
-            )
+            reasons.append(f"tool outcomes {accounting.accounted}/{accounting.parsed} accounted")
         if item.errors:
             reasons.extend(item.errors)
         if reasons:
             tool_failures.append(f"{item.task_id}: {'; '.join(reasons)}")
-    gates.append(_gate(
-        "gate-2", bool(python) and not tool_failures,
-        "all parsed calls have terminal outcomes; bad-argument retries are allowed"
-        if not tool_failures else " | ".join(tool_failures),
-    ))
+    gates.append(
+        _gate(
+            "gate-2",
+            bool(python) and not tool_failures,
+            "all parsed calls have terminal outcomes; bad-argument retries are allowed"
+            if not tool_failures
+            else " | ".join(tool_failures),
+        )
+    )
 
     timing_failures = []
     for task_id in common:
@@ -192,37 +208,46 @@ def build_report(
             timing_failures.append(f"{task_id}: incomplete timing/reuse evidence")
         elif right.wall_seconds > 1.5 * left.wall_seconds:
             timing_failures.append(
-                f"{task_id}: ds4py {right.wall_seconds:.3f}s exceeds "
-                f"1.5x C {left.wall_seconds:.3f}s"
+                f"{task_id}: ds4py {right.wall_seconds:.3f}s exceeds 1.5x C {left.wall_seconds:.3f}s"
             )
         if right.invalid_non_extend_rounds:
-            timing_failures.append(
-                f"{task_id}: {right.invalid_non_extend_rounds} unexplained non-extension rounds"
-            )
-    gates.append(_gate(
-        "gate-3", complete_pairs and not timing_failures,
-        "per-task time is within 1.5x and later syncs extend KV or name an exception"
-        if not timing_failures else " | ".join(timing_failures),
-    ))
+            timing_failures.append(f"{task_id}: {right.invalid_non_extend_rounds} unexplained non-extension rounds")
+    gates.append(
+        _gate(
+            "gate-3",
+            complete_pairs and not timing_failures,
+            "per-task time is within 1.5x and later syncs extend KV or name an exception"
+            if not timing_failures
+            else " | ".join(timing_failures),
+        )
+    )
 
     interruption = restore_results.interruption
-    gates.append(_gate(
-        "gate-4", interruption.passed,
-        f"interruption: {interruption.detail}",
-    ))
+    gates.append(
+        _gate(
+            "gate-4",
+            interruption.passed,
+            f"interruption: {interruption.detail}",
+        )
+    )
 
     expected = [save for item in python for save in item.attempt_save_dirs]
     restored = _restore_runs(restore_results)
     missing = [str(save) for save in expected if save not in restored or not restored[save].passed]
     missing.extend(
         f"{item.task_id}: attempt without save ({len(item.attempt_save_dirs)}/{item.attempts})"
-        for item in python if len(item.attempt_save_dirs) != item.attempts
+        for item in python
+        if len(item.attempt_save_dirs) != item.attempts
     )
-    gates.append(_gate(
-        "gate-5", bool(python) and bool(expected) and not missing,
-        f"case-1/case-2 restore passed for all {len(expected)} attempts"
-        if not missing else "missing or failed restore evidence: " + ", ".join(missing),
-    ))
+    gates.append(
+        _gate(
+            "gate-5",
+            bool(python) and bool(expected) and not missing,
+            f"case-1/case-2 restore passed for all {len(expected)} attempts"
+            if not missing
+            else "missing or failed restore evidence: " + ", ".join(missing),
+        )
+    )
 
     replay_values = None if replay_results is None else tuple(replay_results)
     gates.append(("gate-6", replay_gate(replay_values)))

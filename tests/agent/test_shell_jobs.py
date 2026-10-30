@@ -1,14 +1,15 @@
-from typing import Any, cast
-from pathlib import Path
 import asyncio
 import time
+from pathlib import Path
+from typing import Any, cast
 
-from ds4py.capabilities.shell_jobs import DS4ShellJobs
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai_harness import Shell
+
+from ds4py.capabilities.shell_jobs import DS4ShellJobs
 
 
 class MockSession:
@@ -28,10 +29,7 @@ class MockSession:
 
 
 def _has_tool_return(messages: Any) -> bool:
-    return any(
-        isinstance(p, ToolReturnPart)
-        for m in messages for p in getattr(m, "parts", [])
-    )
+    return any(isinstance(p, ToolReturnPart) for m in messages for p in getattr(m, "parts", []))
 
 
 def test_start_command_tracked_and_stopped(tmp_path: Path) -> None:
@@ -41,9 +39,11 @@ def test_start_command_tracked_and_stopped(tmp_path: Path) -> None:
     def scripted(messages: Any, info: Any) -> ModelResponse:
         if _has_tool_return(messages):
             return ModelResponse(parts=[TextPart("done")])
-        return ModelResponse(parts=[
-            ToolCallPart("start_command", {"command": "sleep 60"}, tool_call_id="call-1"),
-        ])
+        return ModelResponse(
+            parts=[
+                ToolCallPart("start_command", {"command": "sleep 60"}, tool_call_id="call-1"),
+            ]
+        )
 
     agent = Agent(
         FunctionModel(scripted),
@@ -74,13 +74,17 @@ def test_cross_prompt_job_visible(tmp_path: Path) -> None:
             return ModelResponse(parts=[TextPart("done")])
         if run_count[0] == 0:
             run_count[0] += 1
-            return ModelResponse(parts=[
-                ToolCallPart("start_command", {"command": "sleep 60"}, tool_call_id="call-1"),
-            ])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart("start_command", {"command": "sleep 60"}, tool_call_id="call-1"),
+                ]
+            )
         job_id = next(iter(session.states["shell_jobs"].job_ids))
-        return ModelResponse(parts=[
-            ToolCallPart("check_command", {"command_id": job_id}, tool_call_id="call-2"),
-        ])
+        return ModelResponse(
+            parts=[
+                ToolCallPart("check_command", {"command_id": job_id}, tool_call_id="call-2"),
+            ]
+        )
 
     agent = Agent(
         FunctionModel(scripted),
@@ -102,13 +106,15 @@ def test_close_kills_a_term_ignoring_process_group(tmp_path: Path) -> None:
     def scripted(messages: Any, info: Any) -> ModelResponse:
         if _has_tool_return(messages):
             return ModelResponse(parts=[TextPart("done")])
-        return ModelResponse(parts=[
-            ToolCallPart(
-                "start_command",
-                {"command": "trap '' TERM; : > ready; while :; do sleep 1; done"},
-                tool_call_id="call-1",
-            ),
-        ])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "start_command",
+                    {"command": "trap '' TERM; : > ready; while :; do sleep 1; done"},
+                    tool_call_id="call-1",
+                ),
+            ]
+        )
 
     agent = Agent(
         FunctionModel(scripted),
@@ -175,9 +181,11 @@ def test_switch_and_exit_stop_a_term_ignoring_job(tmp_path: Path) -> None:
     def scripted(messages: Any, info: Any) -> ModelResponse:
         if _has_tool_return(messages):
             return ModelResponse(parts=[TextPart("done")])
-        return ModelResponse(parts=[
-            ToolCallPart("start_command", {"command": command}, tool_call_id="call-1"),
-        ])
+        return ModelResponse(
+            parts=[
+                ToolCallPart("start_command", {"command": command}, tool_call_id="call-1"),
+            ]
+        )
 
     def start() -> Any:
         agent = Agent(
@@ -186,7 +194,7 @@ def test_switch_and_exit_stop_a_term_ignoring_job(tmp_path: Path) -> None:
         )
         asyncio.run(agent.run("start"))
         assert _wait_ready(tmp_path)
-        state = cast(Any, session.state("shell_jobs", lambda: None))
+        state = cast("Any", session.state("shell_jobs", lambda: None))
         job_id = next(iter(state.job_ids))
         handle = tmp_path / ".pydantic-ai-harness" / "shell" / job_id / "handle"
         pid_text, group_text = handle.read_text().split()
@@ -222,7 +230,7 @@ def test_switch_and_exit_stop_a_term_ignoring_job(tmp_path: Path) -> None:
         engine.close()
 
 
-def _wait_ready(workspace: Any, timeout: Any=5.0) -> bool:
+def _wait_ready(workspace: Any, timeout: Any = 5.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if (workspace / "ready").exists():
@@ -246,9 +254,11 @@ def test_close_kills_background_child_after_wrapper_publishes_exit(tmp_path: Pat
     def scripted(messages: Any, info: Any) -> ModelResponse:
         if _has_tool_return(messages):
             return ModelResponse(parts=[TextPart("done")])
-        return ModelResponse(parts=[
-            ToolCallPart("start_command", {"command": command}, tool_call_id="call-1"),
-        ])
+        return ModelResponse(
+            parts=[
+                ToolCallPart("start_command", {"command": command}, tool_call_id="call-1"),
+            ]
+        )
 
     agent = Agent(
         FunctionModel(scripted),

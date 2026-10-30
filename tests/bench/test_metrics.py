@@ -1,8 +1,8 @@
 """Synthetic event and trace metrics for bakeoff gates."""
-from typing import Any, cast
 
-from pathlib import Path
 import sys
+from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -12,11 +12,11 @@ from bench.metrics import MetricError, metrics_from_trace, summarize_events
 from ds4py.engine.replay_types import ReplayRound, ReplayTrace
 
 
-def event(kind: Any, payload: Any=None, run_id: Any="run-1") -> dict[str, Any]:
+def event(kind: Any, payload: Any = None, run_id: Any = "run-1") -> dict[str, Any]:
     return {"kind": kind, "run_id": run_id, "payload": payload or {}}
 
 
-def synced(kind: Any="extend", reused: Any=80, to_prefill: Any=20, reason: Any=None) -> Any:
+def synced(kind: Any = "extend", reused: Any = 80, to_prefill: Any = 20, reason: Any = None) -> Any:
     plan = {"kind": kind, "reused": reused, "to_prefill": to_prefill}
     payload = {"event": {"pos": reused + to_prefill, "plan": plan, "prefilled": to_prefill}}
     if reason is not None:
@@ -24,10 +24,13 @@ def synced(kind: Any="extend", reused: Any=80, to_prefill: Any=20, reason: Any=N
     return event("Synced", payload)
 
 
-def result_part(part_kind: Any="tool-return", outcome: Any="success") -> dict[str, Any]:
-    return event("ToolResultEvent", {
-        "part": {"part_kind": part_kind, "outcome": outcome, "tool_call_id": "call-1"},
-    })
+def result_part(part_kind: Any = "tool-return", outcome: Any = "success") -> dict[str, Any]:
+    return event(
+        "ToolResultEvent",
+        {
+            "part": {"part_kind": part_kind, "outcome": outcome, "tool_call_id": "call-1"},
+        },
+    )
 
 
 def valid_events() -> list[dict[str, Any]]:
@@ -36,10 +39,17 @@ def valid_events() -> list[dict[str, Any]]:
         synced("rebuild", 0, 100),
         event("Prefill", {"event": {"done": 100, "total": 100}}),
         event("Token", {"event": {"id": 11, "text_bytes": "31"}}),
-        event("ToolCalls", {"event": {"calls": [
-            {"name": "read", "args": {"path": "a"}, "raw": "raw-a"},
-            {"name": "write", "args": {"path": "b"}, "raw": "raw-b"},
-        ]}}),
+        event(
+            "ToolCalls",
+            {
+                "event": {
+                    "calls": [
+                        {"name": "read", "args": {"path": "a"}, "raw": "raw-a"},
+                        {"name": "write", "args": {"path": "b"}, "raw": "raw-b"},
+                    ]
+                }
+            },
+        ),
         result_part(),
         result_part("retry-prompt", None),
         synced(),
@@ -61,10 +71,10 @@ def test_event_metrics_cover_six_comparison_values_and_tool_accounting() -> None
     assert summary.non_extend_rounds == 0
     assert summary.invalid_non_extend_rounds == 0
     assert summary.parser_errors == 0
-    assert cast(Any, summary.tool_accounting).parsed == 2
-    assert cast(Any, summary.tool_accounting).executed == 1
-    assert cast(Any, summary.tool_accounting).retried == 1
-    assert cast(Any, summary.tool_accounting).complete
+    assert cast("Any", summary.tool_accounting).parsed == 2
+    assert cast("Any", summary.tool_accounting).executed == 1
+    assert cast("Any", summary.tool_accounting).retried == 1
+    assert cast("Any", summary.tool_accounting).complete
 
 
 def test_non_extension_rounds_require_recorded_compaction_or_strategy_reason() -> None:
@@ -97,8 +107,8 @@ def test_parser_error_and_bad_argument_retry_have_distinct_gate_semantics() -> N
     summary = summarize_events(events, wall_seconds=1)
 
     assert summary.parser_errors == 1
-    assert cast(Any, summary.tool_accounting).retried == 1
-    assert cast(Any, summary.tool_accounting).complete
+    assert cast("Any", summary.tool_accounting).retried == 1
+    assert cast("Any", summary.tool_accounting).complete
 
 
 def test_missing_tool_outcome_is_evidence_failure_not_a_valid_zero() -> None:
@@ -106,8 +116,8 @@ def test_missing_tool_outcome_is_evidence_failure_not_a_valid_zero() -> None:
     summary = summarize_events(events, wall_seconds=1)
 
     assert summary.tool_calls == 2
-    assert not cast(Any, summary.tool_accounting).complete
-    assert cast(Any, summary.tool_accounting).accounted == 0
+    assert not cast("Any", summary.tool_accounting).complete
+    assert cast("Any", summary.tool_accounting).accounted == 0
 
 
 @pytest.mark.parametrize("mutation", ["missing_end", "negative_reuse", "bad_token"])
@@ -125,14 +135,21 @@ def test_malformed_or_incomplete_events_raise(mutation: Any) -> None:
 
 
 def test_trace_metrics_use_committed_samples_and_prefix_extension() -> None:
-    trace = ReplayTrace(None, None, (
-        ReplayRound(0, tuple(range(10)), (10, 11), 0, 0, False),
-        ReplayRound(1, tuple(range(15)), (15, 16, 17), 0, 12, False),
-        ReplayRound(2, tuple(range(20)), (20,), 0, 5, False),
-    ))
+    trace = ReplayTrace(
+        None,
+        None,
+        (
+            ReplayRound(0, tuple(range(10)), (10, 11), 0, 0, False),
+            ReplayRound(1, tuple(range(15)), (15, 16, 17), 0, 12, False),
+            ReplayRound(2, tuple(range(20)), (20,), 0, 5, False),
+        ),
+    )
 
     summary = metrics_from_trace(
-        trace, wall_seconds=3, progress_events=7, tool_calls=4,
+        trace,
+        wall_seconds=3,
+        progress_events=7,
+        tool_calls=4,
     )
 
     assert summary.wall_seconds == 3
@@ -146,8 +163,6 @@ def test_trace_metrics_use_committed_samples_and_prefix_extension() -> None:
 
 
 def test_trace_reuse_rejects_inconsistent_cached_prefix() -> None:
-    trace = ReplayTrace(None, None, (
-        ReplayRound(0, (1, 2), (3,), 0, 3, False),
-    ))
+    trace = ReplayTrace(None, None, (ReplayRound(0, (1, 2), (3,), 0, 3, False),))
     with pytest.raises(MetricError):
         metrics_from_trace(trace, wall_seconds=1, progress_events=1, tool_calls=0)

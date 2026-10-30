@@ -1,4 +1,5 @@
 """Default ds4-py agent composition."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
