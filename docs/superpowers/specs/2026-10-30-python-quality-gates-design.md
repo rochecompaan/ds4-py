@@ -86,7 +86,7 @@ Enable both annotation and import-level controls:
 
 - `ANN401` rejects `Any` in function arguments and return annotations.
 - `TID251` with `typing.Any` in `banned-api` prevents bypassing the policy through variable annotations, aliases, and nested annotations.
-- `TID251` also bans `typing.TypeGuard` and `typing_extensions.TypeGuard`; use `TypeIs` for type-narrowing validators without compatibility aliases.
+- A dedicated prek `pygrep` hook bans `TypeGuard` in every Python file, independently of path-scoped `TID251` exceptions for `Any`; use `TypeIs` for type-narrowing validators without compatibility aliases.
 
 Default-deny `Any` in production code. Start the exception review with `src/ds4py/_native/**` and direct native interfaces such as `raw.py`, but do not automatically exempt every module that currently imports `Any`. JSON, event, and external API boundaries receive exceptions only when a precise static contract is not practical. Tests and benchmark code may use broader, explicitly scoped exceptions for test doubles and dynamic fixtures.
 
@@ -136,6 +136,7 @@ Hooks will cover:
 
 - Ruff lint with safe fixes and Ruff formatting through project-local uv commands.
 - Whole-project ty checking through the locked project environment; do not pass only changed filenames to ty.
+- A dedicated `pygrep` hook that rejects `TypeGuard` in every Python file, including files with dynamic-boundary exceptions.
 - `pyproject-fmt` with full dependency versions preserved and automatic Python classifier generation disabled.
 - `yamllint` with line length 120, optional document start, and truthy key checking disabled for GitHub's `on:` key while retaining value checks.
 - JSON syntax and stable pretty formatting without sorting keys or escaping Unicode unnecessarily.
