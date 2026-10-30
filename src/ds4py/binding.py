@@ -176,7 +176,7 @@ def _ensure_key(message: ModelMessage) -> str:
 
 def _arguments(args: str | Mapping[str, JsonValue] | None) -> dict[str, JsonValue]:
     value: object = json.loads(args) if isinstance(args, str) else args
-    if not value:
+    if value is None:
         return {}
     if not is_string_key_mapping(value):
         raise ValueError("tool call arguments must be a mapping")

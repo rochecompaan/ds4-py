@@ -39,6 +39,28 @@ def test_is_json_value_rejects_one_invalid_deeply_nested_value() -> None:
     assert not is_json_value({"outer": [{"inner": [1, {"invalid": object()}]}]})
 
 
+def test_is_json_value_rejects_self_referential_containers() -> None:
+    list_value = []
+    list_value.append(list_value)
+    assert not is_json_value(list_value)
+
+    dict_value = {}
+    dict_value["self"] = dict_value
+    assert not is_json_value(dict_value)
+
+
+def test_is_json_value_rejects_indirect_cycles() -> None:
+    left = {}
+    right = {"left": left}
+    left["right"] = right
+    assert not is_json_value(left)
+
+
+def test_is_json_value_allows_shared_acyclic_subcontainers() -> None:
+    shared = {"value": 1}
+    assert is_json_value({"left": shared, "right": shared})
+
+
 def _accept_json(value: JsonValue) -> JsonValue:
     return value
 
