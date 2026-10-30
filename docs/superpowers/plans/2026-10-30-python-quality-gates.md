@@ -186,19 +186,19 @@ Run Ruff and ty on `src/ds4py/engine`, then `pytest tests/engine -m "not live an
 - Consumes: `JsonValue`, `JsonObject`, `is_json_value`, and `is_json_object` from Task 2.
 - Produces: zero Ruff/ty diagnostics for the agent-facing production modules; typed persisted payloads and capability boundaries; modern model/system-notes sentinels.
 
-- [ ] **Step 1: Replace dynamic payload annotations with precise contracts**
+- [x] **Step 1: Replace dynamic payload annotations with precise contracts**
 
 Use Task 2's JSON aliases for tool arguments, persisted data, and JSON parsing. Introduce closed `TypedDict` contracts for stable record shapes, using `Required`/`NotRequired`/`ReadOnly` where appropriate. Use `object` for arbitrary values that are narrowed, and generics where result types must be preserved.
 
-- [ ] **Step 2: Modernize model and system-notes sentinels**
+- [x] **Step 2: Modernize model and system-notes sentinels**
 
 Review `_UNSET`, `_UNKNOWN`, and model `_END` for public repr/copy/pickle implications before replacing them with lowercase `sentinel`. Add focused tests for any relied-upon behavior not already covered; otherwise keep the change type-only and covered by existing tests.
 
-- [ ] **Step 3: Correct overrides, callbacks, async contexts, and restore boundaries**
+- [x] **Step 3: Correct overrides, callbacks, async contexts, and restore boundaries**
 
 Add `@override`, precise `RunContext`/result types, `Generator`/`AsyncGenerator` annotations, and narrowing for restore results and stream events. Resolve disjoint casts and redundant conditions without hiding real state or history bugs.
 
-- [ ] **Step 4: Run the agent regression gate**
+- [x] **Step 4: Run the agent regression gate**
 
 Run Ruff and ty over all files owned by this task, then `pytest tests/agent -m "not live and not build" -q` inside devenv with the isolated `HOME`. Expected: zero static diagnostics and all agent tests pass. Commit `refactor: strengthen agent and persistence types`.
 
