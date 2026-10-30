@@ -1,4 +1,4 @@
-exclude: ^(docs/patches/|uv\.lock$|devenv\.lock$)
+exclude: ^(docs/patches/|bench/patches/|uv\.lock$|devenv\.lock$)
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
