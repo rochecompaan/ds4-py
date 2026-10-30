@@ -1,19 +1,23 @@
 """Token acceptance and commit policy separated from native decode steps."""
 
-from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
-from ds4py._native.protocol import EngineHandle, SessionHandle
 from ds4py.errors import EngineError
 
 from .events import Event, Token
 from .logits import LogitsView
 from .pause import ControlSpan
-from .sampling import Rng, SamplingPolicy
-from .stream import RoundStream
-from .transcript import Transcript
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from ds4py._native.protocol import EngineHandle, SessionHandle
+
+    from .sampling import Rng, SamplingPolicy
+    from .stream import RoundStream
+    from .transcript import Transcript
 
 
 class Verdict(Enum):
@@ -42,7 +46,7 @@ class GenerateJob:
 
 
 class DecodeContext:
-    def __init__(
+    def __init__(  # noqa: PLR0913 - Decode context mirrors the native round dependencies.
         self,
         engine: EngineHandle,
         job: GenerateJob,
@@ -86,7 +90,8 @@ class DecodeContext:
 
     def before_sample(self) -> None:
         if self._logits_view is not None:
-            assert self._session is not None
+            if self._session is None:
+                raise AssertionError("logits hooks require a native session")
             stream = self._job.stream
             self._logits_view._update(
                 position=self._session.pos(),
@@ -222,7 +227,7 @@ class PlainStep:
                 return
 
 
-def generate(
+def generate(  # noqa: PLR0913 - Generation accepts the complete native round context.
     engine: EngineHandle,
     session: SessionHandle,
     job: GenerateJob,
@@ -258,5 +263,6 @@ def generate(
             else:
                 raise EngineError("decode returned no tokens")
     ctx.finalize()
-    assert ctx.reason is not None
+    if ctx.reason is None:
+        raise AssertionError("finalized decode requires a stop reason")
     return ctx.reason

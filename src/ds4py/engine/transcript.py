@@ -1,7 +1,10 @@
 """Thread-safe token history with segment boundaries."""
 
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 from threading import Lock
 from types import MappingProxyType
 
@@ -68,7 +71,7 @@ class Transcript:
         with self._lock:
             return len(self._tokens)
 
-    def append(self, tokens: Sequence[int], kind: str, meta: Mapping | None = None) -> Segment:
+    def append(self, tokens: Sequence[int], kind: str, meta: Mapping[str, object] | None = None) -> Segment:
         with self._lock:
             if kind not in KINDS:
                 raise ValueError(f"unknown segment kind: {kind}")
@@ -91,7 +94,7 @@ class Transcript:
             self._tokens.extend(added)
             self._segments[-1] = replace(self._segments[-1], end=len(self._tokens))
 
-    def annotate(self, start: int, *, kinds: tuple[str, ...], meta: Mapping) -> None:
+    def annotate(self, start: int, *, kinds: tuple[str, ...], meta: Mapping[str, object]) -> None:
         """Merge provenance into existing ranges without changing token history."""
         with self._lock:
             self._segments = [

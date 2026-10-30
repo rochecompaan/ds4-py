@@ -1,10 +1,17 @@
 """Per-assistant-round parser, control matching, and display stream state."""
 
-from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING
 
-from ds4py._native.protocol import EngineInfo
+from ds4py._native.protocol import THINK_LEVEL_BASE
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
+    from ds4py._native.protocol import EngineInfo
 
 from .decoder import Decoder
+
+_MAX_CUSTOM_THINK_LEVEL = THINK_LEVEL_BASE + 100
 from .events import Event, TextDelta, Thinking, ToolCalls, ToolSyntax
 from .pause import ControlSpan
 from .tool_syntax import make_parser
@@ -18,7 +25,7 @@ class RoundStream:
         *,
         control: ControlSpan | None = None,
     ) -> None:
-        thinking = int(think_mode) in (1, 2, 3, 4) or 1001 <= int(think_mode) <= 1100
+        thinking = int(think_mode) in (1, 2, 3, 4) or THINK_LEVEL_BASE < int(think_mode) <= _MAX_CUSTOM_THINK_LEVEL
         self.parser = make_parser(info)
         self.parser.in_think = thinking
         self.decoder = Decoder(thinking=thinking)

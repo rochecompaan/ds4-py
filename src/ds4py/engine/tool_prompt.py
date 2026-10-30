@@ -1,8 +1,11 @@
 """Generate model-family-native prompts from caller-owned tool definitions."""
 
 import json
-from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
 
 
 @dataclass(frozen=True)

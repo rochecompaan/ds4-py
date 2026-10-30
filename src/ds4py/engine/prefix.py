@@ -17,6 +17,11 @@ class PrefixError(ValueError):
     """Invalid prefix-file syntax, encoding, or file access."""
 
 
+_ASSISTANT_MARKER_LENGTH = 10
+_LF = 10
+_CR = 13
+
+
 def _marker_at(
     data: bytes,
     position: int,
@@ -24,11 +29,13 @@ def _marker_at(
     if data.startswith(b"USER:", position):
         return "user", 5
     if data.startswith(b"ASSISTANT:", position):
-        return "assistant", 10
+        return "assistant", _ASSISTANT_MARKER_LENGTH
     return None
 
 
-def _decode_content(data: bytes, start: int, end: int, role: str, line: int, turn_start: int) -> str:
+def _decode_content(  # noqa: PLR0913, PLR0917 - Decoding reports the full source location.
+    data: bytes, start: int, end: int, role: str, line: int, turn_start: int
+) -> str:
     try:
         return data[start:end].decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -36,7 +43,9 @@ def _decode_content(data: bytes, start: int, end: int, role: str, line: int, tur
         raise PrefixError(f"line {invalid_line}: invalid UTF-8 in {role.upper()} turn") from exc
 
 
-def parse_prefix(data: bytes) -> tuple[PrefixTurn, ...]:
+def parse_prefix(  # noqa: PLR0912 - Prefix parsing validates each document boundary.
+    data: bytes,
+) -> tuple[PrefixTurn, ...]:
     """Parse UTF-8 USER:/ASSISTANT: pairs; require a final assistant turn."""
     if not data:
         raise PrefixError("prefix file is empty")
@@ -64,7 +73,7 @@ def parse_prefix(data: bytes) -> tuple[PrefixTurn, ...]:
         next_line = line
         scan_line = line
         for index in range(content_start, len(data)):
-            if data[index] != 10:
+            if data[index] != _LF:
                 continue
             scan_line += 1
             if index + 1 < len(data) and _marker_at(data, index + 1) is not None:
@@ -73,9 +82,9 @@ def parse_prefix(data: bytes) -> tuple[PrefixTurn, ...]:
                 break
 
         content_end = next_position
-        if content_end > content_start and data[content_end - 1] == 10:
+        if content_end > content_start and data[content_end - 1] == _LF:
             content_end -= 1
-            if content_end > content_start and data[content_end - 1] == 13:
+            if content_end > content_start and data[content_end - 1] == _CR:
                 content_end -= 1
         if content_end == content_start:
             raise PrefixError(f"line {line} has an empty {role.upper()} turn")
