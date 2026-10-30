@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
-
-from pydantic_ai_harness.step_persistence import ContinuableSnapshot
 
 from ds4py.errors import EngineError, StoreError
 from ds4py.store import KV_HEADER, SaveRecord, SessionStore, token_digest
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
+    from pydantic_ai_harness.step_persistence import ContinuableSnapshot
+
     from ds4py.binding import MessageBinder
     from ds4py.capabilities.system_notes import DS4SystemNotes
     from ds4py.engine.session import Session
@@ -68,7 +69,7 @@ def validate_restore_snapshot(
         raise StoreError(f"{session_dir / 'save.json'}: cannot restore: {error}") from error
 
 
-def restore_snapshot(
+def restore_snapshot(  # noqa: PLR0913 - Restoration needs the complete saved execution context.
     *,
     session: Session,
     binder: MessageBinder,

@@ -1,19 +1,24 @@
 """Append harness and engine events to a JSONL telemetry file."""
 
 import json
-from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import fields, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, cast, override
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandStartedEvent
 
-from ds4py.engine.lifecycle import SessionEvent
-from ds4py.engine.session import Session
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
-JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
+    from pydantic_ai.messages import AgentStreamEvent
+    from pydantic_ai.tools import RunContext
+
+    from ds4py._json import JsonValue
+    from ds4py.engine.lifecycle import SessionEvent
+    from ds4py.engine.session import Session
 
 
 def _json_safe(value: object) -> JsonValue:
@@ -64,7 +69,8 @@ class DS4RunRecord(AbstractCapability):
         """Point later lines at another session directory."""
         self.path = Path(path)
 
-    async def for_run(self, ctx: Any) -> DS4RunRecord:
+    @override
+    async def for_run(self, ctx: RunContext[object]) -> DS4RunRecord:
         if not self._subscribed and hasattr(self.session, "on_event"):
             self.session.on_event(self._on_engine_event)
             self._subscribed = True
@@ -100,12 +106,9 @@ class DS4RunRecord(AbstractCapability):
         try:
             self._write(line)
         except OSError:
-            try:
-                with self.path.open("r+b") as handle:
-                    handle.truncate(offset)
-            except OSError:
+            with suppress(OSError), self.path.open("r+b") as handle:
                 # Rollback must not replace the original terminal write error.
-                pass
+                handle.truncate(offset)
             raise
         written_payload = cast("dict[str, JsonValue]", line["payload"])
         self._written_run_end = (line["run_id"], written_payload.get("status"))
@@ -119,13 +122,12 @@ class DS4RunRecord(AbstractCapability):
         if kind == "run_end" and terminal == self._written_run_end:
             self._written_run_end = None
             return
-        try:
-            self._write(self._line(kind, payload))
-        except OSError:
+        with suppress(OSError):
             # Telemetry must never break the engine that is publishing.
-            pass
+            self._write(self._line(kind, payload))
 
-    async def on_event(self, ctx: Any, *, event: object) -> None:
+    @override
+    async def on_event(self, ctx: RunContext[object], *, event: AgentStreamEvent) -> None:
         line = self._line(type(event).__name__, _event_payload(event))
         line["conversation_id"] = getattr(ctx, "conversation_id", None)
         run_id = getattr(ctx, "run_id", None)

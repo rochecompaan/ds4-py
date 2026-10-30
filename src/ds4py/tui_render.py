@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 from prompt_toolkit.formatted_text import FormattedText, StyleAndTextTuples
-from prompt_toolkit.output import Output
 from prompt_toolkit.shortcuts import print_formatted_text
 from prompt_toolkit.utils import get_cwidth
 from pydantic_ai.messages import (
@@ -19,9 +19,13 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
 )
 
-from ds4py.engine.events import TextDelta
-from ds4py.engine.lifecycle import SessionEvent
-from ds4py.runtime import AgentRuntime
+from ds4py.engine.events import Prefill, Synced, TextDelta
+
+if TYPE_CHECKING:
+    from prompt_toolkit.output import Output
+
+    from ds4py.engine.lifecycle import SessionEvent
+    from ds4py.runtime import AgentRuntime
 
 _INLINE = re.compile(r"(\*\*[^*\n]+\*\*|(?<!\*)\*[^*\n]+\*(?!\*)|`[^`\n]+`)")
 _HEADING = re.compile(r"^#{1,6}\s+(.*)$")
@@ -100,7 +104,9 @@ class StreamRenderer:
             )
         return fragments
 
-    def _fragments(self, event: object) -> StyleAndTextTuples:
+    def _fragments(  # noqa: PLR0911 - Each harness event type has its own renderer.
+        self, event: object
+    ) -> StyleAndTextTuples:
         if isinstance(event, TextDelta):
             if event.thinking:
                 return [("dim italic class:thinking", event.text)]
@@ -151,25 +157,35 @@ class FooterModel:
             self.prefill = None
         elif event.kind == "Prefill":
             inner = event.payload["event"]
+            if not isinstance(inner, Prefill):
+                raise TypeError("Prefill event payload has the wrong type")
             self.prefill = (inner.done, inner.total, inner.tps)
         elif event.kind == "Synced":
             inner = event.payload["event"]
+            if not isinstance(inner, Synced):
+                raise TypeError("Synced event payload has the wrong type")
             self.plan = inner.plan.kind
             self.ctx_used = inner.pos
         elif event.kind in {"service_started", "service_status", "service_stopped"}:
-            self.service_pid = event.payload.get("pid", self.service_pid)
-            self.service_status = event.payload.get("status")
+            pid = event.payload.get("pid", self.service_pid)
+            if pid is not None and not isinstance(pid, int):
+                raise TypeError("service pid must be an integer or None")
+            status = event.payload.get("status")
+            if status is not None and not isinstance(status, str):
+                raise TypeError("service status must be a string or None")
+            self.service_pid = pid
+            self.service_status = status
         elif event.kind == "status":
             key = str(event.payload["key"])
             value = event.payload.get("text")
-            if value:
+            if bool(value):
                 self.custom[key] = str(value)
             else:
                 self.custom.pop(key, None)
 
     def _parts(self) -> list[str]:
         parts = [self.status]
-        if self.plan:
+        if bool(self.plan):
             parts.append(self.plan)
         parts.append(f"ctx {self.ctx_used}/{self.ctx_total}")
         if self.prefill is not None:
