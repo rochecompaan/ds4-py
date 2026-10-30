@@ -56,9 +56,7 @@ class AgentConfig:
     def __post_init__(self) -> None:
         if self.agent not in {"c", "ds4py"}:
             raise ValueError("agent must be 'c' or 'ds4py'")
-        object.__setattr__(
-            self, "executable", tuple(str(item) for item in self.executable)
-        )
+        object.__setattr__(self, "executable", tuple(str(item) for item in self.executable))
 
 
 _SUMMARY_FIELDS = frozenset(EventSummary.__dataclass_fields__)
@@ -84,10 +82,7 @@ class TaskRunResult:
             value = getattr(self.summary, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"{name} must be nonnegative")
-        if (
-            not math.isfinite(self.summary.wall_seconds)
-            or self.summary.wall_seconds < 0
-        ):
+        if not math.isfinite(self.summary.wall_seconds) or self.summary.wall_seconds < 0:
             raise ValueError("wall_seconds must be finite and nonnegative")
         reuse = self.summary.avg_prefill_reuse
         if reuse is not None and not 0 <= reuse <= 1:
@@ -108,9 +103,7 @@ class TaskRunResult:
 
 
 def _option_number(value: int | float) -> str:
-    return (
-        str(int(value)) if isinstance(value, int) or value.is_integer() else str(value)
-    )
+    return str(int(value)) if isinstance(value, int) or value.is_integer() else str(value)
 
 
 def build_agent_command(
@@ -159,9 +152,7 @@ def drive_pty(
         try:
             if cwd is not None:
                 os.chdir(cwd)
-            os.execvpe(
-                command[0], list(command), os.environ.copy() if env is None else env
-            )
+            os.execvpe(command[0], list(command), os.environ.copy() if env is None else env)
         except BaseException as error:
             print(f"PTY exec failed: {error}", file=sys.stderr)
             os._exit(127)
@@ -246,9 +237,7 @@ def load_events(path: str | Path) -> list[dict[str, Any]]:
         try:
             record = json.loads(line)
         except json.JSONDecodeError as error:
-            raise MetricError(
-                f"{path}:{line_number}: invalid JSON: {error.msg}"
-            ) from error
+            raise MetricError(f"{path}:{line_number}: invalid JSON: {error.msg}") from error
         if not isinstance(record, dict):
             raise MetricError(f"{path}:{line_number}: event must be an object")
         records.append(record)
@@ -267,10 +256,7 @@ def _trace_tokens(path: str | Path) -> tuple[ReplayTrace, int]:
 
 
 def _c_tool_calls(log_text: str) -> int:
-    return sum(
-        bool(re.search(r"\btool[_ -]call(?:ed|s)?\b", line, re.IGNORECASE))
-        for line in log_text.splitlines()
-    )
+    return sum(bool(re.search(r"\btool[_ -]call(?:ed|s)?\b", line, re.IGNORECASE)) for line in log_text.splitlines())
 
 
 def _attempt_summary(
@@ -286,9 +272,7 @@ def _attempt_summary(
             summary = replace(summary, tool_accounting=None)
         _trace, tokens = _trace_tokens(trace_path)
         if tokens != summary.tokens:
-            raise MetricError(
-                f"trace has {tokens} committed tokens but events have {summary.tokens}"
-            )
+            raise MetricError(f"trace has {tokens} committed tokens but events have {summary.tokens}")
         return summary
     if config.agent == "ds4py":
         raise MetricError(f"ds4py attempt has no event stream: {events_path}")
@@ -303,15 +287,9 @@ def _attempt_summary(
 
 def _save_dir(home: Path) -> Path:
     sessions = home / "sessions"
-    saves = (
-        sorted(path.parent for path in sessions.glob("*/save.json"))
-        if sessions.is_dir()
-        else []
-    )
+    saves = sorted(path.parent for path in sessions.glob("*/save.json")) if sessions.is_dir() else []
     if len(saves) != 1:
-        raise MetricError(
-            f"expected one saved session under {sessions}, found {len(saves)}"
-        )
+        raise MetricError(f"expected one saved session under {sessions}, found {len(saves)}")
     return saves[0]
 
 
@@ -333,20 +311,15 @@ def run_task(
     errors: list[str] = []
     feedback = ""
     for attempt in range(1, workspace.max_attempts + 1):
-        attempt_root = (
-            results_root / workspace.task_id / config.agent / f"attempt-{attempt}"
-        )
+        attempt_root = results_root / workspace.task_id / config.agent / f"attempt-{attempt}"
         attempt_root.mkdir(parents=True, exist_ok=True)
-        trace_path = attempt_root / (
-            "trace.jsonl" if config.agent == "ds4py" else "trace.txt"
-        )
+        trace_path = attempt_root / ("trace.jsonl" if config.agent == "ds4py" else "trace.txt")
         events_path = attempt_root / "events.jsonl"
         home = attempt_root / "home"
         prompt = base_prompt
         if feedback:
             prompt += (
-                "\n\nThe previous attempt failed hidden grading. Fix the remaining issues.\n"
-                "Grader output:\n" + feedback
+                "\n\nThe previous attempt failed hidden grading. Fix the remaining issues.\nGrader output:\n" + feedback
             )
         command = build_agent_command(config, prompt, trace_path)
         environment = os.environ.copy()
@@ -500,16 +473,12 @@ def run_bakeoff(
         grade_runner=grade_runner,
     )
     ds4_config = next(config for config in configs if config.agent == "ds4py")
-    restore_runs = check_result_saves(
-        task_results, ds4_config, results_root / "restores"
-    )
+    restore_runs = check_result_saves(task_results, ds4_config, results_root / "restores")
     interruption_workspace = clone_workspace(
         staged[0],
         results_root / "acceptance" / "interruption",
     )
-    interruption = interruption_acceptance(
-        ds4_config, interruption_workspace, results_root
-    )
+    interruption = interruption_acceptance(ds4_config, interruption_workspace, results_root)
     restore = RestoreSummary(restore_runs, interruption)
     replay = replay_task_results(task_results, ds4_config)
     report = build_report(task_results, restore, replay)
@@ -521,9 +490,7 @@ def run_bakeoff(
 def _parser() -> argparse.ArgumentParser:
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--manifest", type=Path, default=Path(__file__).with_name("bakeoff.yaml")
-    )
+    parser.add_argument("--manifest", type=Path, default=Path(__file__).with_name("bakeoff.yaml"))
     parser.add_argument("--benchmark", type=Path, default=root.parent / "benchmark")
     parser.add_argument("--repo-root", type=Path, default=root)
     parser.add_argument("--results", type=Path, required=True)

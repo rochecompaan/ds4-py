@@ -156,9 +156,7 @@ class AgentRuntime:
         self.model = model
         self.project_dir = Path(project_dir)
         self.store = store if store is not None else SessionStore()
-        self._clock = (
-            clock if clock is not None else (lambda: datetime.now().astimezone())
-        )
+        self._clock = clock if clock is not None else (lambda: datetime.now().astimezone())
         self._session = model.session
         self._messages: list[ModelMessage] = []
         self._title = ""
@@ -181,19 +179,11 @@ class AgentRuntime:
         )
         self._agent = self.components.agent
         self._notes = next(
-            (
-                item
-                for item in self.components.components
-                if isinstance(item, DS4SystemNotes)
-            ),
+            (item for item in self.components.components if isinstance(item, DS4SystemNotes)),
             None,
         )
         self._record = next(
-            (
-                item
-                for item in self.components.components
-                if isinstance(item, DS4RunRecord)
-            ),
+            (item for item in self.components.components if isinstance(item, DS4RunRecord)),
             None,
         )
         if self._notes is not None:
@@ -274,9 +264,7 @@ class AgentRuntime:
             return
         for message in self._messages:
             for part in message.parts:
-                if not isinstance(part, UserPromptPart) or not isinstance(
-                    part.content, str
-                ):
+                if not isinstance(part, UserPromptPart) or not isinstance(part.content, str):
                     continue
                 text = " ".join(part.content.split())
                 if text:
@@ -343,9 +331,7 @@ class AgentRuntime:
             run_id=run_id,
             status=status,
             error=None if error is None else str(error),
-            persistence_error=(
-                None if persistence_error is None else str(persistence_error)
-            ),
+            persistence_error=(None if persistence_error is None else str(persistence_error)),
         )
 
     async def run(self, prompt: str) -> AgentRunResult[Any]:
@@ -472,13 +458,9 @@ class AgentRuntime:
             session_dir / "session.kv",
             write_payload,
         )
-        if (
-            written.get("tokens") != len(tokens)
-            or written.get("payload_bytes") != payload_bytes
-        ):
+        if written.get("tokens") != len(tokens) or written.get("payload_bytes") != payload_bytes:
             raise EngineError(
-                f"the native payload covers {written.get('tokens')} tokens, "
-                f"the transcript has {len(tokens)}"
+                f"the native payload covers {written.get('tokens')} tokens, the transcript has {len(tokens)}"
             )
 
         snapshot = ContinuableSnapshot(
@@ -525,9 +507,7 @@ class AgentRuntime:
             ),
         )
         self.store.write_record_atomic(session_dir / "save.json", record)
-        self._session.emit(
-            "saved", record=record.to_dict(), payload_bytes=payload_bytes
-        )
+        self._session.emit("saved", record=record.to_dict(), payload_bytes=payload_bytes)
         return record
 
     async def _next_save_run_id(self, store: FileStepStore) -> str:

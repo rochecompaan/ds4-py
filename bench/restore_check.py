@@ -105,9 +105,7 @@ def _events(path: Path) -> Path:
         try:
             value = json.loads(line)
         except json.JSONDecodeError as error:
-            raise RestoreError(
-                f"{path}:{line_number}: invalid JSON: {error.msg}"
-            ) from error
+            raise RestoreError(f"{path}:{line_number}: invalid JSON: {error.msg}") from error
         if not isinstance(value, dict) or not isinstance(value.get("kind"), str):
             raise RestoreError(f"{path}:{line_number}: malformed event")
         kinds.append(value["kind"])
@@ -124,9 +122,7 @@ def validate_save(save_dir: str | Path) -> SaveEvidence:
         record = store.read_record(save_dir / "save.json")
         payload = store.read_kv_header(save_dir / "session.kv")
         if payload != record.payload_bytes:
-            raise RestoreError(
-                f"{save_dir}: KV payload {payload} does not match record {record.payload_bytes}"
-            )
+            raise RestoreError(f"{save_dir}: KV payload {payload} does not match record {record.payload_bytes}")
         events_path = _events(save_dir / "events.jsonl")
         steps_root = save_dir / "steps"
         if not steps_root.is_dir():
@@ -140,25 +136,16 @@ def validate_save(save_dir: str | Path) -> SaveEvidence:
                 include_interrupted=True,
             )
         )
-        if (
-            snapshot is None
-            or snapshot.state != "complete"
-            or snapshot.step_index != record.step_index
-        ):
+        if snapshot is None or snapshot.state != "complete" or snapshot.step_index != record.step_index:
             raise RestoreError(f"{save_dir}: named complete snapshot is missing")
         snapshot_path = None
         for path in sorted((steps_root / record.run_id / "snapshots").glob("*.json")):
             value = json.loads(path.read_text())
-            if (
-                value.get("step_index") == record.step_index
-                and value.get("state") == "complete"
-            ):
+            if value.get("step_index") == record.step_index and value.get("state") == "complete":
                 snapshot_path = path
                 break
         if snapshot_path is None:
-            raise RestoreError(
-                f"{save_dir}: snapshot JSON for step {record.step_index} is missing"
-            )
+            raise RestoreError(f"{save_dir}: snapshot JSON for step {record.step_index} is missing")
         return SaveEvidence(record, events_path, snapshot_path)
     except RestoreError:
         raise
@@ -203,23 +190,13 @@ def _compare_restore(
     second = _samples(case2.trace_path)
     for index in range(min(len(first), len(second), 256)):
         if first[index] != second[index]:
-            problems.append(
-                f"token {index} differs: case 1={first[index]} case 2={second[index]}"
-            )
+            problems.append(f"token {index} differs: case 1={first[index]} case 2={second[index]}")
             break
     else:
         if len(first) != len(second) and min(len(first), len(second)) < 256:
-            problems.append(
-                f"token {min(len(first), len(second))} is missing from the shorter restore"
-            )
-        elif (
-            len(first) < 256
-            and len(second) < 256
-            and case1.terminal_reason != case2.terminal_reason
-        ):
-            problems.append(
-                f"terminal reasons differ: {case1.terminal_reason} vs {case2.terminal_reason}"
-            )
+            problems.append(f"token {min(len(first), len(second))} is missing from the shorter restore")
+        elif len(first) < 256 and len(second) < 256 and case1.terminal_reason != case2.terminal_reason:
+            problems.append(f"terminal reasons differ: {case1.terminal_reason} vs {case2.terminal_reason}")
     return problems, first, second
 
 
@@ -246,9 +223,7 @@ def check_restore(
         case1 = runner(original_home, evidence.record.session_id, 1, case1_trace)
         trace_paths.append(case1_trace)
         case2_trace = work_dir / "case-2.jsonl"
-        case2 = runner(
-            stripped.parent.parent, evidence.record.session_id, 2, case2_trace
-        )
+        case2 = runner(stripped.parent.parent, evidence.record.session_id, 2, case2_trace)
         trace_paths.append(case2_trace)
         problems, first, second = _compare_restore(case1, case2)
         passed = not problems
@@ -264,13 +239,9 @@ def check_restore(
             save_dir,
             passed,
             detail,
+            CheckResult(case1.switch_prefill == 0 and case1.followup_plan == "extend", "case 1"),
             CheckResult(
-                case1.switch_prefill == 0 and case1.followup_plan == "extend", "case 1"
-            ),
-            CheckResult(
-                case2.switch_prefill == 0
-                and case2.followup_prefill > 0
-                and case2.followup_plan == "rebuild",
+                case2.switch_prefill == 0 and case2.followup_prefill > 0 and case2.followup_plan == "rebuild",
                 "case 2",
             ),
             stripped,
@@ -341,9 +312,7 @@ def _trace(
     from ds4py.prefill_trace import PrefillTraceWriter
 
     trace = (
-        PrefillTraceWriter(
-            runtime.model.session, args.trace, think=runtime.model.session.engine.think
-        )
+        PrefillTraceWriter(runtime.model.session, args.trace, think=runtime.model.session.engine.think)
         if args.trace is not None
         else nullcontext()
     )
@@ -480,11 +449,7 @@ def process_restore_runner(
         trace_path: Path,
     ) -> RestoreRun:
         metadata = trace_path.with_suffix(".json")
-        executable = (
-            config.executable[:-1]
-            if config.executable[-1] == "attempt"
-            else config.executable
-        )
+        executable = config.executable[:-1] if config.executable[-1] == "attempt" else config.executable
         command = [
             *executable,
             "restore",
@@ -516,9 +481,7 @@ def process_restore_runner(
             text=True,
             cwd=workspace,
         )
-        trace_path.with_suffix(".log").write_text(
-            (completed.stdout or "") + (completed.stderr or "")
-        )
+        trace_path.with_suffix(".log").write_text((completed.stdout or "") + (completed.stderr or ""))
         if completed.returncode:
             raise RestoreError(f"restore case {case} exited {completed.returncode}")
         value = json.loads(metadata.read_text())
@@ -607,9 +570,7 @@ def check_command(argv: Sequence[str]) -> int:
         + "\n"
     )
     for result in results:
-        print(
-            f"{'PASS' if result.passed else 'FAIL'} {result.save_dir}: {result.detail}"
-        )
+        print(f"{'PASS' if result.passed else 'FAIL'} {result.save_dir}: {result.detail}")
     return 0 if passed else 1
 
 

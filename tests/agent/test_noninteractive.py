@@ -16,9 +16,7 @@ from typing import Never
 
 
 class FakeRunRuntime:
-    def __init__(
-        self, *, output: Any = "answer", run_error: Any = None, save_error: Any = None
-    ) -> None:
+    def __init__(self, *, output: Any = "answer", run_error: Any = None, save_error: Any = None) -> None:
         self.output = output
         self.run_error = run_error
         self.save_error = save_error
@@ -55,9 +53,7 @@ def test_noninteractive_prints_only_the_final_answer_and_saves() -> None:
         (KeyboardInterrupt(), 130, "interrupted"),
     ],
 )
-def test_noninteractive_saves_on_run_failure_and_interruption(
-    error: Any, code: Any, message: Any
-) -> None:
+def test_noninteractive_saves_on_run_failure_and_interruption(error: Any, code: Any, message: Any) -> None:
     runtime = FakeRunRuntime(run_error=error)
     actual, out, err = invoke(runtime)
     assert actual == code and out == "" and message in err
@@ -259,9 +255,7 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(
     run = next(item for item in created if getattr(item, "kind", None) == "run")
     assert run.runtime is runtime and run.prompt == "hello"
     assert runtime.closed
-    assert next(
-        item for item in created if getattr(item, "kind", None) == "engine"
-    ).engine.exited
+    assert next(item for item in created if getattr(item, "kind", None) == "engine").engine.exited
 
 
 def test_agent_cli_interactive_constructs_and_runs_tui(
@@ -385,15 +379,9 @@ def test_raw_alias_and_core_commands_do_not_import_the_harness(
     import ds4py.raw as raw_module
 
     calls = []
-    monkeypatch.setattr(
-        raw_module, "command", lambda args: calls.append(args.command) or 0
-    )
-    monkeypatch.setattr(
-        cli, "build_library", lambda *args, **kwargs: tmp_path / "libds4.so"
-    )
-    monkeypatch.setattr(
-        cli, "check_library", lambda lib: SimpleNamespace(manifest=None, error=None)
-    )
+    monkeypatch.setattr(raw_module, "command", lambda args: calls.append(args.command) or 0)
+    monkeypatch.setattr(cli, "build_library", lambda *args, **kwargs: tmp_path / "libds4.so")
+    monkeypatch.setattr(cli, "check_library", lambda lib: SimpleNamespace(manifest=None, error=None))
     monkeypatch.setattr(cli, "format_report", lambda report: "ABI ok")
     real_import = builtins.__import__
 

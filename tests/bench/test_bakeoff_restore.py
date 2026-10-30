@@ -108,9 +108,7 @@ def make_save(root: Any, session_id: Any = "session-1") -> Any:
     (save_dir / "events.jsonl").write_text(
         json.dumps({"kind": "run_start", "run_id": "run-1", "payload": {}})
         + "\n"
-        + json.dumps(
-            {"kind": "run_end", "run_id": "run-1", "payload": {"status": "success"}}
-        )
+        + json.dumps({"kind": "run_end", "run_id": "run-1", "payload": {"status": "success"}})
         + "\n"
     )
 
@@ -156,9 +154,7 @@ def write_trace(path: Any, sampled: Any) -> None:
     )
 
 
-def successful_driver(
-    calls: Any, tokens: Any = (1, 2, 3), reason: Any = "stop_token"
-) -> Any:
+def successful_driver(calls: Any, tokens: Any = (1, 2, 3), reason: Any = "stop_token") -> Any:
     def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
         calls.append((home, session_id, case))
         write_trace(trace_path, tokens)
@@ -186,9 +182,7 @@ def test_validate_save_accepts_complete_record_snapshot_events_and_kv(
 
 
 @pytest.mark.parametrize("missing", ["events", "snapshot", "kv"])
-def test_validate_save_rejects_missing_required_evidence(
-    tmp_path: Path, missing: Any
-) -> None:
+def test_validate_save_rejects_missing_required_evidence(tmp_path: Path, missing: Any) -> None:
     save = make_save(tmp_path)
     if missing == "events":
         (save / "events.jsonl").unlink()
@@ -422,9 +416,7 @@ def test_interruption_acceptance_uses_tui_idle_lifecycle(
     task = tmp_path / "task"
     task.mkdir()
     (task / "TASK.md").write_text("Solve the task.")
-    output = (
-        "prefill 2/2\nidle | ctx 2/100\nordinary follow-up answer\nidle | ctx 4/100\n"
-    )
+    output = "prefill 2/2\nidle | ctx 2/100\nordinary follow-up answer\nidle | ctx 4/100\n"
 
     def drive(command: list[str], *, steps: Any, **kwargs: Any) -> CheckResult:
         cursor = 0
@@ -499,9 +491,7 @@ def test_restore_processes_run_from_the_original_task_workspace(
         workspace=workspace,
     )
 
-    results = check_result_saves(
-        cast(Any, (item,)), cast(Any, config), tmp_path / "restores"
-    )
+    results = check_result_saves(cast(Any, (item,)), cast(Any, config), tmp_path / "restores")
 
     assert results[0].passed, results[0].detail
     assert working_directories == [workspace, workspace]
