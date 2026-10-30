@@ -8,10 +8,12 @@ import subprocess
 import sys
 import tempfile
 from collections import deque
-from collections.abc import Mapping, Sequence
 from importlib.resources import files
 from pathlib import Path
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 
 from ds4py._native.bindings import Binding, all_bindings
 from ds4py._native.loader import LIB_NAME
@@ -71,8 +73,11 @@ def _mirror(src: Path, farm: Path) -> None:
 
 
 def _run_make(farm: Path, backend: str, cc: str, jobs: int | None, log: TextIO) -> None:
+    make = shutil.which("make")
+    if make is None:
+        raise BuildError("make not found on PATH")
     command = [
-        "make",
+        make,
         "-f",
         "Makefile.lib",
         "libds4",
@@ -82,7 +87,8 @@ def _run_make(farm: Path, backend: str, cc: str, jobs: int | None, log: TextIO) 
     ]
     tail: deque[str] = deque(maxlen=40)
     with subprocess.Popen(command, cwd=farm, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as process:
-        assert process.stdout is not None
+        if process.stdout is None:
+            raise BuildError("make stdout is unavailable")
         for line in process.stdout:
             log.write(line)
             log.flush()
@@ -107,7 +113,7 @@ def install(
     installs.mkdir(parents=True, exist_ok=True)
     staged_dir = Path(tempfile.mkdtemp(dir=installs))
     temporary = out_dir / f".{LIB_NAME}.new"
-    switched = False
+    switched: bool = False
     try:
         staged = staged_dir / LIB_NAME
         shutil.copy2(lib, staged)
@@ -134,7 +140,7 @@ def install(
         switched = True
         return out_dir / LIB_NAME
     finally:
-        if not switched:
+        if not switched:  # ty: ignore[redundant-condition-strict]  # Exceptions bypass the normal assignment.
             temporary.unlink(missing_ok=True)
             # replace can publish before an interrupt prevents recording switched.
             # Never delete a generation that is current or cannot be ruled out.
@@ -146,7 +152,7 @@ def install(
                 shutil.rmtree(staged_dir)
 
 
-def _build_manifest(
+def _build_manifest(  # noqa: PLR0913, PLR0917 - Manifest construction mirrors the native build context.
     src: Path,
     lib: Path,
     backend: str,
@@ -163,8 +169,11 @@ def _build_manifest(
     if not known:
         print("warning: unknown ds4 header hashes", file=log)
     try:
+        git = shutil.which("git")
+        if git is None:
+            raise BuildError("git not found on PATH")
         commit = subprocess.run(
-            ["git", "-C", str(src), "rev-parse", "HEAD"],
+            [git, "-C", str(src), "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
             check=True,
@@ -189,7 +198,7 @@ def _build_manifest(
     )
 
 
-def build_library(
+def build_library(  # noqa: PLR0913 - Build options mirror the public CLI.
     src: Path,
     *,
     backend: str,

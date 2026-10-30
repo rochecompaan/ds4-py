@@ -1,9 +1,14 @@
 """ABI diagnostics and opt-in model-backed sync/restore checks."""
 
 import time
-from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+    from ds4py._json import JsonValue
 
 from ds4py._native.api import LibNative
 from ds4py._native.loader import load_library, resolve_lib_path
@@ -45,8 +50,8 @@ def format_report(r: CheckReport) -> str:
     if r.error is not None:
         return f"library:  {r.lib_path}\nerror:    {r.error}"
     m, v = r.manifest, r.validation
-    assert m is not None
-    assert v is not None
+    if m is None or v is None:
+        raise RuntimeError("successful library check is missing manifest data")
     tree = (
         f"{m.source_path} at {m.source_commit[:12]}"
         if m.source_commit is not None
@@ -77,10 +82,10 @@ def format_report(r: CheckReport) -> str:
         lines.append("optional: none")
     if "sync_plans" in m.live_checks:
         sync = m.live_checks["sync_plans"]
-        lines.append(f"sync:     {'ok' if sync['ok'] else 'failed'} ({sync['message']})")
+        lines.append(f"sync:     {'ok' if bool(sync['ok']) else 'failed'} ({sync['message']})")
     if "restore" in m.live_checks:
         restore = m.live_checks["restore"]
-        lines.append(f"restore:  {'ok' if restore['ok'] else 'disabled'} ({restore['message']})")
+        lines.append(f"restore:  {'ok' if bool(restore['ok']) else 'disabled'} ({restore['message']})")
     else:
         lines.append("restore:  not verified (run `ds4py check --live --model PATH`)")
     return "\n".join(lines)
@@ -128,7 +133,7 @@ def _greedy_run(worker: EngineWorker, count: int) -> tuple[list[int], str]:
 def _compare_runs(
     a: tuple[list[int], str],
     b: tuple[list[int], str],
-) -> dict[str, bool | str | int]:
+) -> dict[str, JsonValue]:
     left, left_reason = a
     right, right_reason = b
     if a == b:
@@ -156,16 +161,16 @@ def run_live_checks(
     prefix: int = 2048,
     tail: int = 64,
     generate: int = 256,
-) -> dict[str, dict]:
+) -> dict[str, dict[str, JsonValue]]:
     """Compare planned reuse counts and greedy restore/rebuild output, not speed."""
     ctx = worker.call(lambda e, s: s.ctx()).result()
     if prefix + generate + 1 > ctx:
         raise EngineError(f"ds4py check --live needs a context of at least {prefix + generate + 1}")
     text = LIVE_TEXT
-    tokens = worker.call(lambda e, s: e.tokenize(text)).result()
+    tokens = worker.call(lambda e, s, text=text: e.tokenize(text)).result()
     while len(tokens) < prefix:
         text += LIVE_TEXT
-        tokens = worker.call(lambda e, s: e.tokenize(text)).result()
+        tokens = worker.call(lambda e, s, text=text: e.tokenize(text)).result()
     tokens = tokens[:prefix]
     _timed_sync(worker, tokens[: prefix - tail], clock)
     list(worker.submit(CheckpointJob(LIVE_CHECKPOINT)))

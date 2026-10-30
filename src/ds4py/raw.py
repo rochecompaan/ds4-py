@@ -1,16 +1,18 @@
 """Raw token streaming and ds4-agent-compatible binary traces."""
 
-import argparse
 import re
 import signal
 import sys
 import threading
-from collections.abc import Callable
 from contextlib import nullcontext
 from datetime import datetime
-from pathlib import Path
-from types import FrameType
-from typing import Any, BinaryIO, TextIO
+from typing import TYPE_CHECKING, BinaryIO, Self, TextIO
+
+if TYPE_CHECKING:
+    import argparse
+    from collections.abc import Callable
+    from pathlib import Path
+    from types import FrameType
 
 from ds4py import Engine
 from ds4py import open as open_engine
@@ -18,17 +20,22 @@ from ds4py.engine.events import Interrupted, Stopped, Token
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.errors import EngineError
 
+_ASCII_SPACE = 32
+_ASCII_DELETE = 127
+
 
 def _escape(data: bytes) -> bytes:
     escapes = {92: b"\\\\", 10: b"\\n", 13: b"\\r", 9: b"\\t", 34: b'\\"'}
-    return b"".join(escapes.get(b, f"\\x{b:02x}".encode() if b < 32 or b == 127 else bytes([b])) for b in data)
+    return b"".join(
+        escapes.get(b, f"\\x{b:02x}".encode() if b < _ASCII_SPACE or b == _ASCII_DELETE else bytes([b])) for b in data
+    )
 
 
 class Trace:
     def __init__(self, path: Path, *, now: Callable[[], datetime] = datetime.now) -> None:
         self.path, self.now = path, now
 
-    def __enter__(self) -> Trace:
+    def __enter__(self) -> Self:
         self._file = self.path.open("ab")
         return self
 
@@ -76,7 +83,7 @@ def read_trace_tokens(path: Path) -> tuple[list[int], list[int]]:
     return tokens[:prompt_length], tokens[prompt_length:]
 
 
-def run_raw(
+def run_raw(  # noqa: PLR0913 - Raw execution mirrors CLI and trace configuration.
     engine: Engine,
     prompt: str,
     *,
@@ -100,7 +107,7 @@ def run_raw(
         err.write(f"ds4py: prompt of {len(tokens)} tokens does not fit a context of {engine.config.ctx}\n")
         return 2
     main_thread = threading.current_thread() is threading.main_thread()
-    previous: Any = None
+    previous: signal.Handlers | Callable[[int, FrameType | None], object] | int | None = None
     if main_thread:
         previous = signal.getsignal(signal.SIGINT)
 

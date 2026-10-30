@@ -3,12 +3,14 @@
 import ctypes
 import re
 from dataclasses import dataclass
+from typing import override
 
 from ds4py.errors import TypeMapError
 
 from .structs import CANCEL_FN, PROGRESS_FN, STRUCTS
 
 TYPE_MAP_VERSION = 1
+_DOUBLE_POINTER = 2
 _ALL_STRUCTS = STRUCTS
 
 _SCALARS = {
@@ -41,7 +43,7 @@ _CALLBACKS = {
     "ds4_session_progress_fn": PROGRESS_FN,
     "ds4_session_cancel_fn": CANCEL_FN,
 }
-_TYPE_WORDS: set[str] = set(["void", "int", "unsigned", "short", "long", "bool", "float", "double", "char", "const"])
+_TYPE_WORDS: set[str] = {"void", "int", "unsigned", "short", "long", "bool", "float", "double", "char", "const"}
 _TYPE_WORDS.update(_SCALARS)
 _TYPE_WORDS.update(_CALLBACKS)
 _TYPE_WORDS.update(_ALL_STRUCTS)
@@ -54,6 +56,7 @@ class CType:
     pointers: int
     const: bool
 
+    @override
     def __str__(self) -> str:
         return ("const " if self.const else "") + self.base + (" " + "*" * self.pointers if self.pointers else "")
 
@@ -64,6 +67,7 @@ class CPrototype:
     restype: CType
     params: tuple[CType, ...]
 
+    @override
     def __str__(self) -> str:
         return _declaration(self, self.name)
 
@@ -87,7 +91,7 @@ def _parse_type(text: str, *, parameter: bool) -> CType:
             raise TypeMapError(f"invalid C type {text!r}")
         tokens = tokens[:first]
     const = "const" in tokens
-    tokens = [token for token in tokens if token != "const"]
+    tokens = [word for word in tokens if word != "const"]
     if not tokens:
         raise TypeMapError(f"invalid C type {text!r}")
     return CType(" ".join(tokens), pointers, const)
@@ -111,7 +115,9 @@ def normalize_prototype(text: str) -> str:
     return str(parse_prototype(text))
 
 
-def _ctypes_type(ctype: CType, function: str, *, returning: bool = False) -> object | None:
+def _ctypes_type(  # noqa: PLR0911 - C declaration mapping is intentionally flat and exhaustive.
+    ctype: CType, function: str, *, returning: bool = False
+) -> object | None:
     base, pointers = ctype.base, ctype.pointers
     if base == "void" and pointers == 0 and returning:
         return None
@@ -131,7 +137,7 @@ def _ctypes_type(ctype: CType, function: str, *, returning: bool = False) -> obj
             return ctypes.POINTER(_ALL_STRUCTS[base])
         if base in _SCALARS:
             return ctypes.POINTER(_SCALARS[base])
-    if pointers == 2 and base in ("ds4_engine", "ds4_session") and not ctype.const:
+    if pointers == _DOUBLE_POINTER and base in ("ds4_engine", "ds4_session") and not ctype.const:
         return ctypes.POINTER(ctypes.c_void_p)
     raise TypeMapError(f"unknown C type '{ctype}' in {function}; add it to ds4py/_native/typemap.py")
 
