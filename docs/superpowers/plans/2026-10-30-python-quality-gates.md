@@ -213,19 +213,19 @@ Run Ruff and ty over all files owned by this task, then `pytest tests/agent -m "
 - Consumes: all production contracts from Tasks 2-5.
 - Produces: zero Ruff/ty diagnostics across `src`, `bench`, and `tests`; the complete static gate used by prek and CI.
 
-- [ ] **Step 1: Align benchmark tooling with the typed production contracts**
+- [x] **Step 1: Align benchmark tooling with the typed production contracts**
 
 Replace dynamic manifest/report values with JSON aliases or exact records, fix subprocess/path/PTy annotations, remove redundant or disjoint casts, and keep CLI-only exceptions scoped to the relevant files.
 
-- [ ] **Step 2: Correct tests and test doubles without changing assertions**
+- [x] **Step 2: Correct tests and test doubles without changing assertions**
 
 Annotate queues, fixtures, callbacks, monkeypatched methods, and generic containers to match production signatures. Fix test-only import resolution explicitly rather than suppressing unresolved imports. Retain documented test exceptions for assertions, private access, dynamic doubles, and `Any`; the independent `TypeGuard` ban still applies.
 
-- [ ] **Step 3: Handle intentional exceptional tests narrowly**
+- [x] **Step 3: Handle intentional exceptional tests narrowly**
 
 For intentional cases such as division by zero, use the smallest possible targeted suppression with a reason. Do not enable the globally noisy ty rules and do not weaken an entire test directory's soundness checks to resolve isolated diagnostics.
 
-- [ ] **Step 4: Run the complete static and behavioral gate**
+- [x] **Step 4: Run the complete static and behavioral gate**
 
 ```bash
 devenv shell -- uv run --frozen --extra agent ruff check src bench tests
