@@ -176,14 +176,17 @@ def test_failed_first_attempt_feeds_grader_output_to_exactly_one_retry(tmp_path:
 
 
 def test_relative_results_root_keeps_attempt_artifacts_at_invocation_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = make_exercise(tmp_path)
     workspace = prepare_exercise(source, tmp_path / "staged")
     monkeypatch.chdir(tmp_path)
 
     completed = run_task(
-        workspace, config(tmp_path), Path("results"),
+        workspace,
+        config(tmp_path),
+        Path("results"),
         grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(command, 0, "pass", ""),
     )
 
@@ -216,13 +219,16 @@ def test_c_and_python_run_sequentially_on_equivalent_tasks(tmp_path: Path) -> No
 
 
 def test_sequential_runner_reports_each_task_start_and_finish(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     source = make_exercise(tmp_path)
     staged = prepare_exercise(source, tmp_path / "staged")
 
     run_tasks_sequentially(
-        [staged], [config(tmp_path, "c"), config(tmp_path)], tmp_path / "results",
+        [staged],
+        [config(tmp_path, "c"), config(tmp_path)],
+        tmp_path / "results",
         grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(command, 0, "pass", ""),
     )
 

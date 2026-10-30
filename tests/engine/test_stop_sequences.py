@@ -48,7 +48,7 @@ class TextEngine:
         self.texts = texts or {}
 
     def token_text(self, token: Any) -> bytes:
-        return self.texts.get(token, b"" if token == 0 else bytes([token]))
+        return bytes(self.texts.get(token, b"" if token == 0 else bytes([token])))
 
     def is_stop(self, token: Any) -> Any:
         return token == 0
@@ -163,7 +163,7 @@ def test_max_tokens_counts_accepted_sampled_tokens_not_characters() -> None:
 
 def test_resume_retains_matcher_state_and_clears_only_stop_field() -> None:
     control = ControlSpan([b"stop"])
-    reason, session, transcript, _ = decode(
+    reason, _, _, _ = decode(
         [ord("s"), ord("t"), ord("o"), ord("p"), 0],
         [b"stop"],
         control=control,
@@ -265,7 +265,7 @@ def test_paused_round_rejects_changed_stop_sequences(chat: Any, monkeypatch: pyt
         sampled_before = sample_calls
         with pytest.raises(
             ValueError,
-            match="^stop_sequences cannot change while resuming a round$",
+            match=r"^stop_sequences cannot change while resuming a round$",
         ):
             list(session.run_round(stop_sequences=[b"other"]))
         assert sample_calls == sampled_before
@@ -316,7 +316,7 @@ def test_new_user_retires_paused_stream_and_starts_fresh_assistant() -> None:
 
 
 @pytest.mark.parametrize(
-    "mutation, kind",
+    ("mutation", "kind"),
     [
         (lambda session: session.append_tool_results(["result"]), "tool"),
         (lambda session: session.append_system_note("note"), "note"),

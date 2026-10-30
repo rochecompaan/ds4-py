@@ -2,12 +2,12 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, override
 
 import pytest
 from pydantic_ai.messages import (
@@ -199,10 +199,9 @@ def test_prefill_trace_uses_persistence_step_indices(tmp_path: Path) -> None:
         async def scenario() -> Any:
             with PrefillTraceWriter(model.session, trace_path, think=engine.think):
                 result = await runtime.run("read hello")
-            snapshots = await runtime_steps(
+            return await runtime_steps(
                 store.session_dir(runtime.session_id) / "steps",
             ).list_snapshots(run_id=result.run_id)
-            return snapshots
 
         try:
             snapshots = asyncio.run(scenario())
@@ -278,10 +277,11 @@ class FailingModel(DS4Model):
         self.fail_from_request = fail_from_request
         self.requests_seen = 0
 
+    @override
     @asynccontextmanager
     async def request_stream(
         self, messages: Any, model_settings: Any, model_request_parameters: Any, run_context: Any = None
-    ) -> AsyncIterator[Any]:
+    ) -> AsyncGenerator[Any]:
         self.requests_seen += 1
         if self.requests_seen >= self.fail_from_request:
             raise RuntimeError("scripted model failure")
@@ -412,10 +412,11 @@ class BlockingModel(DS4Model):
         self.entered: asyncio.Event | None = None
         self.release: asyncio.Event | None = None
 
+    @override
     @asynccontextmanager
     async def request_stream(
         self, messages: Any, model_settings: Any, model_request_parameters: Any, run_context: Any = None
-    ) -> AsyncIterator[Any]:
+    ) -> AsyncGenerator[Any]:
         cast("Any", self.entered).set()
         await cast("Any", self.release).wait()
         async with super().request_stream(
@@ -579,7 +580,7 @@ def test_run_record_failure_fails_the_run_instead_of_reporting_success(tmp_path:
         blocked = store.session_dir(runtime.session_id) / "events.jsonl"
         blocked.mkdir(parents=True)
         try:
-            with pytest.raises(Exception) as failed:
+            with pytest.raises(Exception, match=r"events.jsonl") as failed:
                 asyncio.run(runtime.run("hello"))
             assert runtime.status == "error"
             assert "events.jsonl" in str(failed.value)

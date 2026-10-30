@@ -26,7 +26,7 @@ def read(path: Any) -> Any:
 
 
 def assert_replay_error(path: Any, fragment: Any) -> None:
-    with pytest.raises(ValueError) as caught:
+    with pytest.raises(ValueError, match=re.escape(str(fragment))) as caught:
         read(path)
     assert type(caught.value).__name__ == "ReplayError"
     message = str(caught.value)

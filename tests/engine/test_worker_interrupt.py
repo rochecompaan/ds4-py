@@ -108,6 +108,7 @@ def test_startup_sigint_closes_resources_on_owner_before_reraising(startup_fails
         capture_output=True,
         text=True,
         timeout=8,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == f"startup SIGINT cleanup OK {startup_fails}"

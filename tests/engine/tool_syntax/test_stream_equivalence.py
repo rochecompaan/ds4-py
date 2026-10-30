@@ -1,4 +1,5 @@
 import random
+from itertools import pairwise
 from typing import Any
 
 
@@ -18,6 +19,6 @@ def test_100_seeded_random_partitions(parser_case: Any, parse_chunks: Any) -> No
     for sample in range(100):
         cuts = sorted(rng.randint(0, len(data)) for _ in range(24))
         bounds = [0, *cuts, len(data)]
-        chunks = [data[start:end] for start, end in zip(bounds, bounds[1:])]
+        chunks = [data[start:end] for start, end in pairwise(bounds)]
         observed = parse_chunks(parser_case, chunks)
         assert observed == expected, f"random partition {sample}: {cuts}"

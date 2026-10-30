@@ -23,7 +23,7 @@ from bench.replay_c_traces import replay_trace
 def test_chat_matches_c_trace_without_executing_tools(request: pytest.FixtureRequest) -> None:
     model = os.environ.get("DS4_TEST_MODEL")
     trace_path = os.environ.get("DS4_REPLAY_TRACE")
-    if not model or not trace_path:
+    if model is None or model == "" or trace_path is None or trace_path == "":
         pytest.skip("set DS4_TEST_MODEL and DS4_REPLAY_TRACE for live replay parity")
     live_lib = request.getfixturevalue("live_lib")
     trace = read_replay(cast("str", trace_path))

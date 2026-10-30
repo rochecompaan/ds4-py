@@ -1,7 +1,7 @@
 import threading
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Never, cast
+from typing import Any, Never, cast, override
 
 import pytest
 
@@ -51,7 +51,7 @@ def test_each_sync_reports_the_plan_it_carried_out() -> None:
     run(w, SyncJob(tuple(P[:8])))
     assert run(w, CheckpointJob("turn")) == [Checkpointed("turn", 8, 8 * 1024)]
     plans = []
-    for tokens, kind in [(P[:20], "extend"), (P[:8] + [99, 98], "restore"), ([50, 51], "rebuild")]:
+    for tokens, kind in [(P[:20], "extend"), ([*P[:8], 99, 98], "restore"), ([50, 51], "rebuild")]:
         predicted = w.plan(tokens)
         *_, synced = run(w, SyncJob(tuple(tokens)))
         assert predicted.kind == kind and synced == Synced(len(tokens), predicted, predicted.to_prefill)
@@ -156,7 +156,7 @@ def test_over_budget_replacement_keeps_old_snapshot_and_other_keys() -> None:
     with pytest.raises(CheckpointError, match="checkpoint_budget_bytes"):
         run(w, CheckpointJob("a"))
     assert len(saved) == 2 and not any(s.closed for s in saved)
-    *_, synced = run(w, SyncJob(tuple(P[:4] + [99])))
+    *_, synced = run(w, SyncJob((*P[:4], 99)))
     assert synced.plan == Plan("restore", 4, 1, True, "a")
     run(w, CheckpointJob(SYSTEM, drop=True))
     run(w, CheckpointJob("a"))  # enough room now; the old a is freed only on success
@@ -191,7 +191,7 @@ def test_oversized_returned_snapshot_is_freed_without_losing_retained_state(repl
     assert saved[-1].closed and not any(s.closed for s in saved[:-1])
     assert closed == [(saved[-1], owner)]
     prefix = 3 if replacement else 2
-    *_, synced = run(w, SyncJob(tuple(P[:prefix] + [99])))
+    *_, synced = run(w, SyncJob((*P[:prefix], 99)))
     assert synced.plan == Plan("restore", prefix, 1, True, "a" if replacement else SYSTEM)
     w.close()
     assert all(s.closed for s in saved) and len(closed) == len(saved)
@@ -213,7 +213,7 @@ def test_zero_budget_disables_even_zero_byte_checkpoints() -> None:
 
 
 @pytest.mark.parametrize(
-    "budget, error",
+    ("budget", "error"),
     [
         (-1, ValueError),
         (1.5, TypeError),
@@ -225,6 +225,7 @@ def test_zero_budget_disables_even_zero_byte_checkpoints() -> None:
 )
 def test_bad_checkpoint_budget_is_refused_before_native_open(budget: Any, error: Any) -> None:
     class NeverOpened(FakeNative):
+        @override
         def open_engine(self, config: Any) -> Any:
             pytest.fail("invalid budget opened a native engine")
 
@@ -278,7 +279,7 @@ def test_a_checkpoint_is_kept_until_its_replacement_is_saved() -> None:
     run(w, SyncJob(tuple(P[:16])))
     with pytest.raises(EngineError, match="out of memory"):
         run(w, CheckpointJob("a"))
-    *_, synced = run(w, SyncJob(tuple(P[:12] + [99])))
+    *_, synced = run(w, SyncJob((*P[:12], 99)))
     assert synced.plan == Plan("restore", 12, 1, True, "a")  # closing first would fail this restore
 
 
@@ -300,6 +301,7 @@ def test_engine_calls_run_on_one_worker_thread() -> None:
 
 def test_open_errors_reach_the_caller() -> None:
     class Broken(FakeNative):
+        @override
         def open_engine(self, config: Any) -> Never:
             raise ModelFileError("no model")
 
@@ -310,13 +312,15 @@ def test_open_errors_reach_the_caller() -> None:
 def test_completion_racing_empty_receive_preserves_queued_events_and_errors() -> None:
     from queue import Empty, SimpleQueue
 
+    from ds4py.engine.events import Event
     from ds4py.engine.worker import _END, _JobEvents
 
     events = _JobEvents()
     failure = EngineError("queued native error")
     synced = Synced(2, Plan("extend", 2, 0, True, None), 0)
 
-    class CompletingQueue(SimpleQueue):
+    class CompletingQueue(SimpleQueue[Event | BaseException | _END]):
+        @override
         def get(self, *args: Any, **kwargs: Any) -> Any:
             try:
                 return super().get_nowait()
@@ -354,6 +358,7 @@ def test_submit_enqueues_before_iteration_and_plan_waits_for_it() -> None:
 
 def test_progress_work_is_relative_and_chunk_and_display_are_absolute() -> None:
     class TickClock(FakeClock):
+        @override
         def __call__(self) -> Any:
             self.advance(0.2)
             return super().__call__()
@@ -388,6 +393,7 @@ def test_close_drains_jobs_then_frees_snapshots_session_and_engine_on_owner() ->
     log = []
 
     class TrackingNative(FakeNative):
+        @override
         def open_engine(self, config: Any) -> Any:
             e = super().open_engine(config)
             create, engine_close = e.create_session, e.close
@@ -404,21 +410,21 @@ def test_close_drains_jobs_then_frees_snapshots_session_and_engine_on_owner() ->
                         log.append(("snapshot", threading.get_ident()))
                         close()
 
-                    snap.close = close_snapshot
+                    snap.close = close_snapshot  # ty: ignore[invalid-assignment]  # Instance-level test double replaces a bound method.
                     return snap
 
                 def close_session() -> None:
                     log.append(("session", threading.get_ident()))
                     session_close()
 
-                s.save_snapshot, s.close = save_snapshot, close_session
+                s.save_snapshot, s.close = save_snapshot, close_session  # ty: ignore[invalid-assignment]  # Instance-level test double replaces bound methods.
                 return s
 
             def close_engine() -> None:
                 log.append(("engine", threading.get_ident()))
                 engine_close()
 
-            e.create_session, e.close = create_session, close_engine
+            e.create_session, e.close = create_session, close_engine  # ty: ignore[invalid-assignment]  # Instance-level test double replaces bound methods.
             return e
 
     w = EngineWorker(TrackingNative(), EngineConfig(Path("f")))
@@ -437,6 +443,7 @@ def test_session_open_failure_closes_engine_on_opening_thread() -> None:
     log = []
 
     class Broken(FakeNative):
+        @override
         def open_engine(self, config: Any) -> Any:
             e = super().open_engine(config)
 
@@ -450,7 +457,7 @@ def test_session_open_failure_closes_engine_on_opening_thread() -> None:
                 log.append(("close", threading.get_ident()))
                 real_close()
 
-            e.create_session, e.close = create, close
+            e.create_session, e.close = create, close  # ty: ignore[invalid-assignment]  # Instance-level test double replaces bound methods.
             return e
 
     with pytest.raises(EngineError, match="session failed"):

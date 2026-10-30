@@ -92,7 +92,7 @@ def event_calls(events: Any) -> Any:
 
 
 @pytest.mark.parametrize(
-    "family,text,name,path",
+    ("family", "text", "name", "path"),
     [
         ("deepseek4", DSML, "read", "/tmp/x"),
         ("glm", GLM_TWO, "first", "1"),
@@ -102,7 +102,7 @@ def event_calls(events: Any) -> Any:
 def test_chat_tool_calls_stop_and_emit_before_stopped(
     workers: Any, family: Any, text: Any, name: Any, path: Any
 ) -> None:
-    events, transcript, stream, _ = run_native(workers, native_for(family, text))
+    events, _, stream, _ = run_native(workers, native_for(family, text))
     calls = event_calls(events)
     assert len(calls) == 1 and events[-1] == Stopped("tool_call_complete")
     assert events.index(calls[0]) == len(events) - 2
@@ -148,7 +148,7 @@ def test_structural_tokens_switch_actual_sampling_and_values_restore_it(workers:
     assert normal in samples[first_greedy + 1 :]
 
 
-@pytest.mark.parametrize("family,text", [("deepseek4", DSML), ("glm", GLM_TWO), ("qwen", QWEN)])
+@pytest.mark.parametrize(("family", "text"), [("deepseek4", DSML), ("glm", GLM_TWO), ("qwen", QWEN)])
 def test_markup_in_thinking_is_parser_error_without_calls(workers: Any, family: Any, text: Any) -> None:
     events, _, _, _ = run_native(
         workers,
@@ -200,7 +200,7 @@ class StopEngine:
         return token == 0
 
     def token_text(self, token: Any) -> bytes:
-        return self.texts.get(token, b"x")
+        return bytes(self.texts.get(token, b"x"))
 
 
 class StopSession:
@@ -215,7 +215,7 @@ class StopSession:
         return 10
 
     def sample(self, *args: Any) -> int:
-        return self.tokens.pop(0)
+        return int(self.tokens.pop(0))
 
     def eval(self, token: Any) -> None:
         self.seen.append(("eval", token))
@@ -262,7 +262,7 @@ def test_stream_observe_snapshots_once_per_token() -> None:
         snapshots.append(snapshot)
         return snapshot
 
-    stream.parser._snapshot = counted_snapshot
+    stream.parser._snapshot = counted_snapshot  # ty: ignore[invalid-assignment]  # Instance-level test double replaces a bound method.
     events = []
     stream.observe(999, b"a<b", events.append)
 

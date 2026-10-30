@@ -57,21 +57,20 @@ class FakeMultiTokenStep:
             self.block_sizes.append(len(tokens))
             ctx.buffer_events()
             committed = 0
-            for index, token in enumerate(tokens):
+            for committed, token in enumerate(tokens):
                 if ctx.cancelled():
                     session.rewind(block_start + committed)
                     ctx.flush_events()
                     return
-                verdict = first_verdict if index == 0 else ctx.accept(token)
+                verdict = first_verdict if committed == 0 else ctx.accept(token)
                 if verdict is Verdict.STOP_BEFORE:
                     session.rewind(block_start + committed)
                     ctx.flush_events()
                     return
                 verdict = ctx.commit(token, verdict)
-                committed += 1
                 if verdict is Verdict.STOP_AFTER:
-                    if session.pos() > block_start + committed:
-                        session.rewind(block_start + committed)
+                    if session.pos() > block_start + committed + 1:
+                        session.rewind(block_start + committed + 1)
                     ctx.flush_events()
                     return
             ctx.flush_events()

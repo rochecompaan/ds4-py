@@ -162,7 +162,7 @@ def test_all_chat_helpers_refuse_to_mutate_during_an_active_round() -> None:
         try:
             assert isinstance(next(event for event in rnd if isinstance(event, Token)), Token)
             calls = [
-                lambda: session.start_chat(),
+                session.start_chat,
                 lambda: session.append_user("user"),
                 lambda: session.append_prefix([PrefixTurn("user", "u"), PrefixTurn("assistant", "a")]),
                 lambda: session.append_tool_results(["result"]),

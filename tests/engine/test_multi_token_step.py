@@ -100,7 +100,7 @@ def token_ids(events: Any) -> Any:
 
 
 def test_first_stop_token_has_no_eval_or_commit(workers: Any) -> None:
-    reason, events, transcript, worker, step, positions, error = run_step(workers, [0], [])
+    reason, events, transcript, worker, _, positions, error = run_step(workers, [0], [])
     assert error is None and reason == "stop_token" and events == [Stopped("stop_token")]
     assert transcript.tokens == (5, 6) and positions == []
     assert worker.call(lambda e, s: s.pos()).result() == 2
@@ -109,7 +109,7 @@ def test_first_stop_token_has_no_eval_or_commit(workers: Any) -> None:
 
 def test_later_stop_rewinds_before_publishing_kept_tokens(workers: Any) -> None:
     a, b, later = 98, 99, 100
-    reason, events, transcript, worker, step, positions, error = run_step(
+    reason, events, transcript, worker, _, positions, error = run_step(
         workers,
         [a, b, 0, later],
         [[b, 0, later]],
@@ -123,7 +123,7 @@ def test_later_stop_rewinds_before_publishing_kept_tokens(workers: Any) -> None:
 
 def test_budget_stop_discards_remaining_block(workers: Any) -> None:
     tokens = [98, 99, 100, 101]
-    reason, events, transcript, worker, step, positions, error = run_step(
+    reason, events, transcript, worker, _, positions, error = run_step(
         workers,
         tokens,
         [tokens[1:]],
@@ -138,7 +138,7 @@ def test_budget_stop_discards_remaining_block(workers: Any) -> None:
 def test_tool_boundary_discards_later_drafts(workers: Any) -> None:
     stanza = tokenize_rendered(DSML)
     tokens = stanza + tokenize_rendered("TAIL")
-    reason, events, transcript, worker, step, positions, error = run_step(
+    reason, events, transcript, worker, _, positions, error = run_step(
         workers,
         tokens,
         block_chunks(tokens),
@@ -155,7 +155,7 @@ def test_tool_boundary_discards_later_drafts(workers: Any) -> None:
 def test_drafts_are_capped_at_sixteen_and_sampling_resumes(workers: Any) -> None:
     tokens = list(range(1, 41))
     blocks = [tokens[1:], *block_chunks(tokens[17:])]
-    reason, events, transcript, worker, step, positions, error = run_step(workers, tokens, blocks)
+    reason, events, transcript, worker, step, _, error = run_step(workers, tokens, blocks)
     assert error is None and reason == "stop_token"
     assert token_ids(events) == tokens and transcript.tokens == (5, 6, *tokens)
     assert step.block_sizes == [17, 17, 6]
@@ -163,7 +163,7 @@ def test_drafts_are_capped_at_sixteen_and_sampling_resumes(workers: Any) -> None
 
 
 def test_empty_engine_block_raises_without_new_events(workers: Any) -> None:
-    reason, events, transcript, worker, step, positions, error = run_step(workers, [98], [None])
+    reason, events, transcript, worker, _, positions, error = run_step(workers, [98], [None])
     assert reason is None and isinstance(error, EngineError)
     assert str(error) == "decode returned no tokens"
     assert events == [] and transcript.tokens == (5, 6) and positions == []
@@ -171,7 +171,7 @@ def test_empty_engine_block_raises_without_new_events(workers: Any) -> None:
 
 
 def test_empty_block_after_kept_block_raises_without_changing_position(workers: Any) -> None:
-    reason, events, transcript, worker, step, positions, error = run_step(
+    reason, events, transcript, worker, _, _, error = run_step(
         workers,
         [98, 99],
         [[], None],
