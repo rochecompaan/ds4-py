@@ -1,6 +1,5 @@
 """Render trusted chat structure while keeping caller payloads plain."""
 
-from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -10,6 +9,8 @@ from .tool_prompt import ToolDefinition, ToolPromptGenerator
 from .tool_syntax.text import escape_tool_text
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+
     from .session import Engine
 
 
@@ -49,7 +50,7 @@ class PromptBuilder:
         append("system", self.engine._chat_begin())
         if self.family == "qwen":
             effort = self.engine._qwen_reasoning_effort(self.engine.think)
-            if effort:
+            if bool(effort):
                 append("system", self.message(prefix, "system", effort))
         else:
             append("system", self.engine._think_prefix(prefix, self.engine.think))
@@ -65,7 +66,7 @@ class PromptBuilder:
         else:
             append("system", tool_tokens)
 
-        if instructions:
+        if bool(instructions):
             append("system", self.message(prefix, "system", "\n\n" + instructions))
         return segments
 

@@ -3,8 +3,10 @@
 import os
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from ds4py._native.protocol import EngineInfo
+if TYPE_CHECKING:
+    from ds4py._native.protocol import EngineInfo
 from ds4py._native.rng import rng_state
 
 
@@ -17,7 +19,7 @@ class SamplingPolicy:
     seed: int | None = None
 
     @classmethod
-    def for_engine(
+    def for_engine(  # noqa: PLR0913 - Sampling mirrors all native policy knobs.
         cls,
         info: EngineInfo,
         *,
@@ -38,7 +40,7 @@ class SamplingPolicy:
 
 class Rng:
     def __init__(self, seed: int | None) -> None:
-        if not seed:
+        if seed is None or seed == 0:
             seed = int(time.time()) ^ (os.getpid() << 32) ^ time.process_time_ns()
             seed = (seed & ((1 << 64) - 1)) or 1
         self.state = rng_state(seed)

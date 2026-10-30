@@ -1,8 +1,10 @@
 """Pure planning of whole-prefix KV reuse."""
 
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -14,7 +16,7 @@ class Plan:
     checkpoint: str | None
 
 
-def plan_sync(
+def plan_sync(  # noqa: PLR0913 - Sync planning needs the full reuse context.
     tokens: Sequence[int],
     *,
     live: Sequence[int],

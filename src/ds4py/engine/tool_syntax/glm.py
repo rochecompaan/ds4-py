@@ -1,5 +1,7 @@
 """Incremental GLM name-first tool-call parser."""
 
+from typing import override
+
 from .delimiter import DelimiterParser
 from .model import ToolArgument
 from .text import unescape_tool_text
@@ -19,6 +21,7 @@ class Glm(DelimiterParser):
     _parameter_close = _ARG_VALUE_CLOSE
     _family = "GLM"
 
+    @override
     def _parse_call(self) -> bool:
         end = self.raw.find(b"<", self.parse_pos)
         if end < 0:
@@ -32,7 +35,7 @@ class Glm(DelimiterParser):
             return True
         name = bytes(self.raw[self.parse_pos : end]).strip(_ASCII_SPACE)
         name = self._decode(name, "GLM function name")
-        if not name:
+        if name is None or name == "":
             if self.state != "ERROR":
                 self._fail("GLM tool call without function name")
             return True
@@ -40,6 +43,7 @@ class Glm(DelimiterParser):
         self.parse_pos = end
         return True
 
+    @override
     def _parse_parameter(self) -> None:
         if not self.raw.startswith(_ARG_KEY, self.parse_pos):
             if self._partial(_ARG_KEY, self.parse_pos):
@@ -52,7 +56,7 @@ class Glm(DelimiterParser):
             return
         key = bytes(self.raw[key_start:key_end]).strip(_ASCII_SPACE)
         key = self._decode(key, "GLM argument name")
-        if not key:
+        if key is None or key == "":
             if self.state != "ERROR":
                 self._fail("empty <arg_key> in GLM tool call")
             return
@@ -69,6 +73,7 @@ class Glm(DelimiterParser):
         self._param_scan_pos = self.parse_pos
         self.state = "PARAM_VALUE"
 
+    @override
     def _parse_parameter_value(self) -> bool:
         end = self.raw.find(_ARG_VALUE_CLOSE, self._param_scan_pos)
         if end < 0:
@@ -79,7 +84,8 @@ class Glm(DelimiterParser):
             return True
         value = unescape_tool_text(text, _ARG_VALUE_CLOSE.decode())
         param_name = self._param_name
-        assert param_name is not None
+        if param_name is None:
+            raise AssertionError("completed GLM parameter requires a name")
         self._args[param_name] = ToolArgument(param_name, value, True)
         self._param_name = None
         self.parse_pos = end + len(_ARG_VALUE_CLOSE)

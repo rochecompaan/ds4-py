@@ -2,12 +2,14 @@
 
 import operator
 import threading
-from asyncio import AbstractEventLoop
-from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
-from concurrent.futures import Future
-from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Any, BinaryIO, TypeVar, cast
+from typing import TYPE_CHECKING, BinaryIO, Self, cast
+
+if TYPE_CHECKING:
+    from asyncio import AbstractEventLoop
+    from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
+    from concurrent.futures import Future
+    from contextlib import AbstractContextManager
 from uuid import uuid4
 
 from ds4py._native.api import LibNative
@@ -28,14 +30,16 @@ from .events import (
     Synced,
 )
 from .lifecycle import SessionEvent, SessionLifecycle
-from .logits import LogitsView
 from .pause import ControlSpan, resolve_control
-from .plan import Plan
-from .prefix import PrefixTurn
+
+if TYPE_CHECKING:
+    from .logits import LogitsView
+    from .plan import Plan
+    from .prefix import PrefixTurn
+    from .stream import RoundStream
+    from .tool_prompt import ToolDefinition
 from .prompt import PromptBuilder
 from .sampling import Rng, SamplingPolicy
-from .stream import RoundStream
-from .tool_prompt import ToolDefinition
 from .transcript import Segment, Transcript, TranscriptView
 from .worker import (
     CheckpointJob,
@@ -48,10 +52,8 @@ from .worker import (
     SyncJob,
 )
 
-T = TypeVar("T")
 
-
-def open(
+def open(  # noqa: PLR0913 - Engine construction mirrors the public CLI options.
     model: str | Path = "ds4flash.gguf",
     *,
     ctx: int = 100_000,
@@ -143,7 +145,7 @@ class Engine:
         finally:
             self._worker.close()
 
-    def __enter__(self) -> Engine:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -204,7 +206,7 @@ class Session:
         """
         return self._lifecycle.on_event(listener, kinds=kinds)
 
-    def emit(self, kind: str, **payload: Any) -> None:
+    def emit(self, kind: str, **payload: object) -> None:
         """Publish an extension/status event on this session's bus."""
         self._lifecycle.emit(kind, **payload)
 
@@ -212,7 +214,7 @@ class Session:
         """Scope all session-bus delivery to one asyncio loop's owning thread."""
         return self._lifecycle.deliver_on(loop)
 
-    def state(self, key: str, factory: Callable[[], T]) -> T:
+    def state[T](self, key: str, factory: Callable[[], T]) -> T:
         """Return the session-owned state for ``key``, creating it once."""
         self._require_open()
         return self._lifecycle.state(key, factory)
@@ -232,8 +234,8 @@ class Session:
     def switch(
         self,
         new_id: str,
-        restore: Callable[[], Mapping[str, Any] | None] | None = None,
-        **payload: Any,
+        restore: Callable[[], Mapping[str, object] | None] | None = None,
+        **payload: object,
     ) -> str:
         """Change identity across a restore boundary, closing old scoped state.
 
@@ -317,7 +319,7 @@ class Session:
         self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
         self._transcript.reset()
 
-    def append_tokens(self, tokens: Sequence[int], kind: str, meta: Mapping | None = None) -> Segment:
+    def append_tokens(self, tokens: Sequence[int], kind: str, meta: Mapping[str, object] | None = None) -> Segment:
         with self._lock:
             if self._active_round:
                 raise EngineError("a round is open")
@@ -492,7 +494,7 @@ class Session:
                 yield event
             exhausted = True
         finally:
-            if not exhausted:
+            if not exhausted:  # ty: ignore[redundant-condition-strict]  # Early exits bypass the normal assignment.
                 # A published terminal event means native work has already ended.
                 if not terminal:
                     self.cancel()
@@ -519,10 +521,11 @@ class Session:
         resuming = self._paused_control is not None and self._paused_stream is None
         control = resolve_control(self._paused_control if resuming else None, stop_sequences)
         sampled_tokens = self._paused_sampled_tokens if resuming else []
-        assert sampled_tokens is not None
+        if sampled_tokens is None:
+            raise AssertionError("paused raw round requires sampled tokens")
         try:
             tokens = self._transcript.tokens
-            if (yield from self._job_events(SyncJob(tokens))):
+            if bool((yield from self._job_events(SyncJob(tokens)))):
                 return
             job = GenerateJob(
                 sampling or self._engine.sampling_defaults,
@@ -536,7 +539,7 @@ class Session:
             )
             yield from self._job_events(job)
         finally:
-            if control is not None and control.stop_sequence is not None:
+            if control.stop_sequence is not None:
                 self._paused_control = control
                 self._paused_sampled_tokens = sampled_tokens
             else:
@@ -576,8 +579,11 @@ class Session:
         return self._worker.plan(self._transcript.tokens if tokens is None else tokens)
 
     def checkpoint(self, key: str) -> Checkpointed:
-        event = list(self._job_events(CheckpointJob(key)))[0]
-        assert isinstance(event, Checkpointed)
+        event = next(iter(self._job_events(CheckpointJob(key))))
+        if not isinstance(event, Checkpointed):
+            raise AssertionError(  # noqa: TRY004 - Preserve the impossible-event assertion contract.
+                "checkpoint job returned a non-checkpoint event"
+            )
         self._checkpoint_tokens[key] = event.tokens
         return event
 
@@ -628,7 +634,7 @@ class Session:
             self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
             return list(self._transcript.tokens)
 
-    def on_worker(self, fn: Callable[[Handles], T]) -> Future[T]:
+    def on_worker[T](self, fn: Callable[[Handles], T]) -> Future[T]:
         """Run ``fn`` on the engine worker and return a future for its result.
 
         The handles are borrowed and confined to the callback: do not retain

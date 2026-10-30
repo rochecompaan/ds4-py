@@ -1,23 +1,24 @@
 """Session-level chat helpers; these functions own transcript mutations."""
 
-from collections.abc import Generator, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, cast
 
 from ds4py.errors import EngineError
 
 from .decode import GenerateJob
-from .events import Event
 from .pause import resolve_control
-from .prefix import PrefixTurn
 from .prompt import PromptBuilder
-from .sampling import SamplingPolicy
 from .stream import RoundStream
-from .tool_prompt import ToolDefinition
-from .transcript import Segment
 from .worker import SyncJob
 
 if TYPE_CHECKING:
+    from collections.abc import Generator, Iterable, Mapping, Sequence
+
+    from .events import Event
+    from .prefix import PrefixTurn
+    from .sampling import SamplingPolicy
     from .session import Session
+    from .tool_prompt import ToolDefinition
+    from .transcript import Segment
 
 
 def _append(
@@ -111,9 +112,10 @@ def run_round(
         last_tokens: tuple[int, ...] | None = None
         while True:
             tokens = session._transcript.tokens
-            if tokens != last_tokens or len(tokens) < session._engine.config.ctx:
-                if (yield from session._job_events(SyncJob(tokens))):
-                    return
+            if (tokens != last_tokens or len(tokens) < session._engine.config.ctx) and bool(
+                (yield from session._job_events(SyncJob(tokens)))
+            ):
+                return
             # An unchanged full session is already synced. Generate again so a
             # zero reserve reports another pause instead of failing the sync.
             sampled_before = len(stream.sampled_tokens)
@@ -139,7 +141,7 @@ def run_round(
             reserve = action[1]
             resuming = True
     finally:
-        if stream is not None and stream.stop_sequence is not None:
+        if stream.stop_sequence is not None:
             session._paused_stream = stream
             session._paused_control = stream.control
         else:
@@ -176,7 +178,7 @@ def append_system_note(
     retire_paused(session)
     builder = PromptBuilder(session._engine)
     tokens = builder.message(session._transcript.tokens, "system", "\n" + text)
-    meta = {"subtype": subtype} if subtype else None
+    meta = {"subtype": subtype} if bool(subtype) else None
     return cast("Segment", _append(session, tokens, "note", meta))
 
 
