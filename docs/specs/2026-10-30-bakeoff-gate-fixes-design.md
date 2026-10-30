@@ -1,8 +1,8 @@
 # Bake-off gate fixes design
 
-Status: proposed for review
+Status: approved
 Date: 2026-10-30
-Branch: `fix-bakeoff-gates`
+Branch: `m3-harness-agent`
 
 ## Evidence and baseline
 
