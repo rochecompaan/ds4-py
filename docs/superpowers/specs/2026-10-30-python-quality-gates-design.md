@@ -23,7 +23,7 @@ Establish one strict, reproducible quality workflow before the codebase grows fu
 - Enabling every Ruff or ty rule without regard for false positives and project conventions.
 - Automatic unsafe fixes or automatic commits to pull requests.
 - Rewriting public APIs solely to make a linter happy.
-- Replacing every `Any` occurrence or every `TypeGuard` mechanically.
+- Replacing annotations mechanically without checking their runtime and public API contracts.
 - Changing native model execution, replay semantics, persistence formats, or agent capabilities.
 
 ## Anti-goals
@@ -35,7 +35,7 @@ The change fails if it produces a large collection of blanket suppressions, leav
 - Base branch and stacked PR base: `m3-harness-agent` at PR #6 head `6b5d9b912a02e00901eee4cc5f7aaa92b991043a`.
 - Feature branch: `build/python-quality-gates` in an isolated worktree.
 - Python 3.14 or later, using the minimum supported version for type analysis.
-- Existing devenv + uv workflow remains canonical on macOS and Linux. Python tools are locked by `uv.lock`; do not introduce a second Nix-generated hook configuration.
+- Existing devenv + uv workflow remains canonical on macOS and Linux. Enter `devenv shell` before dependency synchronization, static checks, tests, builds, and all other project commands. Python tools are locked by `uv.lock`; do not introduce a second Nix-generated hook configuration.
 - CI uses frozen lockfile resolution and read-only repository permissions.
 - PR #6's portable suite is the behavioral baseline: 1,425 passed, 1 skipped, 17 deselected when the developer's personal skill catalog is isolated from `HOME`.
 - No production change is intended for the baseline's dependence on a developer's personal skills; verification commands will use an isolated `HOME` on affected workstations.
@@ -86,6 +86,7 @@ Enable both annotation and import-level controls:
 
 - `ANN401` rejects `Any` in function arguments and return annotations.
 - `TID251` with `typing.Any` in `banned-api` prevents bypassing the policy through variable annotations, aliases, and nested annotations.
+- `TID251` also bans `typing.TypeGuard` and `typing_extensions.TypeGuard`; use `TypeIs` for type-narrowing validators without compatibility aliases.
 
 Default-deny `Any` in production code. Start the exception review with `src/ds4py/_native/**` and direct native interfaces such as `raw.py`, but do not automatically exempt every module that currently imports `Any`. JSON, event, and external API boundaries receive exceptions only when a precise static contract is not practical. Tests and benchmark code may use broader, explicitly scoped exceptions for test doubles and dynamic fixtures.
 
@@ -105,7 +106,7 @@ Add `typing-extensions>=4.16.0,<5` as a direct production dependency; do not rel
 - Use lowercase `typing_extensions.sentinel`, not the soft-deprecated `Sentinel` alias.
 - Use the sentinel object itself as a type, for example `JsonValue | _UNSET`, and narrow with `is` / `is not`; do not use `Literal[_UNSET]`.
 - Candidate replacements include the existing `_UNSET`, `_UNKNOWN`, `_END`, and `_STOP` objects, after checking identity, repr, serialization, and copy behavior.
-- Use standard-library `typing.TypeIs` on Python 3.14 for validators that genuinely prove a type at runtime. Do not use it as a suppression mechanism or mechanically replace every `TypeGuard`.
+- Use standard-library `typing.TypeIs` on Python 3.14 for validators that genuinely prove a type at runtime. `TypeGuard` is prohibited in both stdlib and `typing_extensions` forms. Review each validator's runtime proof when migrating; do not use `TypeIs` as a suppression mechanism.
 - Use `typing_extensions.TypedDict` for `closed` and `extra_items` support. Prefer class syntax; use the dictionary-based functional form when needed, not removed keyword-field syntax.
 - Use standard-library `Required`, `NotRequired`, and `ReadOnly` for item contracts. `closed=True` is a static contract and does not replace runtime validation.
 - Use PEP 695 `type` aliases and generic syntax where they clarify contracts.
@@ -162,7 +163,7 @@ Add a concise root `AGENTS.md` that tells coding agents:
 - How to enter devenv, synchronize dependencies, and install prek hooks.
 - The canonical quality, type-check, and portable test commands.
 - The requirement to check all of `src/`, `bench/`, and `tests/`.
-- The `Any` exception policy and preference for precise types, generics, and `object`.
+- The `Any` exception policy, the `TypeGuard` prohibition in favor of `TypeIs`, and preference for precise types, generics, and `object`.
 - The rules for targeted suppressions, modern typing, safe fixes, and behavioral verification.
 - When to use focused tests versus the full portable suite.
 
@@ -182,12 +183,12 @@ Mechanical formatting, manual lint fixes, type migration, and workflow/documenta
 
 ## Verification
 
-Required final checks on macOS and in Linux CI:
+Required final checks locally inside devenv on macOS, with equivalent frozen uv commands in Linux CI:
 
-- `uv run --frozen --extra agent prek run --all-files --show-diff-on-failure`
-- `uv run --frozen --extra agent ty check`
-- `uv run --frozen --extra agent pytest -m "not build and not live" -q`
-- `uv build --wheel` and the existing wheel-content check
+- `devenv shell -- uv run --frozen --extra agent prek run --all-files --show-diff-on-failure`
+- `devenv shell -- uv run --frozen --extra agent ty check`
+- `devenv shell -- uv run --frozen --extra agent pytest -m "not build and not live" -q`
+- `devenv shell -- uv build --wheel` and the existing wheel-content check
 - `git diff --check`
 
 Add focused runtime tests whenever a type-oriented change also affects sentinel behavior, validation, signatures, imports, or control flow. Do not add tests that merely restate tool configuration. Existing native, agent, engine, persistence, and benchmark suites are the primary regression evidence. Native build and live CI coverage remains in place; no claim of live model parity will be made from portable tests alone.
