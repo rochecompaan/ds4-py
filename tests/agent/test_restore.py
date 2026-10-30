@@ -253,6 +253,26 @@ def zero_payload_kv(store: Any, session_id: Any) -> None:
     store.write_kv_atomic(store.session_dir(session_id) / "session.kv", b"")
 
 
+def test_native_restore_does_not_emit_a_second_date_note(tmp_path: Path) -> None:
+    project, store, record, _saved = saved_session(tmp_path, script=("first answer",))
+    later_clock = lambda: datetime(2026, 10, 22, 9, 30, 0, tzinfo=timezone.utc)
+
+    with fake_engine(script=scripted_rounds("second answer")) as engine:
+        model = make_model(engine)
+        runtime = AgentRuntime(model, project, store=store, clock=later_clock)
+        try:
+            asyncio.run(runtime.switch(record.session_id))
+            asyncio.run(runtime.run("follow up"))
+
+            assert [
+                segment.meta.get("subtype")
+                for segment in model.session.transcript.segments
+                if segment.kind == "note"
+            ] == ["date"]
+        finally:
+            asyncio.run(runtime.close())
+
+
 @pytest.mark.parametrize("hints", [False, True])
 def test_stripped_payload_switch_renders_fresh_with_full_prefill(tmp_path: Path, hints: Any) -> None:
     project, store, record, saved = saved_session(tmp_path, hints=hints)

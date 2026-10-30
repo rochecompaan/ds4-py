@@ -143,6 +143,26 @@ def test_failed_first_attempt_feeds_grader_output_to_exactly_one_retry(tmp_path:
     assert "hidden failure" in invocations[1]["prompt"]
 
 
+def test_relative_results_root_keeps_attempt_artifacts_at_invocation_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = make_exercise(tmp_path)
+    workspace = prepare_exercise(source, tmp_path / "staged")
+    monkeypatch.chdir(tmp_path)
+
+    completed = run_task(
+        workspace, config(tmp_path), Path("results"),
+        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(command, 0, "pass", ""),
+    )
+
+    assert completed.errors == ()
+    assert completed.trace_path is not None
+    assert completed.trace_path.is_absolute()
+    assert completed.trace_path.is_file()
+    assert completed.trace_path.is_relative_to(tmp_path / "results")
+    assert not (workspace.agent_dir / "results").exists()
+
+
 def test_c_and_python_run_sequentially_on_equivalent_tasks(tmp_path: Path) -> None:
     source = make_exercise(tmp_path)
     staged = prepare_exercise(source, tmp_path / "staged")

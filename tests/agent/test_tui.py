@@ -56,6 +56,32 @@ def test_prompt_loop_accepts_pipe_input_and_exit() -> None:
     assert tui.exiting
 
 
+def test_model_question_uses_active_prompt_and_returns_typed_answer() -> None:
+    from pydantic_ai_harness.ask_user import (
+        AskUserRequest, AskUserResponse, Question, QuestionOption,
+    )
+
+    runtime: Any = FakeRuntime()
+    request = AskUserRequest(questions=(Question(
+        header="next", question="What next?",
+        options=(QuestionOption(label="one"), QuestionOption(label="two")),
+    ),))
+    with create_pipe_input() as input_:
+        input_.send_text("ask\n2\n/exit\n")
+        tui = TUI(runtime, input=input_, output=DummyOutput())
+
+        async def ask_during_run(prompt: str) -> None:
+            runtime.calls.append(("run", prompt))
+            runtime.response = await tui.ask(request)
+
+        runtime.run = ask_during_run
+        asyncio.run(asyncio.wait_for(tui.run(), timeout=2))
+
+    assert isinstance(runtime.response, AskUserResponse)
+    assert runtime.response.answers[0].selected == ("two",)
+    assert runtime.calls == [("run", "ask")]
+
+
 def test_prompt_loop_can_run_an_initial_prompt_inside_the_event_loop() -> None:
     runtime: Any = FakeRuntime()
     with create_pipe_input() as input_:

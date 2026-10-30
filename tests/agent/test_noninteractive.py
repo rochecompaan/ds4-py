@@ -281,6 +281,30 @@ def test_agent_cli_question_answerer_returns_a_typed_response(monkeypatch: pytes
     assert response.answers[0].selected == ("two",)
 
 
+def test_run_tui_binds_questions_to_the_tui(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic_ai_harness import AskUser
+    from ds4py import agent_cli
+
+    questions = AskUser(answerer=None)
+    runtime = SimpleNamespace(components=SimpleNamespace(components=[questions]))
+    created = []
+
+    class FakeTUI:
+        def __init__(self, actual_runtime: Any) -> None:
+            assert actual_runtime is runtime
+            created.append(self)
+
+        async def ask(self, request: Any) -> Any:
+            return request
+
+        async def run(self, prompt: Any = None) -> int:
+            return 0
+
+    monkeypatch.setattr("ds4py.tui.TUI", FakeTUI)
+    assert asyncio.run(agent_cli._run_tui(runtime, None)) == 0
+    assert questions.answerer == created[0].ask
+
+
 def test_raw_alias_and_core_commands_do_not_import_the_harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     import ds4py.raw as raw_module
 

@@ -43,6 +43,7 @@ class PrefillTraceWriter:
         self.path = Path(path)
         self.think = int(think)
         self._needs_separator = False
+        self.failure: OSError | None = None
         if self.path.exists() and self.path.stat().st_size:
             text = self.path.read_text(encoding="utf-8")
             self.round_index = len(read_ds4py(self.path, text).rounds)
@@ -68,16 +69,23 @@ class PrefillTraceWriter:
 
     def append(self, record: PrefillTraceRecord) -> None:
         line = json.dumps(asdict(record), separators=(",", ":"), ensure_ascii=False)
-        with self.path.open("a", encoding="utf-8") as stream:
-            if self._needs_separator:
-                stream.write("\n")
-                self._needs_separator = False
-            stream.write(line + "\n")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8") as stream:
+                if self._needs_separator:
+                    stream.write("\n")
+                    self._needs_separator = False
+                stream.write(line + "\n")
+        except OSError as error:
+            self.failure = error
+            self.session.emit("trace_error", path=str(self.path), error=error)
+            raise
 
     def _finish_round(self, session_id: str) -> None:
         if self._current is None:
             return
         current = self._current
+        self._current = None
         self.append(PrefillTraceRecord(
             session_id=session_id,
             run_id=cast(str, self._run_id),
@@ -89,7 +97,6 @@ class PrefillTraceWriter:
             prefill_suffix=current["prefill_suffix"],
             sampled=tuple(current["sampled"]),
         ))
-        self._current = None
         self._step_index += 1
         self.round_index += 1
 

@@ -384,8 +384,10 @@ def restore_command(argv: Sequence[str]) -> int:
     return 0
 
 
-def process_restore_runner(config: RestoreConfig) -> RestoreRunner:
-    """Return a runner that starts a new process for each restore case."""
+def process_restore_runner(
+    config: RestoreConfig, *, workspace: Path | None = None,
+) -> RestoreRunner:
+    """Return a runner that starts each restore from its task workspace."""
     def run(
         home: Path, session_id: str, case: int, trace_path: Path,
     ) -> RestoreRun:
@@ -400,7 +402,9 @@ def process_restore_runner(config: RestoreConfig) -> RestoreRunner:
         ]
         environment = os.environ.copy()
         environment["DS4PY_HOME"] = str(home)
-        completed = subprocess.run(command, env=environment, capture_output=True, text=True)
+        completed = subprocess.run(
+            command, env=environment, capture_output=True, text=True, cwd=workspace,
+        )
         trace_path.with_suffix(".log").write_text(
             (completed.stdout or "") + (completed.stderr or "")
         )
@@ -427,7 +431,9 @@ def check_result_saves(
             results.append(check_restore(
                 save_dir,
                 Path(results_root) / item.task_id / f"attempt-{index}" / "restore",
-                runner=process_restore_runner(config),
+                runner=process_restore_runner(
+                    config, workspace=getattr(item, "workspace", None),
+                ),
             ))
     return tuple(results)
 

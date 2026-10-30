@@ -191,3 +191,19 @@ def test_validate_for_engine_accepts_the_matching_model_and_quant(tmp_path: Path
     store = SessionStore(tmp_path)
 
     store.validate_for_engine(record(), engine_info())
+
+
+def test_streaming_save_accepts_payload_larger_than_uint32(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path)
+    path = tmp_path / "large.kv"
+    payload_bytes = 1 << 32
+
+    def write_sparse_payload(file: Any) -> int:
+        file.write(KV_HEADER.pack(KV_MAGIC, KV_VERSION, 0))
+        file.seek(payload_bytes - 1, 1)
+        file.write(b"x")
+        return payload_bytes
+
+    assert store.write_kv_stream_atomic(path, write_sparse_payload) == payload_bytes
+    assert store.read_kv_header(path) == payload_bytes
+    assert path.stat().st_size == KV_HEADER.size + payload_bytes

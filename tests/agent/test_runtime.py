@@ -588,3 +588,50 @@ def test_run_record_failure_fails_the_run_instead_of_reporting_success(tmp_path:
             assert "events.jsonl" in str(failed.value)
         finally:
             asyncio.run(runtime.close())
+
+
+def test_prefill_trace_failure_fails_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SessionStore(tmp_path / "home")
+    with fake_engine(script=scripted_rounds("answer")) as engine:
+        runtime = AgentRuntime(make_model(engine), project_dir(tmp_path), store=store)
+        trace = tmp_path / "missing" / "trace.jsonl"
+        original_open = Path.open
+
+        def fail_trace_open(path: Path, *args: Any, **kwargs: Any) -> Any:
+            if path == trace:
+                raise OSError("trace write failed")
+            return original_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", fail_trace_open)
+        try:
+            with PrefillTraceWriter(runtime.model.session, trace, think=engine.think):
+                with pytest.raises(EngineError, match="prefill trace failed"):
+                    asyncio.run(runtime.run("hello"))
+            assert runtime.status == "error"
+            events = read_events(store.session_dir(runtime.session_id) / "events.jsonl")
+            terminal = [line for line in events if line["kind"] == "run_end"]
+            assert [line["payload"]["status"] for line in terminal] == ["error"]
+        finally:
+            asyncio.run(runtime.close())
+
+
+def test_snapshot_history_failure_fails_the_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = SessionStore(tmp_path / "home")
+    with fake_engine(script=scripted_rounds("answer")) as engine:
+        runtime = AgentRuntime(make_model(engine), project_dir(tmp_path), store=store)
+
+        async def fail_history(*args: Any, **kwargs: Any) -> None:
+            raise ValueError("corrupt snapshot history")
+
+        monkeypatch.setattr(runtime._holder().current, "latest_snapshot", fail_history)
+        try:
+            with pytest.raises(ValueError, match="corrupt snapshot history"):
+                asyncio.run(runtime.run("hello"))
+            assert runtime.status == "error"
+            events = read_events(store.session_dir(runtime.session_id) / "events.jsonl")
+            terminal = [line for line in events if line["kind"] == "run_end"]
+            assert [line["payload"]["status"] for line in terminal] == ["error"]
+        finally:
+            asyncio.run(runtime.close())

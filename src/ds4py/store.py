@@ -29,6 +29,7 @@ SAVE_FORMAT_VERSION = 1
 _KV_FILE = "session.kv"
 _SAVE_FILE = "save.json"
 _MAX_UINT32 = 2**32 - 1
+_MAX_UINT64 = 2**64 - 1
 
 
 def token_digest(tokens: Iterable[int]) -> str:
@@ -365,7 +366,7 @@ class SessionStore:
                 payload_bytes = _nonnegative(
                     write_payload(cast(BinaryIO, file)), "payload byte count",
                 )
-                if payload_bytes > _MAX_UINT32:
+                if payload_bytes > _MAX_UINT64:
                     raise StoreError(
                         f"{path}: payload of {payload_bytes} bytes does not fit "
                         "the KV header"

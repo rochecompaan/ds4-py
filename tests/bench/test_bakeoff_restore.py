@@ -5,17 +5,22 @@ import asyncio
 from dataclasses import replace
 import json
 from pathlib import Path
+import re
 import shutil
+import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bench.run_bakeoff import drive_pty
+from bench.run_bakeoff import drive_pty, interruption_acceptance
 from bench.restore_check import (
+    CheckResult,
     RestoreError,
     RestoreRun,
+    check_result_saves,
     check_restore,
     make_stripped_copy,
     restore_command,
@@ -321,3 +326,73 @@ def test_pty_interrupt_resumes(tmp_path: Path) -> None:
 
     assert interrupted.passed, interrupted.detail
     assert "RESUMED" in interrupted.detail
+
+
+def test_interruption_acceptance_uses_tui_idle_lifecycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bench.run_bakeoff as runner
+
+    task = tmp_path / "task"
+    task.mkdir()
+    (task / "TASK.md").write_text("Solve the task.")
+    output = "prefill 2/2\nidle | ctx 2/100\nordinary follow-up answer\nidle | ctx 4/100\n"
+
+    def drive(command: list[str], *, steps: Any, **kwargs: Any) -> CheckResult:
+        cursor = 0
+        for pattern, response in steps:
+            match = re.search(pattern, output[cursor:], re.IGNORECASE)
+            assert match is not None, f"missing TUI lifecycle signal: {pattern}"
+            cursor += match.end()
+        return CheckResult(True, output)
+
+    monkeypatch.setattr(runner, "drive_pty", drive)
+    config = SimpleNamespace(
+        agent="ds4py", executable=(sys.executable, "driver.py"),
+        model="model.gguf", backend="cpu", ctx=100,
+        temperature=0.0, seed=1, tokens=32,
+    )
+
+    result = interruption_acceptance(
+        config, SimpleNamespace(agent_dir=task), tmp_path / "results",
+    )
+
+    assert result.passed, result.detail
+
+
+def test_restore_processes_run_from_the_original_task_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    save = make_save(tmp_path)
+    workspace = tmp_path / "task-workspace"
+    workspace.mkdir()
+    working_directories: list[Path | None] = []
+    config = SimpleNamespace(
+        executable=(sys.executable, "restore-driver.py", "attempt"),
+        model="model.gguf", backend="cpu", ctx=65536,
+        temperature=0.0, seed=1,
+    )
+
+    def complete(command: list[str], **kwargs: Any) -> Any:
+        working_directories.append(kwargs.get("cwd"))
+        metadata = Path(command[command.index("--metadata") + 1])
+        trace = Path(command[command.index("--trace") + 1])
+        case = 1 if trace.name == "case-1.jsonl" else 2
+        write_trace(trace, (1,))
+        metadata.write_text(json.dumps({
+            "switch_prefill": 0,
+            "followup_plan": "extend" if case == 1 else "rebuild",
+            "followup_prefill": 2 if case == 1 else 12,
+            "terminal_reason": "stop_token", "trace_path": str(trace),
+        }))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", complete)
+    item = SimpleNamespace(
+        agent="ds4py", task_id="tiny", attempt_save_dirs=(save,), workspace=workspace,
+    )
+
+    results = check_result_saves((item,), config, tmp_path / "restores")
+
+    assert results[0].passed, results[0].detail
+    assert working_directories == [workspace, workspace]

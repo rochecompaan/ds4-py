@@ -161,6 +161,7 @@ class AgentRuntime:
         self._running = False
         self._run_task: asyncio.Task[Any] | None = None
         self._interrupted = False
+        self._trace_failure: OSError | None = None
         self._created_at = self._timestamp()
         self._session_dir = self.store.session_dir(self._session.id)
         self.components = build_agent_components(
@@ -185,7 +186,9 @@ class AgentRuntime:
             # build_agent_components owns the wall clock; a runtime clock keeps a
             # fresh render byte-identical to the transcript it was saved from.
             self._notes.clock = self._clock
-        self._session.on_event(self._on_engine_event, kinds={"Interrupted", "Stopped"})
+        self._session.on_event(
+            self._on_engine_event, kinds={"Interrupted", "Stopped", "trace_error"},
+        )
 
     @property
     def messages(self) -> list[ModelMessage]:
@@ -235,6 +238,11 @@ class AgentRuntime:
         )
 
     def _on_engine_event(self, event: SessionEvent) -> None:
+        if event.kind == "trace_error":
+            error = event.payload["error"]
+            if isinstance(error, OSError) and self._trace_failure is None:
+                self._trace_failure = error
+            return
         if event.kind == "Interrupted":
             self._interrupted = True
             return
@@ -263,13 +271,11 @@ class AgentRuntime:
             await asyncio.wait([task])
 
     async def _latest(self, run_id: str) -> ContinuableSnapshot | None:
-        try:
-            holder = self._holder()
-            return await holder.current.latest_snapshot(
-                run_id=run_id, include_interrupted=True,
-            )
-        except (Ds4pyError, OSError, ValueError):
-            return None
+        """Return the newest snapshot; propagate storage failures to the run."""
+        holder = self._holder()
+        return await holder.current.latest_snapshot(
+            run_id=run_id, include_interrupted=True,
+        )
 
     async def _adopt_history(
         self,
@@ -331,6 +337,7 @@ class AgentRuntime:
         try:
             if self._record is not None:
                 self._record.failure = None
+            self._trace_failure = None
             self._session.emit("run_start", run_id=run_id)
             holder = self._holder()
             try:
@@ -360,6 +367,10 @@ class AgentRuntime:
             except BaseException as error:
                 await self._fail(run_id, "error", error, persist=False)
                 raise
+            if self._trace_failure is not None:
+                failure = self._trace_failure
+                await self._fail(run_id, "error", failure)
+                raise EngineError(f"prefill trace failed: {failure}") from failure
             self._note_title()
             if self._record is not None and self._record.failure is not None:
                 failure = self._record.failure

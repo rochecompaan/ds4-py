@@ -172,6 +172,28 @@ def test_repeated_sync_preserves_original_prompt_and_all_samples(tmp_path: Path)
     assert record.sampled == (3, 4)
 
 
+def test_trace_write_failure_publishes_an_error_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session: Any = TraceSession([1, 2, 3, 4])
+    events = []
+    session.on_event(lambda event: events.append(event) if event.kind == "trace_error" else None)
+    trace = tmp_path / "missing" / "trace.jsonl"
+    original_open = Path.open
+
+    def fail_trace_open(path: Path, *args: Any, **kwargs: Any) -> Any:
+        if path == trace:
+            raise OSError("trace write failed")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fail_trace_open)
+    with PrefillTraceWriter(session, trace, think=1):
+        emit_round(session, "run")
+
+    assert len(events) == 1
+    assert isinstance(events[0].payload["error"], OSError)
+
+
 VALID = {
     "session_id": "session",
     "run_id": "run",

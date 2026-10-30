@@ -15,8 +15,10 @@ from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 from prompt_toolkit.output import Output
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import PromptSession, print_formatted_text
+from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse
 
 from ds4py.engine.lifecycle import SessionEvent
+from ds4py.question_answers import selected_labels
 from ds4py.runtime import AgentRuntime
 from ds4py.tui_commands import SlashCommandRegistry, install_builtin_commands
 from ds4py.tui_render import FooterModel, StreamRenderer
@@ -61,6 +63,8 @@ class TUI:
         self._events: asyncio.Queue[SessionEvent] = asyncio.Queue()
         self._prompt_task: asyncio.Task[str] | None = None
         self._queued: deque[str] = deque()
+        self._answers: asyncio.Queue[str] = asyncio.Queue()
+        self._answering = False
         self._in_loop = False
         self._closed = False
         self._unsubscribe: Callable[[], None] = runtime.on_event(self._receive_event)
@@ -142,7 +146,11 @@ class TUI:
                 return
             if prompt_task in done:
                 try:
-                    self._queued.append(self._take_prompt(prompt_task))
+                    line = self._take_prompt(prompt_task)
+                    if self._answering:
+                        self._answers.put_nowait(line)
+                    else:
+                        self._queued.append(line)
                 except EOFError:
                     self.exiting = True
                     self.runtime.cancel()
@@ -151,6 +159,45 @@ class TUI:
                     except Exception as error:
                         self.show_message(f"error: {error}")
                     return
+
+    async def ask(self, request: AskUserRequest) -> AskUserResponse:
+        """Answer model questions through the active prompt, never raw stdin."""
+        if self._answering:
+            raise RuntimeError("a model question is already active")
+        self._answering = True
+        answers = []
+        try:
+            for question in request.questions:
+                self.show_message(question.question)
+                for index, option in enumerate(question.options, 1):
+                    description = f" — {option.description}" if option.description else ""
+                    self.show_message(f"  {index}. {option.label}{description}")
+                prompt = "Choices (comma-separated)" if question.multi_select else "Choice"
+                self.show_message(f"{prompt}; enter /cancel to cancel.")
+                while True:
+                    if self._in_loop:
+                        self._ensure_prompt()
+                        answer = await self._answers.get()
+                    else:
+                        try:
+                            answer = await self.session.prompt_async("answer> ")
+                        except EOFError:
+                            return AskUserResponse(cancelled=True)
+                    if answer.strip() == "/cancel":
+                        return AskUserResponse(cancelled=True)
+                    selected = selected_labels(question, answer)
+                    if selected is None:
+                        self.show_message("Invalid choice; try again or enter /cancel.")
+                        continue
+                    answers.append(AskUserAnswer(
+                        header=question.header, selected=selected,
+                    ))
+                    break
+            return AskUserResponse(answers=tuple(answers))
+        finally:
+            self._answering = False
+            while not self._answers.empty():
+                self._queued.append(self._answers.get_nowait())
 
     async def dispatch(self, line: str) -> None:
         """Execute one submitted prompt or command without escaping the loop."""

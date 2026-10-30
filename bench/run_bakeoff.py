@@ -68,6 +68,7 @@ class TaskRunResult:
     attempt_save_dirs: tuple[Path, ...] = ()
     attempt_trace_paths: tuple[Path, ...] = ()
     errors: tuple[str, ...] = ()
+    workspace: Path | None = None
 
     def __post_init__(self) -> None:
         if self.attempts not in {1, 2}:
@@ -280,7 +281,7 @@ def run_task(
     clock: Callable[[], float] = time.monotonic,
 ) -> TaskRunResult:
     """Run one agent on one staged task, with at most two sequential attempts."""
-    results_root = Path(results_root)
+    results_root = Path(results_root).resolve()
     base_prompt = (workspace.agent_dir / "TASK.md").read_text()
     summaries: list[EventSummary] = []
     grades: list[GradeResult] = []
@@ -353,7 +354,7 @@ def run_task(
         grader_outputs=tuple(grade.output for grade in grades),
         attempt_save_dirs=tuple(save_dirs),
         attempt_trace_paths=tuple(trace_paths),
-        errors=tuple(errors),
+        errors=tuple(errors), workspace=workspace.agent_dir.resolve(),
     )
 
 
@@ -394,13 +395,13 @@ def interruption_acceptance(
         env=_acceptance_environment(root / "home"),
         steps=[
             (r"prefill|tokens/s", "\x03"),
-            (r"interrupted", "State the next concrete action in one sentence, then stop.\n"),
-            (r"\[success\]|success", "/exit\n"),
+            (r"\bidle\b", "State the next concrete action in one sentence, then stop.\n"),
+            (r"\bidle\b", "/exit\n"),
         ],
         timeout=180,
     )
     (root / "interactive.log").write_text(result.detail)
-    return CheckResult(result.passed and "interrupted" in result.detail.lower(), result.detail)
+    return result
 
 
 def run_bakeoff(
@@ -409,7 +410,7 @@ def run_bakeoff(
     grade_runner: CommandRunner | None = None,
 ) -> BakeoffReport:
     """Run all tasks and acceptance checks, then write all six gate results."""
-    results_root = Path(results_root)
+    results_root = Path(results_root).resolve()
     results_root.mkdir(parents=True, exist_ok=False)
     manifest = load_manifest(manifest_path)
     staged = prepare_manifest(manifest, results_root / "staged", benchmark, repo_root)

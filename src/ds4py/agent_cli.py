@@ -80,6 +80,8 @@ async def _question_answerer(request: "AskUserRequest") -> "AskUserResponse":
     """Read AskUser choices and return its typed response."""
     from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserResponse
 
+    from ds4py.question_answers import selected_labels
+
     answers = []
     for question in request.questions:
         print(question.question, file=sys.stderr, flush=True)
@@ -90,23 +92,10 @@ async def _question_answerer(request: "AskUserRequest") -> "AskUserResponse":
         answer = sys.stdin.readline()
         if answer == "":
             return AskUserResponse(cancelled=True)
-        selected = []
-        for value in (item.strip() for item in answer.split(",")):
-            if not value:
-                continue
-            if value.isdecimal() and 1 <= int(value) <= len(question.options):
-                label = question.options[int(value) - 1].label
-            else:
-                label = next(
-                    (option.label for option in question.options if option.label == value),
-                    None,
-                )
-            if label is None or label in selected:
-                return AskUserResponse(cancelled=True)
-            selected.append(label)
-        if not selected or (len(selected) > 1 and not question.multi_select):
+        selected = selected_labels(question, answer)
+        if selected is None:
             return AskUserResponse(cancelled=True)
-        answers.append(AskUserAnswer(header=question.header, selected=tuple(selected)))
+        answers.append(AskUserAnswer(header=question.header, selected=selected))
     return AskUserResponse(answers=tuple(answers))
 
 
@@ -169,6 +158,15 @@ async def _run_tui(runtime: "AgentRuntime", prompt: str | None) -> int:
     from ds4py.tui import TUI
 
     tui = TUI(runtime)
+    from pydantic_ai_harness import AskUser
+
+    components = getattr(getattr(runtime, "components", None), "components", ())
+    questions = next(
+        (item for item in components if isinstance(item, AskUser)),
+        None,
+    )
+    if questions is not None:
+        questions.answerer = tui.ask
     if prompt is not None:
         return await tui.run(prompt)
     return await tui.run()
