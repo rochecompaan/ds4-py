@@ -17,10 +17,13 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO, cast
+from typing import TYPE_CHECKING, BinaryIO, SupportsIndex, cast
 
-from ds4py._native.protocol import EngineInfo
+from ds4py._json import is_string_key_mapping
 from ds4py.errors import StoreError
+
+if TYPE_CHECKING:
+    from ds4py._native.protocol import EngineInfo
 
 KV_HEADER = struct.Struct(">8sIQ")
 KV_MAGIC = b"DS4PYKV\0"
@@ -29,6 +32,7 @@ SAVE_FORMAT_VERSION = 1
 _KV_FILE = "session.kv"
 _SAVE_FILE = "save.json"
 _MAX_UINT32 = 2**32 - 1
+_SHA256_HEX_LENGTH = 64
 
 
 def token_digest(tokens: Iterable[int]) -> str:
@@ -48,8 +52,10 @@ def token_digest(tokens: Iterable[int]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _integer(value: Any, name: str) -> int:
+def _integer(value: object, name: str) -> int:
     if isinstance(value, bool):
+        raise ValueError(f"{name} must be an integer")
+    if not isinstance(value, SupportsIndex):
         raise ValueError(f"{name} must be an integer")
     try:
         return operator.index(value)
@@ -57,16 +63,22 @@ def _integer(value: Any, name: str) -> int:
         raise ValueError(f"{name} must be an integer") from error
 
 
-def _nonnegative(value: Any, name: str) -> int:
+def _nonnegative(value: object, name: str) -> int:
     value = _integer(value, name)
     if value < 0:
         raise ValueError(f"{name} must not be negative")
     return value
 
 
-def _string(value: Any, name: str) -> str:
+def _string(value: object, name: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{name} must be a string")
+    return value
+
+
+def _mapping(value: object, name: str) -> Mapping[str, object]:
+    if not is_string_key_mapping(value):
+        raise ValueError(f"{name} must be an object with string keys")
     return value
 
 
@@ -102,17 +114,17 @@ class SegmentProvenance:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping) -> SegmentProvenance:
+    def from_dict(cls, data: Mapping[str, object]) -> SegmentProvenance:
         if not isinstance(data, Mapping):
             raise ValueError("a segment must be an object")
         try:
             return cls(
-                data["start"],
-                data["end"],
-                data["kind"],
-                data["key"],
-                data["content_hash"],
-                data["source"],
+                _nonnegative(data["start"], "segment start"),
+                _nonnegative(data["end"], "segment end"),
+                _string(data["kind"], "segment kind"),
+                _string(data["key"], "segment key"),
+                _string(data["content_hash"], "segment content_hash"),
+                _string(data["source"], "segment source"),
             )
         except KeyError as error:
             raise ValueError(f"segment is missing {error.args[0]!r}") from error
@@ -147,7 +159,7 @@ class SaveRecord:
         for name in ("step_index", "model_id", "quant_bits", "ctx", "payload_bytes", "tokens"):
             object.__setattr__(self, name, _nonnegative(getattr(self, name), name))
         digest = self.tokens_sha256
-        if len(digest) != 64 or any(char not in "0123456789abcdefABCDEF" for char in digest):
+        if len(digest) != _SHA256_HEX_LENGTH or any(char not in "0123456789abcdefABCDEF" for char in digest):
             raise ValueError("tokens_sha256 must be a 64-character SHA-256 digest")
         segments = tuple(self.segments)
         if not all(isinstance(segment, SegmentProvenance) for segment in segments):
@@ -195,7 +207,7 @@ class SaveRecord:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping) -> SaveRecord:
+    def from_dict(cls, data: Mapping[str, object]) -> SaveRecord:
         if not isinstance(data, Mapping):
             raise ValueError("a save record must be an object")
         names = (
@@ -222,14 +234,27 @@ class SaveRecord:
         if not isinstance(raw_segments, (list, tuple)):
             raise ValueError("segments must be a list")
         return cls(
-            **{name: data[name] for name in names if name != "segments"},
-            segments=tuple(SegmentProvenance.from_dict(item) for item in raw_segments),
+            version=_integer(data["version"], "version"),
+            session_id=_string(data["session_id"], "session_id"),
+            conversation_id=_string(data["conversation_id"], "conversation_id"),
+            run_id=_string(data["run_id"], "run_id"),
+            step_index=_nonnegative(data["step_index"], "step_index"),
+            model_id=_nonnegative(data["model_id"], "model_id"),
+            quant_bits=_nonnegative(data["quant_bits"], "quant_bits"),
+            ctx=_nonnegative(data["ctx"], "ctx"),
+            title=_string(data["title"], "title"),
+            created_at=_string(data["created_at"], "created_at"),
+            last_used=_string(data["last_used"], "last_used"),
+            payload_bytes=_nonnegative(data["payload_bytes"], "payload_bytes"),
+            tokens=_nonnegative(data["tokens"], "tokens"),
+            tokens_sha256=_string(data["tokens_sha256"], "tokens_sha256"),
+            segments=tuple(SegmentProvenance.from_dict(_mapping(item, "segment")) for item in raw_segments),
         )
 
 
 def _default_root() -> Path:
     configured = os.environ.get("DS4PY_HOME")
-    if configured:
+    if configured is not None and configured != "":
         return Path(configured).expanduser()
     return Path("~/.ds4py").expanduser()
 
@@ -241,7 +266,7 @@ def _atomic_write(path: Path, chunks: Sequence[bytes]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as error:
         raise StoreError(f"{path}: cannot create directory: {error}") from error
-    temporary = None
+    temporary: Path | None = None
     replaced = False
     try:
         with tempfile.NamedTemporaryFile(
@@ -260,7 +285,7 @@ def _atomic_write(path: Path, chunks: Sequence[bytes]) -> None:
     except OSError as error:
         raise StoreError(f"{path}: cannot write atomically: {error}") from error
     finally:
-        if temporary is not None and not replaced:
+        if temporary is not None and not replaced:  # ty: ignore[redundant-condition-strict]  # Early failures precede assignment.
             with suppress(OSError):
                 temporary.unlink()
 
@@ -273,7 +298,7 @@ class SessionStore:
     Resolution never creates directories or moves files.
     """
 
-    def __init__(self, root: str | os.PathLike | None = None) -> None:
+    def __init__(self, root: str | os.PathLike[str] | None = None) -> None:
         self._root = None if root is None else Path(root).expanduser()
 
     @property
@@ -283,7 +308,7 @@ class SessionStore:
     def session_dir(self, session_id: str) -> Path:
         return self.root / "sessions" / session_id
 
-    def write_kv_atomic(self, path: str | os.PathLike, payload: bytes) -> None:
+    def write_kv_atomic(self, path: str | os.PathLike[str], payload: bytes) -> None:
         """Write the fixed header and exactly ``len(payload)`` payload bytes."""
         if not isinstance(payload, (bytes, bytearray, memoryview)):
             raise TypeError("payload must be bytes-like")
@@ -291,7 +316,7 @@ class SessionStore:
         header = KV_HEADER.pack(KV_MAGIC, KV_VERSION, len(payload))
         _atomic_write(Path(path), (header, payload))
 
-    def read_kv_header(self, path: str | os.PathLike) -> int:
+    def read_kv_header(self, path: str | os.PathLike[str]) -> int:
         """Validate a KV header and length; return the declared payload size.
 
         Native loading needs an open file positioned after the header, so the
@@ -319,9 +344,9 @@ class SessionStore:
         if version != KV_VERSION:
             raise StoreError(f"{path}: unsupported KV version {version}, expected {KV_VERSION}")
         remaining = max(0, os.fstat(file.fileno()).st_size - KV_HEADER.size)
-        return payload_bytes, remaining
+        return _integer(payload_bytes, "payload byte count"), remaining
 
-    def read_kv(self, path: str | os.PathLike) -> bytes:
+    def read_kv(self, path: str | os.PathLike[str]) -> bytes:
         """Read one payload, rejecting a bad header, every truncation, and extras."""
         path = Path(path)
         payload_bytes = self.read_kv_header(path)
@@ -337,7 +362,7 @@ class SessionStore:
 
     def write_kv_stream_atomic(
         self,
-        path: str | os.PathLike,
+        path: str | os.PathLike[str],
         write_payload: Callable[[BinaryIO], int],
     ) -> int:
         """Stream a payload into the KV file and publish it at one rename.
@@ -352,7 +377,7 @@ class SessionStore:
             path.parent.mkdir(parents=True, exist_ok=True)
         except OSError as error:
             raise StoreError(f"{path}: cannot create directory: {error}") from error
-        temporary = None
+        temporary: Path | None = None
         replaced = False
         try:
             with tempfile.NamedTemporaryFile(
@@ -382,12 +407,12 @@ class SessionStore:
         except OSError as error:
             raise StoreError(f"{path}: cannot write atomically: {error}") from error
         finally:
-            if temporary is not None and not replaced:
+            if temporary is not None and not replaced:  # ty: ignore[redundant-condition-strict]  # Early failures precede assignment.
                 with suppress(OSError):
                     temporary.unlink()
         return payload_bytes
 
-    def write_record_atomic(self, path: str | os.PathLike, record: SaveRecord) -> None:
+    def write_record_atomic(self, path: str | os.PathLike[str], record: SaveRecord) -> None:
         """Serialize and atomically publish one save record."""
         path = Path(path)
         try:
@@ -403,7 +428,7 @@ class SessionStore:
             raise StoreError(f"{path}: invalid save record: {error}") from error
         _atomic_write(path, (encoded,))
 
-    def read_record(self, path: str | os.PathLike) -> SaveRecord:
+    def read_record(self, path: str | os.PathLike[str]) -> SaveRecord:
         """Parse one save record, wrapping every malformation with its path."""
         path = Path(path)
         try:

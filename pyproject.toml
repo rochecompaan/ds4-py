@@ -88,6 +88,15 @@ lint.per-file-ignores."src/ds4py/abi/build.py" = [
 lint.per-file-ignores."src/ds4py/abi/probe.py" = [
   "S603", # Compiler probes use fixed argument lists without a shell.
 ]
+lint.per-file-ignores."src/ds4py/agent.py" = [
+  "TC002", # QuestionAnswerer is a runtime re-export of the composition API.
+]
+lint.per-file-ignores."src/ds4py/agent_cli.py" = [
+  "PLC0415", # Agent dependencies are imported lazily at the CLI boundary.
+]
+lint.per-file-ignores."src/ds4py/cli.py" = [
+  "PLC0415", # Agent dependencies are imported lazily at the CLI boundary.
+]
 lint.per-file-ignores."src/ds4py/engine/decoder.py" = [
   "FBT001", # Existing decoder options keep positional booleans for API compatibility.
 ]
@@ -111,6 +120,24 @@ lint.per-file-ignores."src/ds4py/engine/tool_syntax/glm.py" = [
 ]
 lint.per-file-ignores."src/ds4py/engine/tool_syntax/render.py" = [
   "RUF001", # Fullwidth vertical bars are required DSML protocol markers.
+]
+lint.per-file-ignores."src/ds4py/message_rendering.py" = [
+  "FBT001",  # Existing rendering options keep positional booleans for API compatibility.
+  "PLR0912", # Each model family has distinct rendering contracts.
+  "RUF001",  # Fullwidth vertical bars are required DSML protocol markers.
+  "TRY004",  # Public rendering errors retain ValueError for invalid payloads.
+]
+lint.per-file-ignores."src/ds4py/noninteractive.py" = [
+  "BLE001", # CLI exit codes and diagnostics cover every failure path.
+]
+lint.per-file-ignores."src/ds4py/runtime.py" = [
+  "FBT001", # Existing runtime options keep positional booleans for API compatibility.
+]
+lint.per-file-ignores."src/ds4py/store.py" = [
+  "TRY004", # Store validation retains ValueError for malformed persisted input.
+]
+lint.per-file-ignores."src/ds4py/tui.py" = [
+  "BLE001", # Interactive errors are shown without stopping the shell.
 ]
 lint.per-file-ignores."tests/**/*.py" = [
   "ANN401",  # Dynamic test doubles can require Any.

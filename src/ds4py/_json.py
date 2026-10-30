@@ -1,5 +1,6 @@
 """JSON-shaped types and runtime validators for dynamic input boundaries."""
 
+from collections.abc import Mapping
 from typing import TypeIs
 
 type JsonValue = str | int | float | bool | list[JsonValue] | dict[str, JsonValue] | None
@@ -13,6 +14,11 @@ def is_json_value(value: object) -> TypeIs[JsonValue]:
     if isinstance(value, list):
         return all(is_json_value(item) for item in value)
     return is_json_object(value)
+
+
+def is_string_key_mapping(value: object) -> TypeIs[Mapping[str, object]]:
+    """Return whether *value* is a mapping with only string keys."""
+    return isinstance(value, Mapping) and all(isinstance(key, str) for key in value)
 
 
 def is_json_object(value: object) -> TypeIs[JsonObject]:

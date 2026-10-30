@@ -4,20 +4,24 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, override
 
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
-from prompt_toolkit.document import Document
-from prompt_toolkit.formatted_text import StyleAndTextTuples
-from prompt_toolkit.input import Input
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.key_binding.key_processor import KeyPressEvent
-from prompt_toolkit.output import Output
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import PromptSession, print_formatted_text
 
-from ds4py.engine.lifecycle import SessionEvent
-from ds4py.runtime import AgentRuntime
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
+    from prompt_toolkit.document import Document
+    from prompt_toolkit.formatted_text import StyleAndTextTuples
+    from prompt_toolkit.input import Input
+    from prompt_toolkit.key_binding.key_processor import KeyPressEvent
+    from prompt_toolkit.output import Output
+
+    from ds4py.engine.lifecycle import SessionEvent
+    from ds4py.runtime import AgentRuntime
 from ds4py.tui_commands import SlashCommandRegistry, install_builtin_commands
 from ds4py.tui_render import FooterModel, StreamRenderer
 
@@ -26,6 +30,7 @@ class _SlashCompleter(Completer):
     def __init__(self, registry: SlashCommandRegistry) -> None:
         self.registry = registry
 
+    @override
     def get_completions(
         self,
         document: Document,
@@ -117,9 +122,14 @@ class TUI:
 
     def _ensure_prompt(self) -> asyncio.Task[str]:
         if self._prompt_task is None:
-            self._prompt_task = asyncio.create_task(
-                self.session.prompt_async("ds4py> "),
-            )
+
+            async def prompt() -> str:
+                line = await self.session.prompt_async("ds4py> ")
+                if not isinstance(line, str):
+                    raise TypeError("prompt did not return text")
+                return line
+
+            self._prompt_task = asyncio.create_task(prompt())
         return self._prompt_task
 
     def _take_prompt(self, task: asyncio.Task[str]) -> str:

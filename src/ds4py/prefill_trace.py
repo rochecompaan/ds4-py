@@ -1,15 +1,18 @@
 """Append-only token traces captured from committed facade events."""
 
 import json
-from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import TYPE_CHECKING, Self, TypedDict, cast
 
 from ds4py.engine.ds4py_replay import read_ds4py
 from ds4py.engine.events import Stopped, Synced, Token
-from ds4py.engine.lifecycle import SessionEvent
-from ds4py.engine.session import Session
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from ds4py.engine.lifecycle import SessionEvent
+    from ds4py.engine.session import Session
 
 
 @dataclass(frozen=True)
@@ -56,7 +59,7 @@ class PrefillTraceWriter:
         self._current: _CurrentRound | None = None
         self._unsubscribe: Callable[[], None] | None = session.on_event(self._on_event)
 
-    def __enter__(self) -> PrefillTraceWriter:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args: object) -> None:
@@ -99,7 +102,10 @@ class PrefillTraceWriter:
     def _on_event(self, event: SessionEvent) -> None:
         if event.kind == "run_start":
             self._finish_round(event.session_id)
-            self._run_id = event.payload["run_id"]
+            run_id = event.payload["run_id"]
+            if not isinstance(run_id, str):
+                raise TypeError("run_start run_id must be a string")
+            self._run_id = run_id
             self._active_run = True
             self._step_index = 0
             return
@@ -109,7 +115,10 @@ class PrefillTraceWriter:
             return
         if event.kind == "model_step":
             if self._active_run and event.payload["run_id"] == self._run_id:
-                self._step_index = event.payload["step_index"]
+                step_index = event.payload["step_index"]
+                if not isinstance(step_index, int):
+                    raise TypeError("model_step step_index must be an integer")
+                self._step_index = step_index
             return
         if not self._active_run:
             return

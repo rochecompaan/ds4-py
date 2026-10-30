@@ -3,19 +3,23 @@
 import argparse
 import asyncio
 import sys
-from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ds4py import ThinkMode
+from ds4py._native.protocol import THINK_LEVEL_BASE
 from ds4py.errors import Ds4pyError
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 
     from ds4py.runtime import AgentRuntime
 
+
+_MAX_THINK_LEVEL = 100
 
 _THINK_MODES = {
     "none": ThinkMode.NONE,
@@ -28,7 +32,7 @@ _THINK_MODES = {
 
 def _level(value: str) -> int:
     level = int(value)
-    if not 1 <= level <= 100:
+    if not 1 <= level <= _MAX_THINK_LEVEL:
         raise argparse.ArgumentTypeError("think level must be between 1 and 100")
     return level
 
@@ -66,9 +70,9 @@ def parser() -> argparse.ArgumentParser:
 
 def _think_mode(args: argparse.Namespace) -> int:
     if args.think_mode is not None:
-        return args.think_mode
+        return int(args.think_mode)
     if args.think_level is not None:
-        return 1000 + args.think_level
+        return THINK_LEVEL_BASE + int(args.think_level)
     if args.think is not None:
         return _THINK_MODES[args.think]
     return ThinkMode.HIGH
@@ -82,9 +86,8 @@ async def _question_answerer(request: AskUserRequest) -> AskUserResponse:
     for question in request.questions:
         print(question.question, file=sys.stderr, flush=True)
         for index, option in enumerate(question.options, 1):
-            description = f" — {option.description}" if option.description else ""
+            description = f" — {option.description}" if bool(option.description) else ""
             print(f"  {index}. {option.label}{description}", file=sys.stderr, flush=True)
-        prompt = "Choices (comma-separated)" if question.multi_select else "Choice"
         answer = sys.stdin.readline()
         if answer == "":
             return AskUserResponse(cancelled=True)
@@ -114,7 +117,7 @@ def open_runtime(
     project_dir: str | Path,
     *,
     read_only: bool = False,
-) -> Iterator[AgentRuntime]:
+) -> Generator[AgentRuntime]:
     """Open the canonical agent stack with its CLI interaction services."""
     from ds4py import open as open_engine
     from ds4py.engine.sampling import SamplingPolicy

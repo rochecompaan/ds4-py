@@ -15,7 +15,7 @@ def _report(err: TextIO, message: str) -> None:
     except asyncio.CancelledError, KeyboardInterrupt:
         pass
     except Exception:
-        pass
+        return
 
 
 async def run_noninteractive(
