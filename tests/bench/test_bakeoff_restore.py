@@ -354,7 +354,7 @@ def test_interruption_acceptance_uses_tui_idle_lifecycle(
     )
 
     result = interruption_acceptance(
-        config, SimpleNamespace(agent_dir=task), tmp_path / "results",
+        cast(Any, config), cast(Any, SimpleNamespace(agent_dir=task)), tmp_path / "results",
     )
 
     assert result.passed, result.detail
@@ -392,7 +392,7 @@ def test_restore_processes_run_from_the_original_task_workspace(
         agent="ds4py", task_id="tiny", attempt_save_dirs=(save,), workspace=workspace,
     )
 
-    results = check_result_saves((item,), config, tmp_path / "restores")
+    results = check_result_saves(cast(Any, (item,)), cast(Any, config), tmp_path / "restores")
 
     assert results[0].passed, results[0].detail
     assert working_directories == [workspace, workspace]

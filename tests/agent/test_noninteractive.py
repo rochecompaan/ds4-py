@@ -301,7 +301,7 @@ def test_run_tui_binds_questions_to_the_tui(monkeypatch: pytest.MonkeyPatch) -> 
             return 0
 
     monkeypatch.setattr("ds4py.tui.TUI", FakeTUI)
-    assert asyncio.run(agent_cli._run_tui(runtime, None)) == 0
+    assert asyncio.run(agent_cli._run_tui(cast(Any, runtime), None)) == 0
     assert questions.answerer == created[0].ask
 
 
