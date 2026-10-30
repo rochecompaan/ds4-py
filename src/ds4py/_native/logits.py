@@ -1,12 +1,13 @@
 """ctypes marshalling for the live session logits vector."""
 
 import ctypes as C
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from ds4py.errors import EngineError
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from .api import NativeSession
 
 
