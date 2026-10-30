@@ -1,0 +1,72 @@
+exclude: ^(docs/patches/|uv\.lock$|devenv\.lock$)
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: pretty-format-json
+        args: [--autofix, --no-sort-keys, --no-ensure-ascii]
+      - id: trailing-whitespace
+
+  - repo: https://github.com/tox-dev/pyproject-fmt
+    rev: v2.30.3
+    hooks:
+      - id: pyproject-fmt
+        args: [--keep-full-version, --no-generate-python-version-classifiers, --max-supported-python=3.15]
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.39.0
+    hooks:
+      - id: check-github-workflows
+      - id: check-github-workflows-require-timeout
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+
+  - repo: local
+    hooks:
+      - id: forbid-type-guard
+        name: TypeGuard is banned; use TypeIs
+        entry: \bTypeGuard\b
+        language: pygrep
+        types: [python]
+      - id: ruff-check
+        name: ruff check
+        entry: >-
+          uv run --frozen --extra agent ruff check
+          --force-exclude --fix --exit-non-zero-on-fix
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
+      - id: ruff-format
+        name: ruff format
+        entry: >-
+          uv run --frozen --extra agent ruff format
+          --force-exclude --exit-non-zero-on-format
+        language: system
+        types_or: [python, pyi, jupyter]
+        require_serial: true
+      - id: ty
+        name: ty check
+        entry: uv run --frozen --extra agent ty check
+        language: system
+        pass_filenames: false
+        always_run: true
+        require_serial: true
