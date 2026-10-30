@@ -444,7 +444,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", required=True)
     parser.add_argument("--agent", required=True, help="C reference agent executable")
     parser.add_argument("--backend", default="cpu")
-    parser.add_argument("--tokens", type=int, default=512)
+    parser.add_argument("--tokens", type=int, default=8192)
     return parser
 
 

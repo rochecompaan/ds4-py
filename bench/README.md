@@ -20,6 +20,9 @@ isolation and grader visibility.
   `20261021`, plus the two pinned repository tasks in `bench/bakeoff.yaml`.
 - Sampling: temperature 0, seed 1, context 100000, at most two attempts per
   task. Both agents must use the same model, backend, prompt, and sampling.
+- Response budget: 8192 tokens per model response by default for both agents.
+  Thinking consumes this budget. Use `--tokens` to set a different shared limit;
+  a larger explicit value may still be necessary for thinking-heavy tasks.
 - Run agents and replay sequentially. Do not run another agent, model, replay,
   or memory-heavy benchmark process at the same time.
 
