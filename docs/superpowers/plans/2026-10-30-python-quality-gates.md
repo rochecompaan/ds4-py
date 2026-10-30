@@ -249,23 +249,23 @@ Expected: zero static diagnostics and the full portable suite passes. Commit `te
 - Consumes: Task 6's completely green local gate.
 - Produces: one CI `quality` job running prek, no Pyright dependency/configuration, documented devenv-first commands, and the final stacked-PR verification evidence.
 
-- [ ] **Step 1: Replace the old typing job and harden workflow behavior**
+- [x] **Step 1: Replace the old typing job and harden workflow behavior**
 
 Rename `typing` to `quality` and run `uv run --frozen --extra agent prek run --all-files --show-diff-on-failure` on Python 3.14 Ubuntu. Remove Pyright commands. Preserve test/build matrices, add suitable timeouts to every job, pin actions to full commit SHAs, and disable persisted credentials where unnecessary.
 
-- [ ] **Step 2: Remove Pyright and synchronize documentation**
+- [x] **Step 2: Remove Pyright and synchronize documentation**
 
 Remove its dependency and `[tool.pyright]` table, regenerate the lockfile, then run `pyproject-fmt --check`. In `AGENTS.md`, document devenv setup, `uv sync --frozen --extra agent`, `uv run prek install`, canonical quality/test commands, `Any` and `TypeGuard` policies, modern typing, safe fixes, and focused versus full verification. Link native/live details in `docs/development.md` rather than duplicating them.
 
-- [ ] **Step 3: Run all configuration and packaging checks**
+- [x] **Step 3: Run all configuration and packaging checks**
 
 Inside devenv, run prek with all files, direct ty, actionlint, `uv build --wheel`, the existing `Makefile.lib` wheel-content assertion, and `git diff --check`. Expected: all pass; GitHub schema, timeout, YAML, JSON, TOML, and `TypeGuard` hooks all execute successfully.
 
-- [ ] **Step 4: Run final behavioral and hygiene verification**
+- [x] **Step 4: Run final behavioral and hygiene verification**
 
 Run the full portable pytest suite with the empty isolated `HOME`, then rerun prek to prove no hook modifies the final tree. Inspect `git diff --stat`, `git diff --check`, and all type-oriented changes for accidental behavior edits. Expected: 1,425 or more passing tests depending on added focused tests, no unexpected skips beyond baseline, and a clean worktree after commits.
 
-- [ ] **Step 5: Commit and prepare the stacked PR**
+- [x] **Step 5: Commit and prepare the stacked PR**
 
 ```bash
 git add .github/workflows/ci.yml pyproject.toml uv.lock AGENTS.md docs/development.md .pre-commit-config.yaml
