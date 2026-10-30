@@ -159,19 +159,19 @@ Expected: all pass. Commit `refactor: harden native type boundaries`.
 - Consumes: Tasks 1-2's rules, JSON contracts, and dynamic-boundary policy.
 - Produces: zero Ruff/ty diagnostics for `src/ds4py/engine`; typed worker/session queues and events; reviewed lowercase sentinels for `_END` and `_STOP`.
 
-- [ ] **Step 1: Type engine payload, queue, and state contracts**
+- [x] **Step 1: Type engine payload, queue, and state contracts**
 
 Replace avoidable `Any` with `object`, generics, `JsonValue`, `TypedDict`, and exact callback/queue types. Add missing generic arguments and `@override`; preserve iterator, async, cancellation, and listener signatures.
 
-- [ ] **Step 2: Modernize worker sentinels and narrowing**
+- [x] **Step 2: Modernize worker sentinels and narrowing**
 
 Replace worker `_END`/`_STOP` object sentinels with lowercase `sentinel` where identity behavior remains compatible. Use the sentinel itself in union types and narrow with identity. Add focused tests only for identity, repr, copying, or queue behavior that the existing suite does not already pin.
 
-- [ ] **Step 3: Resolve strict condition and soundness diagnostics**
+- [x] **Step 3: Resolve strict condition and soundness diagnostics**
 
 Review every `redundant-condition-strict`, `truthiness-test-of-none-union`, `unsound-*`, and invalid assignment report against actual state transitions. Correct real unreachable or ambiguous branches; use a narrow documented suppression only after demonstrating a checker false positive.
 
-- [ ] **Step 4: Run the engine regression gate**
+- [x] **Step 4: Run the engine regression gate**
 
 Run Ruff and ty on `src/ds4py/engine`, then `pytest tests/engine -m "not live and not build" -q`, all inside devenv. Expected: zero static diagnostics and all engine tests pass. Commit `refactor: strengthen engine type contracts`.
 
