@@ -71,6 +71,15 @@ def _payload(
     return payload, nested
 
 
+def _canonical_tool_part(part: object) -> tuple[dict[str, Any], str]:
+    if not isinstance(part, dict):
+        raise MetricError("canonical tool event needs a part object")
+    call_id = part.get("tool_call_id")
+    if not isinstance(call_id, str) or not call_id:
+        raise MetricError("canonical tool event needs a nonempty tool_call_id")
+    return part, call_id
+
+
 def _reuse(plan: object) -> tuple[str, int, int]:
     if not isinstance(plan, dict):
         raise MetricError("Synced event is missing its plan")
@@ -101,6 +110,8 @@ def summarize_events(
     ratios: list[float] = []
     reasons: list[str] = []
     seen_runs: set[str] = set()
+    canonical_calls: set[str] = set()
+    resolved_calls: set[str] = set()
     for record in records:
         kind = record.get("kind")
         if not isinstance(kind, str):
@@ -140,8 +151,22 @@ def summarize_events(
             if not isinstance(calls, list):
                 raise MetricError("ToolCalls event needs a calls list")
             parsed += len(calls)
-        elif kind == "ToolResultEvent":
+        elif kind == "FunctionToolCallEvent":
+            part, call_id = _canonical_tool_part(payload.get("part"))
+            if part.get("part_kind") != "tool-call":
+                raise MetricError("FunctionToolCallEvent needs a tool-call part")
+            if call_id in canonical_calls:
+                raise MetricError(f"duplicate canonical tool call: {call_id}")
+            canonical_calls.add(call_id)
+        elif kind in {"ToolResultEvent", "FunctionToolResultEvent"}:
             part = payload.get("part")
+            if kind == "FunctionToolResultEvent":
+                part, call_id = _canonical_tool_part(part)
+                if call_id not in canonical_calls:
+                    raise MetricError(f"result for unknown canonical tool call: {call_id}")
+                if call_id in resolved_calls:
+                    raise MetricError(f"duplicate canonical tool result: {call_id}")
+                resolved_calls.add(call_id)
             if not isinstance(part, dict):
                 raise MetricError("ToolResultEvent needs a part")
             part_kind = part.get("part_kind")
@@ -157,6 +182,9 @@ def summarize_events(
                     raise MetricError(f"unknown tool outcome: {outcome!r}")
             else:
                 raise MetricError(f"unknown tool result part: {part_kind!r}")
+    unresolved = canonical_calls - resolved_calls
+    if unresolved:
+        raise MetricError(f"canonical tool calls without outcomes: {sorted(unresolved)!r}")
     accounting = ToolAccounting(parsed, executed, refused, retried)
     return EventSummary(
         wall_seconds=_wall(wall_seconds),

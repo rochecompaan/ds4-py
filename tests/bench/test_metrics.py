@@ -50,6 +50,46 @@ def valid_events() -> list[dict[str, Any]]:
     ]
 
 
+def function_call(call_id: Any="call-1") -> dict[str, Any]:
+    return event("FunctionToolCallEvent", {
+        "part": {
+            "tool_name": "read_file", "args": {"path": "a"}, "tool_call_id": call_id,
+            "tool_kind": "file_system.read_file", "id": None, "provider_name": None,
+            "provider_details": {}, "part_kind": "tool-call",
+        },
+        "args_valid": True, "event_kind": "function_tool_call",
+    })
+
+
+def function_result(
+    call_id: Any="call-1", part_kind: Any="tool-return", outcome: Any="success",
+) -> dict[str, Any]:
+    return event("FunctionToolResultEvent", {
+        "part": {
+            "tool_name": "read_file", "content": "a", "tool_call_id": call_id,
+            "tool_kind": "file_system.read_file", "metadata": None,
+            "timestamp": "2026-10-30 14:12:00+00:00", "outcome": outcome,
+            "part_kind": part_kind,
+        },
+        "content": None, "event_kind": "function_tool_result",
+    })
+
+
+def canonical_events() -> list[dict[str, Any]]:
+    return [
+        event("run_start"),
+        event("ToolCalls", {"event": {"calls": [
+            {"name": "read", "args": {"path": "a"}, "raw": "raw-a"},
+            {"name": "read", "args": {"path": "b"}, "raw": "raw-b"},
+        ]}}),
+        function_call("call-1"),
+        function_call("call-2"),
+        function_result("call-2", outcome="denied"),
+        function_result("call-1"),
+        event("run_end", {"status": "success"}),
+    ]
+
+
 def test_event_metrics_cover_six_comparison_values_and_tool_accounting() -> None:
     summary = summarize_events(valid_events(), wall_seconds=2.5)
 
@@ -65,6 +105,57 @@ def test_event_metrics_cover_six_comparison_values_and_tool_accounting() -> None
     assert cast(Any, summary.tool_accounting).executed == 1
     assert cast(Any, summary.tool_accounting).retried == 1
     assert cast(Any, summary.tool_accounting).complete
+
+
+def test_canonical_tool_results_pair_by_id_and_count_denials() -> None:
+    summary = summarize_events(canonical_events(), wall_seconds=1)
+
+    assert summary.tool_calls == 2
+    assert cast(Any, summary.tool_accounting).executed == 1
+    assert cast(Any, summary.tool_accounting).refused == 1
+    assert cast(Any, summary.tool_accounting).retried == 0
+    assert cast(Any, summary.tool_accounting).complete
+
+
+def test_canonical_retry_prompt_is_a_resolution_not_an_execution() -> None:
+    events = [
+        event("run_start"),
+        event("ToolCalls", {"event": {"calls": [
+            {"name": "read", "args": {"path": "a"}, "raw": "raw-a"},
+        ]}}),
+        function_call(),
+        function_result(part_kind="retry-prompt", outcome=None),
+        event("run_end", {"status": "success"}),
+    ]
+
+    summary = summarize_events(events, wall_seconds=1)
+
+    assert cast(Any, summary.tool_accounting).executed == 0
+    assert cast(Any, summary.tool_accounting).retried == 1
+    assert cast(Any, summary.tool_accounting).complete
+
+
+@pytest.mark.parametrize("mutation", [
+    "duplicate_call", "duplicate_result", "unknown_result", "missing_call_id",
+    "empty_result_id", "unresolved_call",
+])
+def test_inconsistent_canonical_tool_evidence_raises(mutation: Any) -> None:
+    events = canonical_events()
+    if mutation == "duplicate_call":
+        events.insert(3, function_call("call-1"))
+    elif mutation == "duplicate_result":
+        events.insert(-1, function_result("call-1"))
+    elif mutation == "unknown_result":
+        events[-2] = function_result("unknown")
+    elif mutation == "missing_call_id":
+        del events[2]["payload"]["part"]["tool_call_id"]
+    elif mutation == "empty_result_id":
+        events[-2] = function_result("")
+    else:
+        del events[-2]
+
+    with pytest.raises(MetricError):
+        summarize_events(events, wall_seconds=1)
 
 
 def test_non_extension_rounds_require_recorded_compaction_or_strategy_reason() -> None:
