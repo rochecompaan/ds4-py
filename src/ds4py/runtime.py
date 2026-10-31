@@ -34,7 +34,7 @@ from pydantic_ai_harness.step_persistence import (
 from ds4py.agent import QuestionAnswerer, build_agent_components
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.system_notes import DS4SystemNotes
-from ds4py.errors import Ds4pyError, EngineError, StoreError
+from ds4py.errors import EngineError, StoreError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -338,7 +338,7 @@ class AgentRuntime:
             persistence_error=(None if persistence_error is None else str(persistence_error)),
         )
 
-    async def run(self, prompt: str) -> AgentRunResult[object]:
+    async def run(self, prompt: str) -> AgentRunResult[object]:  # noqa: PLR0915 - One run owns its full persistence lifecycle.
         """Run one prompt as one harness run and record its terminal status."""
         self._require_open()
         if self._running:

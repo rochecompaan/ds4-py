@@ -7,14 +7,10 @@ destination-directory temporary file protocol used to publish both files.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
-from contextlib import suppress
-from dataclasses import dataclass
 import hashlib
 import json
 import operator
 import os
-from pathlib import Path
 import struct
 import tempfile
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -300,7 +296,7 @@ def _atomic_write(path: Path, chunks: Sequence[bytes]) -> None:
                 file.write(chunk)
             file.flush()
             os.fsync(file.fileno())
-        os.replace(temporary, path)
+        Path(temporary).replace(path)
         replaced = True
     except OSError as error:
         raise StoreError(f"{path}: cannot write atomically: {error}") from error
@@ -408,7 +404,7 @@ class SessionStore:
             ) as file:
                 temporary = Path(file.name)
                 payload_bytes = _nonnegative(
-                    write_payload(cast(BinaryIO, file)),
+                    write_payload(cast("BinaryIO", file)),
                     "payload byte count",
                 )
                 if payload_bytes > _MAX_UINT64:
@@ -422,7 +418,7 @@ class SessionStore:
                 file.write(KV_HEADER.pack(KV_MAGIC, KV_VERSION, payload_bytes))
                 file.flush()
                 os.fsync(file.fileno())
-            os.replace(temporary, path)
+            Path(temporary).replace(path)
             replaced = True
         except OSError as error:
             raise StoreError(f"{path}: cannot write atomically: {error}") from error

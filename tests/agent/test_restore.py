@@ -5,7 +5,7 @@ import json
 import shutil
 from copy import deepcopy
 from dataclasses import replace
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Never, cast
 
@@ -251,7 +251,7 @@ def zero_payload_kv(store: Any, session_id: Any) -> None:
 
 def test_native_restore_does_not_emit_a_second_date_note(tmp_path: Path) -> None:
     project, store, record, _saved = saved_session(tmp_path, script=("first answer",))
-    later_clock = lambda: datetime(2026, 10, 22, 9, 30, 0, tzinfo=timezone.utc)
+    later_clock = lambda: datetime(2026, 10, 22, 9, 30, 0, tzinfo=UTC)
 
     with fake_engine(script=scripted_rounds("second answer")) as engine:
         model = make_model(engine)
@@ -586,7 +586,7 @@ def test_wrong_content_hash_fails_with_the_key(tmp_path: Path, restore_path: Any
 
 
 def test_model_or_quant_mismatch_is_an_error_naming_the_identity(tmp_path: Path) -> None:
-    project, store, record, saved = saved_session(tmp_path)
+    project, store, _record, saved = saved_session(tmp_path)
 
     with fake_engine(script=scripted_rounds("second answer"), model_id=9) as engine:
         model = make_model(engine)
@@ -608,7 +608,7 @@ def test_model_or_quant_mismatch_is_an_error_naming_the_identity(tmp_path: Path)
 
 
 def test_corrupt_kv_fails_with_the_path(tmp_path: Path) -> None:
-    project, store, record, saved = saved_session(tmp_path)
+    project, store, _record, saved = saved_session(tmp_path)
     kv_path = store.session_dir(saved["session_id"]) / "session.kv"
     kv_path.write_bytes(b"not-a-kv-file" * 8)
 
@@ -616,7 +616,7 @@ def test_corrupt_kv_fails_with_the_path(tmp_path: Path) -> None:
         model = make_model(engine)
         runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
         try:
-            with pytest.raises(StoreError, match="session.kv"):
+            with pytest.raises(StoreError, match=r"session\.kv"):
                 asyncio.run(runtime.switch(saved["session_id"]))
         finally:
             asyncio.run(runtime.close())

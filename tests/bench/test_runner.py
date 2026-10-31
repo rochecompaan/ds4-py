@@ -47,15 +47,15 @@ def config(tmp_path: Path, agent: Any = "ds4py") -> Any:
 def result(task_id: Any = "task", agent: Any = "ds4py", **changes: Any) -> Any:
     save = Path("/saves") / task_id / agent
     trace = Path("/traces") / task_id / agent
-    metric_values: dict[str, Any] = dict(
-        wall_seconds=10,
-        progress_events=3,
-        tokens=20,
-        tool_calls=1,
-        avg_prefill_reuse=0.8,
-        non_extend_rounds=0,
-        tool_accounting=ToolAccounting(1, 1) if agent == "ds4py" else None,
-    )
+    metric_values: dict[str, Any] = {
+        "wall_seconds": 10,
+        "progress_events": 3,
+        "tokens": 20,
+        "tool_calls": 1,
+        "avg_prefill_reuse": 0.8,
+        "non_extend_rounds": 0,
+        "tool_accounting": ToolAccounting(1, 1) if agent == "ds4py" else None,
+    }
     for name in EventSummary.__dataclass_fields__:
         if name in changes:
             metric_values[name] = changes.pop(name)

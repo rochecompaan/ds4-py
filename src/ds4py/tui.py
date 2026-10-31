@@ -12,9 +12,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import PromptSession, print_formatted_text
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse
 
-from ds4py.engine.lifecycle import SessionEvent
 from ds4py.question_answers import selected_labels
-from ds4py.runtime import AgentRuntime
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -24,6 +22,9 @@ if TYPE_CHECKING:
     from prompt_toolkit.input import Input
     from prompt_toolkit.key_binding.key_processor import KeyPressEvent
     from prompt_toolkit.output import Output
+
+    from ds4py.engine.lifecycle import SessionEvent
+    from ds4py.runtime import AgentRuntime
 from ds4py.tui_commands import SlashCommandRegistry, install_builtin_commands
 from ds4py.tui_render import FooterModel, StreamRenderer
 

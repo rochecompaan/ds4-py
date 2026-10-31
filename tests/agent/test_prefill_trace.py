@@ -175,7 +175,8 @@ def test_repeated_sync_preserves_original_prompt_and_all_samples(tmp_path: Path)
 
 
 def test_trace_write_failure_publishes_an_error_event(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session: Any = TraceSession([1, 2, 3, 4])
     events = []

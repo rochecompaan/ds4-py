@@ -1,39 +1,48 @@
 """Bakeoff save evidence and fresh-process restore checks."""
 
-from typing import Any, cast
-
 import asyncio
-from dataclasses import replace
 import json
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bench.run_bakeoff import drive_pty, interruption_acceptance
+from typing import Never
+
+from pydantic_ai_harness.step_persistence import (
+    ContinuableSnapshot,
+    FileStepStore,
+)
+from pydantic_ai_harness.step_persistence import (
+    RunRecord as StepRunRecord,
+)
+
+import ds4py
 from bench.restore_check import (
     CheckResult,
     RestoreError,
     RestoreRun,
-    check_result_saves,
     check_restore,
+    check_result_saves,
     make_stripped_copy,
     restore_command,
     run_attempt_with_save,
     validate_save,
 )
-import ds4py
-from ds4py.engine.session import Engine
+from bench.run_bakeoff import drive_pty, interruption_acceptance
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.engine.sampling import SamplingPolicy
+from ds4py.engine.session import Engine
 from ds4py.model import DS4Model
 from ds4py.runtime import AgentRuntime
 from ds4py.store import (
@@ -43,12 +52,6 @@ from ds4py.store import (
     SessionStore,
     token_digest,
 )
-from pydantic_ai_harness.step_persistence import (
-    ContinuableSnapshot,
-    FileStepStore,
-    RunRecord as StepRunRecord,
-)
-from typing import Never
 
 
 def restore_fake_engine(script: Any) -> Engine:
@@ -217,7 +220,7 @@ def test_restore_cases_compare_tokens_and_enforce_prefill_paths(tmp_path: Path) 
     assert result.passed, result.detail
     assert [call[2] for call in calls] == [1, 2]
     assert all(call[1] == "session-1" for call in calls)
-    stripped = cast(Any, result.stripped_save_dir)
+    stripped = cast("Any", result.stripped_save_dir)
     assert SessionStore().read_kv_header(stripped / "session.kv") == 0
 
 
@@ -240,7 +243,7 @@ def test_restore_token_mismatch_fails_with_index(tmp_path: Path) -> None:
     assert "token 1" in result.detail
 
 
-@pytest.mark.parametrize("case1_prefill,case2_prefill", [(1, 12), (0, 0)])
+@pytest.mark.parametrize(("case1_prefill", "case2_prefill"), [(1, 12), (0, 0)])
 def test_restore_requires_no_case1_prefill_and_real_case2_prefill(
     tmp_path: Path,
     case1_prefill: Any,
@@ -439,8 +442,8 @@ def test_interruption_acceptance_uses_tui_idle_lifecycle(
     )
 
     result = interruption_acceptance(
-        cast(Any, config),
-        cast(Any, SimpleNamespace(agent_dir=task)),
+        cast("Any", config),
+        cast("Any", SimpleNamespace(agent_dir=task)),
         tmp_path / "results",
     )
 
@@ -491,7 +494,7 @@ def test_restore_processes_run_from_the_original_task_workspace(
         workspace=workspace,
     )
 
-    results = check_result_saves(cast(Any, (item,)), cast(Any, config), tmp_path / "restores")
+    results = check_result_saves(cast("Any", (item,)), cast("Any", config), tmp_path / "restores")
 
     assert results[0].passed, results[0].detail
     assert working_directories == [workspace, workspace]

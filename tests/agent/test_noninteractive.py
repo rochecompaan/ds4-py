@@ -1,18 +1,17 @@
-from typing import Any, cast
 import asyncio
 import builtins
 import io
-from pathlib import Path
 import sys
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, Never, cast
 
 import pytest
 
 import ds4py
-from ds4py import ThinkMode, cli
+from ds4py import cli
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.noninteractive import run_noninteractive
-from typing import Never
 
 
 class FakeRunRuntime:
@@ -77,9 +76,9 @@ def test_noninteractive_saves_and_reports_save_failure_after_output_failure() ->
     err = io.StringIO()
     code = asyncio.run(
         run_noninteractive(
-            cast(Any, runtime),
+            cast("Any", runtime),
             "prompt",
-            out=cast(Any, BrokenOutput()),
+            out=cast("Any", BrokenOutput()),
             err=err,
         )
     )
@@ -119,7 +118,7 @@ def test_agent_cli_validates_noninteractive_prompt_and_supported_flags(
 def test_agent_cli_reports_value_errors_without_a_traceback(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    import ds4py.agent_cli as agent_cli
+    from ds4py import agent_cli
 
     def fail(_args: Any) -> Never:
         raise ValueError("invalid prefix")
@@ -148,7 +147,7 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(
         def __enter__(self) -> Any:
             return self
 
-        def __exit__(self, *args: Any) -> None:
+        def __exit__(self, *args: object) -> None:
             self.exited = True
 
         def session(self) -> object:
@@ -248,7 +247,7 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(
         "interactive": False,
         "question_answerer": None,
     }
-    assert [(turn.role, turn.content) for turn in cast(Any, runtime.loaded)] == [
+    assert [(turn.role, turn.content) for turn in cast("Any", runtime.loaded)] == [
         ("user", "earlier"),
         ("assistant", "answer"),
     ]
@@ -273,7 +272,7 @@ def test_agent_cli_interactive_constructs_and_runs_tui(
         def __enter__(self) -> Any:
             return self
 
-        def __exit__(self, *args: Any) -> None:
+        def __exit__(self, *args: object) -> None:
             created.append("engine-closed")
 
         def session(self) -> object:
@@ -323,13 +322,14 @@ def test_agent_cli_rejects_removed_yolo_flag() -> None:
 def test_agent_cli_question_answerer_returns_a_typed_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from ds4py import agent_cli
     from pydantic_ai_harness.ask_user import (
         AskUserRequest,
         AskUserResponse,
         Question,
         QuestionOption,
     )
+
+    from ds4py import agent_cli
 
     request = AskUserRequest(
         questions=(
@@ -351,6 +351,7 @@ def test_agent_cli_question_answerer_returns_a_typed_response(
 
 def test_run_tui_binds_questions_to_the_tui(monkeypatch: pytest.MonkeyPatch) -> None:
     from pydantic_ai_harness import AskUser
+
     from ds4py import agent_cli
 
     questions = AskUser(answerer=None)
@@ -369,7 +370,7 @@ def test_run_tui_binds_questions_to_the_tui(monkeypatch: pytest.MonkeyPatch) -> 
             return 0
 
     monkeypatch.setattr("ds4py.tui.TUI", FakeTUI)
-    assert asyncio.run(agent_cli._run_tui(cast(Any, runtime), None)) == 0
+    assert asyncio.run(agent_cli._run_tui(cast("Any", runtime), None)) == 0
     assert questions.answerer == created[0].ask
 
 
