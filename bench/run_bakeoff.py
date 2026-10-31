@@ -504,16 +504,17 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     manifest = load_manifest(args.manifest)
-    common = dict(
-        model=args.model,
-        backend=args.backend,
-        ctx=manifest.ctx,
-        temperature=manifest.temperature,
-        seed=manifest.seed,
-        tokens=args.tokens,
-    )
     configs = [
-        AgentConfig("c", (args.agent,), **common),
+        AgentConfig(
+            "c",
+            (args.agent,),
+            model=args.model,
+            backend=args.backend,
+            ctx=manifest.ctx,
+            temperature=manifest.temperature,
+            seed=manifest.seed,
+            tokens=args.tokens,
+        ),
         AgentConfig(
             "ds4py",
             (
@@ -521,7 +522,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 str(Path(__file__).with_name("restore_check.py")),
                 "attempt",
             ),
-            **common,
+            model=args.model,
+            backend=args.backend,
+            ctx=manifest.ctx,
+            temperature=manifest.temperature,
+            seed=manifest.seed,
+            tokens=args.tokens,
         ),
     ]
     report = run_bakeoff(

@@ -12,13 +12,16 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-from collections.abc import Awaitable, Callable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from bench.run_bakeoff import TaskRunResult
 
+from ds4py.engine.events import Stopped, Synced
 from ds4py.engine.lifecycle import SessionEvent
 from ds4py.engine.replay import read_replay
 from ds4py.errors import Ds4pyError
@@ -297,7 +300,7 @@ def _runtime(
     args: argparse.Namespace,
     *,
     read_only: bool = False,
-) -> Iterator[AgentRuntime]:
+) -> Generator[AgentRuntime]:
     from ds4py.agent_cli import open_runtime
 
     with open_runtime(args, Path.cwd(), read_only=read_only) as runtime:
@@ -308,7 +311,7 @@ def _runtime(
 def _trace(
     runtime: AgentRuntime,
     args: argparse.Namespace,
-) -> Iterator[None]:
+) -> Generator[None]:
     from ds4py.prefill_trace import PrefillTraceWriter
 
     trace = (
@@ -321,9 +324,12 @@ def _trace(
 
 
 def _prompt(args: argparse.Namespace) -> str | None:
-    if args.prompt_file is not None:
-        return args.prompt_file.read_bytes().decode("utf-8")
-    return args.prompt
+    prompt: object = args.prompt_file.read_bytes().decode("utf-8") if args.prompt_file is not None else args.prompt
+    if prompt is None:
+        return None
+    if not isinstance(prompt, str):
+        raise RestoreError("prompt must be text")
+    return prompt
 
 
 def attempt_command(argv: Sequence[str]) -> int:
@@ -375,11 +381,19 @@ def attempt_command(argv: Sequence[str]) -> int:
     return status
 
 
+class _RestoreState(TypedDict):
+    followup: bool
+    switch_prefill: int
+    followup_prefill: int
+    plan: str | None
+    reason: str | None
+
+
 async def _restore_operation(
     runtime: AgentRuntime,
     session_id: str,
-) -> dict[str, Any]:
-    state = {
+) -> _RestoreState:
+    state: _RestoreState = {
         "followup": False,
         "switch_prefill": 0,
         "followup_prefill": 0,
@@ -388,16 +402,17 @@ async def _restore_operation(
     }
 
     def listener(event: SessionEvent) -> None:
-        if event.kind == "Synced":
-            plan = event.payload["event"].plan
+        inner = event.payload["event"]
+        if event.kind == "Synced" and isinstance(inner, Synced):
+            plan = inner.plan
             if state["followup"]:
                 if state["plan"] is None:
                     state["plan"] = plan.kind
                     state["followup_prefill"] = plan.to_prefill
             else:
                 state["switch_prefill"] += plan.to_prefill
-        elif event.kind == "Stopped" and state["followup"]:
-            state["reason"] = event.payload["event"].reason
+        elif event.kind == "Stopped" and state["followup"] and isinstance(inner, Stopped):
+            state["reason"] = inner.reason
 
     runtime.model.session.on_event(listener)
     await switch_via_command(runtime, session_id)
@@ -535,18 +550,15 @@ def check_command(argv: Sequence[str]) -> int:
     data = json.loads(args.report.read_text())
     tasks = cast(
         list[TaskRunResult],
-        [SimpleNamespace(**item) for item in data.get("tasks", [])],
+        cast(object, [SimpleNamespace(**item) for item in data.get("tasks", [])]),
     )
-    config = cast(
-        RestoreConfig,
-        SimpleNamespace(
-            executable=(sys.executable, str(Path(__file__).resolve()), "attempt"),
-            model=args.model,
-            backend=args.backend,
-            ctx=args.ctx,
-            temperature=args.temp,
-            seed=args.seed,
-        ),
+    config = SimpleNamespace(
+        executable=(sys.executable, str(Path(__file__).resolve()), "attempt"),
+        model=args.model,
+        backend=args.backend,
+        ctx=args.ctx,
+        temperature=args.temp,
+        seed=args.seed,
     )
     results = check_result_saves(
         tasks,
