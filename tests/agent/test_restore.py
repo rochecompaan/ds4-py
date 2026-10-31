@@ -5,7 +5,7 @@ import json
 import shutil
 from copy import deepcopy
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any, Never, cast
 
@@ -261,9 +261,7 @@ def test_native_restore_does_not_emit_a_second_date_note(tmp_path: Path) -> None
             asyncio.run(runtime.run("follow up"))
 
             assert [
-                segment.meta.get("subtype")
-                for segment in model.session.transcript.segments
-                if segment.kind == "note"
+                segment.meta.get("subtype") for segment in model.session.transcript.segments if segment.kind == "note"
             ] == ["date"]
         finally:
             asyncio.run(runtime.close())
