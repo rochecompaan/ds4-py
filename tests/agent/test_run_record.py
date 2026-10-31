@@ -1,34 +1,33 @@
 """DS4RunRecord telemetry encoding and failure semantics (Task 9)."""
-from typing import Any
-from pathlib import Path
 
 import asyncio
-from dataclasses import replace
-from types import SimpleNamespace
 import json
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 import ds4py
-from ds4py.engine.session import Engine
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.capabilities.run_record import DS4RunRecord
+from ds4py.engine.session import Engine
 
 
-def fake_engine(*, script: Any=None) -> Engine:
-    info = replace(FakeNative()._info, name="fake-ds4", is_deepseek41=False,
-                   is_glm_dsa=False, is_qwen4=True, family="qwen")
+def fake_engine(*, script: Any = None) -> Engine:
+    info = replace(
+        FakeNative()._info, name="fake-ds4", is_deepseek41=False, is_glm_dsa=False, is_qwen4=True, family="qwen"
+    )
     native = FakeNative(info=info) if script is None else FakeNative(info=info, script=script)
     return ds4py.open("f.gguf", ctx=65536, think=ThinkMode.NONE, native=native)
 
 
 def scripted_text(text: Any) -> Any:
     tokens = tuple(tokenize_rendered(text))
-    return lambda prompt, generated: (
-        tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
-    )
+    return lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
 
 def read_lines(path: Any) -> Any:
@@ -49,7 +48,7 @@ def test_engine_events_are_one_flushed_json_line_each(tmp_path: Path) -> None:
 
     lines = read_lines(path)
     # The engine's close publishes a trailing session_end; stop at this round's end.
-    lines = lines[:[line["kind"] for line in lines].index("run_end") + 1]
+    lines = lines[: [line["kind"] for line in lines].index("run_end") + 1]
     assert lines[0]["kind"] == "run_start" and lines[0]["run_id"] == "run-1"
     assert lines[-1]["kind"] == "run_end" and lines[-1]["payload"]["status"] == "success"
     for line in lines:

@@ -12,7 +12,7 @@ def _report(err: TextIO, message: str) -> None:
     """Best-effort diagnostics must not prevent the unconditional save."""
     try:
         print(f"ds4py: {message}", file=err)
-    except (asyncio.CancelledError, KeyboardInterrupt):
+    except asyncio.CancelledError, KeyboardInterrupt:
         pass
     except Exception:
         pass
@@ -36,7 +36,7 @@ async def run_noninteractive(
     try:
         try:
             result = await runtime.run(prompt)
-        except (asyncio.CancelledError, KeyboardInterrupt):
+        except asyncio.CancelledError, KeyboardInterrupt:
             code = 130
             _report(errors, "interrupted")
         except Exception as exc:
@@ -45,7 +45,7 @@ async def run_noninteractive(
         else:
             try:
                 print(result.output, file=output)
-            except (asyncio.CancelledError, KeyboardInterrupt):
+            except asyncio.CancelledError, KeyboardInterrupt:
                 code = 130
                 _report(errors, "output interrupted")
             except Exception as exc:
@@ -54,7 +54,7 @@ async def run_noninteractive(
     finally:
         try:
             await runtime.save()
-        except (asyncio.CancelledError, KeyboardInterrupt):
+        except asyncio.CancelledError, KeyboardInterrupt:
             if code == 0:
                 code = 130
             _report(errors, "save interrupted")

@@ -1,16 +1,16 @@
 """Build a source mirror and publish immutable library/manifest generations."""
 
-from collections import deque
-from collections.abc import Mapping, Sequence
 import fcntl
 import hashlib
-from importlib.resources import files
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+from collections import deque
+from collections.abc import Mapping, Sequence
+from importlib.resources import files
+from pathlib import Path
 from typing import TextIO
 
 from ds4py._native.bindings import Binding, all_bindings
@@ -18,6 +18,7 @@ from ds4py._native.loader import LIB_NAME
 from ds4py._native.structs import STRUCTS, struct_layout
 from ds4py._native.typemap import TYPE_MAP_VERSION
 from ds4py.errors import AbiMismatch, BuildError
+
 from . import probe
 from .manifest import BindingRecord, Manifest, file_sha256, manifest_path, validate
 from .shaders import copy_metal_sources, metal_source_env
@@ -51,8 +52,7 @@ def _mirror(src: Path, farm: Path) -> None:
     farm = farm.resolve()
     farm.mkdir(parents=True, exist_ok=True)
     for directory, dirs, names in os.walk(src):
-        dirs[:] = [name for name in dirs
-                   if name != ".git" and Path(directory) / name != farm]
+        dirs[:] = [name for name in dirs if name != ".git" and Path(directory) / name != farm]
         target = farm / Path(directory).relative_to(src)
         # A previously mirrored file may now be a source directory. Never
         # traverse its stale symlink, which points back into the source tree.
@@ -71,11 +71,17 @@ def _mirror(src: Path, farm: Path) -> None:
 
 
 def _run_make(farm: Path, backend: str, cc: str, jobs: int | None, log: TextIO) -> None:
-    command = ["make", "-f", "Makefile.lib", "libds4", f"LIBDS4_BACKEND={backend}",
-               f"CC={cc}", f"-j{jobs or os.cpu_count() or 1}"]
+    command = [
+        "make",
+        "-f",
+        "Makefile.lib",
+        "libds4",
+        f"LIBDS4_BACKEND={backend}",
+        f"CC={cc}",
+        f"-j{jobs or os.cpu_count() or 1}",
+    ]
     tail: deque[str] = deque(maxlen=40)
-    with subprocess.Popen(command, cwd=farm, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT, text=True) as process:
+    with subprocess.Popen(command, cwd=farm, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as process:
         assert process.stdout is not None
         for line in process.stdout:
             log.write(line)
@@ -86,7 +92,11 @@ def _run_make(farm: Path, backend: str, cc: str, jobs: int | None, log: TextIO) 
 
 
 def install(
-    lib: Path, manifest: Manifest, out_dir: Path, *, metal_root: Path | None = None,
+    lib: Path,
+    manifest: Manifest,
+    out_dir: Path,
+    *,
+    metal_root: Path | None = None,
 ) -> Path:
     """Publish one bundle; caller holds .build.lock. Never prune reader generations.
 
@@ -111,7 +121,8 @@ def install(
                     raise BuildError("Metal sources differ from the manifest. Run `ds4py build` to rebuild.")
                 metal_source_env(staged_dir, manifest.metal_sources)
             validate(
-                Manifest.read(manifest_path(staged)), lib_sha256=file_sha256(staged),
+                Manifest.read(manifest_path(staged)),
+                lib_sha256=file_sha256(staged),
                 bindings=all_bindings(),
                 layouts={name: struct_layout(cls) for name, cls in STRUCTS.items()},
             )
@@ -119,7 +130,7 @@ def install(
             raise BuildError(str(exc)) from exc
         temporary.unlink(missing_ok=True)
         temporary.symlink_to(Path("installs") / staged_dir.name / LIB_NAME)
-        os.replace(temporary, out_dir / LIB_NAME)
+        Path(temporary).replace(out_dir / LIB_NAME)
         switched = True
         return out_dir / LIB_NAME
     finally:
@@ -129,7 +140,7 @@ def install(
             # Never delete a generation that is current or cannot be ruled out.
             try:
                 published = (out_dir / LIB_NAME).resolve() == staged_dir.resolve() / LIB_NAME
-            except (OSError, RuntimeError):
+            except OSError, RuntimeError:
                 published = True
             if not published:
                 shutil.rmtree(staged_dir)
@@ -154,25 +165,38 @@ def _build_manifest(
     try:
         commit = subprocess.run(
             ["git", "-C", str(src), "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
+    except OSError, subprocess.CalledProcessError:
         commit = None
     return Manifest(
         type_map_version=TYPE_MAP_VERSION,
-        library_file=LIB_NAME, library_sha256=file_sha256(lib),
-        source_path=str(src), source_commit=commit, backend=backend,
-        headers=hashes, headers_known=known,
-        bindings={b.name: BindingRecord(b.normalized, b.required, b.source,
-                                       signatures[b.name].ok, signatures[b.name].message)
-                  for b in bindings},
-        layouts=layouts, metal_sources=metal_sources,
+        library_file=LIB_NAME,
+        library_sha256=file_sha256(lib),
+        source_path=str(src),
+        source_commit=commit,
+        backend=backend,
+        headers=hashes,
+        headers_known=known,
+        bindings={
+            b.name: BindingRecord(b.normalized, b.required, b.source, signatures[b.name].ok, signatures[b.name].message)
+            for b in bindings
+        },
+        layouts=layouts,
+        metal_sources=metal_sources,
     )
 
 
 def build_library(
-    src: Path, *, backend: str, out_dir: Path, jobs: int | None = None,
-    cc: str | None = None, log: TextIO = sys.stderr,
+    src: Path,
+    *,
+    backend: str,
+    out_dir: Path,
+    jobs: int | None = None,
+    cc: str | None = None,
+    log: TextIO = sys.stderr,
 ) -> Path:
     compiler = _preflight(src, backend, cc)
     src = src.resolve()
@@ -180,8 +204,9 @@ def build_library(
     with tempfile.TemporaryDirectory(prefix="ds4py-probe-") as directory:
         work = Path(directory)
         signatures = probe.probe_signatures(src, bindings, compiler, work / "signatures")
-        failed = [f"{b.name}: {signatures[b.name].message}" for b in bindings
-                  if b.required and not signatures[b.name].ok]
+        failed = [
+            f"{b.name}: {signatures[b.name].message}" for b in bindings if b.required and not signatures[b.name].ok
+        ]
         if failed:
             raise BuildError("required signature probes failed:\n" + "\n".join(failed))
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -199,8 +224,9 @@ def build_library(
             metal_sources = copy_metal_sources(src, metal_root) if metal_root is not None else {}
             _run_make(farm, backend, compiler, jobs, log)
             try:
-                manifest = _build_manifest(src, farm / LIB_NAME, backend, compiler,
-                                           work, bindings, signatures, log, metal_sources)
+                manifest = _build_manifest(
+                    src, farm / LIB_NAME, backend, compiler, work, bindings, signatures, log, metal_sources
+                )
             except subprocess.CalledProcessError as exc:
                 raise BuildError(f"layout probe failed: {exc.stderr}") from exc
             return install(farm / LIB_NAME, manifest, out_dir, metal_root=metal_root)

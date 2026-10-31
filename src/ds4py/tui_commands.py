@@ -6,9 +6,9 @@ import inspect
 import shlex
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Never
 
 from prompt_toolkit.completion import Completion
-from typing import Never
 
 from ds4py.runtime import AgentRuntime
 from ds4py.store import SaveRecord
@@ -32,8 +32,12 @@ class SlashCommandRegistry:
         self._commands: dict[str, _Command] = {}
 
     def register(
-        self, name: str, handler: Callable[..., object], *,
-        description: str, usage: str | None = None,
+        self,
+        name: str,
+        handler: Callable[..., object],
+        *,
+        description: str,
+        usage: str | None = None,
     ) -> None:
         name = name.lstrip("/")
         if not name or any(char.isspace() for char in name):
@@ -41,7 +45,9 @@ class SlashCommandRegistry:
         if name in self._commands:
             raise ValueError(f"command already registered: /{name}")
         self._commands[name] = _Command(
-            handler, description, usage or f"/{name}",
+            handler,
+            description,
+            usage or f"/{name}",
         )
 
     async def execute(self, line: str) -> object | None:
@@ -63,7 +69,8 @@ class SlashCommandRegistry:
             return []
         return [
             Completion(
-                f"/{name} ", start_position=-len(prefix),
+                f"/{name} ",
+                start_position=-len(prefix),
                 display_meta=command.description,
             )
             for name, command in sorted(self._commands.items())
@@ -81,7 +88,9 @@ def _record(action: str, record: SaveRecord) -> str:
 
 
 def install_builtin_commands(
-    registry: SlashCommandRegistry, runtime: AgentRuntime, *,
+    registry: SlashCommandRegistry,
+    runtime: AgentRuntime,
+    *,
     request_exit: Callable[[], None],
 ) -> None:
     """Install exactly the commands supported by the interactive shell."""

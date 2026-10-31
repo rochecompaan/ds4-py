@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 
 from ds4py.errors import TypeMapError
+
 from .structs import CANCEL_FN, PROGRESS_FN, STRUCTS
 
 TYPE_MAP_VERSION = 1
@@ -40,7 +41,7 @@ _CALLBACKS = {
     "ds4_session_progress_fn": PROGRESS_FN,
     "ds4_session_cancel_fn": CANCEL_FN,
 }
-_TYPE_WORDS: set[str] = set("void int unsigned short long bool float double char const".split())
+_TYPE_WORDS: set[str] = set(["void", "int", "unsigned", "short", "long", "bool", "float", "double", "char", "const"])
 _TYPE_WORDS.update(_SCALARS)
 _TYPE_WORDS.update(_CALLBACKS)
 _TYPE_WORDS.update(_ALL_STRUCTS)
@@ -54,8 +55,7 @@ class CType:
     const: bool
 
     def __str__(self) -> str:
-        return ("const " if self.const else "") + self.base + (
-            " " + "*" * self.pointers if self.pointers else "")
+        return ("const " if self.const else "") + self.base + (" " + "*" * self.pointers if self.pointers else "")
 
 
 @dataclass(frozen=True)
@@ -133,8 +133,7 @@ def _ctypes_type(ctype: CType, function: str, *, returning: bool = False) -> obj
             return ctypes.POINTER(_SCALARS[base])
     if pointers == 2 and base in ("ds4_engine", "ds4_session") and not ctype.const:
         return ctypes.POINTER(ctypes.c_void_p)
-    raise TypeMapError(
-        f"unknown C type '{ctype}' in {function}; add it to ds4py/_native/typemap.py")
+    raise TypeMapError(f"unknown C type '{ctype}' in {function}; add it to ds4py/_native/typemap.py")
 
 
 def ctypes_signature(proto: CPrototype) -> tuple[object | None, list[object]]:

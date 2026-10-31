@@ -1,20 +1,20 @@
-from typing import Any
-from dataclasses import replace
 import fcntl
 import io
 import os
-from pathlib import Path
 import shutil
 import sys
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
 
 import pytest
+from test_probe import doctored
 
+from ds4py._native.loader import LIB_NAME
 from ds4py.abi import build, pins
 from ds4py.abi.build import build_library
 from ds4py.abi.manifest import Manifest, file_sha256, manifest_path
-from ds4py._native.loader import LIB_NAME
 from ds4py.errors import BuildError
-from test_probe import doctored
 
 
 @pytest.fixture
@@ -33,7 +33,9 @@ def test_not_a_ds4_tree(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("missing", ["Makefile", "ds4.h", "ds4_kvstore.h", "ds4.c"])
-def test_missing_source_file_is_reported_first(fake_tree: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: Any) -> None:
+def test_missing_source_file_is_reported_first(
+    fake_tree: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: Any
+) -> None:
     (fake_tree / missing).unlink()
     monkeypatch.setenv("CC", str(tmp_path / "no-compiler"))
     with pytest.raises(BuildError, match=f"missing {missing}"):
@@ -76,8 +78,9 @@ def test_metal_needs_macos(tmp_path: Path, fake_tree: Any, monkeypatch: pytest.M
 
 
 def test_changed_argument_type_fails_before_make(cc: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    tree = doctored(tmp_path, "int ds4_session_eval(ds4_session *s, int token,",
-                              "int ds4_session_eval(ds4_session *s, long token,")
+    tree = doctored(
+        tmp_path, "int ds4_session_eval(ds4_session *s, int token,", "int ds4_session_eval(ds4_session *s, long token,"
+    )
     (tree / "Makefile").write_text("")
     (tree / "ds4.c").write_text("")
     monkeypatch.setattr(build, "_run_make", lambda *a, **k: pytest.fail("make ran"))
@@ -105,7 +108,9 @@ def installed(out: Any) -> Any:
     return lib.read_bytes(), Manifest.read(manifest_path(lib)).library_sha256 == file_sha256(lib)
 
 
-def test_install_switches_the_library_and_manifest_together(make_manifest: Any, tmp_path: Path, upstream_headers: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_install_switches_the_library_and_manifest_together(
+    make_manifest: Any, tmp_path: Path, upstream_headers: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def pair(name: Any, **changes: Any) -> Any:
         (tmp_path / name).mkdir()
         lib, m = make_manifest(tmp_path / name, upstream_headers)
@@ -130,9 +135,14 @@ def test_install_switches_the_library_and_manifest_together(make_manifest: Any, 
 
 @pytest.mark.parametrize("failure", ["missing_root", "changed_shader", "copy", "switch"])
 def test_shader_publication_failure_keeps_old_generation(
-    make_manifest: Any, tmp_path: Path, upstream_headers: Any, monkeypatch: pytest.MonkeyPatch, failure: Any,
+    make_manifest: Any,
+    tmp_path: Path,
+    upstream_headers: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Any,
 ) -> None:
     import hashlib
+
     source = tmp_path / "source"
     (source / "metal").mkdir(parents=True)
     (source / "metal/dense.metal").write_bytes(b"original shader")
@@ -146,17 +156,21 @@ def test_shader_publication_failure_keeps_old_generation(
         (source / "metal/dense.metal").write_bytes(b"wrong shader")
     if failure == "copy":
         original_copy = shutil.copy2
+
         def fail_copy(src: Any, dst: Any, *args: Any, **kwargs: Any) -> Any:
             if Path(src).suffix == ".metal":
                 raise OSError("shader copy failed")
             return original_copy(src, dst, *args, **kwargs)
+
         monkeypatch.setattr(shutil, "copy2", fail_copy)
     if failure == "switch":
         original_replace = os.replace
+
         def fail_replace(src: Any, dst: Any) -> Any:
             if Path(dst) == current:
                 raise OSError("switch failed")
             return original_replace(src, dst)
+
         monkeypatch.setattr(os, "replace", fail_replace)
     with pytest.raises((BuildError, OSError)):
         build.install(lib, m, out, metal_root=None if failure == "missing_root" else source)
@@ -167,18 +181,24 @@ def test_shader_publication_failure_keeps_old_generation(
 
 
 def test_metal_build_captures_assets_before_make_and_loads_after_relocation(
-    cc: Any, fake_tree: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    cc: Any,
+    fake_tree: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import hashlib
     from unittest.mock import MagicMock
+
     from ds4py._native import loader
 
     (fake_tree / "metal").mkdir()
     (fake_tree / "metal/dense.metal").write_bytes(b"captured shader")
     monkeypatch.setattr(build, "_preflight", lambda *a: cc)
+
     def native_make(farm: Any, *args: Any) -> None:
         (farm / LIB_NAME).write_bytes(b"native library")
         (fake_tree / "metal/dense.metal").write_bytes(b"changed during build")
+
     monkeypatch.setattr(build, "_run_make", native_make)
     lib = build_library(fake_tree, backend="metal", out_dir=tmp_path / "out", cc=cc)
     m = Manifest.read(manifest_path(lib))
@@ -197,7 +217,16 @@ def test_metal_build_captures_assets_before_make_and_loads_after_relocation(
 
 def test_mirror_skips_git_and_objects(tmp_path: Path) -> None:
     src, farm = tmp_path / "src", tmp_path / "farm"
-    for rel in (".git/HEAD", "ds4.c", "metal/ds4.metal", "ds4.o", "metal/ds4.o", "libds4.a", "libds4.so", "libds4.dylib"):
+    for rel in (
+        ".git/HEAD",
+        "ds4.c",
+        "metal/ds4.metal",
+        "ds4.o",
+        "metal/ds4.o",
+        "libds4.a",
+        "libds4.so",
+        "libds4.dylib",
+    ):
         (src / rel).parent.mkdir(parents=True, exist_ok=True)
         (src / rel).write_text(rel)
     build._mirror(src, farm)
@@ -262,7 +291,9 @@ def test_mirror_does_not_recurse_into_itself(tmp_path: Path) -> None:
     assert not (farm / "farm").exists()
 
 
-def test_failed_switch_keeps_old_pair_and_cleans_staging(make_manifest: Any, tmp_path: Path, upstream_headers: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_failed_switch_keeps_old_pair_and_cleans_staging(
+    make_manifest: Any, tmp_path: Path, upstream_headers: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     src = tmp_path / "src"
     src.mkdir()
     pair = make_manifest(src, upstream_headers)
@@ -290,7 +321,13 @@ def test_failed_switch_keeps_old_pair_and_cleans_staging(make_manifest: Any, tmp
 @pytest.mark.parametrize("after_switch", [False, True])
 @pytest.mark.parametrize("relative_out", [False, True])
 def test_interrupted_switch_retains_every_published_pair(
-        make_manifest: Any, tmp_path: Path, upstream_headers: Any, monkeypatch: pytest.MonkeyPatch, after_switch: Any, relative_out: Any) -> None:
+    make_manifest: Any,
+    tmp_path: Path,
+    upstream_headers: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    after_switch: Any,
+    relative_out: Any,
+) -> None:
     src = tmp_path / "src"
     src.mkdir()
     pair = make_manifest(src, upstream_headers)
@@ -334,6 +371,7 @@ def test_make_failure_streams_output_and_reports_tail(tmp_path: Path) -> None:
 
 def test_cli_build_reports_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     from ds4py.cli import main
+
     assert main(["build", "--src", str(tmp_path)]) == 1
     assert "ds4py:" in capsys.readouterr().err
 

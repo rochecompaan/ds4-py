@@ -1,12 +1,14 @@
 """Isolate ds4's inspection-time exits in a child process."""
+
 import ctypes
 import os
-from pathlib import Path
 import subprocess
 import sys
 import traceback
+from pathlib import Path
 
 from ds4py.errors import EngineError, EngineLockedError, ModelFileError
+
 from .protocol import EngineConfig
 
 NATIVE_REFUSED = 3
@@ -31,7 +33,9 @@ def exit_error(status: int, stderr: str, model: Path, lock_file: Path) -> Engine
 def inspect_model(lib: Path, config: EngineConfig, lock_file: Path) -> None:
     result = subprocess.run(
         [sys.executable, "-P", "-m", "ds4py._native.modelcheck", str(lib), str(config.model), config.backend],
-        env={**os.environ, "DS4_LOCK_FILE": str(lock_file)}, capture_output=True, text=True,
+        env={**os.environ, "DS4_LOCK_FILE": str(lock_file)},
+        capture_output=True,
+        text=True,
     )
     error = exit_error(result.returncode, result.stderr, config.model, lock_file)
     if error is not None:
@@ -42,6 +46,7 @@ def main(argv: list[str]) -> int:
     try:
         from .api import engine_options
         from .loader import load_library
+
         lib = load_library(Path(argv[0]))
         options = engine_options(EngineConfig(Path(argv[1]), backend=argv[2]), inspect_only=True)
         raw = ctypes.c_void_p()

@@ -1,14 +1,13 @@
-from typing import Any
-from dataclasses import replace
 import json
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from ds4py._native.fake import FakeNative
 from ds4py.engine.tool_syntax import make_parser
 from ds4py.engine.tool_syntax.glm import Glm
-
 
 CASES = json.loads((Path(__file__).parents[2] / "fixtures" / "tool_syntax" / "glm.json").read_text())
 
@@ -23,7 +22,7 @@ def test_glm_fixtures(case: Any, chunk_size: Any) -> None:
     parser = Glm()
     data = case["input"].encode()
     for offset in range(0, len(data), chunk_size):
-        parser.feed(data[offset:offset + chunk_size])
+        parser.feed(data[offset : offset + chunk_size])
     snapshot = parser.finish()
     assert snapshot.state == case["state"], snapshot.error
     assert observed_calls(snapshot) == case["calls"]

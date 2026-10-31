@@ -1,4 +1,5 @@
 """Display-only assistant text decoder."""
+
 import codecs
 
 from .events import TextDelta
@@ -11,6 +12,7 @@ _PENDING_LIMIT = 16
 
 class Decoder:
     """Display-only UTF-8/think-marker decoding, local to one assistant round."""
+
     def __init__(self, *, thinking: bool = False) -> None:
         self.thinking = thinking
         self._pending = bytearray()
@@ -26,7 +28,11 @@ class Decoder:
             deltas.append(TextDelta(text, thinking))
 
     def _decode(
-        self, data: bytes, deltas: list[TextDelta], *, final: bool = False,
+        self,
+        data: bytes,
+        deltas: list[TextDelta],
+        *,
+        final: bool = False,
     ) -> None:
         text = self._utf8.decode(data, final=final)
         self._emit(deltas, text, self.thinking)

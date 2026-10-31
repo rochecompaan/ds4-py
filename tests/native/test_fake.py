@@ -1,15 +1,15 @@
-from typing import Any
 import ctypes
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
+from contract import CONTRACT
 
 from ds4py._native.fake import FAKE_EOS, FakeClock, FakeNative, reply
 from ds4py._native.protocol import EngineConfig, SyncStatus, ThinkMode
 from ds4py.errors import EngineError, MissingBinding
-from contract import CONTRACT
 
 
 def engine(**kwargs: Any) -> Any:
@@ -28,7 +28,12 @@ def test_tokenizer_round_trips_bytes() -> None:
     assert e.tokenize("héllo", rendered=True) == e.tokenize("héllo")
     assert e.eos() == FAKE_EOS and e.is_stop(FAKE_EOS) and not e.is_stop(e.tokenize("a")[0])
     assert e.token_text(FAKE_EOS) == b"</s>"
-    assert (e.info().name, e.info().family, e.info().mtp_draft_tokens, e.info().vocab_size) == ("fake", "deepseek4", 1, 279)
+    assert (e.info().name, e.info().family, e.info().mtp_draft_tokens, e.info().vocab_size) == (
+        "fake",
+        "deepseek4",
+        1,
+        279,
+    )
     custom = replace(e.info(), family="glm", is_glm_dsa=True)
     assert engine(info=custom).info() == custom
 
@@ -39,8 +44,12 @@ def test_progress_events_follow_ds4() -> None:
     s.sync(list(range(1, 7)))
     events = []
     s.sync(list(range(1, 17)), progress=lambda *e: events.append(e))
-    assert events == [("prefill_chunk", 6, 16), ("prefill_chunk", 10, 16),
-                      ("prefill_chunk", 14, 16), ("prefill_chunk", 16, 16)]
+    assert events == [
+        ("prefill_chunk", 6, 16),
+        ("prefill_chunk", 10, 16),
+        ("prefill_chunk", 14, 16),
+        ("prefill_chunk", 16, 16),
+    ]
     assert clock() == pytest.approx(0.05 * 2 + 0.05 * 3)
     assert s.calls == [("sync", 6), ("sync", 10)]
 
@@ -68,9 +77,11 @@ def test_script_drives_sampling_and_calls_are_logged() -> None:
 
 def test_script_inputs_rng_and_snapshot_generated_state() -> None:
     inputs = []
+
     def script(prompt: Any, generated: Any) -> Any:
         inputs.append((list(prompt), list(generated)))
         return len(generated) + 20
+
     s = engine(script=script).create_session(64)
     s.sync([5, 6])
     rng = ctypes.c_uint64(3)
@@ -163,8 +174,7 @@ def test_snapshot_cannot_resurrect_rewound_checkpoint() -> None:
 
 
 def test_bind(ext_site: Any) -> None:
-    native = FakeNative(bindings={"ds4_engine_layer_count": lambda e: 43},
-                        absent={"ds4_engine_sampling_defaults"})
+    native = FakeNative(bindings={"ds4_engine_layer_count": lambda e: 43}, absent={"ds4_engine_sampling_defaults"})
     assert native.bind("ds4_engine_layer_count")(None) == 43
     with pytest.raises(MissingBinding, match="absent"):
         native.bind("ds4_engine_sampling_defaults")
@@ -174,8 +184,21 @@ def test_bind(ext_site: Any) -> None:
     assert not FakeNative(restore_enabled=False).restore_enabled
 
 
-@pytest.mark.parametrize("text, expected", [("0", 1000), ("100", 1100), ("050", 1050),
-    ("101", None), ("", None), ("-1", None), ("+1", None), (" 1", None), ("１", None), ("high", None)])
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("0", 1000),
+        ("100", 1100),
+        ("050", 1050),
+        ("101", None),
+        ("", None),
+        ("-1", None),
+        ("+1", None),
+        (" 1", None),
+        ("１", None),
+        ("high", None),
+    ],
+)
 def test_think_level(text: Any, expected: Any) -> None:
     assert FakeNative().parse_think_level(text) == expected
 
@@ -192,8 +215,16 @@ def test_thread_confinement_and_close() -> None:
     s = e.create_session(64)
     assert e.raw == id(e) and s.raw == id(s)
     with ThreadPoolExecutor(1) as pool:
-        for call in (e.info, lambda: e.tokenize("x"), lambda: e.create_session(64), e.close,
-                     s.pos, lambda: s.sync([1]), s.argmax, s.close):
+        for call in (
+            e.info,
+            lambda: e.tokenize("x"),
+            lambda: e.create_session(64),
+            e.close,
+            s.pos,
+            lambda: s.sync([1]),
+            s.argmax,
+            s.close,
+        ):
             with pytest.raises(AssertionError, match="thread"):
                 pool.submit(call).result()
     s.close()
@@ -256,10 +287,11 @@ def test_fake_logits_cache_is_invalidated_by_state_changes(operation: Any) -> No
 def test_think_mode_none_stops_at_think_opener() -> None:
     from ds4py import ThinkMode
     from ds4py._native.fake_chat import tokenize_rendered
+
     native = FakeNative()
-    engine = native.open_engine(EngineConfig(Path('f')))
+    engine = native.open_engine(EngineConfig(Path("f")))
     try:
-        token = tokenize_rendered('<think>')[0]
+        token = tokenize_rendered("<think>")[0]
         assert engine.is_stop_for_think_mode(token, ThinkMode.NONE)
         assert not engine.is_stop_for_think_mode(token, ThinkMode.HIGH)
         assert not engine.is_stop(token)

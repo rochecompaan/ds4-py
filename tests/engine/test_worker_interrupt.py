@@ -1,15 +1,16 @@
 """Startup Ctrl+C must stop the owner thread before propagating to the caller."""
-from typing import Any
+
 import subprocess
 import sys
 import textwrap
+from typing import Any
 
 import pytest
 
 
 @pytest.mark.parametrize("startup_fails", [False, True])
 def test_startup_sigint_closes_resources_on_owner_before_reraising(startup_fails: Any) -> None:
-    probe = textwrap.dedent(r'''
+    probe = textwrap.dedent(r"""
         import os
         import signal
         import sys
@@ -101,10 +102,12 @@ def test_startup_sigint_closes_resources_on_owner_before_reraising(startup_fails
             helper.join(3)
         assert not helper.is_alive() and not errors, errors
         print("startup SIGINT cleanup OK", startup_fails)
-    ''')
+    """)
     result = subprocess.run(
         [sys.executable, "-c", probe, str(startup_fails)],
-        capture_output=True, text=True, timeout=8,
+        capture_output=True,
+        text=True,
+        timeout=8,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == f"startup SIGINT cleanup OK {startup_fails}"

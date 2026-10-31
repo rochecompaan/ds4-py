@@ -1,8 +1,8 @@
 """Path-specific failures from corrupt save records and interrupted writes."""
-from typing import Any
 
 import json
 from pathlib import Path
+from typing import Any, Never
 
 import pytest
 
@@ -17,7 +17,6 @@ from ds4py.store import (
     SegmentProvenance,
     SessionStore,
 )
-from typing import Never
 
 DIGEST_123 = "7b0b5ea3ff36958c8e32ccf24b71da9ac68e51d0881bf75e62b837ec9ea6f3a5"
 DIGEST_EMPTY = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -168,7 +167,10 @@ def test_kv_header_declaring_maximum_payload_fails_as_truncated(tmp_path: Path) 
     ],
 )
 def test_invalid_record_counts_and_digests_fail_with_the_path(
-    tmp_path: Path, key: Any, value: Any, reason: Any,
+    tmp_path: Path,
+    key: Any,
+    value: Any,
+    reason: Any,
 ) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("session-1") / "save.json"
@@ -192,8 +194,7 @@ def test_invalid_record_counts_and_digests_fail_with_the_path(
         (
             3,
             DIGEST_123,
-            [(0, 2, "system", "", "h", "rendered"),
-             (1, 3, "user", "k", "h", "rendered")],
+            [(0, 2, "system", "", "h", "rendered"), (1, 3, "user", "k", "h", "rendered")],
             "overlap",
         ),
         (3, DIGEST_123, [], "segments"),
@@ -201,7 +202,11 @@ def test_invalid_record_counts_and_digests_fail_with_the_path(
     ],
 )
 def test_segments_must_cover_the_token_range(
-    tmp_path: Path, tokens: Any, tokens_sha256: Any, segments: Any, reason: Any,
+    tmp_path: Path,
+    tokens: Any,
+    tokens_sha256: Any,
+    segments: Any,
+    reason: Any,
 ) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("session-1") / "save.json"
@@ -209,9 +214,12 @@ def test_segments_must_cover_the_token_range(
     data["tokens"] = tokens
     data["tokens_sha256"] = tokens_sha256
     data["segments"] = [
-        dict(zip(
-            ("start", "end", "kind", "key", "content_hash", "source"), segment,
-        ))
+        dict(
+            zip(
+                ("start", "end", "kind", "key", "content_hash", "source"),
+                segment,
+            )
+        )
         for segment in segments
     ]
     path.parent.mkdir(parents=True)
@@ -278,7 +286,9 @@ def test_quant_mismatch_is_an_error_naming_the_session(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("failure", ["fsync", "replace"])
 def test_interrupted_kv_write_leaves_the_prior_file_intact(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Any,
 ) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("session-1") / "session.kv"
@@ -299,7 +309,8 @@ def test_interrupted_kv_write_leaves_the_prior_file_intact(
 
 
 def test_interrupted_record_write_leaves_the_prior_record_intact(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("session-1") / "save.json"
@@ -321,7 +332,8 @@ def test_interrupted_record_write_leaves_the_prior_record_intact(
 
 
 def test_failed_record_replacement_keeps_the_old_record_for_mismatch_fallback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = SessionStore(tmp_path)
     kv_path = store.session_dir("session-1") / "session.kv"

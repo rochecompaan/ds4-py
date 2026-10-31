@@ -1,18 +1,9 @@
-from typing import Any, cast
-import pytest
 import asyncio
-from dataclasses import replace
 import threading
+from dataclasses import replace
+from typing import Any, cast
 
-import ds4py
-from ds4py.engine.session import Engine
-from ds4py import ThinkMode
-from ds4py._native.fake import FAKE_EOS, FakeEngine, FakeNative
-from ds4py._native.fake_chat import tokenize_rendered
-from ds4py.binding import MessageBinder
-from ds4py.engine.sampling import SamplingPolicy
-from ds4py.engine.worker import SyncJob
-from ds4py.model import DS4Model
+import pytest
 from pydantic_ai.messages import (
     ModelRequest,
     PartStartEvent,
@@ -22,8 +13,18 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 
+import ds4py
+from ds4py import ThinkMode
+from ds4py._native.fake import FAKE_EOS, FakeEngine, FakeNative
+from ds4py._native.fake_chat import tokenize_rendered
+from ds4py.binding import MessageBinder
+from ds4py.engine.sampling import SamplingPolicy
+from ds4py.engine.session import Engine
+from ds4py.engine.worker import SyncJob
+from ds4py.model import DS4Model
 
-def fake_engine(*, script: Any=None, think: Any=ThinkMode.NONE, cancel: Any=None) -> Engine:
+
+def fake_engine(*, script: Any = None, think: Any = ThinkMode.NONE, cancel: Any = None) -> Engine:
     native = FakeNative(script=script) if script is not None else FakeNative()
     info = replace(native._info, name="fake-ds4")
     native._info = info
@@ -32,12 +33,10 @@ def fake_engine(*, script: Any=None, think: Any=ThinkMode.NONE, cancel: Any=None
 
 def scripted_text(text: Any) -> Any:
     tokens = tuple(tokenize_rendered(text))
-    return lambda prompt, generated: (
-        tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
-    )
+    return lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
 
-def user(text: Any="hello") -> ModelRequest:
+def user(text: Any = "hello") -> ModelRequest:
     return ModelRequest([UserPromptPart(text)])
 
 
@@ -45,9 +44,11 @@ def make_model(session: Any, **kwargs: Any) -> DS4Model:
     return DS4Model(session, sampling=SamplingPolicy(seed=1), **kwargs)
 
 
-async def collect(model: Any, messages: Any, settings: Any=None) -> Any:
+async def collect(model: Any, messages: Any, settings: Any = None) -> Any:
     async with model.request_stream(
-        list(messages), settings, ModelRequestParameters(),
+        list(messages),
+        settings,
+        ModelRequestParameters(),
     ) as stream:
         events = [event async for event in stream]
         return stream.get(), events
@@ -61,7 +62,9 @@ def test_empty_output_and_zero_prefill_have_zero_usage(monkeypatch: pytest.Monke
             session = engine.session()
             model = make_model(session)
             async with model.request_stream(
-                [user()], None, ModelRequestParameters(),
+                [user()],
+                None,
+                ModelRequestParameters(),
             ) as stream:
                 # The binder has rendered the request, but the lazy round has not synced it.
                 list(session._worker.submit(SyncJob(session.transcript.tokens)))
@@ -105,7 +108,7 @@ def test_interrupted_round_returns_partial_text_as_interrupted() -> None:
             assert response.state == "interrupted"
             assert response.finish_reason is None
             assert response.usage.output_tokens == 3
-            assert cast(Any, response.metadata)["ds4.source"] == "sampled"
+            assert cast("Any", response.metadata)["ds4.source"] == "sampled"
 
     asyncio.run(scenario())
 
@@ -117,8 +120,8 @@ def test_closing_event_iteration_binds_only_the_published_partial_response() -> 
     def script(prompt: Any, generated: Any) -> Any:
         if not generated:
             prompts.append(tuple(prompt))
-            cast(Any, script).current = outputs.pop(0)
-        tokens = cast(Any, script).current
+            cast("Any", script).current = outputs.pop(0)
+        tokens = cast("Any", script).current
         return tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
     async def scenario() -> None:
@@ -137,13 +140,15 @@ def test_closing_event_iteration_binds_only_the_published_partial_response() -> 
             binder.bind_response = counted_bind
             request = user()
             async with model.request_stream(
-                [request], None, ModelRequestParameters(),
+                [request],
+                None,
+                ModelRequestParameters(),
             ) as stream:
                 iterator = stream.__aiter__()
                 event = await anext(iterator)
                 assert isinstance(event, PartStartEvent)
                 assert event.part == TextPart("p")
-                await cast(Any, iterator).aclose()
+                await cast("Any", iterator).aclose()
                 response = stream.get()
 
             assert response.parts == [TextPart("p")]
@@ -154,16 +159,12 @@ def test_closing_event_iteration_binds_only_the_published_partial_response() -> 
             sampled = [p for p in provenance if p.source == "sampled"]
             assert len(sampled) == 1
             assert sampled[0].kind == "assistant"
-            assert sampled[0].key == cast(Any, response.metadata)["ds4.key"]
-            assert session.transcript.tokens[sampled[0].start:sampled[0].end] == tuple(
-                tokenize_rendered("p")
-            )
+            assert sampled[0].key == cast("Any", response.metadata)["ds4.key"]
+            assert session.transcript.tokens[sampled[0].start : sampled[0].end] == tuple(tokenize_rendered("p"))
             assert sampled[0].end == len(session.transcript)
             assert not [p for p in provenance if p.kind == "eos"]
             assert binder._records[-1].end == len(session.transcript)
-            native_tokens = session._worker.call(
-                lambda engine, native: native.tokens()
-            ).result()
+            native_tokens = session._worker.call(lambda engine, native: native.tokens()).result()
             assert tuple(native_tokens) == session.transcript.tokens
 
             before = session.transcript.tokens
@@ -171,9 +172,9 @@ def test_closing_event_iteration_binds_only_the_published_partial_response() -> 
 
             assert second.parts == [TextPart("next")]
             assert second.finish_reason == "stop"
-            assert session.transcript.tokens[:len(before)] == before
-            assert binder.export_segments()[:len(provenance)] == provenance
-            assert prompts[1][:len(before)] == before
+            assert session.transcript.tokens[: len(before)] == before
+            assert binder.export_segments()[: len(provenance)] == provenance
+            assert prompts[1][: len(before)] == before
             assert not outputs
 
     asyncio.run(scenario())
@@ -195,7 +196,14 @@ def test_session_bus_listeners_stay_on_the_asyncio_thread() -> None:
             session.emit("run_end")
 
             assert [kind for kind, _ in delivered] == [
-                "run_start", "Synced", "Token", "Token", "Token", "Token", "Stopped", "run_end",
+                "run_start",
+                "Synced",
+                "Token",
+                "Token",
+                "Token",
+                "Token",
+                "Stopped",
+                "run_end",
             ]
             assert {thread for _, thread in delivered} == {owning_thread}
 
@@ -220,7 +228,7 @@ def test_request_relies_on_stream_terminal_binding_exactly_once() -> None:
             response = await model.request([user()], None, ModelRequestParameters())
             assert response.parts == [TextPart("done")]
             assert bindings == 1
-            assert binder._records[-1].key == cast(Any, response.metadata)["ds4.key"]
+            assert binder._records[-1].key == cast("Any", response.metadata)["ds4.key"]
 
     asyncio.run(scenario())
 
@@ -231,8 +239,8 @@ def test_direct_stream_response_is_reused_by_the_next_request_without_rerenderin
     def script(prompt: Any, generated: Any) -> Any:
         if not generated:
             tokens = outputs.pop(0)
-            cast(Any, script).current = tokens
-        tokens = cast(Any, script).current
+            cast("Any", script).current = tokens
+        tokens = cast("Any", script).current
         return tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
     async def scenario() -> None:
@@ -242,10 +250,9 @@ def test_direct_stream_response_is_reused_by_the_next_request_without_rerenderin
             model = make_model(session, binder=binder)
             request = user("first request")
             first, _ = await collect(model, [request])
-            first_key = cast(Any, first.metadata)["ds4.key"]
+            first_key = cast("Any", first.metadata)["ds4.key"]
             first_hash = next(
-                p.content_hash for p in binder.export_segments()
-                if p.key == first_key and p.source == "sampled"
+                p.content_hash for p in binder.export_segments() if p.key == first_key and p.source == "sampled"
             )
             before = session.transcript.tokens
             before_provenance = binder.export_segments()
@@ -253,17 +260,16 @@ def test_direct_stream_response_is_reused_by_the_next_request_without_rerenderin
             second, _ = await collect(model, [request, first, user("next")])
 
             assert second.parts == [TextPart("second")]
-            assert session.transcript.tokens[:len(before)] == before
+            assert session.transcript.tokens[: len(before)] == before
             assert len(binder._records) == 4
             assert [record.key for record in binder._records[:2]] == [
-                cast(Any, request.metadata)["ds4.key"], first_key,
+                cast("Any", request.metadata)["ds4.key"],
+                first_key,
             ]
             assert binder._records[1].end == len(before)
             later = binder.export_segments()
-            assert later[:len(before_provenance)] == before_provenance
-            assert next(
-                p.content_hash for p in later if p.key == first_key and p.source == "sampled"
-            ) == first_hash
+            assert later[: len(before_provenance)] == before_provenance
+            assert next(p.content_hash for p in later if p.key == first_key and p.source == "sampled") == first_hash
             assert len([p for p in later if p.kind == "assistant"]) == 2
             assert not outputs
 

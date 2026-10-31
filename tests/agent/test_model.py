@@ -1,20 +1,11 @@
-from typing import Any, cast
-from collections.abc import Callable, Sequence
 import asyncio
 import copy
-from dataclasses import replace
 import math
+from collections.abc import Callable, Sequence
+from dataclasses import replace
+from typing import Any, cast
 
 import pytest
-
-import ds4py
-from ds4py import ThinkMode
-from ds4py._native.fake import FAKE_EOS, FakeNative
-from ds4py._native.fake_chat import tokenize_rendered
-from ds4py.binding import MessageBinder
-from ds4py.engine.session import Engine
-from ds4py.engine.sampling import SamplingPolicy
-from ds4py.model import DS4Model
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelRequest,
@@ -28,8 +19,17 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
+import ds4py
+from ds4py import ThinkMode
+from ds4py._native.fake import FAKE_EOS, FakeNative
+from ds4py._native.fake_chat import tokenize_rendered
+from ds4py.binding import MessageBinder
+from ds4py.engine.sampling import SamplingPolicy
+from ds4py.engine.session import Engine
+from ds4py.model import DS4Model
 
-def fake_engine(*, family: str="deepseek4", script: Any=None, think: ThinkMode=ThinkMode.NONE) -> Engine:
+
+def fake_engine(*, family: str = "deepseek4", script: Any = None, think: ThinkMode = ThinkMode.NONE) -> Engine:
     info = replace(
         FakeNative()._info,
         name="fake-ds4",
@@ -44,12 +44,10 @@ def fake_engine(*, family: str="deepseek4", script: Any=None, think: ThinkMode=T
 
 def scripted_text(text: str) -> Callable[[Sequence[int], Sequence[int]], int]:
     tokens = tuple(tokenize_rendered(text))
-    return lambda prompt, generated: (
-        tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
-    )
+    return lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
 
-def user(text: str="hello") -> ModelRequest:
+def user(text: str = "hello") -> ModelRequest:
     return ModelRequest([UserPromptPart(text)])
 
 
@@ -57,10 +55,14 @@ def make_model(session: Any, **kwargs: Any) -> DS4Model:
     return DS4Model(session, sampling=SamplingPolicy(seed=1), **kwargs)
 
 
-def request(model: Any, messages: Any=None, settings: Any=None, params: Any=None) -> ModelResponse:
-    return asyncio.run(model.request(
-        list(messages or [user()]), settings, params or ModelRequestParameters(),
-    ))
+def request(model: Any, messages: Any = None, settings: Any = None, params: Any = None) -> ModelResponse:
+    return asyncio.run(
+        model.request(
+            list(messages or [user()]),
+            settings,
+            params or ModelRequestParameters(),
+        )
+    )
 
 
 def native_calls(session: Any) -> list[Any]:
@@ -73,7 +75,7 @@ def test_identity_profile_and_native_tool_capabilities() -> None:
 
         assert model.model_name == "fake-ds4"
         assert model.system == "ds4"
-        profile = cast(Any, model.profile)
+        profile = cast("Any", model.profile)
         assert profile["context_window"] == 8192
         assert profile["supports_thinking"] is True
         assert profile["supports_tools"] is True
@@ -100,24 +102,27 @@ def test_request_prepares_settings_and_uses_concrete_sampling_policy() -> None:
             prepared.append((settings, params))
             return original_prepare(settings, params)
 
-        cast(Any, model).prepare_request = recording_prepare
+        cast("Any", model).prepare_request = recording_prepare
         settings = {"temperature": 0.25, "top_p": 0.8, "top_k": 7}
         response = request(model, settings=settings)
 
         assert len(prepared) == 1
         assert prepared[0][0] is settings
         assert response.parts == [TextPart("sampled")]
-        samples = session._worker.call(lambda engine, native: list(cast(Any, native).samples)).result()
+        samples = session._worker.call(lambda engine, native: list(cast("Any", native).samples)).result()
         assert samples[0] == (0.25, 7, 0.8, 0.05)
 
 
-@pytest.mark.parametrize("field,value", [
-    ("temperature", None),
-    ("temperature", math.nan),
-    ("top_p", math.inf),
-    ("min_p", -math.inf),
-    ("top_k", None),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("temperature", None),
+        ("temperature", math.nan),
+        ("top_p", math.inf),
+        ("min_p", -math.inf),
+        ("top_k", None),
+    ],
+)
 def test_request_rejects_missing_or_nonfinite_sampling_before_binding(field: Any, value: Any) -> None:
     with fake_engine() as engine:
         session = engine.session()
@@ -153,8 +158,8 @@ def test_text_and_thinking_deltas_become_distinct_parts_with_token_usage() -> No
         assert response.model_name == "fake-ds4"
         assert response.provider_name == "ds4"
         assert response.provider_url is None
-        assert cast(Any, response.metadata)["ds4.source"] == "sampled"
-        assert cast(Any, response.metadata)["ds4.key"]
+        assert cast("Any", response.metadata)["ds4.source"] == "sampled"
+        assert cast("Any", response.metadata)["ds4.key"]
         output = len(tokenize_rendered(text))
         assert response.usage.output_tokens == output
         assert response.usage.input_tokens > 0
@@ -164,10 +169,7 @@ def test_text_and_thinking_deltas_become_distinct_parts_with_token_usage() -> No
 
 
 def test_tool_calls_have_stable_ids_and_preserve_sampled_raw_syntax() -> None:
-    raw = (
-        "<tool_call>\n<function=read>\n<parameter=path>\n/tmp/x\n</parameter>\n"
-        "</function>\n</tool_call>"
-    )
+    raw = "<tool_call>\n<function=read>\n<parameter=path>\n/tmp/x\n</parameter>\n</function>\n</tool_call>"
     with fake_engine(family="qwen", script=scripted_text(raw)) as engine:
         response = request(make_model(engine.session()))
 
@@ -177,7 +179,7 @@ def test_tool_calls_have_stable_ids_and_preserve_sampled_raw_syntax() -> None:
         assert part.tool_name == "read"
         assert part.args == {"path": "/tmp/x"}
         assert part.tool_call_id
-        assert part.tool_call_id.startswith(cast(Any, response.metadata)["ds4.key"])
+        assert part.tool_call_id.startswith(cast("Any", response.metadata)["ds4.key"])
         assert part.provider_details == {"ds4py.raw": raw}
         assert response.finish_reason == "tool_call"
 
@@ -212,19 +214,26 @@ def test_real_agent_renders_instructions_once_and_invalidates_changes() -> None:
 
             def occurrences(tokens: Any, needle: Any) -> Any:
                 return [
-                    index for index in range(len(tokens) - len(needle) + 1)
-                    if tokens[index:index + len(needle)] == needle
+                    index
+                    for index in range(len(tokens) - len(needle) + 1)
+                    if tokens[index : index + len(needle)] == needle
                 ]
 
             locations = occurrences(session.transcript.tokens, marker)
             assert len(locations) == 1
-            assert len([
-                segment for segment in session.transcript.segments
-                if any(
-                    segment.start <= location and location + len(marker) <= segment.end
-                    for location in locations
+            assert (
+                len(
+                    [
+                        segment
+                        for segment in session.transcript.segments
+                        if any(
+                            segment.start <= location and location + len(marker) <= segment.end
+                            for location in locations
+                        )
+                    ]
                 )
-            ]) == 1
+                == 1
+            )
 
             replacement = "replacement instruction marker"
             change = model.binder.prepare(result.all_messages(), instructions=replacement)
@@ -247,8 +256,7 @@ def test_real_agent_executes_function_tool_and_samples_its_result_next_round() -
 
     def contains(prompt: Any, marker: Any) -> bool:
         return any(
-            tuple(prompt[index:index + len(marker)]) == marker
-            for index in range(len(prompt) - len(marker) + 1)
+            tuple(prompt[index : index + len(marker)]) == marker for index in range(len(prompt) - len(marker) + 1)
         )
 
     def script(prompt: Any, generated: Any) -> Any:
@@ -273,8 +281,11 @@ def test_real_agent_executes_function_tool_and_samples_its_result_next_round() -
             assert len(responses) == 2
             assert isinstance(responses[0].parts[0], ToolCallPart)
             returns = [
-                part for message in result.all_messages() if isinstance(message, ModelRequest)
-                for part in message.parts if isinstance(part, ToolReturnPart)
+                part
+                for message in result.all_messages()
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, ToolReturnPart)
             ]
             assert len(returns) == 1
             assert returns[0].tool_name == "add"
@@ -299,9 +310,12 @@ def test_adopt_uses_stable_keys_without_collapsing_harness_history() -> None:
 
         adopted = binder.adopt(history)
 
-        assert [cast(Any, message.parts[0]).content for message in adopted] == [
-            "question-one", "answer-one", "question-two", "answer-two",
+        assert [cast("Any", message.parts[0]).content for message in adopted] == [
+            "question-one",
+            "answer-one",
+            "question-two",
+            "answer-two",
         ]
-        assert [cast(Any, message.metadata)["ds4.key"] for message in adopted] == [
-            cast(Any, message.metadata)["ds4.key"] for message in history
+        assert [cast("Any", message.metadata)["ds4.key"] for message in adopted] == [
+            cast("Any", message.metadata)["ds4.key"] for message in history
         ]

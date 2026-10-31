@@ -28,6 +28,9 @@ dev = [
     "ruff>=0.17.3",
 ]
 
+[tool.ruff]
+line-length = 120
+
 [tool.pyright]
 include = ["src", "bench", "tests"]
 typeCheckingMode = "standard"

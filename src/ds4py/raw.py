@@ -1,16 +1,19 @@
 """Raw token streaming and ds4-agent-compatible binary traces."""
+
 import argparse
-from contextlib import nullcontext
-from datetime import datetime
-from pathlib import Path
 import re
 import signal
 import sys
 import threading
+from collections.abc import Callable
+from contextlib import nullcontext
+from datetime import datetime
+from pathlib import Path
 from types import FrameType
-from typing import Any, BinaryIO, Callable, TextIO
+from typing import Any, BinaryIO, TextIO
 
-from ds4py import Engine, open as open_engine
+from ds4py import Engine
+from ds4py import open as open_engine
 from ds4py.engine.events import Interrupted, Stopped, Token
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.errors import EngineError
@@ -18,19 +21,18 @@ from ds4py.errors import EngineError
 
 def _escape(data: bytes) -> bytes:
     escapes = {92: b"\\\\", 10: b"\\n", 13: b"\\r", 9: b"\\t", 34: b'\\"'}
-    return b"".join(escapes.get(b, f"\\x{b:02x}".encode() if b < 32 or b == 127
-                                else bytes([b])) for b in data)
+    return b"".join(escapes.get(b, f"\\x{b:02x}".encode() if b < 32 or b == 127 else bytes([b])) for b in data)
 
 
 class Trace:
     def __init__(self, path: Path, *, now: Callable[[], datetime] = datetime.now) -> None:
         self.path, self.now = path, now
 
-    def __enter__(self) -> "Trace":
+    def __enter__(self) -> Trace:
         self._file = self.path.open("ab")
         return self
 
-    def __exit__(self, *exc: Any) -> None:
+    def __exit__(self, *exc: object) -> None:
         self._file.close()
 
     def _line(self, message: bytes) -> None:
@@ -45,8 +47,12 @@ class Trace:
         self._line(label.encode() + b'="' + _escape(data) + b'"')
 
     def token(self, index: int, token: int, text: bytes) -> None:
-        self._line(f"token index={index} id={token} bytes={len(text)} text=\"".encode()
-                   + _escape(text) + b'" hex=' + text.hex().encode())
+        self._line(
+            f'token index={index} id={token} bytes={len(text)} text="'.encode()
+            + _escape(text)
+            + b'" hex='
+            + text.hex().encode()
+        )
 
 
 def read_trace_tokens(path: Path) -> tuple[list[int], list[int]]:
@@ -55,7 +61,8 @@ def read_trace_tokens(path: Path) -> tuple[list[int], list[int]]:
     for line in path.read_bytes().splitlines():
         start = re.fullmatch(
             rb"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} "
-            rb"tokens label=raw_prompt_tokens start=0 len=(\d+)", line,
+            rb"tokens label=raw_prompt_tokens start=0 len=(\d+)",
+            line,
         )
         if start:
             prompt_length = int(start[1])
@@ -69,9 +76,16 @@ def read_trace_tokens(path: Path) -> tuple[list[int], list[int]]:
     return tokens[:prompt_length], tokens[prompt_length:]
 
 
-def run_raw(engine: Engine, prompt: str, *, max_tokens: int,
-            sampling: SamplingPolicy, out: BinaryIO, err: TextIO,
-            trace: Trace | None = None) -> int:
+def run_raw(
+    engine: Engine,
+    prompt: str,
+    *,
+    max_tokens: int,
+    sampling: SamplingPolicy,
+    out: BinaryIO,
+    err: TextIO,
+    trace: Trace | None = None,
+) -> int:
     tokens = engine.tokenize(prompt)
     if not tokens:
         raise EngineError("raw prompt tokenized to no tokens")
@@ -118,11 +132,19 @@ def command(args: argparse.Namespace) -> int:
     prompt = args.prompt if args.prompt is not None else args.prompt_text
     if args.prompt_file is not None:
         prompt = args.prompt_file.read_bytes().decode("utf-8")
-    with open_engine(args.model, ctx=args.ctx, backend=args.backend, seed=args.seed,
-                     threads=args.threads, lib=args.lib) as engine:
-        sampling = SamplingPolicy.for_engine(engine.info, temperature=args.temp,
-                                             top_p=args.top_p, min_p=args.min_p,
-                                             seed=args.seed)
+    with open_engine(
+        args.model, ctx=args.ctx, backend=args.backend, seed=args.seed, threads=args.threads, lib=args.lib
+    ) as engine:
+        sampling = SamplingPolicy.for_engine(
+            engine.info, temperature=args.temp, top_p=args.top_p, min_p=args.min_p, seed=args.seed
+        )
         with Trace(args.trace) if args.trace is not None else nullcontext() as trace:
-            return run_raw(engine, prompt, max_tokens=args.tokens, sampling=sampling,
-                           out=sys.stdout.buffer, err=sys.stderr, trace=trace)
+            return run_raw(
+                engine,
+                prompt,
+                max_tokens=args.tokens,
+                sampling=sampling,
+                out=sys.stdout.buffer,
+                err=sys.stderr,
+                trace=trace,
+            )

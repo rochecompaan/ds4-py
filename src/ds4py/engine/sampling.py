@@ -1,7 +1,8 @@
 """Family-aware sampling parameters and native-compatible random state."""
-from dataclasses import dataclass
+
 import os
 import time
+from dataclasses import dataclass
 
 from ds4py._native.protocol import EngineInfo
 from ds4py._native.rng import rng_state
@@ -17,10 +18,15 @@ class SamplingPolicy:
 
     @classmethod
     def for_engine(
-        cls, info: EngineInfo, *, temperature: float | None = None,
-        top_p: float | None = None, min_p: float | None = None,
-        top_k: int | None = None, seed: int | None = None,
-    ) -> "SamplingPolicy":
+        cls,
+        info: EngineInfo,
+        *,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        min_p: float | None = None,
+        top_k: int | None = None,
+        seed: int | None = None,
+    ) -> SamplingPolicy:
         return cls(
             temperature=1.0 if temperature is None else temperature,
             top_p=(0.95 if info.is_glm_dsa else 1.0) if top_p is None else top_p,

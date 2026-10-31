@@ -29,7 +29,9 @@ class _SlashCompleter(Completer):
         self.registry = registry
 
     def get_completions(
-        self, document: Document, complete_event: CompleteEvent,
+        self,
+        document: Document,
+        complete_event: CompleteEvent,
     ) -> Iterable[Completion]:
         yield from self.registry.completions(document.text_before_cursor)
 
@@ -38,7 +40,10 @@ class TUI:
     """Own prompt input, event rendering, commands, and the live footer."""
 
     def __init__(
-        self, runtime: AgentRuntime, input: Input | None = None, output: Output | None = None,
+        self,
+        runtime: AgentRuntime,
+        input: Input | None = None,
+        output: Output | None = None,
     ) -> None:
         self.runtime = runtime
         self.output = output
@@ -57,7 +62,9 @@ class TUI:
             bottom_toolbar=self._bottom_toolbar,
         )
         install_builtin_commands(
-            self.commands, runtime, request_exit=self._request_exit,
+            self.commands,
+            runtime,
+            request_exit=self._request_exit,
         )
         self._loop: asyncio.AbstractEventLoop | None = None
         self._events: asyncio.Queue[SessionEvent] = asyncio.Queue()
@@ -136,7 +143,8 @@ class TUI:
         while True:
             prompt_task = self._ensure_prompt()
             done, _ = await asyncio.wait(
-                {run_task, prompt_task}, return_when=asyncio.FIRST_COMPLETED,
+                {run_task, prompt_task},
+                return_when=asyncio.FIRST_COMPLETED,
             )
             if run_task in done:
                 try:

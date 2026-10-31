@@ -1,10 +1,13 @@
 """Token acceptance and commit policy separated from native decode steps."""
+
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
-from typing import Callable, Protocol, cast
+from typing import Protocol, cast
 
 from ds4py._native.protocol import EngineHandle, SessionHandle
 from ds4py.errors import EngineError
+
 from .events import Event, Token
 from .logits import LogitsView
 from .pause import ControlSpan
@@ -39,9 +42,17 @@ class GenerateJob:
 
 
 class DecodeContext:
-    def __init__(self, engine: EngineHandle, job: GenerateJob, *, limit: int,
-                 limit_reason: str, cancelled: Callable[[], bool],
-                 emit: Callable[[Event], None], session: SessionHandle | None = None) -> None:
+    def __init__(
+        self,
+        engine: EngineHandle,
+        job: GenerateJob,
+        *,
+        limit: int,
+        limit_reason: str,
+        cancelled: Callable[[], bool],
+        emit: Callable[[Event], None],
+        session: SessionHandle | None = None,
+    ) -> None:
         self.rng = job.rng.state
         self.reason: str | None = None
         self._engine, self._job = engine, job
@@ -50,12 +61,9 @@ class DecodeContext:
         self._session = session
         self._accepted = 0
         self._committed = False
-        self._sampled_tokens = (
-            job.stream.sampled_tokens if job.stream is not None else job.sampled_tokens
-        )
+        self._sampled_tokens = job.stream.sampled_tokens if job.stream is not None else job.sampled_tokens
         self._logits_view = (
-            LogitsView(cast(SessionHandle, session), engine.info().vocab_size)
-            if job.logits_hooks else None
+            LogitsView(cast("SessionHandle", session), engine.info().vocab_size) if job.logits_hooks else None
         )
         self._verdict = Verdict.CONTINUE
         self._event_buffer: list[Event] | None = None
@@ -141,9 +149,7 @@ class DecodeContext:
         elif self._job.control.sequences:
             self._job.control.feed(text)
         # Stop sequences can pause a raw round before any hook is registered.
-        if stream is None and (
-            self._logits_view is not None or self._job.control.sequences
-        ):
+        if stream is None and (self._logits_view is not None or self._job.control.sequences):
             self._sampled_tokens.append(token)
         if stream is not None and stream.malformed:
             self.finish("parser_error")
@@ -216,9 +222,15 @@ class PlainStep:
                 return
 
 
-def generate(engine: EngineHandle, session: SessionHandle, job: GenerateJob, *,
-             cancelled: Callable[[], bool], emit: Callable[[Event], None],
-             step: DecodeStep | None = None) -> str:
+def generate(
+    engine: EngineHandle,
+    session: SessionHandle,
+    job: GenerateJob,
+    *,
+    cancelled: Callable[[], bool],
+    emit: Callable[[Event], None],
+    step: DecodeStep | None = None,
+) -> str:
     room = session.ctx() - session.pos()
     limit = min(job.max_tokens, max(room - job.reserve, 0))
     limit_reason = "max_tokens" if job.max_tokens <= room - job.reserve else "context_reserve"
@@ -226,8 +238,13 @@ def generate(engine: EngineHandle, session: SessionHandle, job: GenerateJob, *,
     if job.logits_hooks and not decode_step.hooks_every_sample:
         decode_step = PlainStep()
     ctx = DecodeContext(
-        engine, job, limit=limit, limit_reason=limit_reason,
-        cancelled=cancelled, emit=emit, session=session,
+        engine,
+        job,
+        limit=limit,
+        limit_reason=limit_reason,
+        cancelled=cancelled,
+        emit=emit,
+        session=session,
     )
     if job.resume:
         ctx.resume()

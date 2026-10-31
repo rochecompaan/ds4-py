@@ -1,10 +1,11 @@
-from typing import Any, cast
 from datetime import datetime
+from typing import Any, cast
+
+from pydantic_ai.messages import ModelRequest, UserPromptPart
 
 from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.engine.session import Engine
 from ds4py.model import DS4Model
-from pydantic_ai.messages import ModelRequest, UserPromptPart
 
 
 class MockSession:
@@ -12,14 +13,14 @@ class MockSession:
         self.notes = []
         self.listeners = []
 
-    def append_system_note(self, text: Any, subtype: Any=None) -> None:
+    def append_system_note(self, text: Any, subtype: Any = None) -> None:
         self.notes.append((text, subtype))
 
-    def on_event(self, listener: Any, kinds: Any=None) -> None:
+    def on_event(self, listener: Any, kinds: Any = None) -> None:
         self.listeners.append((listener, kinds))
 
 
-def user_req(text: Any="hello") -> ModelRequest:
+def user_req(text: Any = "hello") -> ModelRequest:
     return ModelRequest([UserPromptPart(text)])
 
 
@@ -69,7 +70,7 @@ def test_compaction_resets_hints() -> None:
     notes = DS4SystemNotes(session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0), hints=True)
     notes.notes([user_req()])
     assert notes._hints_full_emitted is True
-    notes._on_compacted(cast(Any, None))
+    notes._on_compacted(cast("Any", None))
     assert notes._hints_full_emitted is False
     result = notes.notes([user_req()])
     assert len(result) == 1
@@ -93,13 +94,14 @@ def test_note_segments_have_empty_keys_and_do_not_become_messages() -> None:
     import asyncio
     from dataclasses import replace
 
+    from pydantic_ai.models import ModelRequestParameters
+
     import ds4py
     from ds4py import ThinkMode
     from ds4py._native.fake import FAKE_EOS, FakeNative
     from ds4py._native.fake_chat import tokenize_rendered
     from ds4py.engine.sampling import SamplingPolicy
     from ds4py.model import DS4Model
-    from pydantic_ai.models import ModelRequestParameters
 
     info = replace(
         FakeNative()._info,
@@ -110,9 +112,7 @@ def test_note_segments_have_empty_keys_and_do_not_become_messages() -> None:
         is_qwen4=False,
     )
     tokens = tuple(tokenize_rendered("answer"))
-    script = lambda prompt, generated: (
-        tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
-    )
+    script = lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
     with ds4py.open("f.gguf", ctx=4096, think=ThinkMode.NONE, native=FakeNative(info=info, script=script)) as engine:
         session = engine.session()
         notes = DS4SystemNotes(session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0))
@@ -124,7 +124,7 @@ def test_note_segments_have_empty_keys_and_do_not_become_messages() -> None:
         assert note_segments[0].meta.get("key", "") == ""
 
 
-def _fake_engine(text: Any="answer") -> Engine:
+def _fake_engine(text: Any = "answer") -> Engine:
     from dataclasses import replace
 
     import ds4py
@@ -146,7 +146,9 @@ def _fake_engine(text: Any="answer") -> Engine:
         return tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
     return ds4py.open(
-        "f.gguf", ctx=4096, think=ThinkMode.NONE,
+        "f.gguf",
+        ctx=4096,
+        think=ThinkMode.NONE,
         native=FakeNative(info=info, script=script),
     )
 
@@ -190,15 +192,23 @@ def test_hint_note_renders_immediately_before_tool_continuation_request() -> Non
         asyncio.run(model.request([first], None, ModelRequestParameters()))
 
         notes.hints_enabled = True
-        response = ModelResponse([
-            ToolCallPart("read_file", {"path": "a.txt"}, tool_call_id="call-1"),
-        ])
-        continuation = ModelRequest([
-            ToolReturnPart("read_file", "data", tool_call_id="call-1"),
-        ])
-        asyncio.run(model.request(
-            [first, response, continuation], None, ModelRequestParameters(),
-        ))
+        response = ModelResponse(
+            [
+                ToolCallPart("read_file", {"path": "a.txt"}, tool_call_id="call-1"),
+            ]
+        )
+        continuation = ModelRequest(
+            [
+                ToolReturnPart("read_file", "data", tool_call_id="call-1"),
+            ]
+        )
+        asyncio.run(
+            model.request(
+                [first, response, continuation],
+                None,
+                ModelRequestParameters(),
+            )
+        )
 
         kinds = [segment.kind for segment in session.transcript.segments]
         note_index = max(index for index, kind in enumerate(kinds) if kind == "note")
@@ -274,7 +284,7 @@ def test_restore_restores_hints_enabled_from_latest_note() -> None:
 def test_never_applied_hints_stay_unset_after_compaction() -> None:
     session: Any = MockSession()
     notes = DS4SystemNotes(session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0))
-    notes._on_compacted(cast(Any, None))
+    notes._on_compacted(cast("Any", None))
     result = notes.notes([user_req()])
     assert [subtype for _, subtype in result] == ["date"]
 
@@ -282,13 +292,15 @@ def test_never_applied_hints_stay_unset_after_compaction() -> None:
 def test_compaction_while_disabled_reasserts_hints_off() -> None:
     session: Any = MockSession()
     notes = DS4SystemNotes(
-        session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0), hints=True,
+        session,
+        clock=lambda: datetime(2024, 1, 1, 12, 0, 0),
+        hints=True,
     )
     assert [subtype for _, subtype in notes.notes([user_req()])] == ["date", "hints_full"]
     notes.hints_enabled = False
     assert [subtype for _, subtype in notes.notes([user_req()])] == ["hints_off"]
 
-    notes._on_compacted(cast(Any, None))
+    notes._on_compacted(cast("Any", None))
 
     assert [subtype for _, subtype in notes.notes([user_req()])] == ["hints_off"]
     assert notes.notes([user_req()]) == []
@@ -311,13 +323,12 @@ def test_hint_texts_match_pinned_trailing_newlines() -> None:
     )
     assert HINTS_ON == "The user enabled programming hints. Produce them from now on.\n"
     assert HINTS_OFF == (
-        "Programming hints are disabled. Do not produce teaching asides; "
-        "continue the task normally.\n"
+        "Programming hints are disabled. Do not produce teaching asides; continue the task normally.\n"
     )
 
 
 def test_default_clock_is_timezone_aware() -> None:
-    notes = DS4SystemNotes(cast(Any, MockSession()))
+    notes = DS4SystemNotes(cast("Any", MockSession()))
     when = notes.clock()
     assert isinstance(when, datetime)
     assert when.tzinfo is not None
@@ -360,8 +371,8 @@ def test_same_key_user_rewrite_keeps_date_note_once() -> None:
         binder.prepare([request])
 
         changed = deepcopy(request)
-        cast(UserPromptPart, changed.parts[0]).content = "changed"
-        assert cast(Any, changed.metadata)["ds4.key"] == cast(Any, request.metadata)["ds4.key"]
+        cast("UserPromptPart", changed.parts[0]).content = "changed"
+        assert cast("Any", changed.metadata)["ds4.key"] == cast("Any", request.metadata)["ds4.key"]
 
         change = binder.prepare([changed])
 
@@ -405,8 +416,9 @@ def test_hints_setting_change_on_identical_messages_emits_note_once() -> None:
 
 
 def test_incremental_notes_match_fresh_full_rebuild_tokens() -> None:
-    from ds4py.binding import MessageBinder
     from pydantic_ai.messages import ModelResponse, TextPart
+
+    from ds4py.binding import MessageBinder
 
     first = user_req("first")
     response = ModelResponse([TextPart("answer")])
@@ -415,7 +427,9 @@ def test_incremental_notes_match_fresh_full_rebuild_tokens() -> None:
         incremental_session = incremental_engine.session()
         incremental_binder: Any = MessageBinder(incremental_session)
         incremental_binder.note_provider = DS4SystemNotes(
-            incremental_session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0), hints=True,
+            incremental_session,
+            clock=lambda: datetime(2024, 1, 1, 12, 0, 0),
+            hints=True,
         )
         incremental_binder.prepare([first])
         incremental_binder.prepare([first, response])
@@ -424,7 +438,9 @@ def test_incremental_notes_match_fresh_full_rebuild_tokens() -> None:
         fresh_session = fresh_engine.session()
         fresh_binder: Any = MessageBinder(fresh_session)
         fresh_binder.note_provider = DS4SystemNotes(
-            fresh_session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0), hints=True,
+            fresh_session,
+            clock=lambda: datetime(2024, 1, 1, 12, 0, 0),
+            hints=True,
         )
         fresh_binder.prepare([first, response, follow_up])
 
@@ -437,13 +453,16 @@ def test_incremental_notes_match_fresh_full_rebuild_tokens() -> None:
 def test_compaction_reasserts_full_note_across_rewrite_with_surviving_notes() -> None:
     from copy import deepcopy
 
-    from ds4py.binding import MessageBinder
     from pydantic_ai.messages import ModelResponse, TextPart
+
+    from ds4py.binding import MessageBinder
 
     with _fake_engine() as engine:
         session = engine.session()
         notes = DS4SystemNotes(
-            session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0), hints=True,
+            session,
+            clock=lambda: datetime(2024, 1, 1, 12, 0, 0),
+            hints=True,
         )
         binder: Any = MessageBinder(session)
         binder.note_provider = notes
@@ -456,10 +475,10 @@ def test_compaction_reasserts_full_note_across_rewrite_with_surviving_notes() ->
         binder.prepare([first, response, follow_up])
         notes.hints_enabled = True
         binder.prepare([first, response, follow_up])
-        notes._on_compacted(cast(Any, None))
+        notes._on_compacted(cast("Any", None))
 
         changed = deepcopy(response)
-        cast(TextPart, changed.parts[0]).content = "changed"
+        cast("TextPart", changed.parts[0]).content = "changed"
         binder.prepare([first, changed, follow_up])
 
         kinds = [segment.kind for segment in binder.export_segments()]
@@ -470,13 +489,16 @@ def test_compaction_reasserts_full_note_across_rewrite_with_surviving_notes() ->
 def test_compaction_reasserts_hints_off_across_rewrite_with_surviving_notes() -> None:
     from copy import deepcopy
 
-    from ds4py.binding import MessageBinder
     from pydantic_ai.messages import ModelResponse, TextPart
+
+    from ds4py.binding import MessageBinder
 
     with _fake_engine() as engine:
         session = engine.session()
         notes = DS4SystemNotes(
-            session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0), hints=True,
+            session,
+            clock=lambda: datetime(2024, 1, 1, 12, 0, 0),
+            hints=True,
         )
         binder: Any = MessageBinder(session)
         binder.note_provider = notes
@@ -491,10 +513,10 @@ def test_compaction_reasserts_hints_off_across_rewrite_with_surviving_notes() ->
         binder.prepare([first, response, follow_up])
         notes.hints_enabled = False
         binder.prepare([first, response, follow_up])
-        notes._on_compacted(cast(Any, None))
+        notes._on_compacted(cast("Any", None))
 
         changed = deepcopy(response)
-        cast(TextPart, changed.parts[0]).content = "changed"
+        cast("TextPart", changed.parts[0]).content = "changed"
         binder.prepare([first, changed, follow_up])
 
         kinds = [segment.kind for segment in binder.export_segments()]
@@ -508,7 +530,9 @@ def test_compaction_reasserts_hints_off_across_full_rebuild() -> None:
     with _fake_engine() as engine:
         session = engine.session()
         notes = DS4SystemNotes(
-            session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0), hints=True,
+            session,
+            clock=lambda: datetime(2024, 1, 1, 12, 0, 0),
+            hints=True,
         )
         binder: Any = MessageBinder(session)
         binder.note_provider = notes
@@ -516,7 +540,7 @@ def test_compaction_reasserts_hints_off_across_full_rebuild() -> None:
         binder.prepare([request])
         notes.hints_enabled = False
         binder.prepare([request])
-        notes._on_compacted(cast(Any, None))
+        notes._on_compacted(cast("Any", None))
 
         binder.prepare([request], instructions="changed")
 

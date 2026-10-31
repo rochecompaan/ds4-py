@@ -2,15 +2,16 @@
 
 import ctypes
 import os
-from pathlib import Path
 import sys
 import threading
 from collections.abc import Callable, Iterable
+from pathlib import Path
 from typing import Any
 
 from ds4py.abi.manifest import Manifest, Validation, file_sha256, manifest_path, validate
 from ds4py.abi.shaders import metal_source_env
 from ds4py.errors import AbiMismatch, LibraryAlreadyLoaded, LibraryNotFound, MissingBinding
+
 from .bindings import Binding, all_bindings
 from .structs import STRUCTS, struct_layout
 from .typemap import ctypes_signature, parse_prototype
@@ -88,9 +89,7 @@ def load_library(lib: str | Path | None = None) -> Library:
     try:
         real = path.resolve(strict=True)
     except FileNotFoundError as exc:
-        raise LibraryNotFound(
-            f"library not found: {path}. Run `ds4py build --src <ds4 tree>` to build it."
-        ) from exc
+        raise LibraryNotFound(f"library not found: {path}. Run `ds4py build --src <ds4 tree>` to build it.") from exc
     with _load_lock:
         if _loaded is not None:
             if _loaded.path != real:
@@ -106,7 +105,9 @@ def load_library(lib: str | Path | None = None) -> Library:
         bindings = all_bindings()
         layouts = STRUCTS
         validation = validate(
-            manifest, lib_sha256=file_sha256(real), bindings=bindings,
+            manifest,
+            lib_sha256=file_sha256(real),
+            bindings=bindings,
             layouts={name: struct_layout(cls) for name, cls in layouts.items()},
         )
         if manifest.backend == "metal":

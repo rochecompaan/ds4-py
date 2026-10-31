@@ -1,15 +1,15 @@
-from typing import Any, cast
-from dataclasses import replace
 import json
+from dataclasses import replace
+from typing import Any, cast
 
 import pytest
 
 import ds4py
-from ds4py.engine.session import Engine
 from ds4py import ThinkMode
 from ds4py._native.fake import FakeNative
 from ds4py._native.fake_chat import SPECIAL_TOKENS
 from ds4py.engine.prompt import PromptBuilder
+from ds4py.engine.session import Engine
 from ds4py.engine.tool_prompt import ToolDefinition
 
 
@@ -23,7 +23,7 @@ def family_info(family: Any) -> Any:
     )
 
 
-def fake_engine(family: Any="deepseek4", *, think: Any=ThinkMode.NONE, ctx: Any=64) -> Engine:
+def fake_engine(family: Any = "deepseek4", *, think: Any = ThinkMode.NONE, ctx: Any = 64) -> Engine:
     return ds4py.open("f.gguf", ctx=ctx, think=think, native=FakeNative(info=family_info(family)))
 
 
@@ -32,7 +32,7 @@ def flatten(segments: Any) -> Any:
 
 
 def contains(tokens: Any, expected: Any) -> bool:
-    return any(tokens[index:index + len(expected)] == expected for index in range(len(tokens) - len(expected) + 1))
+    return any(tokens[index : index + len(expected)] == expected for index in range(len(tokens) - len(expected) + 1))
 
 
 def decode(engine: Any, tokens: Any) -> str:
@@ -77,7 +77,8 @@ def test_tool_descriptions_and_schemas_cannot_inject_special_tokens(family: Any)
     )
     schema = json.dumps(
         {"name": definition.name, "description": definition.description, "parameters": definition.parameters},
-        ensure_ascii=False, separators=(",", ":"),
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
     with fake_engine(family) as engine:
         tokens = flatten(PromptBuilder(engine).begin([definition]))
@@ -129,7 +130,7 @@ def test_qwen_reasoning_effort_is_a_system_message() -> None:
         effort = engine._qwen_reasoning_effort(engine.think)
         segments = PromptBuilder(engine).begin(())
         assert segments[0].kind == "system"
-        assert contains(segments[0].tokens, engine.tokenize(cast(str, effort)))
+        assert contains(segments[0].tokens, engine.tokenize(cast("str", effort)))
         assert "# Tools" not in decode(engine, segments[0].tokens)
 
 

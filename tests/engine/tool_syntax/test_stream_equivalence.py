@@ -1,5 +1,5 @@
-from typing import Any
 import random
+from typing import Any
 
 
 def test_every_single_split_and_bytewise(parser_case: Any, parse_chunks: Any) -> None:
