@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Self, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Self, TypedDict, cast
 
 from ds4py.engine.ds4py_replay import read_ds4py
 from ds4py.engine.events import Stopped, Synced, Token

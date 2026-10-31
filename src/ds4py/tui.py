@@ -188,7 +188,7 @@ class TUI:
             for question in request.questions:
                 self.show_message(question.question)
                 for index, option in enumerate(question.options, 1):
-                    description = f" — {option.description}" if option.description else ""
+                    description = f" — {option.description}" if option.description is not None else ""
                     self.show_message(f"  {index}. {option.label}{description}")
                 prompt = "Choices (comma-separated)" if question.multi_select else "Choice"
                 self.show_message(f"{prompt}; enter /cancel to cancel.")
