@@ -1,7 +1,7 @@
 import threading
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Never
+from typing import Any, Never, override
 
 import pytest
 
@@ -44,6 +44,7 @@ def test_think_helper_runs_on_owner_and_failure_closes_worker(fail: Any) -> None
     handles, calls = [], []
 
     class TrackingNative(FakeNative):
+        @override
         def open_engine(self, config: Any) -> Any:
             engine = super().open_engine(config)
             handles.append(engine)
@@ -54,9 +55,10 @@ def test_think_helper_runs_on_owner_and_failure_closes_worker(fail: Any) -> None
                 handles.append(session)
                 return session
 
-            engine.create_session = create_session
+            engine.create_session = create_session  # ty: ignore[invalid-assignment]  # Instance-level test double replaces a bound method.
             return engine
 
+        @override
         def think_mode_for_context(self, mode: Any, ctx: Any) -> Any:
             calls.append(threading.current_thread())
             if fail:
@@ -179,7 +181,7 @@ def test_overlapping_round_is_refused_without_releasing_the_first(
         finally:
             first.close()
             unused.close()
-            if second is not None:
+            if second is not None:  # ty: ignore[redundant-condition-strict]  # second is assigned only on the alternate path.
                 second.close()
 
 

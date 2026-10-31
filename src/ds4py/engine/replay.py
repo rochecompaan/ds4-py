@@ -5,8 +5,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Never
 
+from ds4py._native.protocol import THINK_LEVEL_BASE
+
 from .ds4py_replay import read_ds4py
 from .replay_types import _THINK_NAMES, ReplayError, ReplayRound, ReplayTrace
+
+_MAX_THINK_LEVEL = 100
 
 _TIMESTAMP = re.compile(
     r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?"
@@ -53,9 +57,9 @@ def _think_mode(value: str, reader: _Reader, line: int) -> int:
         return _THINK_NAMES[value]
     if value.isdecimal():
         level = int(value)
-        if 1 <= level <= 100:
-            return 1000 + level
-    reader.error("unsupported think name", line)
+        if 1 <= level <= _MAX_THINK_LEVEL:
+            return THINK_LEVEL_BASE + level
+    return reader.error("unsupported think name", line)
 
 
 def read_replay(path: str | Path) -> ReplayTrace:
@@ -106,7 +110,9 @@ class _Reader:
             self.error("no replay rounds")
         return ReplayTrace(self.ctx, self.model, tuple(self.rounds))
 
-    def dispatch(self, text: str) -> None:
+    def dispatch(  # noqa: PLR0912 - Trace dispatch handles each distinct record family.
+        self, text: str
+    ) -> None:
         if "raw one-shot prompt mode: skipping agent system prompt" in text:
             self.error("raw traces are not replayable")
         if self.block is not None:
@@ -154,7 +160,9 @@ class _Reader:
         self.ctx = ctx
         self.model = match.group(3)
 
-    def start_block(self, text: str) -> None:
+    def start_block(  # noqa: C901, PLR0912 - Trace block validation mirrors each label contract.
+        self, text: str
+    ) -> None:
         match = _TOKENS.fullmatch(text)
         if match is None:
             self.error("malformed token block")
@@ -207,7 +215,8 @@ class _Reader:
             self.current.sampled.append(token_id)
             return
         block = self.block
-        assert block is not None
+        if block is None:
+            raise AssertionError("token line requires an open block")
         expected = block.start + len(block.ids)
         if index != expected:
             self.error("non-contiguous token index in token block")
@@ -219,7 +228,8 @@ class _Reader:
 
     def finish_block(self) -> None:
         block = self.block
-        assert block is not None
+        if block is None:
+            raise AssertionError("finish requires an open block")
         self.block = None
         ids = tuple(block.ids)
         if block.label == "initial_system_prompt":
@@ -229,8 +239,8 @@ class _Reader:
             self.can_compact = False
         else:
             current = self.current
-            assert current is not None
-            assert self.base is not None
+            if current is None or self.base is None:
+                raise AssertionError("suffix requires a round and base history")
             expected = current.prompt_length - current.cached
             if len(ids) != expected:
                 self.error("suffix length does not match prefill", block.line)
@@ -248,7 +258,7 @@ class _Reader:
         think = _think_mode(match.group(6), self, self.line)
         if self.rounds:
             next_number = self.rounds[-1].number + 1
-            valid_number = number == 0 or number == next_number
+            valid_number = number in (0, next_number)
         else:
             valid_number = number in (0, 1)
         if not valid_number:

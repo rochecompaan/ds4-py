@@ -1,11 +1,14 @@
 """Strict comparison metrics extracted from bakeoff event and trace evidence."""
 
 import math
-from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING
 
-from ds4py.engine.replay_types import ReplayTrace
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from ds4py._json import JsonValue
+    from ds4py.engine.replay_types import ReplayTrace
 
 
 class MetricError(ValueError):
@@ -60,8 +63,8 @@ def _wall(value: object) -> float:
 
 
 def _payload(
-    record: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any]]:
+    record: dict[str, JsonValue],
+) -> tuple[dict[str, JsonValue], dict[str, JsonValue]]:
     payload = record.get("payload")
     if not isinstance(payload, dict):
         raise MetricError("event payload must be an object")
@@ -75,7 +78,7 @@ def _reuse(plan: object) -> tuple[str, int, int]:
     if not isinstance(plan, dict):
         raise MetricError("Synced event is missing its plan")
     kind = plan.get("kind")
-    if kind not in {"extend", "restore", "rebuild"}:
+    if not isinstance(kind, str) or kind not in {"extend", "restore", "rebuild"}:
         raise MetricError(f"unknown sync plan kind: {kind!r}")
     reused = _count(plan.get("reused"), "plan.reused")
     to_prefill = _count(plan.get("to_prefill"), "plan.to_prefill")
@@ -85,14 +88,14 @@ def _reuse(plan: object) -> tuple[str, int, int]:
     return kind, reused, denominator
 
 
-def summarize_events(
-    events: Iterable[dict[str, Any]],
+def summarize_events(  # noqa: C901, PLR0912, PLR0915 - Event evidence validation covers each record family.
+    events: Iterable[dict[str, JsonValue]],
     *,
     wall_seconds: float,
 ) -> EventSummary:
     """Summarize one attempt's JSONL records without inventing missing values."""
     records = list(events)
-    if not records or any(not isinstance(record, dict) for record in records):
+    if not records:
         raise MetricError("an attempt needs a nonempty list of event objects")
     starts = sum(record.get("kind") == "run_start" for record in records)
     ends = sum(record.get("kind") == "run_end" for record in records)
@@ -125,7 +128,7 @@ def summarize_events(
             if run_id in seen_runs and plan_kind != "extend":
                 non_extend += 1
                 reason = payload.get("exception_reason", nested.get("exception_reason"))
-                if reason in {"compaction", "strategy"}:
+                if isinstance(reason, str) and reason in {"compaction", "strategy"}:
                     allowed_non_extend += 1
                     if reason not in reasons:
                         reasons.append(reason)

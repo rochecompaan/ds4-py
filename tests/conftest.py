@@ -19,7 +19,7 @@ def built_upstream(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Mani
     from ds4py.abi.manifest import Manifest, manifest_path
 
     src = os.environ.get("DS4_SRC_UPSTREAM")
-    if not src:
+    if src is None or src == "":
         pytest.skip("DS4_SRC_UPSTREAM is not set")
     lib = build_library(Path(src), backend="cpu", out_dir=tmp_path_factory.mktemp("upstream-build"))
     return lib, Manifest.read(manifest_path(lib))
@@ -31,7 +31,7 @@ def built_fork(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Manifest
     from ds4py.abi.manifest import Manifest, manifest_path
 
     src = os.environ.get("DS4_SRC_FORK")
-    if not src:
+    if src is None or src == "":
         pytest.skip("DS4_SRC_FORK is not set")
     with pytest.MonkeyPatch.context() as mp:
         mp.syspath_prepend(str((Path(__file__).parent / "fixtures" / "ext_site").resolve()))
@@ -47,7 +47,7 @@ def built_fork(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Manifest
 @pytest.fixture
 def cc() -> str:
     compiler = os.environ.get("CC") or shutil.which("cc")
-    if not compiler:
+    if compiler is None or compiler == "":
         pytest.skip("C compiler not available")
     return compiler
 
@@ -139,7 +139,7 @@ def fresh_loader() -> Iterator[None]:
 def live_lib() -> Path:
     from ds4py._native.loader import resolve_lib_path
 
-    if not os.environ.get("DS4_TEST_MODEL"):
+    if os.environ.get("DS4_TEST_MODEL") in (None, ""):
         pytest.skip("DS4_TEST_MODEL is not set")
     lib = resolve_lib_path(None)
     if not lib.is_file():

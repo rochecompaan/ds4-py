@@ -146,7 +146,7 @@ def test_writer_rejects_an_existing_c_text_trace(tmp_path: Path) -> None:
     path.write_bytes(Path("tests/fixtures/replay/basic.trace").read_bytes())
     session: Any = TraceSession([1, 2, 3, 4])
 
-    with pytest.raises(ReplayError, match="invalid JSON|missing field"):
+    with pytest.raises(ReplayError, match=r"invalid JSON|missing field"):
         PrefillTraceWriter(session, path, think=1)
 
 
@@ -175,7 +175,8 @@ def test_repeated_sync_preserves_original_prompt_and_all_samples(tmp_path: Path)
 
 
 def test_trace_write_failure_publishes_an_error_event(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session: Any = TraceSession([1, 2, 3, 4])
     events = []
@@ -216,7 +217,7 @@ def write_record(tmp_path: Path, value: Any) -> Any:
 
 
 @pytest.mark.parametrize(
-    "mutate,fragment",
+    ("mutate", "fragment"),
     [
         (lambda value: value.pop("prompt"), "missing field"),
         (lambda value: value.update(cached=2), r"cached \+ prefill_suffix"),

@@ -39,7 +39,7 @@ def test_staged_payload_round_trips_tokens_and_position_without_tokenizing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     first = engine()
-    source, payload = staged(first, [5, 6, 7, 8])
+    _, payload = staged(first, [5, 6, 7, 8])
     path = tmp_path / "session.kv"
     write_staged(path, payload)
 
@@ -64,12 +64,12 @@ def test_zero_length_payload_is_distinct_from_missing_or_truncated(tmp_path: Pat
         session.load_payload(file, 0)
     assert session.tokens() == [] and session.pos() == 0
 
-    source, payload = staged(engine(), [5, 6])
+    _, payload = staged(engine(), [5, 6])
     path = tmp_path / "session.kv"
     write_staged(path, payload)
     with path.open("rb") as file:
         file.seek(len(HEADER))
-        with pytest.raises(EngineError, match="truncated|corrupt|payload"):
+        with pytest.raises(EngineError, match=r"truncated|corrupt|payload"):
             session.load_payload(file, payload.bytes + 1)
     assert session.tokens() == [] and session.pos() == 0
 
@@ -101,7 +101,7 @@ def test_corrupt_payloads_raise_and_do_not_replace_existing_tokens(damage: Any, 
     target.sync([9, 9])
     with path.open("rb") as file:
         file.seek(len(HEADER))
-        with pytest.raises(EngineError, match="truncated|corrupt|payload"):
+        with pytest.raises(EngineError, match=r"truncated|corrupt|payload"):
             target.load_payload(file, payload.bytes)
     assert target.tokens() == [9, 9] and target.pos() == 2
 

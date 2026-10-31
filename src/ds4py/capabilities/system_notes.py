@@ -1,8 +1,7 @@
 """System-note provider for the ds4-py default agent."""
 
-from collections.abc import Callable, Sequence
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, override
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
@@ -12,9 +11,16 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from typing_extensions import sentinel
 
-from ds4py.engine.lifecycle import SessionEvent
-from ds4py.engine.session import Session
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.tools import RunContext
+
+    from ds4py.engine.lifecycle import SessionEvent
+    from ds4py.engine.session import Session
 
 DATE_PREFIX = "Current local date and time at session start: "
 DATE_SUFFIX = ". Use this only when date or time matters."
@@ -34,8 +40,8 @@ HINTS_FULL = (
 HINTS_ON = "The user enabled programming hints. Produce them from now on.\n"
 HINTS_OFF = "Programming hints are disabled. Do not produce teaching asides; continue the task normally.\n"
 
-_UNSET = object()
-_UNKNOWN = object()
+_UNSET = sentinel("_UNSET")
+_UNKNOWN = sentinel("_UNKNOWN")
 
 
 class DS4SystemNotes(AbstractCapability):
@@ -53,7 +59,7 @@ class DS4SystemNotes(AbstractCapability):
         self.hints_enabled = hints
         self._date_emitted = False
         self._hints_full_emitted = False
-        self._hints_applied = _UNSET
+        self._hints_applied: bool | _UNSET | _UNKNOWN = _UNSET
         self._compaction_subscribed = False
         self._compaction_subject = None
 
@@ -101,7 +107,10 @@ class DS4SystemNotes(AbstractCapability):
                 self._hints_applied = False
         return result
 
-    async def before_model_request(self, ctx: Any, request_context: Any) -> Any:
+    @override
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
         if not self._compaction_subscribed:
             subject = getattr(ctx, "compaction_subject", None)
             if subject is None:

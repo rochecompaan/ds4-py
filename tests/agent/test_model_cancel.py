@@ -4,13 +4,14 @@ import asyncio
 import sys
 import threading
 from dataclasses import replace
+from itertools import pairwise
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ModelRequestTimeout
-from pydantic_ai.messages import ModelRequest, PartStartEvent, TextPart, UserPromptPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, PartStartEvent, TextPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 
 import ds4py
@@ -22,10 +23,10 @@ from ds4py.engine import decode as decode_module
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.session import Engine
-from ds4py.model import ContextReserveError, DS4Model
+from ds4py.model import ContextReserveError, DS4Model, DS4StreamedResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "engine"))
-from fake_steps import FakeMultiTokenStep  # type: ignore[import-not-found]
+from fake_steps import FakeMultiTokenStep
 
 
 def fake_engine(*, script: Any = None, think: Any = ThinkMode.NONE, cancel: Any = None) -> Engine:
@@ -43,7 +44,8 @@ def make_model(session: Any, **kwargs: Any) -> DS4Model:
 
 
 def native_tokens(session: Any) -> tuple[int, ...]:
-    return tuple(session._worker.call(lambda engine, native: native.tokens()).result())
+    values = session._worker.call(lambda engine, native: native.tokens()).result()
+    return tuple(int(token) for token in values)
 
 
 def native_calls(session: Any) -> list[Any]:
@@ -56,7 +58,7 @@ def scripted_text(text: Any) -> Any:
 
 
 def response_text(response: Any) -> str:
-    return "".join(part.content for part in response.parts if isinstance(part, TextPart))
+    return "".join(str(part.content) for part in response.parts if isinstance(part, TextPart))
 
 
 def test_asyncio_cancellation_cancels_facade_and_preserves_partial_response() -> None:
@@ -342,7 +344,7 @@ def test_paused_round_can_resume_without_second_assistant_prefix() -> None:
             assert kinds.count("assistant") == 1
             expected_prefill = prompt_length + prefix
             assert response.usage.input_tokens == expected_prefill
-            assert cast("Any", response.usage.details) == {"prefill_tokens": expected_prefill}
+            assert response.usage.details == {"prefill_tokens": expected_prefill}
             assert response.usage.output_tokens == 3
             assert response.usage.requests == 1
             assert response.usage.total_tokens == expected_prefill + 3
@@ -370,36 +372,45 @@ def test_public_request_timeout_cleans_up_round_and_preserves_partial_response()
             bindings = 0
             original_bind = binder.bind_response
 
-            def counted_bind(response: Any, **kwargs: Any) -> None:
+            def counted_bind(response: ModelResponse, **kwargs: Any) -> None:
                 nonlocal bindings
                 bindings += 1
                 original_bind(response, **kwargs)
 
-            binder.bind_response = counted_bind
+            binder.bind_response = counted_bind  # ty: ignore[invalid-assignment]  # Instance-level test double replaces a bound method.
             events = []
-            stream = None
-            with pytest.raises(ModelRequestTimeout):
+
+            stream: DS4StreamedResponse | None = None
+
+            async def consume() -> DS4StreamedResponse:
+                nonlocal stream
                 async with model_request_stream(
                     model,
                     [user()],
                     model_settings={"request_timeout": 0.2},
-                ) as stream:
-                    async for event in stream:
+                ) as response:
+                    stream = cast("DS4StreamedResponse", response)
+                    async for event in response:
                         events.append(event)
+                return stream
 
+            with pytest.raises(ModelRequestTimeout):
+                await consume()
+
+            assert stream is not None
             assert reached.is_set()
             assert [event.part for event in events if isinstance(event, PartStartEvent)] == [TextPart("a")]
-            response = cast("Any", stream).get()
+            response = stream.get()
             assert response.state == "interrupted"
             assert response_text(response) == "a"
             assert response.usage.input_tokens > 0
-            assert cast("Any", response.usage.details) == {
+            assert response.usage.details == {
                 "prefill_tokens": response.usage.input_tokens,
             }
             assert response.usage.output_tokens == 1
             assert response.usage.requests == 1
             assert bindings == 1
-            assert cast("Any", stream)._bound and cast("Any", stream)._round_exhausted
+            assert stream._bound and stream._round_exhausted
             assert session._active_round is False
             assert session.transcript.tokens == native_tokens(session)
             sampled = [p for p in binder.export_segments() if p.source == "sampled"]
@@ -477,7 +488,7 @@ def test_second_round_prefill_cancel_preserves_prior_provenance(monkeypatch: pyt
             assert tuple(binder._records[: len(before_records)]) == before_records
             records = tuple(binder._records)
             assert len(records) == len(before_records) + 1
-            assert all(left.end <= right.start for left, right in zip(records, records[1:]))
+            assert all(left.end <= right.start for left, right in pairwise(records))
             assert records[-1].key == cast("Any", second_user.metadata)["ds4.key"]
             assert records[-1].end == len(session.transcript)
             # The interrupted prefill kept the previous committed KV and added no
@@ -501,9 +512,9 @@ def test_second_round_prefill_cancel_preserves_prior_provenance(monkeypatch: pyt
             assert session.transcript.tokens[: len(before_tokens)] == before_tokens
             provenance = binder.export_segments()
             assert provenance[: len(before_provenance)] == before_provenance
-            assert all(left.end == right.start for left, right in zip(provenance, provenance[1:]))
+            assert all(left.end == right.start for left, right in pairwise(provenance))
             records = tuple(binder._records)
-            assert all(left.end <= right.start for left, right in zip(records, records[1:]))
+            assert all(left.end <= right.start for left, right in pairwise(records))
             native = native_tokens(session)
             assert session.transcript.tokens[: len(native)] == native
 

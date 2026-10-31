@@ -191,7 +191,7 @@ def test_load_failure_keeps_the_existing_transcript_and_file_usable(tmp_path: Pa
             file.seek(len(HEADER))
             file.truncate(len(HEADER) + saved.payload_bytes - 1)
             file.seek(len(HEADER))
-            with pytest.raises(EngineError, match="truncated|corrupt|payload"):
+            with pytest.raises(EngineError, match=r"truncated|corrupt|payload"):
                 session.load_payload(file, payload_bytes=saved.payload_bytes)
             assert not file.closed
         assert session.transcript.tokens == expected

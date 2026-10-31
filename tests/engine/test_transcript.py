@@ -20,7 +20,7 @@ def test_transcript_segments() -> None:
     assert t.tokens == (1, 2, 3)
     with pytest.raises(ValueError, match="kind"):
         t.append([7], "chat")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"segment|tokens"):
         t.append([], "user")
 
 
@@ -53,14 +53,14 @@ def test_chat_flag_is_explicit_and_snapshot_safe() -> None:
 
 def test_truncate_bounds_and_extend_without_segment() -> None:
     t = Transcript()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="segment"):
         t.extend([1])
     t.extend([])
     for kind in KINDS:
         t.append([1], kind)
     before = t.tokens
     for n in (-1, len(t) + 1):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"truncate|bounds|token"):
             t.truncate(n)
         assert t.tokens == before
     t.truncate(len(t))

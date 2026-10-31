@@ -1,56 +1,237 @@
+[build-system]
+build-backend = "uv_build"
+requires = [ "uv-build>=0.12.22,<0.13.0" ]
+
 [project]
 name = "ds4py"
 version = "0.1.0"
 description = "Checked native bindings and engine facade for ds4"
-authors = [
-    { name = "Roché Compaan", email = "roche@upfrontsoftware.co.za" }
-]
+authors = [ { name = "Roché Compaan", email = "roche@upfrontsoftware.co.za" } ]
 requires-python = ">=3.14"
-dependencies = []
-
-[project.optional-dependencies]
-agent = [
-  "pydantic-ai-harness[cli]==0.59.0",
-  "prompt-toolkit>=3.0.52,<4",
+dependencies = [
+  "typing-extensions>=4.16.0,<5",
 ]
-
-[project.scripts]
-ds4py = "ds4py.cli:main"
-
-[build-system]
-requires = ["uv_build>=0.12.22,<0.13.0"]
-build-backend = "uv_build"
+optional-dependencies.agent = [
+  "prompt-toolkit>=3.0.52,<4",
+  "pydantic-ai-harness[cli]==0.59.0",
+]
+scripts.ds4py = "ds4py.cli:main"
 
 [dependency-groups]
 dev = [
-    "pyright>=1.1.414",
-    "pytest>=9.1.1",
-    "ruff>=0.17.3",
+  "prek==0.5.7",
+  "pyright>=1.1.414",
+  "pytest>=9.1.1",
+  "ruff>=0.17.3",
+  "ty==0.0.95",
 ]
 
 [tool.ruff]
 line-length = 120
+lint.select = [
+  "ANN",
+  "ASYNC",
+  "BLE",
+  "C90",
+  "complexity",
+  "correctness",
+  "DTZ",
+  "FBT",
+  "FURB",
+  "G",
+  "LOG",
+  "performance",
+  "PGH",
+  "PIE",
+  "PL",
+  "PT",
+  "PTH",
+  "PYI",
+  "RET",
+  "RSE",
+  "RUF",
+  "S",
+  "SIM",
+  "SLOT",
+  "style",
+  "suspicious",
+  "TC",
+  "TID",
+  "TRY",
+  "UP",
+  "YTT",
+]
+lint.ignore = [
+  "COM812", # The formatter owns trailing commas.
+  "E501",   # The formatter owns line wrapping.
+  "ISC001", # The formatter owns string concatenation layout.
+  "TRY003", # Domain exceptions carry their useful context at raise sites.
+]
+lint.explicit-preview-rules = true
+lint.per-file-ignores."bench/graders/test_ctx_command.py" = [
+  "ANN401", # Grader doubles use dynamic native signatures.
+  "BLE001", # Forbidden grader doubles reject every operation.
+  "FBT001", # Existing grader doubles keep positional booleans.
+  "PT017",  # The grader asserts the expected failure inside except.
+  "S101",   # Grader assertions are intentional.
+  "TID251", # Grader doubles can import Any; TypeGuard has a separate ban.
+]
+lint.per-file-ignores."bench/replay_c_traces.py" = [
+  "FBT003",  # Existing replay helpers keep positional booleans.
+  "PLC0415", # Replay workers import isolation-specific modules lazily.
+  "PLR2004", # Protocol exit codes and token counts are intentional.
+]
+lint.per-file-ignores."bench/report.py" = [
+  "FBT001", # Existing report helpers keep positional booleans for API compatibility.
+  "RUF002", # Protocol examples require fullwidth vertical bars in docstrings.
+]
+lint.per-file-ignores."bench/restore_check.py" = [
+  "FBT003",  # Existing restore helpers keep positional booleans.
+  "PLC0415", # Restore workers import isolation-specific modules lazily.
+  "PLR2004", # Protocol exit codes and token counts are intentional.
+  "S603",    # Restore commands use fixed argument lists without a shell.
+]
+lint.per-file-ignores."bench/run_bakeoff.py" = [
+  "S603", # Bakeoff commands use fixed argument lists without a shell.
+  "S606", # Bakeoff subprocesses never use a shell.
+]
+lint.per-file-ignores."bench/workspaces.py" = [
+  "PLC0415", # Workspace isolation imports task-specific modules lazily.
+  "PLR2004", # Protocol exit codes and attempt counts are intentional.
+  "S603",    # Workspace commands use fixed argument lists without a shell.
+  "S607",    # Git and uv executable names are resolved through PATH.
+]
+lint.per-file-ignores."src/ds4py/_native/**/*.py" = [
+  "ANN401", # ctypes signatures remain dynamic at the native boundary.
+  "TID251", # Any is isolated to reviewed native signatures.
+]
+lint.per-file-ignores."src/ds4py/_native/fake.py" = [
+  "PLR2004", # Scripted token IDs and model limits are intentional fixtures.
+]
+lint.per-file-ignores."src/ds4py/_native/fake_chat.py" = [
+  "PLR2004", # Scripted token IDs are intentional protocol fixtures.
+  "RUF001",  # Fullwidth vertical bars are required DSML protocol markers.
+]
+lint.per-file-ignores."src/ds4py/_native/modelcheck.py" = [
+  "S603", # Child inspection uses a fixed argument list without a shell.
+]
+lint.per-file-ignores."src/ds4py/abi/build.py" = [
+  "S603", # Build commands use fixed argument lists without a shell.
+]
+lint.per-file-ignores."src/ds4py/abi/probe.py" = [
+  "S603", # Compiler probes use fixed argument lists without a shell.
+]
+lint.per-file-ignores."src/ds4py/agent.py" = [
+  "TC002", # QuestionAnswerer is a runtime re-export of the composition API.
+]
+lint.per-file-ignores."src/ds4py/agent_cli.py" = [
+  "PLC0415", # Agent dependencies are imported lazily at the CLI boundary.
+]
+lint.per-file-ignores."src/ds4py/cli.py" = [
+  "PLC0415", # Agent dependencies are imported lazily at the CLI boundary.
+]
+lint.per-file-ignores."src/ds4py/engine/decoder.py" = [
+  "FBT001", # Existing decoder options keep positional booleans for API compatibility.
+]
+lint.per-file-ignores."src/ds4py/engine/tool_prompt.py" = [
+  "FBT003", # Existing prompt helpers keep positional booleans for API compatibility.
+  "RUF001", # Fullwidth vertical bars are required DSML protocol markers.
+]
+lint.per-file-ignores."src/ds4py/engine/tool_syntax/base.py" = [
+  "FBT001", # Existing parser hooks keep positional booleans for API compatibility.
+  "RUF001", # Fullwidth vertical bars are required DSML protocol markers.
+]
+lint.per-file-ignores."src/ds4py/engine/tool_syntax/delimiter.py" = [
+  "FBT001", # Existing parser hooks keep positional booleans for API compatibility.
+]
+lint.per-file-ignores."src/ds4py/engine/tool_syntax/dsml.py" = [
+  "FBT001", # Existing parser hooks keep positional booleans for API compatibility.
+  "RUF001", # Fullwidth vertical bars are required DSML protocol markers.
+]
+lint.per-file-ignores."src/ds4py/engine/tool_syntax/glm.py" = [
+  "FBT003", # Existing parser calls keep positional booleans for API compatibility.
+]
+lint.per-file-ignores."src/ds4py/engine/tool_syntax/render.py" = [
+  "RUF001", # Fullwidth vertical bars are required DSML protocol markers.
+]
+lint.per-file-ignores."src/ds4py/message_rendering.py" = [
+  "FBT001",  # Existing rendering options keep positional booleans for API compatibility.
+  "PLR0912", # Each model family has distinct rendering contracts.
+  "RUF001",  # Fullwidth vertical bars are required DSML protocol markers.
+  "TRY004",  # Public rendering errors retain ValueError for invalid payloads.
+]
+lint.per-file-ignores."src/ds4py/noninteractive.py" = [
+  "BLE001", # CLI exit codes and diagnostics cover every failure path.
+]
+lint.per-file-ignores."src/ds4py/runtime.py" = [
+  "FBT001", # Existing runtime options keep positional booleans for API compatibility.
+]
+lint.per-file-ignores."src/ds4py/store.py" = [
+  "TRY004", # Store validation retains ValueError for malformed persisted input.
+]
+lint.per-file-ignores."src/ds4py/tui.py" = [
+  "BLE001", # Interactive errors are shown without stopping the shell.
+]
+lint.per-file-ignores."tests/**/*.py" = [
+  "ANN401",  # Dynamic test doubles can require Any.
+  "DTZ001",  # Naive local-time fixtures are intentional.
+  "FBT",     # Boolean test fixtures are intentional.
+  "INP001",  # pytest does not require packages for test directories.
+  "N806",    # Model and class names can be uppercase in tests.
+  "PLC0415", # Local imports isolate optional test dependencies.
+  "PLC2701", # Tests can exercise private third-party imports.
+  "PLR0904", # Test classes can expose many test methods.
+  "PLR0913", # Test helpers can need many fixtures.
+  "PLR0915", # Scenario tests can be longer than production functions.
+  "PLR0917", # Test helpers can need many positional fixtures.
+  "PLR2004", # Expected protocol and payload values can be literals.
+  "PLR6301", # Test methods do not need to use self.
+  "PT018",   # Composite assertions keep protocol scenarios readable.
+  "RUF001",  # Fullwidth vertical bars are required protocol fixtures.
+  "RUF002",  # Protocol examples require fullwidth vertical bars in docstrings.
+  "S",       # Tests intentionally exercise subprocesses and unsafe boundaries.
+  "SLF001",  # Tests can inspect private implementation state.
+  "TC001",   # Test fixtures can keep first-party runtime imports.
+  "TC002",   # Test fixtures can keep third-party runtime imports.
+  "TC003",   # Test fixtures can keep standard-library runtime imports.
+  "TID251",  # Dynamic test doubles can import Any; TypeGuard has a separate ban.
+]
+lint.flake8-tidy-imports.banned-api."typing.Any".msg = "Use a precise type; Any requires an approved dynamic boundary."
+lint.mccabe.max-complexity = 15
+lint.preview = true
 
 [tool.pyright]
-include = ["src", "bench", "tests"]
 typeCheckingMode = "standard"
+include = [ "bench", "src", "tests" ]
 reportMissingParameterType = "error"
 
-[tool.ruff.lint]
-select = [
-    "ANN001",
-    "ANN002",
-    "ANN003",
-    "ANN201",
-    "ANN202",
-    "ANN204",
-    "ANN205",
-    "ANN206",
-]
+[tool.ty]
+src.include = [ "bench", "src", "tests" ]
+environment.extra-paths = [ "tests/engine" ]
+environment.python-version = "3.14"
+rules.blanket-ignore-comment = "error"
+rules.disjoint-cast = "error"
+rules.dynamic-function-decorator-return = "error"
+rules.invalid-legacy-positional-parameter = "error"
+rules.mismatched-sentinel-name = "error"
+rules.missing-override-decorator = "error"
+rules.missing-type-argument = "error"
+rules.possibly-unresolved-reference = "error"
+rules.redundant-cast = "error"
+rules.redundant-condition-strict = "error"
+rules.truthiness-test-of-none-union = "error"
+rules.unsound-assignment = "error"
+rules.unsound-return-statement = "error"
+rules.unsound-yield = "error"
+rules.unsupported-dynamic-base = "error"
+rules.unused-ignore-comment = "error"
+terminal.error-on-warning = true
+analysis.strict-equality-semantics = true
+analysis.strict-generic-narrowing = true
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-markers = [
+[tool.pytest]
+ini_options.testpaths = [ "tests" ]
+ini_options.markers = [
   "build: builds libds4 from DS4_SRC_UPSTREAM / DS4_SRC_FORK",
   "live: needs a model in DS4_TEST_MODEL",
 ]

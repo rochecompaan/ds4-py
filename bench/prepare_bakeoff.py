@@ -3,8 +3,11 @@
 import argparse
 import os
 import sys
-from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -19,7 +22,7 @@ from bench.workspaces import (
 
 def benchmark_checkout(argument: str | None = None) -> Path:
     value = argument or os.environ.get("POLYGLOT_BENCHMARK")
-    if not value:
+    if value is None or value == "":
         raise BenchError("set POLYGLOT_BENCHMARK to the pinned Aider polyglot-benchmark checkout")
     return Path(value).expanduser().resolve()
 

@@ -1,12 +1,15 @@
 """Events emitted by engine rounds."""
 
-from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ds4py.errors import EngineError
 
-from .plan import Plan
-from .tool_syntax.model import ToolCall
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from .plan import Plan
+    from .tool_syntax.model import ToolCall
 
 
 @dataclass(frozen=True)
@@ -124,6 +127,7 @@ class ToolCalls:
 
 STOP_REASONS = (
     "stop_token",
+    "stop_sequence",
     "tool_call_complete",
     "max_tokens",
     "context_reserve",

@@ -94,10 +94,10 @@ def test_overrides_must_match_and_keep_their_original_strings(tmp_path: Path, mo
     assert source_env(bundle, hashes, overrides)["DS4_METAL_DENSE_SOURCE"] == "./override.metal"
     assert overrides == {"DS4_METAL_DENSE_SOURCE": "./override.metal", "UNRELATED": "kept"}
     override.write_bytes(b"wrong shader")
-    with pytest.raises(AbiMismatch, match="DS4_METAL_DENSE_SOURCE.*ds4py build"):
+    with pytest.raises(AbiMismatch, match=r"DS4_METAL_DENSE_SOURCE.*ds4py build"):
         source_env(bundle, hashes, overrides)
     override.unlink()
-    with pytest.raises(AbiMismatch, match="DS4_METAL_DENSE_SOURCE.*ds4py build"):
+    with pytest.raises(AbiMismatch, match=r"DS4_METAL_DENSE_SOURCE.*ds4py build"):
         source_env(bundle, hashes, overrides)
 
 
@@ -113,7 +113,7 @@ def test_matching_override_does_not_hide_missing_bundle(tmp_path: Path) -> None:
 def test_empty_shader_override_is_not_silently_ignored(tmp_path: Path) -> None:
     src = make_source(tmp_path / "source")
     hashes = copy_sources(src, tmp_path / "bundle")
-    with pytest.raises(AbiMismatch, match="DS4_METAL_DENSE_SOURCE.*ds4py build"):
+    with pytest.raises(AbiMismatch, match=r"DS4_METAL_DENSE_SOURCE.*ds4py build"):
         source_env(tmp_path / "bundle", hashes, {"DS4_METAL_DENSE_SOURCE": ""})
 
 
@@ -138,12 +138,12 @@ def test_nonregular_shader_files_are_refused_without_reading_them(
 
     monkeypatch.setattr(shaders, "file_sha256", guarded_hash)
     overrides = {"DS4_METAL_DENSE_SOURCE": str(fifo)} if override else None
-    with pytest.raises(AbiMismatch, match="regular.*ds4py build"):
+    with pytest.raises(AbiMismatch, match=r"regular.*ds4py build"):
         source_env(bundle, hashes, overrides)
 
 
 def test_copy_reports_missing_sources(tmp_path: Path) -> None:
-    with pytest.raises(BuildError, match="Metal.*ds4py build"):
+    with pytest.raises(BuildError, match=r"Metal.*ds4py build"):
         copy_sources(tmp_path / "absent", tmp_path / "bundle")
 
 
@@ -154,5 +154,5 @@ def test_copy_reports_io_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         raise OSError("disk full")
 
     monkeypatch.setattr(shutil, "copy2", fail)
-    with pytest.raises(BuildError, match="disk full.*ds4py build"):
+    with pytest.raises(BuildError, match=r"disk full.*ds4py build"):
         copy_sources(src, tmp_path / "bundle")

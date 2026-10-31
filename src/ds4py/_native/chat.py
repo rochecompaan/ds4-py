@@ -1,14 +1,16 @@
 """ctypes adapters for the pinned native chat-rendering calls."""
 
 import ctypes as C
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from ds4py.errors import EngineError
 
 from . import structs
+from ._results import optional_text_result
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from .api import NativeEngine
 
 
@@ -45,4 +47,4 @@ def qwen_reasoning_effort(handle: NativeEngine, mode: int) -> str | None:
         raise EngineError("native handle is closed")
     # Unlike the chat append calls, this C function has no engine parameter.
     text = handle._lib.fn("ds4_qwen4_reasoning_effort_text")(mode)
-    return text.decode() if text is not None else None
+    return optional_text_result(text)

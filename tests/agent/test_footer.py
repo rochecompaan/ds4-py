@@ -1,8 +1,8 @@
 import asyncio
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
+from _helpers import run_context
 from prompt_toolkit.utils import get_cwidth
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandStartedEvent
 from test_tui_commands import FakeRuntime
@@ -23,7 +23,7 @@ class EventRuntime(FakeRuntime):
 
 
 def text(fragments: Any) -> str:
-    return "".join(value for _style, value in fragments)
+    return "".join(str(value) for _style, value in fragments)
 
 
 def test_footer_tracks_live_plan_prefill_service_and_extension_status() -> None:
@@ -93,8 +93,8 @@ def test_run_record_republishes_actual_shell_service_events(tmp_path: Path) -> N
     session: Any = RecordSession()
     record = DS4RunRecord(session, tmp_path / "events.jsonl")
     seen = []
-    session.on_event(lambda event: seen.append(event))
-    ctx = SimpleNamespace(conversation_id="session", run_id="run")
+    session.on_event(seen.append)
+    ctx = run_context(conversation_id="session", run_id="run")
 
     async def scenario() -> None:
         await record.on_event(ctx, event=CommandStartedEvent(command="sleep 1", pid=321))

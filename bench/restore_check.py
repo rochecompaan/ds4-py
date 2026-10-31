@@ -4,27 +4,29 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from contextlib import contextmanager, nullcontext
-from dataclasses import asdict, dataclass
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
-from collections.abc import Awaitable, Callable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from contextlib import contextmanager, nullcontext
+from dataclasses import asdict, dataclass
+from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Protocol, TypedDict, cast
 
 if TYPE_CHECKING:
-    from bench.run_bakeoff import TaskRunResult
+    from collections.abc import Generator
 
-from ds4py.engine.lifecycle import SessionEvent
+    from bench.run_bakeoff import TaskRunResult
+    from ds4py.engine.lifecycle import SessionEvent
+    from ds4py.runtime import AgentRuntime
+
+from ds4py.engine.events import Stopped, Synced
 from ds4py.engine.replay import read_replay
 from ds4py.errors import Ds4pyError
-from ds4py.runtime import AgentRuntime
 from ds4py.store import SaveRecord, SessionStore
-
 
 FOLLOWUP = "Continue the previous task: state the next concrete action, then stop."
 
@@ -105,15 +107,18 @@ def _events(path: Path) -> Path:
         try:
             value = json.loads(line)
         except json.JSONDecodeError as error:
-            raise RestoreError(
-                f"{path}:{line_number}: invalid JSON: {error.msg}"
-            ) from error
+            raise RestoreError(f"{path}:{line_number}: invalid JSON: {error.msg}") from error
         if not isinstance(value, dict) or not isinstance(value.get("kind"), str):
             raise RestoreError(f"{path}:{line_number}: malformed event")
         kinds.append(value["kind"])
     if "run_start" not in kinds or "run_end" not in kinds:
         raise RestoreError(f"{path}: events do not contain a complete run")
     return path
+
+
+def _require(*, condition: bool, message: str) -> None:
+    if not condition:
+        raise RestoreError(message)
 
 
 def validate_save(save_dir: str | Path) -> SaveEvidence:
@@ -123,14 +128,13 @@ def validate_save(save_dir: str | Path) -> SaveEvidence:
         store = SessionStore()
         record = store.read_record(save_dir / "save.json")
         payload = store.read_kv_header(save_dir / "session.kv")
-        if payload != record.payload_bytes:
-            raise RestoreError(
-                f"{save_dir}: KV payload {payload} does not match record {record.payload_bytes}"
-            )
+        _require(
+            condition=payload == record.payload_bytes,
+            message=f"{save_dir}: KV payload {payload} does not match record {record.payload_bytes}",
+        )
         events_path = _events(save_dir / "events.jsonl")
         steps_root = save_dir / "steps"
-        if not steps_root.is_dir():
-            raise RestoreError(f"missing step store: {steps_root}")
+        _require(condition=steps_root.is_dir(), message=f"missing step store: {steps_root}")
         from pydantic_ai_harness.step_persistence import FileStepStore
 
         snapshots = FileStepStore(steps_root)
@@ -140,25 +144,20 @@ def validate_save(save_dir: str | Path) -> SaveEvidence:
                 include_interrupted=True,
             )
         )
-        if (
-            snapshot is None
-            or snapshot.state != "complete"
-            or snapshot.step_index != record.step_index
-        ):
-            raise RestoreError(f"{save_dir}: named complete snapshot is missing")
+        _require(
+            condition=snapshot is not None
+            and snapshot.state == "complete"
+            and snapshot.step_index == record.step_index,
+            message=f"{save_dir}: named complete snapshot is missing",
+        )
         snapshot_path = None
         for path in sorted((steps_root / record.run_id / "snapshots").glob("*.json")):
             value = json.loads(path.read_text())
-            if (
-                value.get("step_index") == record.step_index
-                and value.get("state") == "complete"
-            ):
+            if value.get("step_index") == record.step_index and value.get("state") == "complete":
                 snapshot_path = path
                 break
         if snapshot_path is None:
-            raise RestoreError(
-                f"{save_dir}: snapshot JSON for step {record.step_index} is missing"
-            )
+            raise RestoreError(f"{save_dir}: snapshot JSON for step {record.step_index} is missing")  # noqa: TRY301
         return SaveEvidence(record, events_path, snapshot_path)
     except RestoreError:
         raise
@@ -203,23 +202,13 @@ def _compare_restore(
     second = _samples(case2.trace_path)
     for index in range(min(len(first), len(second), 256)):
         if first[index] != second[index]:
-            problems.append(
-                f"token {index} differs: case 1={first[index]} case 2={second[index]}"
-            )
+            problems.append(f"token {index} differs: case 1={first[index]} case 2={second[index]}")
             break
     else:
         if len(first) != len(second) and min(len(first), len(second)) < 256:
-            problems.append(
-                f"token {min(len(first), len(second))} is missing from the shorter restore"
-            )
-        elif (
-            len(first) < 256
-            and len(second) < 256
-            and case1.terminal_reason != case2.terminal_reason
-        ):
-            problems.append(
-                f"terminal reasons differ: {case1.terminal_reason} vs {case2.terminal_reason}"
-            )
+            problems.append(f"token {min(len(first), len(second))} is missing from the shorter restore")
+        elif len(first) < 256 and len(second) < 256 and case1.terminal_reason != case2.terminal_reason:
+            problems.append(f"terminal reasons differ: {case1.terminal_reason} vs {case2.terminal_reason}")
     return problems, first, second
 
 
@@ -246,9 +235,7 @@ def check_restore(
         case1 = runner(original_home, evidence.record.session_id, 1, case1_trace)
         trace_paths.append(case1_trace)
         case2_trace = work_dir / "case-2.jsonl"
-        case2 = runner(
-            stripped.parent.parent, evidence.record.session_id, 2, case2_trace
-        )
+        case2 = runner(stripped.parent.parent, evidence.record.session_id, 2, case2_trace)
         trace_paths.append(case2_trace)
         problems, first, second = _compare_restore(case1, case2)
         passed = not problems
@@ -264,13 +251,9 @@ def check_restore(
             save_dir,
             passed,
             detail,
+            CheckResult(case1.switch_prefill == 0 and case1.followup_plan == "extend", "case 1"),
             CheckResult(
-                case1.switch_prefill == 0 and case1.followup_plan == "extend", "case 1"
-            ),
-            CheckResult(
-                case2.switch_prefill == 0
-                and case2.followup_prefill > 0
-                and case2.followup_plan == "rebuild",
+                case2.switch_prefill == 0 and case2.followup_prefill > 0 and case2.followup_plan == "rebuild",
                 "case 2",
             ),
             stripped,
@@ -326,7 +309,7 @@ def _runtime(
     args: argparse.Namespace,
     *,
     read_only: bool = False,
-) -> Iterator[AgentRuntime]:
+) -> Generator[AgentRuntime]:
     from ds4py.agent_cli import open_runtime
 
     with open_runtime(args, Path.cwd(), read_only=read_only) as runtime:
@@ -337,13 +320,11 @@ def _runtime(
 def _trace(
     runtime: AgentRuntime,
     args: argparse.Namespace,
-) -> Iterator[None]:
+) -> Generator[None]:
     from ds4py.prefill_trace import PrefillTraceWriter
 
     trace = (
-        PrefillTraceWriter(
-            runtime.model.session, args.trace, think=runtime.model.session.engine.think
-        )
+        PrefillTraceWriter(runtime.model.session, args.trace, think=runtime.model.session.engine.think)
         if args.trace is not None
         else nullcontext()
     )
@@ -352,9 +333,12 @@ def _trace(
 
 
 def _prompt(args: argparse.Namespace) -> str | None:
-    if args.prompt_file is not None:
-        return args.prompt_file.read_bytes().decode("utf-8")
-    return args.prompt
+    prompt: object = args.prompt_file.read_bytes().decode("utf-8") if args.prompt_file is not None else args.prompt
+    if prompt is None:
+        return None
+    if not isinstance(prompt, str):
+        raise RestoreError("prompt must be text")
+    return prompt
 
 
 def attempt_command(argv: Sequence[str]) -> int:
@@ -406,11 +390,19 @@ def attempt_command(argv: Sequence[str]) -> int:
     return status
 
 
+class _RestoreState(TypedDict):
+    followup: bool
+    switch_prefill: int
+    followup_prefill: int
+    plan: str | None
+    reason: str | None
+
+
 async def _restore_operation(
     runtime: AgentRuntime,
     session_id: str,
-) -> dict[str, Any]:
-    state = {
+) -> _RestoreState:
+    state: _RestoreState = {
         "followup": False,
         "switch_prefill": 0,
         "followup_prefill": 0,
@@ -419,16 +411,17 @@ async def _restore_operation(
     }
 
     def listener(event: SessionEvent) -> None:
-        if event.kind == "Synced":
-            plan = event.payload["event"].plan
+        inner = event.payload["event"]
+        if event.kind == "Synced" and isinstance(inner, Synced):
+            plan = inner.plan
             if state["followup"]:
                 if state["plan"] is None:
                     state["plan"] = plan.kind
                     state["followup_prefill"] = plan.to_prefill
             else:
                 state["switch_prefill"] += plan.to_prefill
-        elif event.kind == "Stopped" and state["followup"]:
-            state["reason"] = event.payload["event"].reason
+        elif event.kind == "Stopped" and state["followup"] and isinstance(inner, Stopped):
+            state["reason"] = inner.reason
 
     runtime.model.session.on_event(listener)
     await switch_via_command(runtime, session_id)
@@ -448,9 +441,8 @@ def restore_command(argv: Sequence[str]) -> int:
     # Attempts run non-interactively. Restore must render the same prompt-visible
     # capabilities; read_only below independently enforces restore safety.
     args.non_interactive = True
-    with _runtime(args, read_only=True) as runtime:
-        with _trace(runtime, args):
-            state = asyncio.run(_restore_operation(runtime, own.session_id))
+    with _runtime(args, read_only=True) as runtime, _trace(runtime, args):
+        state = asyncio.run(_restore_operation(runtime, own.session_id))
     own.metadata.write_text(
         json.dumps(
             {
@@ -480,11 +472,7 @@ def process_restore_runner(
         trace_path: Path,
     ) -> RestoreRun:
         metadata = trace_path.with_suffix(".json")
-        executable = (
-            config.executable[:-1]
-            if config.executable[-1] == "attempt"
-            else config.executable
-        )
+        executable = config.executable[:-1] if config.executable[-1] == "attempt" else config.executable
         command = [
             *executable,
             "restore",
@@ -515,10 +503,9 @@ def process_restore_runner(
             capture_output=True,
             text=True,
             cwd=workspace,
+            check=False,
         )
-        trace_path.with_suffix(".log").write_text(
-            (completed.stdout or "") + (completed.stderr or "")
-        )
+        trace_path.with_suffix(".log").write_text((completed.stdout or "") + (completed.stderr or ""))
         if completed.returncode:
             raise RestoreError(f"restore case {case} exited {completed.returncode}")
         value = json.loads(metadata.read_text())
@@ -571,19 +558,16 @@ def check_command(argv: Sequence[str]) -> int:
     args = parser.parse_args(argv)
     data = json.loads(args.report.read_text())
     tasks = cast(
-        list[TaskRunResult],
-        [SimpleNamespace(**item) for item in data.get("tasks", [])],
+        "list[TaskRunResult]",
+        cast("object", [SimpleNamespace(**item) for item in data.get("tasks", [])]),
     )
-    config = cast(
-        RestoreConfig,
-        SimpleNamespace(
-            executable=(sys.executable, str(Path(__file__).resolve()), "attempt"),
-            model=args.model,
-            backend=args.backend,
-            ctx=args.ctx,
-            temperature=args.temp,
-            seed=args.seed,
-        ),
+    config = SimpleNamespace(
+        executable=(sys.executable, str(Path(__file__).resolve()), "attempt"),
+        model=args.model,
+        backend=args.backend,
+        ctx=args.ctx,
+        temperature=args.temp,
+        seed=args.seed,
     )
     results = check_result_saves(
         tasks,
@@ -607,9 +591,7 @@ def check_command(argv: Sequence[str]) -> int:
         + "\n"
     )
     for result in results:
-        print(
-            f"{'PASS' if result.passed else 'FAIL'} {result.save_dir}: {result.detail}"
-        )
+        print(f"{'PASS' if result.passed else 'FAIL'} {result.save_dir}: {result.detail}")
     return 0 if passed else 1
 
 

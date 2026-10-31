@@ -5,16 +5,20 @@ import fcntl
 import os
 import threading
 import weakref
-from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, BinaryIO, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Self, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Generator, Sequence
+
+    from .loader import Library
 
 from ds4py.abi.shaders import metal_source_env
 from ds4py.errors import EmptyPromptError, EngineError, EngineLockedError
 
 from . import chat, payload, structs
-from .loader import Library
+from ._results import bool_result, int_result
 from .modelcheck import inspect_model
 from .protocol import (
     BACKENDS,
@@ -32,7 +36,7 @@ _open_lock = threading.Lock()
 
 # Instance locking and open-time configuration.
 def lock_path() -> Path:
-    return Path(os.environ.get("DS4_LOCK_FILE") or "/tmp/ds4.lock")
+    return Path(os.environ.get("DS4_LOCK_FILE") or "/tmp/ds4.lock")  # noqa: S108 - Preserve the documented default lock location.
 
 
 def engine_lock_path() -> Path:
@@ -68,7 +72,7 @@ class InstanceLock:
             os.close(self._fd)
             self._fd = None
 
-    def __enter__(self) -> InstanceLock:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -76,7 +80,7 @@ class InstanceLock:
 
 
 @contextmanager
-def _open_environment(second: Path, sources: dict[str, str]) -> Iterator[None]:
+def _open_environment(second: Path, sources: dict[str, str]) -> Generator[None]:
     changes = {key: value for key, value in sources.items() if key not in os.environ}
     changes["DS4_LOCK_FILE"] = str(second)
     previous = {key: os.environ.get(key) for key in changes}
@@ -120,7 +124,7 @@ class LibNative:
         return mode.value if self.bind("ds4_think_mode_parse_level")(text.encode(), C.byref(mode)) else None
 
     def think_mode_for_context(self, mode: int, ctx: int) -> int:
-        return self.bind("ds4_think_mode_for_context")(mode, ctx)
+        return int_result(self.bind("ds4_think_mode_for_context")(mode, ctx))
 
     def open_engine(self, config: EngineConfig) -> NativeEngine:
         """Inspect then open, holding the original lock until engine close.
@@ -155,7 +159,9 @@ class LibNative:
                 with _open_environment(second, sources):
                     status = self.bind("ds4_engine_open")(C.byref(raw), C.byref(options))
                 if status:
-                    raise EngineError(f"ds4_engine_open failed ({status})")
+                    raise EngineError(  # noqa: TRY301 - Keep native open cleanup in the same guarded scope.
+                        f"ds4_engine_open failed ({status})"
+                    )
                 try:
                     return NativeEngine(self.lib, cast("int", raw.value), options, lock)
                 except BaseException:
@@ -173,7 +179,8 @@ class _Handle:
         self._thread = threading.get_ident()
 
     def _assert_thread(self) -> None:
-        assert threading.get_ident() == self._thread, "native handle used on another thread"
+        if threading.get_ident() != self._thread:
+            raise AssertionError("native handle used on another thread")
 
     def _call(self, name: str, *args: Any) -> Any:
         self._assert_thread()
@@ -268,14 +275,14 @@ class NativeEngine(_Handle):
             self._lib.free(ptr)
 
     def eos(self) -> int:
-        return self._call("ds4_token_eos")
+        return int_result(self._call("ds4_token_eos"))
 
     def is_stop(self, token: int) -> bool:
-        return self._call("ds4_token_is_stop", token)
+        return bool_result(self._call("ds4_token_is_stop", token))
 
     def is_stop_for_think_mode(self, token: int, mode: int) -> bool:
         """Apply the native mode-aware stop policy on the owning worker."""
-        return self._call("ds4_token_is_stop_for_think_mode", token, mode)
+        return bool_result(self._call("ds4_token_is_stop_for_think_mode", token, mode))
 
     def create_session(self, ctx: int) -> NativeSession:
         self._assert_thread()
@@ -352,7 +359,7 @@ class NativeSession(_Handle):
         try:
             if self._progress is not None and self._callback_error is None:
                 self._progress(event.decode(), current, total)
-        except BaseException as exc:
+        except BaseException as exc:  # noqa: BLE001 - Propagate every callback failure to the worker.
             self._callback_error = exc
 
     def _on_cancel(self, ud: Any) -> bool:
@@ -360,7 +367,7 @@ class NativeSession(_Handle):
             return True
         try:
             return bool(self._cancel and self._cancel())
-        except BaseException as exc:
+        except BaseException as exc:  # noqa: BLE001 - Cancellation must stop native work on every failure.
             self._callback_error = exc
             return True
 
@@ -391,7 +398,7 @@ class NativeSession(_Handle):
                 raise self._callback_error
             if status == 0:
                 return SyncStatus.DONE
-            if status == 2:
+            if status == SyncStatus.INTERRUPTED.value:
                 return SyncStatus.INTERRUPTED
             raise EngineError(error.value.decode(errors="replace"))
         finally:
@@ -408,22 +415,20 @@ class NativeSession(_Handle):
         min_p: float,
         rng: C.c_uint64,
     ) -> int:
-        token = self._call("ds4_session_sample", temperature, top_k, top_p, min_p, C.byref(rng))
-        return token
+        return int_result(self._call("ds4_session_sample", temperature, top_k, top_p, min_p, C.byref(rng)))
 
     def argmax(self) -> int:
-        token = self._call("ds4_session_argmax")
-        return token
+        return int_result(self._call("ds4_session_argmax"))
 
     def copy_logits(self, out: Any) -> None:
         """Copy into a vocabulary-sized writable float32 buffer; worker only."""
-        from .logits import copy_logits
+        from .logits import copy_logits  # noqa: PLC0415 - Keep native module initialization acyclic.
 
         copy_logits(self, out)
 
     def set_logits(self, values: Sequence[float]) -> None:
         """Replace logits from a vocabulary-sized sequence; worker only."""
-        from .logits import set_logits
+        from .logits import set_logits  # noqa: PLC0415 - Keep native module initialization acyclic.
 
         set_logits(self, values)
 
@@ -434,26 +439,26 @@ class NativeSession(_Handle):
         self._call("ds4_session_rewind", pos)
 
     def pos(self) -> int:
-        return self._call("ds4_session_pos")
+        return int_result(self._call("ds4_session_pos"))
 
     def ctx(self) -> int:
-        return self._call("ds4_session_ctx")
+        return int_result(self._call("ds4_session_ctx"))
 
     def tokens(self) -> list[int]:
         data = self._call("ds4_session_tokens").contents
         return list(data.v[: data.len])
 
     def common_prefix(self, tokens: Sequence[int]) -> int:
-        return self._call("ds4_session_common_prefix", C.byref(_tokens(tokens)))
+        return int_result(self._call("ds4_session_common_prefix", C.byref(_tokens(tokens))))
 
     def checkpoint_valid(self) -> bool:
-        return self._call("ds4_session_checkpoint_valid")
+        return bool_result(self._call("ds4_session_checkpoint_valid"))
 
     def invalidate(self) -> None:
         self._call("ds4_session_invalidate")
 
     def payload_bytes(self) -> int:
-        return self._call("ds4_session_payload_bytes")
+        return int_result(self._call("ds4_session_payload_bytes"))
 
     def stage_payload(self) -> NativeStagedPayload:
         self._assert_thread()

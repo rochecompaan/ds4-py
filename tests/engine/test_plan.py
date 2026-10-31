@@ -35,6 +35,6 @@ def test_fits_leaves_the_reserve() -> None:
     assert plan(P, ctx=21).fits and not plan(P, ctx=20).fits
 
 
-@pytest.mark.parametrize("reserve,ctx,fits", [(0, 20, False), (-1, 20, False), (3, 22, False), (3, 23, True)])
+@pytest.mark.parametrize(("reserve", "ctx", "fits"), [(0, 20, False), (-1, 20, False), (3, 22, False), (3, 23, True)])
 def test_reserve_has_minimum_one(reserve: Any, ctx: Any, fits: Any) -> None:
     assert plan_sync(P, live=(), live_valid=True, checkpoints={}, ctx=ctx, reserve=reserve).fits is fits

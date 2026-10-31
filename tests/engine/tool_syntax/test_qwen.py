@@ -33,7 +33,7 @@ def test_qwen_fixtures(case: Any, chunk_size: Any) -> None:
     assert snapshot.state == case["state"], snapshot.error
     assert observed_calls(snapshot) == case["calls"]
     if case["state"] == "ERROR":
-        assert snapshot.error
+        assert snapshot.error is not None
 
 
 def test_numeric_classification_uses_the_c_64_byte_guard() -> None:

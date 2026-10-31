@@ -25,6 +25,7 @@ def run_check(lib: Any, extra_env: Any = None) -> subprocess.CompletedProcess[st
         env={**os.environ, **(extra_env or {})},
         capture_output=True,
         text=True,
+        check=False,
     )
 
 
@@ -151,7 +152,7 @@ def test_live_needs_a_model(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 @pytest.mark.parametrize(
-    "sync_ok,restore_ok,error,expected",
+    ("sync_ok", "restore_ok", "error", "expected"),
     [
         (True, True, None, 0),
         (True, False, None, 0),
@@ -227,5 +228,5 @@ def test_live_persists_checks_only_after_success_and_closes(
         result = check.check_live(lib, Path("f.gguf"), ctx=512)
         saved = Manifest.read(manifest_path(lib)).live_checks
         assert cast("Any", result.manifest).live_checks == saved
-        assert saved["sync_plans"]["ok"] and saved["restore"]["ok"]
+        assert bool(saved["sync_plans"]["ok"]) and bool(saved["restore"]["ok"])
     assert len(engines) == 1

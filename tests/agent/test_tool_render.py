@@ -16,7 +16,7 @@ import ds4py
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import SPECIAL_TOKENS, tokenize_rendered
-from ds4py.binding import MessageBinder
+from ds4py.binding import MessageBinder, _arguments
 from ds4py.engine.session import Engine
 from ds4py.engine.tool_syntax import make_parser
 from ds4py.engine.tool_syntax.render import render_tool_call
@@ -48,7 +48,7 @@ def parse(data: Any, engine: Any, *, bytewise: Any = False) -> Any:
     parser = make_parser(engine.info)
     if bytewise:
         for byte in data:
-            snapshot = parser.feed(bytes([byte]))
+            parser.feed(bytes([byte]))
     else:
         parser.feed(data)
     return parser.finish()
@@ -234,7 +234,7 @@ def test_structured_arguments_safely_preserve_nested_closing_delimiters(family: 
 
 
 @pytest.mark.parametrize(
-    "family,args",
+    ("family", "args"),
     [
         (
             "glm",
@@ -261,7 +261,7 @@ def test_canonical_arguments_preserve_types_and_json_looking_strings(family: Any
 
 
 @pytest.mark.parametrize(
-    "family,value",
+    ("family", "value"),
     [
         ("glm", 1),
         ("glm", {"nested": True}),
@@ -284,8 +284,14 @@ def test_render_tool_call_rejects_unrepresentable_argument_values(family: Any, v
     ],
 )
 def test_recursive_non_json_arguments_are_rejected(family: Any, value: Any) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"JSON|mapping|preserve"):
         render_tool_call(family, "typed", {"value": value})
+
+
+@pytest.mark.parametrize("args", ["[]", "false", "0", '""'])
+def test_falsy_non_object_json_arguments_are_rejected(args: str) -> None:
+    with pytest.raises(ValueError, match="mapping"):
+        _arguments(args)
 
 
 @pytest.mark.parametrize("family", ["deepseek4", "deepseek41", "qwen"])
@@ -350,7 +356,7 @@ def test_glm_argument_key_uses_existing_closing_tag_escaping(bytewise: Any) -> N
 
 
 @pytest.mark.parametrize(
-    "family,name,key",
+    ("family", "name", "key"),
     [
         *[
             case

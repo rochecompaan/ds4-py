@@ -1,7 +1,7 @@
 """Session identity, lifecycle ordering, event delivery, reset, and think changes."""
 
 import re
-from typing import Any, Never, cast
+from typing import Any, Never, cast, override
 from uuid import UUID
 
 import pytest
@@ -22,6 +22,7 @@ class EmptySyncSession(FakeSession):
         super().__init__(engine, ctx)
         self.reset_syncs = []
 
+    @override
     def sync(self, tokens: Any, *, progress: Any = None, cancel: Any = None) -> Any:
         if not tokens:
             self.reset_syncs.append(())
@@ -40,11 +41,11 @@ class ResetNative(FakeNative):
         self.sessions = []
         self.record = [] if record is None else record
 
+    @override
     def open_engine(self, config: Any) -> Any:
         engine = FakeEngine(self)
         if not isinstance(engine, FakeEngine):  # pragma: no cover - defensive
-            raise AssertionError("FakeEngine subclass expected")
-        original = engine.create_session
+            raise AssertionError("FakeEngine subclass expected")  # noqa: TRY004 - Preserve the test-double assertion contract.
 
         def create_session(ctx: Any) -> Any:
             session = EmptySyncSession(engine, ctx)
@@ -52,7 +53,7 @@ class ResetNative(FakeNative):
             self.sessions.append(session)
             return session
 
-        engine.create_session = create_session
+        engine.create_session = create_session  # ty: ignore[invalid-assignment]  # Instance-level test double replaces a bound method.
         return engine
 
 
@@ -86,15 +87,18 @@ class RejectingResetSession(FakeSession):
         self.rejection = rejection
         self.fallbacks = []
 
+    @override
     def sync(self, tokens: Any, *, progress: Any = None, cancel: Any = None) -> Any:
         if not tokens:
             raise self.rejection
         return super().sync(tokens, progress=progress, cancel=cancel)
 
+    @override
     def invalidate(self) -> None:
         self.fallbacks.append("invalidate")
         super().invalidate()
 
+    @override
     def rewind(self, pos: Any) -> None:
         self.fallbacks.append(("rewind", pos))
         super().rewind(pos)
@@ -106,6 +110,7 @@ class RejectingResetNative(FakeNative):
         self.rejection = rejection
         self.sessions = []
 
+    @override
     def open_engine(self, config: Any) -> Any:
         engine = FakeEngine(self)
 
@@ -115,7 +120,7 @@ class RejectingResetNative(FakeNative):
             self.sessions.append(session)
             return session
 
-        engine.create_session = create_session
+        engine.create_session = create_session  # ty: ignore[invalid-assignment]  # Instance-level test double replaces a bound method.
         return engine
 
 
@@ -164,7 +169,7 @@ def test_new_publishes_end_then_closes_state_then_resets_then_starts() -> None:
         session = engine.session()
         state = CloseCounter(record)
         assert session.state("jobs", lambda: state) is state
-        session.on_event(lambda event: record.append(event))
+        session.on_event(record.append)
         session.append_user("hello")
         list(session.run_round(max_tokens=2))
         session.checkpoint("turn")
@@ -190,7 +195,7 @@ def test_new_publishes_end_then_closes_state_then_resets_then_starts() -> None:
         assert native.sessions[0].reset_syncs == [()]
         assert session.engine.sampling_defaults is sampling
         assert session.engine._worker is worker
-        replacement = session.state("jobs", lambda: CloseCounter())
+        replacement = session.state("jobs", CloseCounter)
         assert replacement is not state and state.closes == 1
 
 
@@ -205,7 +210,7 @@ def test_new_rewinds_when_the_native_rejects_the_empty_reset_prompt(message: Any
         native_session = native.sessions[0]
         old = session.id
         events = []
-        session.on_event(lambda event: events.append(event))
+        session.on_event(events.append)
 
         new = session.new()
 
@@ -246,7 +251,7 @@ def test_new_propagates_an_unrelated_native_sync_error_without_starting_a_sessio
         worker = session.engine._worker
         old = session.id
         events = []
-        session.on_event(lambda event: events.append(event))
+        session.on_event(events.append)
 
         with pytest.raises(EngineError) as caught:
             session.new()
@@ -286,7 +291,7 @@ def test_switch_publishes_exact_order_and_runs_restore_while_idle() -> None:
         session.append_user("kept")
         tokens = session.transcript.tokens
         old = session.id
-        session.on_event(lambda event: record.append(event))
+        session.on_event(record.append)
         target = "a" * 32
 
         def restore() -> None:
@@ -310,7 +315,7 @@ def test_switch_publishes_exact_order_and_runs_restore_while_idle() -> None:
         assert record[5].session_id == target
         assert state.closes == 1
         assert session.transcript.tokens == tokens
-        assert session.state("jobs", lambda: CloseCounter()) is not state
+        assert session.state("jobs", CloseCounter) is not state
 
 
 def test_switch_restore_failure_still_starts_the_target_session() -> None:
@@ -322,7 +327,7 @@ def test_switch_restore_failure_still_starts_the_target_session() -> None:
         session.state("jobs", lambda: state)
         old = session.id
         target = "b" * 32
-        session.on_event(lambda event: record.append(event))
+        session.on_event(record.append)
         failure = EngineError("restore rejected")
 
         def restore() -> Never:
@@ -349,7 +354,7 @@ def test_switch_restore_failure_still_starts_the_target_session() -> None:
             "error": "restore rejected",
         }
         assert state.closes == 1
-        assert session.state("jobs", lambda: CloseCounter()) is not state
+        assert session.state("jobs", CloseCounter) is not state
 
 
 def test_fork_emits_only_forked_and_keeps_transcript_kv_checkpoints_and_state() -> None:
@@ -367,7 +372,7 @@ def test_fork_emits_only_forked_and_keeps_transcript_kv_checkpoints_and_state() 
         worker = session.engine._worker
         old = session.id
         record = []
-        session.on_event(lambda event: record.append(event))
+        session.on_event(record.append)
 
         new = session.fork()
 
@@ -380,7 +385,7 @@ def test_fork_emits_only_forked_and_keeps_transcript_kv_checkpoints_and_state() 
         assert native.sessions[0].calls == calls
         assert session.engine._worker is worker
         assert state.closes == 0
-        assert session.state("jobs", lambda: CloseCounter()) is state
+        assert session.state("jobs", CloseCounter) is state
 
 
 def test_engine_events_are_published_before_the_consumer_receives_them() -> None:
@@ -410,7 +415,7 @@ def test_on_event_filters_and_unsubscribes_idempotently() -> None:
         session = engine.session()
         seen = []
         unsubscribe = session.on_event(
-            lambda event: seen.append(event),
+            seen.append,
             kinds=("status",),
         )
         session.emit("status", text="ready")

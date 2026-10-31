@@ -34,7 +34,7 @@ def test_every_core_binding_maps_to_ctypes() -> None:
 
 
 def test_binding_name_must_match_prototype() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"ds4_a|ds4_b"):
         bindings.Binding("ds4_a", "int ds4_b(void)")
 
 

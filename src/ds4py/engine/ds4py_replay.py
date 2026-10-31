@@ -1,10 +1,16 @@
 """Strict reader for append-only ds4-py prefill trace records."""
 
 import json
-from pathlib import Path
-from typing import Never
+from typing import TYPE_CHECKING, Never
+
+from ds4py._native.protocol import THINK_LEVEL_BASE
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from .replay_types import _THINK_NAMES, ReplayError, ReplayRound, ReplayTrace
+
+_MAX_THINK_LEVEL = 100
 
 _FIELDS = (
     "session_id",
@@ -19,7 +25,9 @@ _FIELDS = (
 )
 
 
-def read_ds4py(path: Path, text: str) -> ReplayTrace:
+def read_ds4py(  # noqa: C901, PLR0912, PLR0915 - Trace validation keeps format rules in one pass.
+    path: Path, text: str
+) -> ReplayTrace:
     def error(line: int, message: str) -> Never:
         raise ReplayError(f"{path}:{line}: {message}")
 
@@ -55,8 +63,8 @@ def read_ds4py(path: Path, text: str) -> ReplayTrace:
         if isinstance(think, str):
             if think in _THINK_NAMES:
                 think = _THINK_NAMES[think]
-            elif think.isdecimal() and 1 <= int(think) <= 100:
-                think = 1000 + int(think)
+            elif think.isdecimal() and 1 <= int(think) <= _MAX_THINK_LEVEL:
+                think = THINK_LEVEL_BASE + int(think)
             else:
                 error(line_number, "unsupported think name")
         if not isinstance(think, int) or think < 0:

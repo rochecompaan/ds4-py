@@ -4,16 +4,22 @@ import json
 import os
 import signal
 import time
+from contextlib import suppress
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, cast, override
 
 from pydantic_ai.capabilities import AbstractCapability
 
-from ds4py.engine.session import Session
+if TYPE_CHECKING:
+    from pydantic_ai.messages import ToolCallPart
+    from pydantic_ai.tools import RunContext, ToolDefinition
+
+    from ds4py.engine.session import Session
 
 _TERM_GRACE = 2.0
 _KILL_WAIT = 2.0
 _POLL = 0.05
+_HANDLE_FIELDS = 2
 
 
 class ShellJobState:
@@ -34,7 +40,7 @@ class ShellJobState:
                 continue
             try:
                 fields = handle.read_text().split()
-                if len(fields) != 2 or not fields[0].isdigit():
+                if len(fields) != _HANDLE_FIELDS or not fields[0].isdigit():
                     continue
                 pid = int(fields[0])
                 group = int(fields[1]) if fields[1].isdigit() else None
@@ -46,10 +52,8 @@ class ShellJobState:
                     continue
                 # The wrapper checks this marker before it starts the command;
                 # it also closes the fork/signal race the pinned harness documents.
-                try:
+                with suppress(OSError):
                     (base / "stop").touch()
-                except OSError:
-                    pass
                 _signal(pid, group, signal.SIGTERM)
                 if _wait_for_exit(pid, group, _TERM_GRACE):
                     continue
@@ -73,15 +77,16 @@ class DS4ShellJobs(AbstractCapability):
             lambda: ShellJobState(cast("str | Path", workspace_dir)),
         )
 
+    @override
     async def after_tool_execute(
         self,
-        ctx: Any,
+        ctx: RunContext[object],
         *,
-        call: Any,
-        tool_def: Any,
-        args: Any,
-        result: Any,
-    ) -> Any:
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, object],
+        result: object,
+    ) -> object:
         if call.tool_name == "start_command" and isinstance(result, str):
             for line in result.splitlines():
                 if line.startswith("ID: "):
@@ -96,9 +101,13 @@ def _published_exit(status_path: Path) -> int | None:
     if not status_path.exists():
         return None
     try:
-        return json.loads(status_path.read_text()).get("exit_code")
+        value = json.loads(status_path.read_text())
     except OSError, ValueError:
         return None
+    if not isinstance(value, dict):
+        return None
+    exit_code = value.get("exit_code")
+    return exit_code if isinstance(exit_code, int) and not isinstance(exit_code, bool) else None
 
 
 def _signal(pid: int, group: int | None, number: int) -> None:

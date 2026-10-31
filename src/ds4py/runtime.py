@@ -8,14 +8,12 @@ handles: one prompt is one harness run, saves and restores go through
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from typing import Any, BinaryIO, TypedDict
+from typing import TYPE_CHECKING, BinaryIO, TypedDict, override
 from uuid import uuid4
 
-from pydantic_ai import AgentRunResult
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     ModelMessage,
@@ -24,8 +22,6 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestContext
-from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     FileStepStore,
@@ -38,13 +34,20 @@ from pydantic_ai_harness.step_persistence import (
 from ds4py.agent import QuestionAnswerer, build_agent_components
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.system_notes import DS4SystemNotes
-from ds4py.engine.lifecycle import Listener, SessionEvent
-from ds4py.engine.prefix import PrefixTurn
-from ds4py.engine.session import Session
-from ds4py.errors import Ds4pyError, EngineError, StoreError
-from ds4py.model import DS4Model
+from ds4py.errors import EngineError, StoreError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Sequence
+
+    from pydantic_ai import AgentRunResult
+    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.tools import RunContext
+
+    from ds4py.engine.lifecycle import Listener, SessionEvent
+    from ds4py.engine.prefix import PrefixTurn
+    from ds4py.engine.session import Session
+    from ds4py.model import DS4Model
 from ds4py.runtime_restore import (
-    RestoreOutcome,
     RestoreResult,
     plan_restore,
     restore_snapshot,
@@ -114,9 +117,10 @@ class _ModelStepTrace(AbstractCapability):
     def __init__(self, session: Session) -> None:
         self._session = session
 
+    @override
     async def before_model_request(
         self,
-        ctx: RunContext[Any],
+        ctx: RunContext[object],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         self._session.emit(
@@ -141,7 +145,7 @@ class AgentRuntime:
     requests native cancellation without waiting for the run to finish.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - Runtime composition mirrors the agent feature set.
         self,
         model: DS4Model,
         project_dir: str | Path,
@@ -156,16 +160,14 @@ class AgentRuntime:
         self.model = model
         self.project_dir = Path(project_dir)
         self.store = store if store is not None else SessionStore()
-        self._clock = (
-            clock if clock is not None else (lambda: datetime.now().astimezone())
-        )
+        self._clock = clock if clock is not None else (lambda: datetime.now().astimezone())
         self._session = model.session
         self._messages: list[ModelMessage] = []
         self._title = ""
         self._status = "idle"
         self._closed = False
         self._running = False
-        self._run_task: asyncio.Task[Any] | None = None
+        self._run_task: asyncio.Task[AgentRunResult[object]] | None = None
         self._interrupted = False
         self._trace_failure: OSError | None = None
         self._created_at = self._timestamp()
@@ -181,19 +183,11 @@ class AgentRuntime:
         )
         self._agent = self.components.agent
         self._notes = next(
-            (
-                item
-                for item in self.components.components
-                if isinstance(item, DS4SystemNotes)
-            ),
+            (item for item in self.components.components if isinstance(item, DS4SystemNotes)),
             None,
         )
         self._record = next(
-            (
-                item
-                for item in self.components.components
-                if isinstance(item, DS4RunRecord)
-            ),
+            (item for item in self.components.components if isinstance(item, DS4RunRecord)),
             None,
         )
         if self._notes is not None:
@@ -274,9 +268,7 @@ class AgentRuntime:
             return
         for message in self._messages:
             for part in message.parts:
-                if not isinstance(part, UserPromptPart) or not isinstance(
-                    part.content, str
-                ):
+                if not isinstance(part, UserPromptPart) or not isinstance(part.content, str):
                     continue
                 text = " ".join(part.content.split())
                 if text:
@@ -343,12 +335,10 @@ class AgentRuntime:
             run_id=run_id,
             status=status,
             error=None if error is None else str(error),
-            persistence_error=(
-                None if persistence_error is None else str(persistence_error)
-            ),
+            persistence_error=(None if persistence_error is None else str(persistence_error)),
         )
 
-    async def run(self, prompt: str) -> AgentRunResult[Any]:
+    async def run(self, prompt: str) -> AgentRunResult[object]:  # noqa: PLR0915 - One run owns its full persistence lifecycle.
         """Run one prompt as one harness run and record its terminal status."""
         self._require_open()
         if self._running:
@@ -381,7 +371,7 @@ class AgentRuntime:
             except BaseException as error:
                 await self._fail(
                     run_id,
-                    "interrupted" if self._interrupted else "error",
+                    "interrupted" if self._interrupted else "error",  # ty: ignore[redundant-condition-strict]  # Cancellation can set this during await.
                     error,
                 )
                 raise
@@ -472,13 +462,9 @@ class AgentRuntime:
             session_dir / "session.kv",
             write_payload,
         )
-        if (
-            written.get("tokens") != len(tokens)
-            or written.get("payload_bytes") != payload_bytes
-        ):
+        if written.get("tokens") != len(tokens) or written.get("payload_bytes") != payload_bytes:
             raise EngineError(
-                f"the native payload covers {written.get('tokens')} tokens, "
-                f"the transcript has {len(tokens)}"
+                f"the native payload covers {written.get('tokens')} tokens, the transcript has {len(tokens)}"
             )
 
         snapshot = ContinuableSnapshot(
@@ -525,9 +511,7 @@ class AgentRuntime:
             ),
         )
         self.store.write_record_atomic(session_dir / "save.json", record)
-        self._session.emit(
-            "saved", record=record.to_dict(), payload_bytes=payload_bytes
-        )
+        self._session.emit("saved", record=record.to_dict(), payload_bytes=payload_bytes)
         return record
 
     async def _next_save_run_id(self, store: FileStepStore) -> str:
@@ -584,7 +568,7 @@ class AgentRuntime:
         )
         if self._record is not None:
             self._record.relocate(session_dir / "events.jsonl")
-        outcome: RestoreOutcome = {}
+        outcome: dict[str, object] = {}
 
         def restore() -> RestoreResult:
             try:

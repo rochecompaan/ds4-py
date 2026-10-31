@@ -170,7 +170,7 @@ def test_ctx_repository_copy_keeps_hidden_grader_outside(tmp_path: Path) -> None
 
 def test_glm_patch_fails_focused_test_and_clean_tree_passes(tmp_path: Path) -> None:
     repo = Path(__file__).parents[2]
-    common: dict[str, Any] = dict(
+    common: dict[str, Any] = dict(  # noqa: C408 - Keyword-built task context is clearer here.
         prompt="Fix the GLM close boundary without editing tests.",
         visible_test="tests/engine/tool_syntax/test_glm.py",
     )

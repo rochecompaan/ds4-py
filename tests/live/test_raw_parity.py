@@ -36,6 +36,7 @@ def test_raw_matches_ds4_agent(live_lib: Any, tmp_path: Path) -> None:
         ],
         capture_output=True,
         env=c_env,
+        check=False,
     )
     p = subprocess.run(
         [
@@ -53,6 +54,7 @@ def test_raw_matches_ds4_agent(live_lib: Any, tmp_path: Path) -> None:
             str(tmp_path / "py.log"),
         ],
         capture_output=True,
+        check=False,
     )
     assert c.returncode == 0 and p.returncode == 0, (c.stderr, p.stderr)
     assert read_trace_tokens(tmp_path / "py.log") == read_trace_tokens(tmp_path / "c.log")

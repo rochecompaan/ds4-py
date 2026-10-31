@@ -28,7 +28,7 @@ def fake_tree(tmp_path: Path, upstream_headers: Any) -> Any:
 
 def test_not_a_ds4_tree(tmp_path: Path) -> None:
     (tmp_path / "Makefile").touch()
-    with pytest.raises(BuildError, match="not a ds4 source tree: missing ds4.h"):
+    with pytest.raises(BuildError, match=r"not a ds4 source tree: missing ds4.h"):
         build_library(tmp_path, backend="cpu", out_dir=tmp_path / "out")
 
 
@@ -398,5 +398,5 @@ def test_cpu_build_of_upstream(built_upstream: Any, capsys: pytest.CaptureFixtur
 
 @pytest.mark.build
 def test_cpu_build_of_fork_with_extension(built_fork: Any) -> None:
-    lib, m = built_fork
+    _, m = built_fork
     assert m.headers_known and m.bindings["ds4_engine_sampling_defaults"].ok

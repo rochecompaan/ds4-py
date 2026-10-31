@@ -18,6 +18,7 @@ from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeEngine, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.binding import MessageBinder
+from ds4py.engine.events import STOP_REASONS
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.session import Engine
 from ds4py.engine.worker import SyncJob
@@ -82,6 +83,16 @@ def test_empty_output_and_zero_prefill_have_zero_usage(monkeypatch: pytest.Monke
     asyncio.run(scenario())
 
 
+def test_stop_sequence_finishes_as_a_normal_stop() -> None:
+    async def scenario() -> None:
+        with fake_engine(script=scripted_text("stop")) as engine:
+            response, _ = await collect(make_model(engine.session()), [user()], {"stop_sequences": [b"stop"]})
+            assert response.finish_reason == "stop"
+            assert "stop_sequence" in STOP_REASONS
+
+    asyncio.run(scenario())
+
+
 def test_thinking_only_output_is_retained() -> None:
     async def scenario() -> None:
         with fake_engine(script=scripted_text("thought"), think=ThinkMode.HIGH) as engine:
@@ -108,7 +119,7 @@ def test_interrupted_round_returns_partial_text_as_interrupted() -> None:
             assert response.state == "interrupted"
             assert response.finish_reason is None
             assert response.usage.output_tokens == 3
-            assert cast("Any", response.metadata)["ds4.source"] == "sampled"
+            assert response.metadata["ds4.source"] == "sampled"
 
     asyncio.run(scenario())
 
@@ -137,7 +148,7 @@ def test_closing_event_iteration_binds_only_the_published_partial_response() -> 
                 bindings += 1
                 original_bind(response)
 
-            binder.bind_response = counted_bind
+            binder.bind_response = counted_bind  # ty: ignore[invalid-assignment]  # Instance-level test double replaces a bound method.
             request = user()
             async with model.request_stream(
                 [request],
@@ -224,7 +235,7 @@ def test_request_relies_on_stream_terminal_binding_exactly_once() -> None:
                 bindings += 1
                 original_bind(response)
 
-            binder.bind_response = counted_bind
+            binder.bind_response = counted_bind  # ty: ignore[invalid-assignment]  # Instance-level test double replaces a bound method.
             response = await model.request([user()], None, ModelRequestParameters())
             assert response.parts == [TextPart("done")]
             assert bindings == 1
@@ -250,7 +261,7 @@ def test_direct_stream_response_is_reused_by_the_next_request_without_rerenderin
             model = make_model(session, binder=binder)
             request = user("first request")
             first, _ = await collect(model, [request])
-            first_key = cast("Any", first.metadata)["ds4.key"]
+            first_key = first.metadata["ds4.key"]
             first_hash = next(
                 p.content_hash for p in binder.export_segments() if p.key == first_key and p.source == "sampled"
             )

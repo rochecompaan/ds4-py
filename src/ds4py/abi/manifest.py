@@ -4,11 +4,15 @@ import hashlib
 import json
 import os
 import tempfile
-from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ds4py._native.bindings import Binding
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from ds4py._json import JsonValue
+    from ds4py._native.bindings import Binding
 from ds4py._native.structs import StructLayout
 from ds4py._native.typemap import TYPE_MAP_VERSION
 from ds4py.errors import AbiMismatch
@@ -49,7 +53,7 @@ class Manifest:
     headers_known: bool
     bindings: dict[str, BindingRecord]
     layouts: dict[str, StructLayout]
-    live_checks: dict[str, dict] = field(default_factory=dict)
+    live_checks: dict[str, dict[str, JsonValue]] = field(default_factory=dict)
     metal_sources: dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -60,7 +64,7 @@ class Manifest:
         return cls(**data)
 
     def write(self, path: Path) -> None:
-        temporary = None
+        temporary: Path | None = None
         try:
             with tempfile.NamedTemporaryFile(
                 mode="w",
@@ -73,7 +77,7 @@ class Manifest:
                 stream.write("\n")
             os.replace(temporary, path)  # noqa: PTH105 - Keep the atomic OS seam patchable in tests.
         finally:
-            if temporary is not None:
+            if temporary is not None:  # ty: ignore[redundant-condition-strict]  # Early failures precede assignment.
                 temporary.unlink(missing_ok=True)
 
 
@@ -84,7 +88,7 @@ class Validation:
     warnings: tuple[str, ...]
 
 
-def validate(
+def validate(  # noqa: PLR0912 - ABI validation checks independent manifest contracts.
     m: Manifest,
     *,
     lib_sha256: str,

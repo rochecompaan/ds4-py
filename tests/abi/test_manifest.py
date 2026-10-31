@@ -92,18 +92,18 @@ def test_metal_manifest_requires_shader_records(
     lib, m = make_manifest(tmp_path, upstream_headers)
     m.backend = "metal"
     m.metal_sources = records
-    with pytest.raises(AbiMismatch, match="Metal.*ds4py build"):
+    with pytest.raises(AbiMismatch, match=r"Metal.*ds4py build"):
         manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=CORE_BINDINGS, layouts=LAYOUTS)
 
 
 def test_manifest_round_trips(make_manifest: Any, tmp_path: Path, upstream_headers: Any) -> None:
-    lib, m = make_manifest(tmp_path, upstream_headers)
+    _, m = make_manifest(tmp_path, upstream_headers)
     m.write(tmp_path / "m.json")
     assert manifest.Manifest.read(tmp_path / "m.json") == m
 
 
 @pytest.mark.parametrize(
-    "damage, match",
+    ("damage", "match"),
     [
         ("missing", "ds4_engine_options"),
         ("size", "ds4_engine_options.*size"),
@@ -162,7 +162,7 @@ def test_non_boolean_probe_result_is_refused(
         manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=[binding], layouts=LAYOUTS)
 
 
-@pytest.mark.parametrize("ok, required", [(True, True), (False, True), (True, False), (False, False)])
+@pytest.mark.parametrize(("ok", "required"), [(True, True), (False, True), (True, False), (False, False)])
 def test_boolean_probe_results_preserve_required_and_optional_semantics(
     make_manifest: Any,
     tmp_path: Path,

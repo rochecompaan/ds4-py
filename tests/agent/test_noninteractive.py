@@ -1,24 +1,21 @@
-from typing import Any, cast
 import asyncio
 import builtins
 import io
-from pathlib import Path
 import sys
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, Never, cast
 
 import pytest
 
 import ds4py
-from ds4py import ThinkMode, cli
+from ds4py import cli
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.noninteractive import run_noninteractive
-from typing import Never
 
 
 class FakeRunRuntime:
-    def __init__(
-        self, *, output: Any = "answer", run_error: Any = None, save_error: Any = None
-    ) -> None:
+    def __init__(self, *, output: Any = "answer", run_error: Any = None, save_error: Any = None) -> None:
         self.output = output
         self.run_error = run_error
         self.save_error = save_error
@@ -55,9 +52,7 @@ def test_noninteractive_prints_only_the_final_answer_and_saves() -> None:
         (KeyboardInterrupt(), 130, "interrupted"),
     ],
 )
-def test_noninteractive_saves_on_run_failure_and_interruption(
-    error: Any, code: Any, message: Any
-) -> None:
+def test_noninteractive_saves_on_run_failure_and_interruption(error: Any, code: Any, message: Any) -> None:
     runtime = FakeRunRuntime(run_error=error)
     actual, out, err = invoke(runtime)
     assert actual == code and out == "" and message in err
@@ -81,9 +76,9 @@ def test_noninteractive_saves_and_reports_save_failure_after_output_failure() ->
     err = io.StringIO()
     code = asyncio.run(
         run_noninteractive(
-            cast(Any, runtime),
+            cast("Any", runtime),
             "prompt",
-            out=cast(Any, BrokenOutput()),
+            out=cast("Any", BrokenOutput()),
             err=err,
         )
     )
@@ -123,7 +118,7 @@ def test_agent_cli_validates_noninteractive_prompt_and_supported_flags(
 def test_agent_cli_reports_value_errors_without_a_traceback(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    import ds4py.agent_cli as agent_cli
+    from ds4py import agent_cli
 
     def fail(_args: Any) -> Never:
         raise ValueError("invalid prefix")
@@ -152,7 +147,7 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(
         def __enter__(self) -> Any:
             return self
 
-        def __exit__(self, *args: Any) -> None:
+        def __exit__(self, *args: object) -> None:
             self.exited = True
 
         def session(self) -> object:
@@ -252,16 +247,14 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(
         "interactive": False,
         "question_answerer": None,
     }
-    assert [(turn.role, turn.content) for turn in cast(Any, runtime.loaded)] == [
+    assert [(turn.role, turn.content) for turn in cast("Any", runtime.loaded)] == [
         ("user", "earlier"),
         ("assistant", "answer"),
     ]
     run = next(item for item in created if getattr(item, "kind", None) == "run")
     assert run.runtime is runtime and run.prompt == "hello"
     assert runtime.closed
-    assert next(
-        item for item in created if getattr(item, "kind", None) == "engine"
-    ).engine.exited
+    assert next(item for item in created if getattr(item, "kind", None) == "engine").engine.exited
 
 
 def test_agent_cli_interactive_constructs_and_runs_tui(
@@ -279,7 +272,7 @@ def test_agent_cli_interactive_constructs_and_runs_tui(
         def __enter__(self) -> Any:
             return self
 
-        def __exit__(self, *args: Any) -> None:
+        def __exit__(self, *args: object) -> None:
             created.append("engine-closed")
 
         def session(self) -> object:
@@ -329,13 +322,14 @@ def test_agent_cli_rejects_removed_yolo_flag() -> None:
 def test_agent_cli_question_answerer_returns_a_typed_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from ds4py import agent_cli
     from pydantic_ai_harness.ask_user import (
         AskUserRequest,
         AskUserResponse,
         Question,
         QuestionOption,
     )
+
+    from ds4py import agent_cli
 
     request = AskUserRequest(
         questions=(
@@ -357,6 +351,7 @@ def test_agent_cli_question_answerer_returns_a_typed_response(
 
 def test_run_tui_binds_questions_to_the_tui(monkeypatch: pytest.MonkeyPatch) -> None:
     from pydantic_ai_harness import AskUser
+
     from ds4py import agent_cli
 
     questions = AskUser(answerer=None)
@@ -375,7 +370,7 @@ def test_run_tui_binds_questions_to_the_tui(monkeypatch: pytest.MonkeyPatch) -> 
             return 0
 
     monkeypatch.setattr("ds4py.tui.TUI", FakeTUI)
-    assert asyncio.run(agent_cli._run_tui(cast(Any, runtime), None)) == 0
+    assert asyncio.run(agent_cli._run_tui(cast("Any", runtime), None)) == 0
     assert questions.answerer == created[0].ask
 
 
@@ -385,15 +380,9 @@ def test_raw_alias_and_core_commands_do_not_import_the_harness(
     import ds4py.raw as raw_module
 
     calls = []
-    monkeypatch.setattr(
-        raw_module, "command", lambda args: calls.append(args.command) or 0
-    )
-    monkeypatch.setattr(
-        cli, "build_library", lambda *args, **kwargs: tmp_path / "libds4.so"
-    )
-    monkeypatch.setattr(
-        cli, "check_library", lambda lib: SimpleNamespace(manifest=None, error=None)
-    )
+    monkeypatch.setattr(raw_module, "command", lambda args: calls.append(args.command) or 0)
+    monkeypatch.setattr(cli, "build_library", lambda *args, **kwargs: tmp_path / "libds4.so")
+    monkeypatch.setattr(cli, "check_library", lambda lib: SimpleNamespace(manifest=None, error=None))
     monkeypatch.setattr(cli, "format_report", lambda report: "ABI ok")
     real_import = builtins.__import__
 

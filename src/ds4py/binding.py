@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, NotRequired, Protocol, TypedDict
+from typing import TYPE_CHECKING, NotRequired, Protocol, TypedDict
 from uuid import uuid4
 
 from pydantic_ai.messages import (
@@ -28,6 +27,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
+from ds4py._json import is_json_object, is_string_key_mapping
 from ds4py.engine import chat as chat_ops
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.tool_prompt import ToolDefinition
@@ -36,6 +36,9 @@ from ds4py.errors import EngineError
 from ds4py.message_rendering import MessageRenderer, stable_text
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping, Sequence
+
+    from ds4py._json import JsonValue
     from ds4py.capabilities.system_notes import DS4SystemNotes
     from ds4py.engine.session import Engine, Session
 
@@ -44,7 +47,7 @@ class _ProjectionPart(TypedDict, total=False):
     kind: str
     content: str
     name: str
-    args: dict[str, Any]
+    args: dict[str, JsonValue]
     id: str
     raw: str
 
@@ -121,24 +124,34 @@ class _ScratchSession:
         return self._transcript.append(tokens, kind, meta)
 
 
-def _definitions(tools: Iterable[Any]) -> tuple[ToolDefinition, ...]:
-    return tuple(
-        ToolDefinition(
-            tool.name,
-            tool.description or "",
-            tool.parameters_json_schema if hasattr(tool, "parameters_json_schema") else tool.parameters,
+def _definitions(tools: Iterable[object]) -> tuple[ToolDefinition, ...]:
+    definitions = []
+    for tool in tools:
+        name = getattr(tool, "name", None)
+        if not isinstance(name, str):
+            raise TypeError("tool name must be a string")
+        description = getattr(tool, "description", None)
+        if description is not None and not isinstance(description, str):
+            raise TypeError("tool description must be a string or None")
+        if hasattr(tool, "parameters_json_schema"):
+            parameters = tool.parameters_json_schema
+        else:
+            parameters = getattr(tool, "parameters", None)
+        if not is_string_key_mapping(parameters):
+            raise TypeError("tool parameters must be a string-keyed mapping")
+        definitions.append(ToolDefinition(name, description or "", parameters))
+    return tuple(definitions)
+
+
+def _digest(value: object) -> str:
+    encoded = str(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
         )
-        for tool in tools
-    )
-
-
-def _digest(value: Any) -> str:
-    encoded = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
     ).encode()
     return hashlib.sha256(encoded).hexdigest()
 
@@ -152,16 +165,25 @@ def _tool_digest(tools: Iterable[ToolDefinition]) -> str:
 def _ensure_key(message: ModelMessage) -> str:
     metadata = dict(message.metadata or {})
     key = metadata.get("ds4.key")
-    if not key:
+    if key is not None and not isinstance(key, str):
+        raise TypeError("message ds4.key must be a string or None")
+    if key is None or key == "":
         key = uuid4().hex
         metadata["ds4.key"] = key
     message.metadata = metadata
     return key
 
 
-def _arguments(args: str | Mapping[str, Any] | None) -> dict[str, Any]:
-    value: Any = json.loads(args) if isinstance(args, str) else args
-    return dict(value or {})
+def _arguments(args: str | Mapping[str, JsonValue] | None) -> dict[str, JsonValue]:
+    value: object = json.loads(args) if isinstance(args, str) else args
+    if value is None:
+        return {}
+    if not is_string_key_mapping(value):
+        raise ValueError("tool call arguments must be a mapping")
+    converted = dict(value)
+    if not is_json_object(converted):
+        raise ValueError("tool call arguments must contain JSON values")
+    return converted
 
 
 def _projection(message: ModelMessage) -> _MessageProjection:
@@ -185,7 +207,7 @@ def _projection(message: ModelMessage) -> _MessageProjection:
             if (message.metadata or {}).get("ds4.source") == "sampled" and isinstance(raw, str):
                 item["raw"] = raw
             projected["parts"].append(item)
-        elif kind == "tool-return" or kind == "retry-prompt":
+        elif kind in {"tool-return", "retry-prompt"}:
             projected["parts"].append(
                 {
                     "kind": kind,
@@ -272,6 +294,7 @@ class MessageBinder:
             recoverable.setdefault(_key_recovery_hash(message), []).append(index)
         adopted = []
         for candidate in candidates:
+            adopted_candidate = candidate
             key = (candidate.metadata or {}).get("ds4.key")
             index = bound.get(key) if key is not None else None
             if index is None and not key:
@@ -279,8 +302,8 @@ class MessageBinder:
                 if len(matches) == 1:
                     index = matches[0]
             if index is not None and _content_hash(candidate) != self._records[index].content_hash:
-                candidate = deepcopy(self._bound_messages[index])
-            adopted.append(candidate)
+                adopted_candidate = deepcopy(self._bound_messages[index])
+            adopted.append(adopted_candidate)
         self._keyed(adopted)
         return adopted
 
@@ -346,7 +369,7 @@ class MessageBinder:
         self._signature = None
         self._restored = True
 
-    def _restore_state(
+    def _restore_state(  # noqa: PLR0912 - Restore validation covers each persisted contract.
         self,
         messages: Sequence[ModelMessage],
         segments: Sequence[_Provenance],
@@ -475,11 +498,11 @@ class MessageBinder:
             keyed.append((key, content_hash))
         return keyed
 
-    def prepare(
+    def prepare(  # noqa: PLR0912, PLR0915 - Binding coordinates each history transition.
         self,
         messages: Sequence[ModelMessage],
         *,
-        tools: Iterable[Any] = (),
+        tools: Iterable[object] = (),
         instructions: str | None = None,
         note_provider: DS4SystemNotes | None = None,
     ) -> BindingChange:
@@ -570,7 +593,7 @@ class MessageBinder:
         self,
         messages: Sequence[ModelMessage],
         *,
-        tools: Iterable[Any] = (),
+        tools: Iterable[object] = (),
         instructions: str | None = None,
     ) -> int:
         messages = list(messages)
@@ -587,7 +610,8 @@ class MessageBinder:
 
     def bind_response(self, response: ModelResponse) -> None:
         key = _ensure_key(response)
-        assert response.metadata is not None  # _ensure_key initializes it
+        if response.metadata is None:
+            raise AssertionError("_ensure_key must initialize metadata")
         response.metadata["ds4.source"] = "sampled"
         content_hash = _content_hash(response)
         segments = self.session.transcript.segments
