@@ -717,9 +717,11 @@ def test_prefill_trace_failure_fails_the_run(
 
         monkeypatch.setattr(Path, "open", fail_trace_open)
         try:
-            with PrefillTraceWriter(runtime.model.session, trace, think=engine.think):
-                with pytest.raises(EngineError, match="prefill trace failed"):
-                    asyncio.run(runtime.run("hello"))
+            with (
+                PrefillTraceWriter(runtime.model.session, trace, think=engine.think),
+                pytest.raises(EngineError, match="prefill trace failed"),
+            ):
+                asyncio.run(runtime.run("hello"))
             assert runtime.status == "error"
             events = read_events(store.session_dir(runtime.session_id) / "events.jsonl")
             terminal = [line for line in events if line["kind"] == "run_end"]

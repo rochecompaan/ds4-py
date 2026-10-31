@@ -2,9 +2,8 @@
 
 import json
 from dataclasses import asdict, dataclass
-import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self, TypedDict, cast
+from typing import TYPE_CHECKING, Self, TypedDict, cast
 
 from ds4py.engine.ds4py_replay import read_ds4py
 from ds4py.engine.events import Stopped, Synced, Token
@@ -64,7 +63,7 @@ class PrefillTraceWriter:
     def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, *args: Any) -> None:
+    def __exit__(self, *args: object) -> None:
         self.close()
 
     def close(self) -> None:
@@ -94,7 +93,7 @@ class PrefillTraceWriter:
         self.append(
             PrefillTraceRecord(
                 session_id=session_id,
-                run_id=cast(str, self._run_id),
+                run_id=cast("str", self._run_id),
                 step_index=self._step_index,
                 round_index=self.round_index,
                 prompt=current["prompt"],
