@@ -1,3 +1,4 @@
+from typing import Any
 import importlib
 import re
 from pathlib import Path
@@ -17,7 +18,7 @@ FIRST_PREFILL = (
 )
 
 
-def read(path):
+def read(path: Any) -> Any:
     try:
         module = importlib.import_module("ds4py.engine.replay")
     except ModuleNotFoundError as error:
@@ -27,7 +28,7 @@ def read(path):
     return module.read_replay(path)
 
 
-def assert_replay_error(path, fragment):
+def assert_replay_error(path: Any, fragment: Any) -> None:
     with pytest.raises(ValueError) as caught:
         read(path)
     assert type(caught.value).__name__ == "ReplayError"
@@ -36,7 +37,7 @@ def assert_replay_error(path, fragment):
     assert re.search(re.escape(str(path)) + r":\d+:", message)
 
 
-def mutate(tmp_path, source, old, new):
+def mutate(tmp_path: Path, source: Any, old: Any, new: Any) -> Any:
     data = source.read_text()
     assert old in data
     path = tmp_path / f"{source.stem}-invalid.trace"
@@ -44,7 +45,7 @@ def mutate(tmp_path, source, old, new):
     return path
 
 
-def test_basic_trace_rebuilds_rounds_eos_tool_results_and_rewinds():
+def test_basic_trace_rebuilds_rounds_eos_tool_results_and_rewinds() -> None:
     trace = read(BASIC)
 
     assert trace.ctx == 4096
@@ -67,7 +68,41 @@ def test_basic_trace_rebuilds_rounds_eos_tool_results_and_rewinds():
     assert [round.prefix_only for round in trace.rounds] == [False] * 4
 
 
-def test_compaction_replaces_the_base_and_records_context_limit():
+def test_c_trace_with_split_utf8_token_bytes_preserves_replay_ids(tmp_path: Path) -> None:
+    data = BASIC.read_bytes()
+    replacements = (
+        (
+            b'token index=1 id=20 bytes=1 text="a" hex=61',
+            b'token index=1 id=20 bytes=2 text="' + b"\xe2\x99" + b'" hex=e299',
+        ),
+        (
+            b'token index=2 id=21 bytes=1 text="\\t" hex=09',
+            b'token index=2 id=21 bytes=1 text="' + b"\xaf" + b'" hex=af',
+        ),
+        (
+            b'token index=1 id=40 bytes=1 text="x" hex=78',
+            b'token index=1 id=40 bytes=2 text="' + b"\xe1\xbb" + b'" hex=e1bb',
+        ),
+        (
+            b'token index=8 id=50 bytes=1 text="2" hex=32',
+            b'token index=8 id=50 bytes=1 text="' + b"\x9d" + b'" hex=9d',
+        ),
+    )
+    for old, new in replacements:
+        assert old in data
+        data = data.replace(old, new, 1)
+    path = tmp_path / "split-utf8.trace"
+    path.write_bytes(data)
+
+    expected = read(BASIC)
+    actual = read(path)
+
+    assert [(round.prompt, round.sampled) for round in actual.rounds] == [
+        (round.prompt, round.sampled) for round in expected.rounds
+    ]
+
+
+def test_compaction_replaces_the_base_and_records_context_limit() -> None:
     trace = read(COMPACTED)
 
     assert trace.ctx == 8192
@@ -85,7 +120,7 @@ def test_compaction_replaces_the_base_and_records_context_limit():
     assert second.context_limited is False
 
 
-def test_early_edit_round_is_prefix_only():
+def test_early_edit_round_is_prefix_only() -> None:
     trace = read(EARLY_EDIT)
 
     assert len(trace.rounds) == 1
@@ -97,7 +132,7 @@ def test_early_edit_round_is_prefix_only():
     assert round.context_limited is False
 
 
-def test_ignores_prefill_sync_status(tmp_path):
+def test_ignores_prefill_sync_status(tmp_path: Path) -> None:
     path = mutate(
         tmp_path, BASIC, FIRST_PREFILL,
         "prefill sync done prompt=4 cached=0 suffix=4 rc=0 1.0 ms\n"
@@ -109,7 +144,7 @@ def test_ignores_prefill_sync_status(tmp_path):
     assert len(trace.rounds) == 4
 
 
-def test_accepts_c_round_numbers_across_user_turns(tmp_path):
+def test_accepts_c_round_numbers_across_user_turns(tmp_path: Path) -> None:
     data = BASIC.read_text()
     for old, new in ((1, 0), (2, 1), (3, 2), (4, 3)):
         data = data.replace(f"tool_round={old}", f"tool_round={new}")
@@ -130,7 +165,7 @@ def test_accepts_c_round_numbers_across_user_turns(tmp_path):
     assert trace.rounds[-1].sampled == (71,)
 
 
-def test_missing_initial_prompt_is_rejected(tmp_path):
+def test_missing_initial_prompt_is_rejected(tmp_path: Path) -> None:
     lines = BASIC.read_text().splitlines(keepends=True)
     initial = next(i for i, line in enumerate(lines) if "initial_system_prompt" in line)
     prefill = next(i for i, line in enumerate(lines) if "prefill tool_round=" in line)
@@ -186,11 +221,11 @@ def test_missing_initial_prompt_is_rejected(tmp_path):
     ("think=high", "think=ultra", "unsupported think name"),
     ("think=75", "think=0", "unsupported think name"),
 ])
-def test_malformed_basic_traces_are_rejected(tmp_path, old, new, fragment):
+def test_malformed_basic_traces_are_rejected(tmp_path: Path, old: Any, new: Any, fragment: Any) -> None:
     assert_replay_error(mutate(tmp_path, BASIC, old, new), fragment)
 
 
-def test_missing_context_is_rejected(tmp_path):
+def test_missing_context_is_rejected(tmp_path: Path) -> None:
     path = mutate(
         tmp_path, BASIC,
         "agent worker start ctx=4096 backend=cpu model=/models/fake.gguf trace=c.trace",
@@ -199,12 +234,12 @@ def test_missing_context_is_rejected(tmp_path):
     assert_replay_error(path, "missing context")
 
 
-def test_invalid_context_is_rejected(tmp_path):
+def test_invalid_context_is_rejected(tmp_path: Path) -> None:
     path = mutate(tmp_path, BASIC, "agent worker start ctx=4096", "agent worker start ctx=0")
     assert_replay_error(path, "invalid context")
 
 
-def test_duplicate_compaction_is_rejected(tmp_path):
+def test_duplicate_compaction_is_rejected(tmp_path: Path) -> None:
     path = mutate(
         tmp_path, COMPACTED,
         "prefill tool_round=2 transcript=5 prompt=5 cached=4 suffix=1 think=low",
@@ -219,7 +254,7 @@ def test_duplicate_compaction_is_rejected(tmp_path):
     "raw one-shot prompt mode: skipping agent system prompt",
     "tokens label=raw_prompt_tokens start=0 len=0",
 ])
-def test_raw_traces_are_not_replayable(tmp_path, raw_line):
+def test_raw_traces_are_not_replayable(tmp_path: Path, raw_line: Any) -> None:
     path = tmp_path / "raw.trace"
     path.write_text(
         STAMP + "agent worker start ctx=4096 backend=cpu model=/models/raw.gguf trace=raw.trace\n"
@@ -232,13 +267,13 @@ def test_raw_traces_are_not_replayable(tmp_path, raw_line):
     'agent worker start ctx=4096 backend=cpu model=/models/fake.gguf trace=c.trace',
     'agent worker start ctx=1 backend=cuda model=/models/other.gguf trace=other.trace',
 ])
-def test_duplicate_worker_start_cannot_overwrite_replay_metadata(tmp_path, header):
+def test_duplicate_worker_start_cannot_overwrite_replay_metadata(tmp_path: Path, header: Any) -> None:
     path = tmp_path / 'duplicate.trace'
     path.write_text(BASIC.read_text() + STAMP + header + '\n')
     assert_replay_error(path, 'duplicate worker start')
 
 
-def test_initial_state_without_any_round_cannot_claim_replay_parity(tmp_path):
+def test_initial_state_without_any_round_cannot_claim_replay_parity(tmp_path: Path) -> None:
     path = tmp_path / 'empty.trace'
     path.write_text('\n'.join(BASIC.read_text().splitlines()[:5]) + '\n')
     assert_replay_error(path, 'no replay rounds')

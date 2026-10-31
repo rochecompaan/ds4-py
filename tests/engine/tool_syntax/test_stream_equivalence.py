@@ -1,7 +1,8 @@
+from typing import Any
 import random
 
 
-def test_every_single_split_and_bytewise(parser_case, parse_chunks):
+def test_every_single_split_and_bytewise(parser_case: Any, parse_chunks: Any) -> None:
     data = parser_case["input"].encode()
     expected = parse_chunks(parser_case, [data])
     assert parse_chunks(parser_case, [bytes([byte]) for byte in data]) == expected
@@ -10,7 +11,7 @@ def test_every_single_split_and_bytewise(parser_case, parse_chunks):
         assert observed == expected, f"split {split} of {len(data)}"
 
 
-def test_100_seeded_random_partitions(parser_case, parse_chunks):
+def test_100_seeded_random_partitions(parser_case: Any, parse_chunks: Any) -> None:
     data = parser_case["input"].encode()
     expected = parse_chunks(parser_case, [data])
     rng = random.Random(f"0:{parser_case['id']}")

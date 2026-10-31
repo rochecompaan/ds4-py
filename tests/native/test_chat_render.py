@@ -1,3 +1,4 @@
+from typing import Any, cast
 import ctypes as C
 from dataclasses import replace
 from pathlib import Path
@@ -16,7 +17,7 @@ from ds4py.errors import EngineError
 class ChatLib:
     """Small callable boundary double; no model or native inference is needed."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.calls = []
         self.keepalive = []
         self.token_frees = 0
@@ -31,14 +32,14 @@ class ChatLib:
             "ds4_qwen4_reasoning_effort_text": self.qwen_effort,
         }
 
-    def fn(self, name):
+    def fn(self, name: Any) -> Any:
         return self._functions[name]
 
     @staticmethod
-    def tokens(pointer):
+    def tokens(pointer: Any) -> Any:
         return C.cast(pointer, C.POINTER(Tokens)).contents
 
-    def push(self, pointer, token):
+    def push(self, pointer: Any, token: Any) -> None:
         tokens = self.tokens(pointer)
         values = list(tokens.v[:tokens.len]) + [token]
         array = (C.c_int * len(values))(*values)
@@ -46,45 +47,45 @@ class ChatLib:
         tokens.v = C.cast(array, C.POINTER(C.c_int))
         tokens.len = tokens.cap = len(values)
 
-    def append(self, pointer, values):
+    def append(self, pointer: Any, values: Any) -> None:
         for value in values:
             self.push(pointer, value)
 
-    def free_tokens(self, pointer):
+    def free_tokens(self, pointer: Any) -> None:
         self.token_frees += 1
         tokens = self.tokens(pointer)
         tokens.v = C.POINTER(C.c_int)()
         tokens.len = tokens.cap = 0
 
-    def chat_begin(self, raw, tokens):
+    def chat_begin(self, raw: Any, tokens: Any) -> None:
         self.calls.append(("begin", raw))
         self.append(tokens, [90])
 
-    def think_prefix(self, raw, tokens, mode):
+    def think_prefix(self, raw: Any, tokens: Any, mode: Any) -> None:
         self.calls.append(("think", raw, mode))
         self.append(tokens, [91, 92])
 
-    def render_message(self, raw, tokens, role, content):
+    def render_message(self, raw: Any, tokens: Any, role: Any, content: Any) -> None:
         self.calls.append(("message", raw, role, content))
         self.append(tokens, [93])
 
-    def assistant_prefix(self, raw, tokens, mode):
+    def assistant_prefix(self, raw: Any, tokens: Any, mode: Any) -> None:
         self.calls.append(("assistant", raw, mode))
         self.append(tokens, [94])
 
-    def qwen_effort(self, mode):
+    def qwen_effort(self, mode: Any) -> Any:
         self.calls.append(("effort", mode))
         return self.effort
 
 
-def native_handle():
+def native_handle() -> Any:
     lib = ChatLib()
     engine = NativeEngine.__new__(NativeEngine)
-    _Handle.__init__(engine, lib, 0x1234)
+    _Handle.__init__(engine, cast(Any, lib), 0x1234)
     return engine, lib
 
 
-def fake_engine(family="deepseek4"):
+def fake_engine(family: Any="deepseek4") -> Any:
     native = FakeNative()
     info = replace(
         native._info,
@@ -96,7 +97,7 @@ def fake_engine(family="deepseek4"):
     return FakeNative(info=info).open_engine(EngineConfig(Path("fake.gguf")))
 
 
-def test_native_chat_deltas_preserve_prefix_and_free_token_storage():
+def test_native_chat_deltas_preserve_prefix_and_free_token_storage() -> None:
     engine, lib = native_handle()
     prefix = [4, 5]
 
@@ -114,7 +115,7 @@ def test_native_chat_deltas_preserve_prefix_and_free_token_storage():
     ]
 
 
-def test_native_chat_rejects_a_closed_handle():
+def test_native_chat_rejects_a_closed_handle() -> None:
     engine, _ = native_handle()
     engine.raw = 0
     for call in (
@@ -128,7 +129,7 @@ def test_native_chat_rejects_a_closed_handle():
             call()
 
 
-def test_native_qwen_effort_is_borrowed_and_may_be_null():
+def test_native_qwen_effort_is_borrowed_and_may_be_null() -> None:
     engine, lib = native_handle()
     assert engine.qwen_reasoning_effort(ThinkMode.MEDIUM) is None
     lib.effort = b"xhigh effort"
@@ -137,10 +138,10 @@ def test_native_qwen_effort_is_borrowed_and_may_be_null():
     assert lib.token_frees == 0
 
 
-def test_native_chat_detects_a_rewritten_prefix():
+def test_native_chat_detects_a_rewritten_prefix() -> None:
     engine, lib = native_handle()
 
-    def corrupt(raw, pointer, mode):
+    def corrupt(raw: Any, pointer: Any, mode: Any) -> None:
         tokens = lib.tokens(pointer)
         tokens.v[0] = 999
 
@@ -149,7 +150,7 @@ def test_native_chat_detects_a_rewritten_prefix():
         engine.think_prefix([1], ThinkMode.HIGH)
 
 
-def test_fake_rendered_specials_never_leak_into_plain_tokenization():
+def test_fake_rendered_specials_never_leak_into_plain_tokenization() -> None:
     engine = fake_engine()
     special = engine.tokenize("<tool_call>", rendered=True)
     assert len(special) == 1
@@ -162,7 +163,7 @@ def test_fake_rendered_specials_never_leak_into_plain_tokenization():
     assert b"".join(engine.token_text(token) for token in plain) == text.encode()
 
 
-def test_fake_chat_rendering_appends_only_the_native_delta():
+def test_fake_chat_rendering_appends_only_the_native_delta() -> None:
     engine = fake_engine()
     prefix = engine.tokenize("prefix")
     assert engine.chat_begin() == engine.tokenize("<｜begin▁of▁sentence｜>", rendered=True)
@@ -176,7 +177,7 @@ def test_fake_chat_rendering_appends_only_the_native_delta():
     assert prefix == engine.tokenize("prefix")
 
 
-def test_fake_qwen_native_tool_markup_is_plain_like_pinned_upstream():
+def test_fake_qwen_native_tool_markup_is_plain_like_pinned_upstream() -> None:
     engine = fake_engine("qwen")
     delta = engine.render_message([], "tool", "result")
     tool_open = engine.tokenize("<tool_response>", rendered=True)
@@ -188,7 +189,7 @@ def test_fake_qwen_native_tool_markup_is_plain_like_pinned_upstream():
     )
 
 
-def test_public_engine_chat_counterparts_run_on_the_worker():
+def test_public_engine_chat_counterparts_run_on_the_worker() -> None:
     engine = open_engine(Path("fake.gguf"), native=FakeNative())
     try:
         assert engine._chat_begin() == engine.tokenize("<｜begin▁of▁sentence｜>", rendered=True)

@@ -1,3 +1,5 @@
+from typing import Any, cast
+from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 
@@ -25,12 +27,12 @@ QWEN = ("<tool_call><function=read><parameter=path>/tmp/x</parameter>"
         "</function></tool_call>")
 
 
-def scripted(tokens):
+def scripted(tokens: Any) -> Any:
     tokens = tuple(tokens)
     return lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
 
-def native_for(family, text):
+def native_for(family: Any, text: Any) -> FakeNative:
     info = replace(
         FakeNative()._info,
         family=family,
@@ -42,15 +44,15 @@ def native_for(family, text):
 
 
 @pytest.fixture
-def workers():
+def workers() -> Iterator[Any]:
     created = []
     yield created
     for worker in created:
         worker.close()
 
 
-def run_native(workers, native, *, chat=True, max_tokens=1000, ctx=1024,
-               think=ThinkMode.NONE, policy=None):
+def run_native(workers: Any, native: Any, *, chat: Any=True, max_tokens: Any=1000, ctx: Any=1024,
+               think: Any=ThinkMode.NONE, policy: Any=None) -> Any:
     worker = EngineWorker(native, EngineConfig(Path("f"), ctx=ctx))
     workers.append(worker)
     transcript = Transcript()
@@ -66,7 +68,7 @@ def run_native(workers, native, *, chat=True, max_tokens=1000, ctx=1024,
     return events, transcript, stream, worker
 
 
-def event_calls(events):
+def event_calls(events: Any) -> Any:
     return [event for event in events if isinstance(event, ToolCalls)]
 
 
@@ -75,7 +77,7 @@ def event_calls(events):
     ("glm", GLM_TWO, "first", "1"),
     ("qwen", QWEN, "read", "/tmp/x"),
 ])
-def test_chat_tool_calls_stop_and_emit_before_stopped(workers, family, text, name, path):
+def test_chat_tool_calls_stop_and_emit_before_stopped(workers: Any, family: Any, text: Any, name: Any, path: Any) -> None:
     events, transcript, stream, _ = run_native(workers, native_for(family, text))
     calls = event_calls(events)
     assert len(calls) == 1 and events[-1] == Stopped("tool_call_complete")
@@ -87,14 +89,14 @@ def test_chat_tool_calls_stop_and_emit_before_stopped(workers, family, text, nam
     assert stream.finalized and not stream.parser.wants_greedy_sampling()
 
 
-def test_parser_terminal_overrides_simultaneous_caller_limit(workers):
+def test_parser_terminal_overrides_simultaneous_caller_limit(workers: Any) -> None:
     ids = tokenize_rendered(DSML)
     events, _, _, _ = run_native(workers, native_for("deepseek4", DSML), max_tokens=len(ids))
     assert events[-1] == Stopped("tool_call_complete")
     assert len(event_calls(events)) == 1
 
 
-def test_context_reserve_does_not_finalize_stream(workers):
+def test_context_reserve_does_not_finalize_stream(workers: Any) -> None:
     events, _, stream, _ = run_native(
         workers, native_for("qwen", QWEN), ctx=10, max_tokens=100,
     )
@@ -103,7 +105,7 @@ def test_context_reserve_does_not_finalize_stream(workers):
     assert event_calls(events) == []
 
 
-def test_structural_tokens_switch_actual_sampling_and_values_restore_it(workers):
+def test_structural_tokens_switch_actual_sampling_and_values_restore_it(workers: Any) -> None:
     policy = SamplingPolicy(temperature=0.6, top_k=4, top_p=0.9, min_p=0.03)
     events, _, _, worker = run_native(
         workers, native_for("deepseek4", DSML), policy=policy,
@@ -118,7 +120,7 @@ def test_structural_tokens_switch_actual_sampling_and_values_restore_it(workers)
 
 
 @pytest.mark.parametrize("family,text", [("deepseek4", DSML), ("glm", GLM_TWO), ("qwen", QWEN)])
-def test_markup_in_thinking_is_parser_error_without_calls(workers, family, text):
+def test_markup_in_thinking_is_parser_error_without_calls(workers: Any, family: Any, text: Any) -> None:
     events, _, _, _ = run_native(
         workers, native_for(family, text), think=ThinkMode.HIGH,
     )
@@ -126,7 +128,7 @@ def test_markup_in_thinking_is_parser_error_without_calls(workers, family, text)
     assert event_calls(events) == []
 
 
-def test_tool_markup_after_think_close_is_allowed(workers):
+def test_tool_markup_after_think_close_is_allowed(workers: Any) -> None:
     for family, text in (("deepseek4", DSML), ("glm", GLM_TWO), ("qwen", QWEN)):
         events, _, _, _ = run_native(
             workers, native_for(family, "</think>" + text), think=ThinkMode.HIGH,
@@ -135,14 +137,14 @@ def test_tool_markup_after_think_close_is_allowed(workers):
         assert len(event_calls(events)) == 1
 
 
-def test_eos_finalizes_an_incomplete_call_as_parser_error(workers):
+def test_eos_finalizes_an_incomplete_call_as_parser_error(workers: Any) -> None:
     text = "<tool_call><function=read><parameter=path>unfinished"
     events, _, stream, _ = run_native(workers, native_for("qwen", text))
     assert events[-1] == Stopped("parser_error")
     assert stream.snapshot.state == "ERROR" and event_calls(events) == []
 
 
-def test_raw_round_has_no_parser_or_display_events(workers):
+def test_raw_round_has_no_parser_or_display_events(workers: Any) -> None:
     events, _, stream, _ = run_native(workers, native_for("glm", GLM_TWO), chat=False)
     assert stream is None and events[-1] == Stopped("stop_token")
     assert all(isinstance(event, (Token, Stopped)) for event in events)
@@ -150,41 +152,41 @@ def test_raw_round_has_no_parser_or_display_events(workers):
 
 
 class StopEngine:
-    def __init__(self, texts=None):
+    def __init__(self, texts: Any=None) -> None:
         self.info = FakeNative()._info
         self.texts = texts or {}
         self.raw_stops = []
         self.chat_stops = []
 
-    def is_stop(self, token):
+    def is_stop(self, token: Any) -> Any:
         self.raw_stops.append(token)
         return token == 0
 
-    def is_stop_for_think_mode(self, token, mode):
+    def is_stop_for_think_mode(self, token: Any, mode: Any) -> Any:
         self.chat_stops.append((token, mode))
         return token == 0
 
-    def token_text(self, token):
+    def token_text(self, token: Any) -> bytes:
         return self.texts.get(token, b"x")
 
 
 class StopSession:
-    def __init__(self, tokens):
+    def __init__(self, tokens: Any) -> None:
         self.tokens = list(tokens)
         self.seen = []
 
-    def ctx(self): return 100
-    def pos(self): return 10
-    def sample(self, *args): return self.tokens.pop(0)
-    def eval(self, token): self.seen.append(("eval", token))
+    def ctx(self) -> int: return 100
+    def pos(self) -> int: return 10
+    def sample(self, *args: Any) -> int: return self.tokens.pop(0)
+    def eval(self, token: Any) -> None: self.seen.append(("eval", token))
 
 
-def test_raw_and_chat_use_their_respective_stop_bindings():
+def test_raw_and_chat_use_their_respective_stop_bindings() -> None:
     for chat in (False, True):
         engine, session, transcript = StopEngine(), StopSession([0]), Transcript()
         stream = RoundStream(engine.info, ThinkMode.HIGH) if chat else None
         reason = generate(
-            engine, session,
+            cast(Any, engine), cast(Any, session),
             GenerateJob(SamplingPolicy(), Rng(1), 5, transcript,
                         think_mode=ThinkMode.HIGH if chat else None, stream=stream,
                         control=stream.control if stream is not None else ControlSpan()),
@@ -197,7 +199,7 @@ def test_raw_and_chat_use_their_respective_stop_bindings():
             assert engine.chat_stops == [(0, ThinkMode.HIGH)]
 
 
-def test_stream_observe_snapshots_once_per_token():
+def test_stream_observe_snapshots_once_per_token() -> None:
     stream = RoundStream(FakeNative()._info, ThinkMode.NONE)
     prefix = (
         '<｜DSML｜tool_calls><｜DSML｜invoke name="read">'
@@ -210,7 +212,7 @@ def test_stream_observe_snapshots_once_per_token():
     snapshots = []
     original_snapshot = stream.parser._snapshot
 
-    def counted_snapshot():
+    def counted_snapshot() -> Any:
         snapshot = original_snapshot()
         snapshots.append(snapshot)
         return snapshot
@@ -227,12 +229,12 @@ def test_stream_observe_snapshots_once_per_token():
     assert events == [TextDelta("a<b", False)]
 
 
-def test_commit_order_is_eval_transcript_token_then_stream_events():
+def test_commit_order_is_eval_transcript_token_then_stream_events() -> None:
     engine = StopEngine({7: b"<think>", 8: b"x"})
     session, transcript, observed = StopSession([7, 8, 0]), Transcript(), []
     stream = RoundStream(engine.info, ThinkMode.NONE)
     reason = generate(
-        engine, session,
+        cast(Any, engine), cast(Any, session),
         GenerateJob(SamplingPolicy(), Rng(1), 5, transcript,
                     think_mode=ThinkMode.NONE, stream=stream, control=stream.control),
         cancelled=lambda: False,
@@ -247,13 +249,13 @@ def test_commit_order_is_eval_transcript_token_then_stream_events():
     assert session.seen == [("eval", 7), ("eval", 8)]
 
 
-def test_interruption_does_not_finalize_stream_or_publish_calls():
+def test_interruption_does_not_finalize_stream_or_publish_calls() -> None:
     engine, session, transcript = StopEngine(), StopSession([7, 8, 0]), Transcript()
     stream = RoundStream(engine.info, ThinkMode.NONE)
     answers = iter([False, False, True, True])
     events = []
     reason = generate(
-        engine, session,
+        cast(Any, engine), cast(Any, session),
         GenerateJob(SamplingPolicy(), Rng(1), 5, transcript,
                     think_mode=ThinkMode.NONE, stream=stream, control=stream.control),
         cancelled=lambda: next(answers, True), emit=events.append,

@@ -13,6 +13,16 @@ defaults:
     shell: bash          # adds -o pipefail
 
 jobs:
+  typing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          python-version: "3.14"
+      - run: uv run --extra agent pyright
+      - run: uv run --extra agent ruff check src bench tests
+
   unit:
     strategy:
       fail-fast: false
@@ -27,7 +37,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.2
         with:
           python-version: ${{ matrix.python }}
-      - run: uv run pytest -m "not build and not live" -v
+      - run: uv run --extra agent pytest -m "not build and not live" -v
       - name: The wheel carries Makefile.lib
         run: |
           uv build --wheel
@@ -65,7 +75,7 @@ jobs:
           path: ds4-src
           persist-credentials: false
       - name: Build tests
-        run: env "${{ matrix.src_var }}=$GITHUB_WORKSPACE/ds4-src" uv run pytest -m build -v
+        run: env "${{ matrix.src_var }}=$GITHUB_WORKSPACE/ds4-src" uv run --extra agent pytest -m build -v
       - name: ds4py build and ds4py check
         run: |
           if [ "$PIN" = fork ]; then export PYTHONPATH="$GITHUB_WORKSPACE/tests/fixtures/ext_site"; fi

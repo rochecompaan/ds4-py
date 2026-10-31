@@ -18,7 +18,7 @@ class Segment:
 class TranscriptView:
     """Live, read-only observations of session-owned history."""
 
-    def __init__(self, transcript: "Transcript"):
+    def __init__(self, transcript: "Transcript") -> None:
         self._transcript = transcript
 
     @property
@@ -38,7 +38,7 @@ class TranscriptView:
 
 
 class Transcript:
-    def __init__(self):
+    def __init__(self) -> None:
         self._lock = Lock()
         self._tokens: list[int] = []
         self._segments: list[Segment] = []
@@ -92,6 +92,48 @@ class Transcript:
             self._tokens.extend(added)
             self._segments[-1] = replace(self._segments[-1], end=len(self._tokens))
 
+    def annotate(self, start: int, *, kinds: tuple[str, ...], meta: Mapping) -> None:
+        """Merge provenance into existing ranges without changing token history."""
+        with self._lock:
+            self._segments = [
+                replace(
+                    segment,
+                    meta=MappingProxyType({**segment.meta, **meta}),
+                ) if segment.start >= start and segment.kind in kinds else segment
+                for segment in self._segments
+            ]
+
+    def install(self, segments: Sequence[Segment]) -> None:
+        """Replace provenance over tokens a native payload already established.
+
+        The loaded KV is authoritative for the tokens; the saved ranges must
+        describe them without gaps or overlap, and the transcript is a chat
+        transcript from then on.
+        """
+        with self._lock:
+            installed = list(segments)
+            expected = 0
+            for segment in installed:
+                if segment.start != expected or segment.end <= segment.start:
+                    raise ValueError(
+                        "installed segments must cover the tokens without gaps"
+                    )
+                expected = segment.end
+            if expected != len(self._tokens):
+                raise ValueError(
+                    f"installed segments cover {expected} tokens, "
+                    f"not the {len(self._tokens)} tokens present"
+                )
+            self._segments = installed
+            self._chat = True
+
+    def reset(self) -> None:
+        """Drop all tokens, segments, and chat initialization."""
+        with self._lock:
+            self._tokens.clear()
+            self._segments.clear()
+            self._chat = False
+
     def truncate(self, n: int) -> None:
         with self._lock:
             if not 0 <= n <= len(self._tokens):
@@ -101,3 +143,5 @@ class Transcript:
                 self._segments.pop()
             if self._segments and self._segments[-1].end > n:
                 self._segments[-1] = replace(self._segments[-1], end=n)
+            if n == 0:
+                self._chat = False

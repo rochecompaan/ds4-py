@@ -5,6 +5,7 @@ import re
 from .delimiter import DelimiterParser
 from .model import ToolArgument
 from .text import unescape_tool_text
+from typing import Never
 
 _ASCII_SPACE = b" \t\r\n"
 _CLOSE = b"</tool_call>"
@@ -15,11 +16,11 @@ _PARAMETER_CLOSE = b"</parameter>"
 _NUMBER = re.compile(rb"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 
 
-def _parse_number(value):
+def _parse_number(value: str) -> float | int:
     return float(value) if any(marker in value for marker in ".eE") else int(value)
 
 
-def value_is_json(value):
+def value_is_json(value: bytes) -> bool:
     """Classify a Qwen value using the pinned C numeric and container rules."""
     start = 0
     end = len(value)
@@ -45,7 +46,7 @@ class Qwen(DelimiterParser):
     _parameter_close = _PARAMETER_CLOSE
     _family = "Qwen"
 
-    def _parse_call(self):
+    def _parse_call(self) -> bool:
         if not self.raw.startswith(_FUNCTION, self.parse_pos):
             if self._partial(_FUNCTION, self.parse_pos):
                 return False
@@ -66,7 +67,7 @@ class Qwen(DelimiterParser):
         self.parse_pos = end + 1
         return True
 
-    def _parse_call_close(self):
+    def _parse_call_close(self) -> bool:
         after = self._skip_space(self.raw, self.parse_pos + len(_FUNCTION_CLOSE))
         if after >= len(self.raw) or self._partial(_CLOSE, after):
             return False
@@ -78,7 +79,7 @@ class Qwen(DelimiterParser):
         self._after_call = True
         return True
 
-    def _parse_parameter(self):
+    def _parse_parameter(self) -> None:
         if not self.raw.startswith(_PARAMETER, self.parse_pos):
             if self._partial(_PARAMETER, self.parse_pos):
                 return
@@ -101,7 +102,7 @@ class Qwen(DelimiterParser):
         self._param_scan_pos = self.parse_pos
         self.state = "PARAM_VALUE"
 
-    def _parse_parameter_value(self):
+    def _parse_parameter_value(self) -> bool:
         end = self.raw.find(_PARAMETER_CLOSE, self._param_scan_pos)
         if end < 0:
             self._param_scan_pos = max(
@@ -131,12 +132,14 @@ class Qwen(DelimiterParser):
                 return True
         else:
             value = unescape_tool_text(text, _PARAMETER_CLOSE.decode())
-        self._args[self._param_name] = ToolArgument(self._param_name, value, not is_json)
+        param_name = self._param_name
+        assert param_name is not None
+        self._args[param_name] = ToolArgument(param_name, value, not is_json)
         self._param_name = None
         self.parse_pos = close_start + len(_PARAMETER_CLOSE)
         self.state = "STRUCTURAL"
         return True
 
     @staticmethod
-    def _reject_json_constant(value):
+    def _reject_json_constant(value: str) -> Never:
         raise ValueError(f"invalid JSON constant: {value}")

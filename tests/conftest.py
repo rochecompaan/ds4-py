@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Iterator, Sequence
 import importlib
 import os
 from pathlib import Path
@@ -6,9 +8,13 @@ from importlib.metadata import MetadataPathFinder
 
 import pytest
 
+if TYPE_CHECKING:
+    from ds4py._native.bindings import Binding
+    from ds4py.abi.manifest import Manifest
+
 
 @pytest.fixture(scope="session")
-def built_upstream(tmp_path_factory):
+def built_upstream(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, "Manifest"]:
     from ds4py.abi.build import build_library
     from ds4py.abi.manifest import Manifest, manifest_path
 
@@ -20,7 +26,7 @@ def built_upstream(tmp_path_factory):
 
 
 @pytest.fixture(scope="session")
-def built_fork(tmp_path_factory):
+def built_fork(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, "Manifest"]:
     from ds4py.abi.build import build_library
     from ds4py.abi.manifest import Manifest, manifest_path
 
@@ -39,7 +45,7 @@ def built_fork(tmp_path_factory):
 
 
 @pytest.fixture
-def cc():
+def cc() -> str:
     compiler = os.environ.get("CC") or shutil.which("cc")
     if not compiler:
         pytest.skip("C compiler not available")
@@ -47,7 +53,7 @@ def cc():
 
 
 @pytest.fixture
-def ext_site(monkeypatch):
+def ext_site(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     site = Path(__file__).parent / "fixtures" / "ext_site"
     monkeypatch.syspath_prepend(str(site.resolve()))
     importlib.invalidate_caches()
@@ -57,29 +63,33 @@ def ext_site(monkeypatch):
 
 
 @pytest.fixture
-def upstream_headers():
+def upstream_headers() -> Path:
     return Path(__file__).parent / "fixtures" / "ds4-headers" / "upstream"
 
 
 @pytest.fixture
-def fork_headers():
+def fork_headers() -> Path:
     return Path(__file__).parent / "fixtures" / "ds4-headers" / "fork"
 
 
 @pytest.fixture(scope="session")
-def probed():
+def probed() -> dict[Any, Any]:
     return {}
 
 
 @pytest.fixture
-def make_manifest(cc, probed, tmp_path_factory):
+def make_manifest(
+    cc: str, probed: dict[Any, Any], tmp_path_factory: pytest.TempPathFactory,
+) -> Callable[..., tuple[Path, "Manifest"]]:
     from ds4py.abi import probe
     from ds4py.abi.manifest import BindingRecord, Manifest, file_sha256
     from ds4py._native.bindings import CORE_BINDINGS
     from ds4py._native.loader import LIB_NAME
     from ds4py._native.typemap import TYPE_MAP_VERSION
 
-    def make(where, headers_dir, bindings=CORE_BINDINGS):
+    def make(
+        where: Path, headers_dir: Path, bindings: Sequence["Binding"]=CORE_BINDINGS,
+    ) -> tuple[Path, "Manifest"]:
         lib = where / LIB_NAME
         lib.write_bytes(b"dummy library")
         key = (headers_dir.resolve(), tuple(b.name for b in bindings))
@@ -106,7 +116,7 @@ def make_manifest(cc, probed, tmp_path_factory):
 
 
 @pytest.fixture
-def fresh_loader():
+def fresh_loader() -> Iterator[None]:
     from ds4py._native import loader
     loader._loaded = None
     yield
@@ -114,7 +124,7 @@ def fresh_loader():
 
 
 @pytest.fixture(scope="session")
-def live_lib():
+def live_lib() -> Path:
     from ds4py._native.loader import resolve_lib_path
 
     if not os.environ.get("DS4_TEST_MODEL"):

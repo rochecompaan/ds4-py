@@ -1,8 +1,13 @@
 """Public token-oriented engine facade and lazy, exclusively owned rounds."""
+import operator
 import threading
+from asyncio import AbstractEventLoop
+from collections.abc import Generator, Iterable
 from concurrent.futures import Future
+from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Callable, Iterator, Mapping, Sequence, TypeVar
+from typing import Any, BinaryIO, Callable, Iterator, Mapping, Sequence, TypeVar, cast
+from uuid import uuid4
 
 from ds4py._native.api import LibNative
 from ds4py._native.loader import load_library
@@ -10,12 +15,23 @@ from ds4py._native.protocol import EngineConfig, Native, ThinkMode
 from ds4py.errors import EngineError
 from . import chat as chat_ops
 from .decode import GenerateJob
-from .events import Checkpointed, Event, Interrupted, ReserveReached, Stopped, Synced
-from .pause import resolve_control
+from .events import (
+    Checkpointed, Event, Interrupted, Loaded, ReserveReached, Saved, Stopped, Synced,
+)
+from .lifecycle import SessionEvent, SessionLifecycle
+from .logits import LogitsView
+from .pause import ControlSpan, resolve_control
 from .plan import Plan
+from .prefix import PrefixTurn
+from .prompt import PromptBuilder
 from .sampling import Rng, SamplingPolicy
+from .stream import RoundStream
+from .tool_prompt import ToolDefinition
 from .transcript import Segment, Transcript, TranscriptView
-from .worker import CheckpointJob, EngineWorker, Handles, SyncJob
+from .worker import (
+    CheckpointJob, EngineWorker, Handles, Job, LoadPayloadJob, ResetJob, SavePayloadJob,
+    SyncJob,
+)
 
 T = TypeVar("T")
 
@@ -57,7 +73,7 @@ def open(model: str | Path = "ds4flash.gguf", *, ctx: int = 100_000,
 
 class Engine:
     def __init__(self, native: Native, worker: EngineWorker, config: EngineConfig,
-                 think: int, sampling_defaults: SamplingPolicy):
+                 think: int, sampling_defaults: SamplingPolicy) -> None:
         self.native, self._worker = native, worker
         self.info, self.config, self.think = worker.info, config, think
         self.sampling_defaults = sampling_defaults
@@ -96,12 +112,18 @@ class Engine:
             return self._session
 
     def close(self) -> None:
-        self._worker.close()
+        with self._session_lock:
+            session = self._session
+        try:
+            if session is not None:
+                session.close()
+        finally:
+            self._worker.close()
 
     def __enter__(self) -> "Engine":
         return self
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(self, *exc: Any) -> None:
         self.close()
 
 
@@ -111,17 +133,30 @@ class Session:
     Chat helpers dispatch rendering/tokenization to the engine worker. Do not
     call these blocking methods from a logits hook or an on_worker callback.
     """
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine) -> None:
         self._engine, self._worker = engine, engine._worker
         self._transcript = Transcript()
         self._transcript_view = TranscriptView(self._transcript)
         self._rng = Rng(engine.sampling_defaults.seed)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._active_round = False
-        self._logits_hooks = []
-        self._paused_stream = None
-        self._paused_control = None
-        self._paused_sampled_tokens = None
+        self._logits_hooks: list[Callable[[LogitsView], None]] = []
+        self._paused_stream: RoundStream | None = None
+        self._paused_control: ControlSpan | None = None
+        self._paused_sampled_tokens: list[int] | None = None
+        self._checkpoint_tokens: dict[str, int] = {}
+        self._lifecycle = SessionLifecycle()
+        self._closed = False
+
+    @property
+    def id(self) -> str:
+        """The live session identity; a fork or switch replaces it."""
+        return self._lifecycle.id
+
+    @property
+    def engine(self) -> Engine:
+        """The facade-owned engine; ownership remains with the caller."""
+        return self._engine
 
     @property
     def transcript(self) -> TranscriptView:
@@ -132,6 +167,125 @@ class Session:
     def ctx_used(self) -> int:
         return self._worker.call(lambda e, s: s.pos()).result()
 
+    def on_event(
+        self, listener: Callable[[SessionEvent], None], *,
+        kinds: Iterable[str] | None = None,
+    ) -> Callable[[], None]:
+        """Subscribe on the consuming thread; the returned call unsubscribes.
+
+        Listeners must not call blocking session methods. ``kinds`` filters by
+        event kind, including engine class names such as ``"Prefill"``.
+        """
+        return self._lifecycle.on_event(listener, kinds=kinds)
+
+    def emit(self, kind: str, **payload: Any) -> None:
+        """Publish an extension/status event on this session's bus."""
+        self._lifecycle.emit(kind, **payload)
+
+    def events_on_loop(self, loop: AbstractEventLoop) -> AbstractContextManager[None]:
+        """Scope all session-bus delivery to one asyncio loop's owning thread."""
+        return self._lifecycle.deliver_on(loop)
+
+    def state(self, key: str, factory: Callable[[], T]) -> T:
+        """Return the session-owned state for ``key``, creating it once."""
+        self._require_open()
+        return self._lifecycle.state(key, factory)
+
+    def new(self) -> str:
+        """End the old session, drop scoped state, and reset history/KV."""
+        with self._lock:
+            self._require_idle()
+            old = self.id
+            self._lifecycle.emit("session_end", old=old)
+            self._lifecycle.close_states()
+            self._reset()
+            new = self._lifecycle.set_id()
+            self._lifecycle.emit("session_start", old=old, new=new)
+            return new
+
+    def switch(
+        self, new_id: str,
+        restore: Callable[[], Mapping[str, Any] | None] | None = None,
+        **payload: Any,
+    ) -> str:
+        """Change identity across a restore boundary, closing old scoped state.
+
+        ``restore`` runs between ``session_end`` and ``session_start`` so a
+        runtime can load history/KV without a second identity or state set.
+        Its returned mapping can refine the final ``switched`` payload.
+        """
+        with self._lock:
+            self._require_idle()
+            old = self.id
+            self._lifecycle.emit("switching", old=old, new=new_id)
+            self._lifecycle.emit("session_end", old=old)
+            self._lifecycle.close_states()
+            try:
+                restored = restore() if restore is not None else None
+            except BaseException as error:
+                # Restore can reject a snapshot after old scoped state is closed.
+                # Balance the lifecycle and adopt the target identity, then
+                # preserve the original failure for the caller.
+                self._lifecycle.set_id(new_id)
+                self._lifecycle.emit(
+                    "session_start", old=old, new=new_id,
+                    status="error", error=str(error),
+                )
+                raise
+            self._lifecycle.set_id(new_id)
+            self._lifecycle.emit("session_start", old=old, new=new_id)
+            self._lifecycle.emit(
+                "switched",
+                **{"old": old, "new": new_id, **payload, **(restored or {})},
+            )
+            return new_id
+
+    def fork(self) -> str:
+        """Change only identity; transcript, KV, checkpoints, and state survive."""
+        with self._lock:
+            self._require_idle()
+            old = self.id
+            new = uuid4().hex
+            self._lifecycle.emit("forked", old=old, new=new)
+            self._lifecycle.set_id(new)
+            return new
+
+    def set_think(self, mode: int) -> None:
+        """Set the think mode between rounds; bound prefixes rebuild next request."""
+        with self._lock:
+            self._require_idle()
+            normalized = self._worker.call(
+                lambda e, s: self._engine.native.think_mode_for_context(
+                    mode, self._engine.config.ctx,
+                )
+            ).result()
+            self._engine.think = normalized
+
+    def close(self) -> None:
+        """End the live session and close all state; safe to call repeatedly."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._lifecycle.emit("session_end", old=self.id)
+            self._lifecycle.close_states()
+
+    def _require_open(self) -> None:
+        if self._closed:
+            raise EngineError("session is closed")
+
+    def _require_idle(self) -> None:
+        self._require_open()
+        if self._active_round:
+            raise EngineError("a round is open")
+
+    def _reset(self) -> None:
+        for _ in self._job_events(ResetJob()):
+            pass
+        self._checkpoint_tokens.clear()
+        self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
+        self._transcript.reset()
+
     def append_tokens(self, tokens: Sequence[int], kind: str,
                       meta: Mapping | None = None) -> Segment:
         with self._lock:
@@ -139,7 +293,9 @@ class Session:
                 raise EngineError("a round is open")
             return self._transcript.append(tokens, kind, meta)
 
-    def start_chat(self, tools=(), instructions=None) -> None:
+    def start_chat(
+        self, tools: Iterable[ToolDefinition] = (), instructions: str | None = None,
+    ) -> None:
         """Initialize chat once, between rounds, with tools and optional instructions.
 
         Rendering runs on the worker; caller-provided payloads stay plain text.
@@ -149,7 +305,51 @@ class Session:
                 raise EngineError("a round is open")
             chat_ops.start_chat(self, tools, instructions)
 
-    def append_user(self, text: str, images=()) -> Segment:
+    def append_message(
+        self, role: str, text: str, *, images: Sequence[object] = (),
+        meta: Mapping[str, object] | None = None,
+    ) -> Segment:
+        """Append one plain-payload chat message with optional provenance metadata."""
+        with self._lock:
+            if self._active_round:
+                raise EngineError("a round is open")
+            if images:
+                raise EngineError("image input requires M5 vision support")
+            chat_ops._start_if_empty(self)
+            chat_ops.retire_paused(self)
+            tokens = PromptBuilder(self._engine).message(self._transcript.tokens, role, text)
+            return self._transcript.append(tokens, role, meta)
+
+    def truncate(self, token_count: int) -> None:
+        """Truncate between rounds and invalidate checkpoints beyond the new end."""
+        with self._lock:
+            if self._active_round:
+                raise EngineError("a round is open")
+            token_count = operator.index(token_count)
+            if not 0 <= token_count <= len(self._transcript):
+                raise ValueError("truncate position is outside the transcript")
+            for key, length in tuple(self._checkpoint_tokens.items()):
+                if length > token_count:
+                    self.drop_checkpoint(key)
+            self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
+            self._transcript.truncate(token_count)
+
+    def reconcile_round(self, token_count: int) -> None:
+        """Rewind native state and transcript to one closed round's sampled end.
+
+        The response owner calls this after closing and draining its facade
+        iterator. Cancellation cannot still be observed by a native job here.
+        """
+        with self._lock:
+            if self._active_round:
+                raise EngineError("a round is open")
+            self.truncate(token_count)
+            self._worker.call(
+                lambda engine, native: native.rewind(token_count)
+            ).result()
+            self._worker.cancel_event.clear()
+
+    def append_user(self, text: str, images: Sequence[object] = ()) -> Segment:
         """Append a user turn between rounds, initializing an empty chat if needed.
 
         A stop-sequence-paused assistant is closed first; the next run_round
@@ -161,7 +361,7 @@ class Session:
                 raise EngineError("a round is open")
             return chat_ops.append_user(self, text, images)
 
-    def append_prefix(self, turns) -> None:
+    def append_prefix(self, turns: Iterable[PrefixTurn]) -> None:
         """Append PrefixTurn history between rounds, starting an empty chat if needed.
 
         Retires a paused assistant and closes each supplied assistant turn using
@@ -172,7 +372,7 @@ class Session:
                 raise EngineError("a round is open")
             chat_ops.append_prefix(self, turns)
 
-    def append_tool_results(self, results) -> Segment:
+    def append_tool_results(self, results: Iterable[str]) -> Segment:
         """Append results joined by two newlines as one tool message in initialized chat.
 
         Between rounds only; closes a paused assistant before appending. Worker
@@ -183,18 +383,18 @@ class Session:
                 raise EngineError("a round is open")
             return chat_ops.append_tool_results(self, results)
 
-    def append_system_note(self, text: str) -> Segment:
+    def append_system_note(self, text: str, *, subtype: str | None = None) -> Segment:
         """Append a newline-prefixed note between rounds in initialized chat.
 
         Closes a paused assistant first and dispatches plain-payload rendering
-        to the worker.
+        to the worker. ``subtype`` becomes save provenance metadata.
         """
         with self._lock:
             if self._active_round:
                 raise EngineError("a round is open")
-            return chat_ops.append_system_note(self, text)
+            return chat_ops.append_system_note(self, text, subtype)
 
-    def add_logits_hook(self, hook: Callable) -> None:
+    def add_logits_hook(self, hook: Callable[[LogitsView], None]) -> None:
         """Register a lazy pre-sample hook on the worker-thread decode path.
 
         Registration is allowed only between rounds. Each invocation receives
@@ -207,8 +407,13 @@ class Session:
                 raise EngineError("cannot add a logits hook during an active round")
             self._logits_hooks.append(hook)
 
-    def _reserve_decision(self, job) -> Iterator[Event]:
-        decision = {}
+    def _publish(self, event: Event) -> None:
+        self._lifecycle.emit(type(event).__name__, event=event)
+
+    def _reserve_decision(
+        self, job: GenerateJob,
+    ) -> Generator[Event, None, bool | tuple[str, int]]:
+        decision: dict[str, object] = {}
         pause = ReserveReached(
             job.reserve,
             on_resume=lambda reserve: decision.update(
@@ -216,27 +421,36 @@ class Session:
             ),
             on_fail=lambda: decision.update(action="fail"),
         )
+        self._publish(pause)
         yield pause
         if not decision:
             raise EngineError("reserve pause requires a decision before advancing")
         if decision["action"] == "fail":
-            yield Stopped("context_exhausted")
+            stopped = Stopped("context_exhausted")
+            self._publish(stopped)
+            yield stopped
             return False
-        return "resume", decision["reserve"]
+        return "resume", cast(int, decision["reserve"])
 
-    def _job_events(self, job, *, pause_on_reserve=False) -> Iterator[Event]:
+    def _job_events(
+        self, job: Job, *, pause_on_reserve: bool = False,
+    ) -> Generator[Event, None, bool | tuple[str, int] | None]:
         # submit may fail before there is an iterator to drain.
         events = self._worker.submit(job)
         exhausted = interrupted = terminal = False
         try:
             for event in events:
-                terminal = isinstance(event, (Synced, Interrupted, Stopped))
+                if isinstance(job, (SavePayloadJob, LoadPayloadJob)):
+                    terminal = isinstance(event, (Saved, Loaded, Interrupted, Stopped))
+                else:
+                    terminal = isinstance(event, (Synced, Interrupted, Stopped))
                 interrupted = isinstance(event, Interrupted) or (
                     isinstance(event, Stopped) and event.reason == "interrupted"
                 )
                 if (pause_on_reserve and isinstance(event, Stopped)
                         and event.reason == "context_reserve"):
-                    return (yield from self._reserve_decision(job))
+                    return (yield from self._reserve_decision(cast(GenerateJob, job)))
+                self._publish(event)
                 yield event
             exhausted = True
         finally:
@@ -258,7 +472,10 @@ class Session:
                         self._worker.cancel_event.clear()
         return interrupted
 
-    def _raw_round(self, max_tokens, sampling, stop_sequences=()):
+    def _raw_round(
+        self, max_tokens: int, sampling: SamplingPolicy | None,
+        stop_sequences: Sequence[bytes] = (),
+    ) -> Generator[Event, None, None]:
         resuming = self._paused_control is not None and self._paused_stream is None
         control = resolve_control(self._paused_control if resuming else None, stop_sequences)
         sampled_tokens = self._paused_sampled_tokens if resuming else []
@@ -283,7 +500,7 @@ class Session:
 
     def run_round(self, *, max_tokens: int = 50_000,
                   sampling: SamplingPolicy | None = None,
-                  stop_sequences: Sequence[bytes] = ()) -> Iterator[Event]:
+                  stop_sequences: Sequence[bytes] = ()) -> Generator[Event, None, None]:
         """Synchronize and generate on the worker; ownership begins at iteration.
 
         While open, other rounds and caller mutations are refused. A stop
@@ -312,13 +529,67 @@ class Session:
         return self._worker.plan(self._transcript.tokens if tokens is None else tokens)
 
     def checkpoint(self, key: str) -> Checkpointed:
-        return list(self._worker.submit(CheckpointJob(key)))[0]
+        event = list(self._job_events(CheckpointJob(key)))[0]
+        assert isinstance(event, Checkpointed)
+        self._checkpoint_tokens[key] = event.tokens
+        return event
 
     def drop_checkpoint(self, key: str) -> None:
-        list(self._worker.submit(CheckpointJob(key, drop=True)))
+        list(self._job_events(CheckpointJob(key, drop=True)))
+        self._checkpoint_tokens.pop(key, None)
+
+    def save_payload(self, file: BinaryIO, *, header: bytes) -> Saved:
+        """Sync the transcript and write the header plus staged native payload.
+
+        Call on the consuming thread between rounds. The caller owns ``file``;
+        only a duplicated descriptor reaches native code. A failed sync or write
+        leaves the Python file usable.
+        """
+        with self._lock:
+            self._require_idle()
+            saved = None
+            for event in self._job_events(
+                SavePayloadJob(self._transcript.tokens, header, file),
+            ):
+                if isinstance(event, Saved):
+                    saved = event
+            if saved is None:
+                raise EngineError("save did not complete")
+            return saved
+
+    def load_payload(self, file: BinaryIO, *, payload_bytes: int) -> list[int]:
+        """Load a payload after the caller's header and adopt its token list.
+
+        Call on the consuming thread between rounds. The loaded KV becomes the
+        live checkpoint; stale snapshots and paused streams from the previous
+        transcript are discarded. No tokenization or prefill occurs during load.
+        """
+        payload_bytes = operator.index(payload_bytes)
+        if payload_bytes < 0:
+            raise ValueError("payload byte count cannot be negative")
+        with self._lock:
+            self._require_idle()
+            loaded = None
+            for event in self._job_events(
+                LoadPayloadJob(file, payload_bytes, self._transcript),
+            ):
+                if isinstance(event, Loaded):
+                    loaded = event
+            if loaded is None:
+                raise EngineError("load did not complete")
+            self._checkpoint_tokens.clear()
+            self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
+            return list(self._transcript.tokens)
 
     def on_worker(self, fn: Callable[[Handles], T]) -> Future[T]:
+        """Run ``fn`` on the engine worker and return a future for its result.
+
+        The handles are borrowed and confined to the callback: do not retain
+        them or use them on another thread. Blocking session or engine calls
+        from the callback can deadlock the worker.
+        """
         return self._worker.call(lambda e, s: fn(Handles(e.raw, s.raw)))
 
     def cancel(self) -> None:
+        """Request worker cancellation from any thread without closing the round."""
         self._worker.cancel_event.set()

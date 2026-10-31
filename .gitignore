@@ -16,3 +16,6 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+
+# Agent bake-off outputs
+bench/results/

@@ -15,7 +15,7 @@ class Binding:
     required: bool = True
     source: str = "core"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         parsed = parse_prototype(self.prototype)
         if parsed.name != self.name:
             raise ValueError(f"binding {self.name} has prototype for {parsed.name}")
@@ -72,6 +72,10 @@ CORE_BINDINGS: tuple[Binding, ...] = (
     Binding("ds4_session_load_snapshot", "int ds4_session_load_snapshot(ds4_session *s, const ds4_session_snapshot *snap, char *err, size_t errlen)"),
     Binding("ds4_session_snapshot_free", "void ds4_session_snapshot_free(ds4_session_snapshot *snap)"),
     Binding("ds4_session_payload_bytes", "uint64_t ds4_session_payload_bytes(ds4_session *s)"),
+    Binding("ds4_session_stage_payload", "int ds4_session_stage_payload(ds4_session *s, ds4_session_payload_file *out, char *err, size_t errlen)"),
+    Binding("ds4_session_write_staged_payload", "int ds4_session_write_staged_payload(const ds4_session_payload_file *payload, FILE *fp, char *err, size_t errlen)"),
+    Binding("ds4_session_payload_file_free", "void ds4_session_payload_file_free(ds4_session_payload_file *payload)"),
+    Binding("ds4_session_load_payload", "int ds4_session_load_payload(ds4_session *s, FILE *fp, uint64_t payload_bytes, char *err, size_t errlen)"),
     Binding("ds4_session_copy_logits", "int ds4_session_copy_logits(ds4_session *s, float *out, int cap)"),
     Binding("ds4_session_set_logits", "int ds4_session_set_logits(ds4_session *s, const float *logits, int n)"),
     Binding("ds4_think_mode_for_context", "ds4_think_mode ds4_think_mode_for_context(ds4_think_mode mode, int ctx_size)"),

@@ -1,10 +1,11 @@
+from typing import Any
 from ds4py.engine.decoder import Decoder
 from ds4py.engine.events import TextDelta
 from ds4py.engine.tool_syntax.glm import Glm
 from ds4py.engine.transcript import Transcript
 
 
-def collapse(deltas):
+def collapse(deltas: Any) -> Any:
     result = []
     for delta in deltas:
         if result and result[-1][1] == delta.thinking:
@@ -14,14 +15,14 @@ def collapse(deltas):
     return result
 
 
-def test_ascii_passes_through_and_empty_feeds_emit_nothing():
+def test_ascii_passes_through_and_empty_feeds_emit_nothing() -> None:
     decoder = Decoder()
     assert decoder.feed(b"") == []
     assert decoder.feed(b"hello ASCII") == [TextDelta("hello ASCII", False)]
     assert decoder.feed(b"") == []
 
 
-def test_multibyte_utf8_is_identical_at_every_split_and_bytewise():
+def test_multibyte_utf8_is_identical_at_every_split_and_bytewise() -> None:
     text = "Aα雪🙂Z"
     data = text.encode()
     expected = "".join(delta.text for delta in Decoder().feed(data))
@@ -36,7 +37,7 @@ def test_multibyte_utf8_is_identical_at_every_split_and_bytewise():
     assert "".join(delta.text for delta in deltas) == text
 
 
-def test_think_markers_work_at_every_split_and_change_delta_labels():
+def test_think_markers_work_at_every_split_and_change_delta_labels() -> None:
     data = b"before<think>inside</think>after"
     expected = [("before", False), ("inside", True), ("after", False)]
     assert collapse(Decoder().feed(data)) == expected
@@ -46,7 +47,7 @@ def test_think_markers_work_at_every_split_and_change_delta_labels():
         assert collapse(deltas) == expected, split
 
 
-def test_pending_scanner_flushes_ordinary_and_marker_like_text():
+def test_pending_scanner_flushes_ordinary_and_marker_like_text() -> None:
     for text in ("<", "</", "<thinking>", "<thinkx>", "<<", "a < b"):
         decoder = Decoder()
         deltas = decoder.feed(text.encode()) + decoder.finish()
@@ -57,7 +58,7 @@ def test_pending_scanner_flushes_ordinary_and_marker_like_text():
     assert collapse(decoder.feed(b"<think>x")) == [("x", True)]
 
 
-def test_finish_flushes_safe_pending_text_and_incomplete_utf8():
+def test_finish_flushes_safe_pending_text_and_incomplete_utf8() -> None:
     decoder = Decoder()
     assert decoder.feed(b"<th") == []
     assert decoder.finish() == [TextDelta("<th", False)]
@@ -71,14 +72,14 @@ def test_finish_flushes_safe_pending_text_and_incomplete_utf8():
     assert Decoder().finish() == []
 
 
-def test_initial_thinking_labels_pre_marker_output():
+def test_initial_thinking_labels_pre_marker_output() -> None:
     decoder = Decoder(thinking=True)
     assert collapse(decoder.feed(b"reason</think>answer")) == [
         ("reason", True), ("answer", False),
     ]
 
 
-def test_display_decoding_does_not_mutate_transcript_or_tool_parser():
+def test_display_decoding_does_not_mutate_transcript_or_tool_parser() -> None:
     transcript = Transcript()
     parser = Glm()
     before = parser.feed(b"")

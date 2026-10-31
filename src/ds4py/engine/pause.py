@@ -18,7 +18,7 @@ def _failure_table(sequence: bytes) -> tuple[int, ...]:
 class StopSequenceMatcher:
     """KMP matchers with fixed memory and independent state."""
 
-    def __init__(self, sequences: Iterable[bytes] = ()):
+    def __init__(self, sequences: Iterable[bytes] = ()) -> None:
         normalized = []
         for sequence in sequences:
             sequence = bytes(sequence)
@@ -60,7 +60,7 @@ class StopSequenceMatcher:
 class ControlSpan:
     """Resumable stop matching over sampled control-region bytes."""
 
-    def __init__(self, sequences: Iterable[bytes] = ()):
+    def __init__(self, sequences: Iterable[bytes] = ()) -> None:
         self.matcher = StopSequenceMatcher(sequences)
         self.stop_sequence: bytes | None = None
         self.active_stop_sequences: list[bytes] = []

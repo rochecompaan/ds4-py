@@ -7,7 +7,8 @@ import re
 import signal
 import sys
 import threading
-from typing import BinaryIO, Callable, TextIO
+from types import FrameType
+from typing import Any, BinaryIO, Callable, TextIO
 
 from ds4py import Engine, open as open_engine
 from ds4py.engine.events import Interrupted, Stopped, Token
@@ -22,14 +23,14 @@ def _escape(data: bytes) -> bytes:
 
 
 class Trace:
-    def __init__(self, path: Path, *, now: Callable[[], datetime] = datetime.now):
+    def __init__(self, path: Path, *, now: Callable[[], datetime] = datetime.now) -> None:
         self.path, self.now = path, now
 
     def __enter__(self) -> "Trace":
         self._file = self.path.open("ab")
         return self
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(self, *exc: Any) -> None:
         self._file.close()
 
     def _line(self, message: bytes) -> None:
@@ -85,10 +86,11 @@ def run_raw(engine: Engine, prompt: str, *, max_tokens: int,
         err.write(f"ds4py: prompt of {len(tokens)} tokens does not fit a context of {engine.config.ctx}\n")
         return 2
     main_thread = threading.current_thread() is threading.main_thread()
+    previous: Any = None
     if main_thread:
         previous = signal.getsignal(signal.SIGINT)
 
-        def interrupt(signum, frame):
+        def interrupt(signum: int, frame: FrameType | None) -> None:
             session.cancel()
             signal.signal(signal.SIGINT, signal.SIG_DFL)
 

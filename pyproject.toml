@@ -8,6 +8,12 @@ authors = [
 requires-python = ">=3.14"
 dependencies = []
 
+[project.optional-dependencies]
+agent = [
+  "pydantic-ai-harness[cli]==0.59.0",
+  "prompt-toolkit>=3.0.52,<4",
+]
+
 [project.scripts]
 ds4py = "ds4py.cli:main"
 
@@ -17,7 +23,26 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "pyright>=1.1.414",
     "pytest>=9.1.1",
+    "ruff>=0.17.3",
+]
+
+[tool.pyright]
+include = ["src", "bench", "tests"]
+typeCheckingMode = "standard"
+reportMissingParameterType = "error"
+
+[tool.ruff.lint]
+select = [
+    "ANN001",
+    "ANN002",
+    "ANN003",
+    "ANN201",
+    "ANN202",
+    "ANN204",
+    "ANN205",
+    "ANN206",
 ]
 
 [tool.pytest.ini_options]

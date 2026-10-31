@@ -1,3 +1,5 @@
+from typing import Any
+from pathlib import Path
 import os
 import subprocess
 import sys
@@ -9,7 +11,7 @@ from ds4py.abi.manifest import Manifest, manifest_path
 
 
 @pytest.mark.live
-def test_check_live_records_its_results(live_lib, tmp_path):
+def test_check_live_records_its_results(live_lib: Any, tmp_path: Path) -> None:
     lib = tmp_path / live_lib.name
     shutil.copy(live_lib, lib)
     shutil.copy(manifest_path(live_lib), manifest_path(lib))

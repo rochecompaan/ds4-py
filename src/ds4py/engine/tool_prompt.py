@@ -1,4 +1,5 @@
 """Generate model-family-native prompts from caller-owned tool definitions."""
+from collections.abc import Iterable
 from dataclasses import dataclass
 import json
 from typing import Mapping
@@ -21,14 +22,14 @@ class ToolPromptSpan:
 
 class ToolPromptGenerator:
     """Generate executable family examples and schemas without native calls."""
-    def __init__(self, family: str):
+    def __init__(self, family: str) -> None:
         self.family = family
 
-    def generate(self, definitions) -> str:
+    def generate(self, definitions: Iterable[ToolDefinition]) -> str:
         """Return the full prompt text for ordered tool definitions."""
         return "".join(span.text for span in self.spans(definitions))
 
-    def spans(self, definitions) -> list[ToolPromptSpan]:
+    def spans(self, definitions: Iterable[ToolDefinition]) -> list[ToolPromptSpan]:
         """Separate trusted template markup from plain serialized definitions."""
         schemas = [
             json.dumps(
@@ -47,7 +48,9 @@ class ToolPromptGenerator:
         raise ValueError(f"unknown tool prompt family: {self.family}")
 
     @staticmethod
-    def _schema_spans(schemas, prefix, suffix, *, qwen=False):
+    def _schema_spans(
+        schemas: Iterable[str], prefix: str, suffix: str, *, qwen: bool = False,
+    ) -> list[ToolPromptSpan]:
         spans = [ToolPromptSpan(prefix, True)]
         for index, schema in enumerate(schemas):
             if index:
@@ -61,7 +64,7 @@ class ToolPromptGenerator:
         return spans
 
     @classmethod
-    def _deepseek(cls, schemas, *, v41):
+    def _deepseek(cls, schemas: Iterable[str], *, v41: bool) -> list[ToolPromptSpan]:
         calls = " calls" if v41 else "tool_calls"
         invoke = " invoke" if v41 else "invoke"
         parameter = " parameter" if v41 else "parameter"
@@ -83,7 +86,7 @@ class ToolPromptGenerator:
         return cls._schema_spans(schemas, "# Tools\n\n<tools>", suffix)
 
     @classmethod
-    def _glm(cls, schemas):
+    def _glm(cls, schemas: Iterable[str]) -> list[ToolPromptSpan]:
         suffix = (
             "</tools>\n\n"
             "Call example:\n"
@@ -94,7 +97,7 @@ class ToolPromptGenerator:
         return cls._schema_spans(schemas, "# Tools\n\n<tools>", suffix)
 
     @classmethod
-    def _qwen(cls, schemas):
+    def _qwen(cls, schemas: Iterable[str]) -> list[ToolPromptSpan]:
         suffix = (
             "</tools>\n\n"
             "Call example:\n"

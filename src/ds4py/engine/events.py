@@ -48,6 +48,18 @@ class Dropped:
 
 
 @dataclass(frozen=True)
+class Saved:
+    tokens: int
+    payload_bytes: int
+
+
+@dataclass(frozen=True)
+class Loaded:
+    tokens: int
+    payload_bytes: int
+
+
+@dataclass(frozen=True)
 class Token:
     id: int
     text_bytes: bytes
@@ -62,7 +74,7 @@ class ReserveReached:
     """A one-shot decision that keeps a chat assistant round open."""
 
     def __init__(self, needed: int, *, on_resume: Callable[[int], None],
-                 on_fail: Callable[[], None]):
+                 on_fail: Callable[[], None]) -> None:
         self.needed = needed
         self._on_resume = on_resume
         self._on_fail = on_fail
@@ -110,4 +122,4 @@ STOP_REASONS = (
     "stop_token", "tool_call_complete", "max_tokens", "context_reserve",
     "interrupted", "parser_error", "context_exhausted",
 )
-Event = Prefill | Synced | Interrupted | Checkpointed | Dropped | Token | Stopped | ReserveReached | TextDelta | Thinking | ToolSyntax | ToolCalls
+Event = Prefill | Synced | Interrupted | Checkpointed | Dropped | Saved | Loaded | Token | Stopped | ReserveReached | TextDelta | Thinking | ToolSyntax | ToolCalls
