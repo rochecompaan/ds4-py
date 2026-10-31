@@ -139,7 +139,8 @@ committed separately. Before live work, run:
 uv run --extra agent pytest -m "not build and not live" -q
 uv run --extra agent pyright
 uv run --extra agent ruff check src bench tests
-uv run --extra agent ruff format --check src bench tests
+uv run --extra agent ruff format --check bench/run_targeted.py tests/bench/test_targeted.py
+git diff --check
 ```
 
 Local fake-based tests are not live gate evidence. Performance reassessment
