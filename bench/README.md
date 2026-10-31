@@ -73,6 +73,27 @@ The command exits nonzero if any gate fails. Outputs:
 - `bench/results/`: staged workspaces, per-attempt logs, traces, saves, restore
   traces, and acceptance logs.
 
+## Run selected tasks three times
+
+Use targeted runs to check a fix before paying for another full bake-off. The
+command runs only ds4-py, with one attempt per repetition and the explicit
+8192-token and 100-request budgets. Each repetition gets a fresh workspace and
+result root. The results directory must not already exist.
+
+```bash
+uv run --extra agent python bench/run_targeted.py \
+  --task scale-generator \
+  --task repo-ctx-command \
+  --repetitions 3 \
+  --results bench/targeted-results \
+  --model "$DS4_TEST_MODEL" \
+  --backend "$DS4_BAKEOFF_BACKEND"
+```
+
+`targeted.json` retains every result, including failures. The command exits
+nonzero for a grader failure or a recorded attempt error. Do not start another
+full bake-off until each selected task passes all three repetitions.
+
 ## Recheck restores
 
 This starts fresh processes for both restore paths of every ds4-py attempt. It
