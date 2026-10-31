@@ -97,6 +97,9 @@ class RestoreConfig(Protocol):
     @property
     def request_limit(self) -> int: ...
 
+    @property
+    def tokens(self) -> int: ...
+
 
 def _events(path: Path) -> Path:
     if not path.is_file():
@@ -402,7 +405,7 @@ def process_restore_runner(
             "--backend", config.backend, "--ctx", str(config.ctx),
             "--temp", str(config.temperature), "--seed", str(config.seed),
             "--request-limit", str(config.request_limit),
-            "--tokens", "256", "--trace", str(trace_path),
+            "--tokens", str(config.tokens), "--trace", str(trace_path),
         ]
         environment = os.environ.copy()
         environment["DS4PY_HOME"] = str(home)

@@ -336,7 +336,11 @@ def test_interruption_acceptance_uses_tui_idle_lifecycle(
     task = tmp_path / "task"
     task.mkdir()
     (task / "TASK.md").write_text("Solve the task.")
-    output = "prefill 2/2\nidle | ctx 2/100\nordinary follow-up answer\nidle | ctx 4/100\n"
+    output = (
+        "prefill_cap 2/2\nstreaming | ctx 2/100\nidle | ctx 2/100\n"
+        "ordinary follow-up answer\nidle | ctx 4/100\n"
+    )
+    observed_steps: list[tuple[str, str | None]] = []
 
     def drive(command: list[str], *, steps: Any, **kwargs: Any) -> CheckResult:
         cursor = 0
@@ -344,6 +348,7 @@ def test_interruption_acceptance_uses_tui_idle_lifecycle(
             match = re.search(pattern, output[cursor:], re.IGNORECASE)
             assert match is not None, f"missing TUI lifecycle signal: {pattern}"
             cursor += match.end()
+            observed_steps.append((pattern, response))
         return CheckResult(True, output)
 
     monkeypatch.setattr(runner, "drive_pty", drive)
@@ -358,6 +363,11 @@ def test_interruption_acceptance_uses_tui_idle_lifecycle(
     )
 
     assert result.passed, result.detail
+    assert observed_steps == [
+        (r"\bstreaming\b", "\x03"),
+        (r"\bidle\b", "State the next concrete action in one sentence, then stop.\n"),
+        (r"\bidle\b", "/exit\n"),
+    ]
 
 
 def test_restore_processes_run_from_the_original_task_workspace(
@@ -371,7 +381,7 @@ def test_restore_processes_run_from_the_original_task_workspace(
     config = SimpleNamespace(
         executable=(sys.executable, "restore-driver.py", "attempt"),
         model="model.gguf", backend="cpu", ctx=65536,
-        temperature=0.0, seed=1, tokens=256, request_limit=100,
+        temperature=0.0, seed=1, tokens=8192, request_limit=100,
     )
 
     def complete(command: list[str], **kwargs: Any) -> Any:
@@ -400,5 +410,5 @@ def test_restore_processes_run_from_the_original_task_workspace(
     assert working_directories == [workspace, workspace]
     assert len(commands) == 2
     for command in commands:
-        assert command[command.index("--tokens") + 1] == "256"
+        assert command[command.index("--tokens") + 1] == "8192"
         assert command[command.index("--request-limit") + 1] == "100"

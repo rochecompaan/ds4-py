@@ -148,6 +148,8 @@ class FooterModel:
         elif event.kind == "run_end":
             self.status = "idle"
             self.prefill = None
+        elif event.kind == "Token":
+            self.status = "streaming"
         elif event.kind == "Prefill":
             inner = event.payload["event"]
             self.prefill = (inner.done, inner.total, inner.tps)

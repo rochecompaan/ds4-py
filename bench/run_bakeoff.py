@@ -402,7 +402,7 @@ def interruption_acceptance(
         command, cwd=workspace.agent_dir,
         env=_acceptance_environment(root / "home"),
         steps=[
-            (r"prefill|tokens/s", "\x03"),
+            (r"\bstreaming\b", "\x03"),
             (r"\bidle\b", "State the next concrete action in one sentence, then stop.\n"),
             (r"\bidle\b", "/exit\n"),
         ],

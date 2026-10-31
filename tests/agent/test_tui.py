@@ -16,8 +16,9 @@ from pydantic_ai.messages import (
 )
 
 from test_tui_commands import FakeRuntime, make_tui
+from ds4py.engine.lifecycle import SessionEvent
 from ds4py.tui import TUI
-from ds4py.tui_render import StreamRenderer, markdown_fragments
+from ds4py.tui_render import FooterModel, StreamRenderer, markdown_fragments
 
 
 def test_dispatch_runs_one_prompt_and_preserves_pasted_newlines() -> None:
@@ -124,6 +125,25 @@ def test_ctrl_c_cancels_without_touching_partial_text_and_ctrl_d_exits() -> None
     )))
     assert len(exits) == 1
     assert isinstance(exits[0], EOFError)
+
+
+def test_footer_distinguishes_prefill_from_token_generation() -> None:
+    footer = FooterModel(cast(Any, FakeRuntime()))
+    try:
+        footer.handle_event(SessionEvent("run_start", "session", {}))
+        assert footer.status == "running"
+        footer.handle_event(SessionEvent("Prefill", "session", {
+            "event": SimpleNamespace(done=2, total=2, tps=10.0),
+        }))
+        assert footer.status == "running"
+        footer.handle_event(SessionEvent("Token", "session", {}))
+        assert footer.status == "streaming"
+        footer.handle_event(SessionEvent("Token", "session", {}))
+        assert footer.status == "streaming"
+        footer.handle_event(SessionEvent("run_end", "session", {}))
+        assert footer.status == "idle"
+    finally:
+        footer.close()
 
 
 def fragment_text(fragments: Any) -> str:
