@@ -52,7 +52,14 @@ def build_agent_components(
 
     components: list[AbstractCapability] = [
         LocalWorkspace(project_dir, read_only=read_only),
-        FileSystem(root_dir=project_dir, cwd=project_dir, content_hashes=True, read_only=False),
+        FileSystem(
+            tools=(
+                "read_file", "write_file", "edit_file", "search_files",
+                "find_files", "create_directory", "file_info",
+            ),
+            root_dir=project_dir, cwd=project_dir,
+            content_hashes=True, read_only=False,
+        ),
         Shell(cwd=project_dir),
         DS4ShellJobs(model.session, project_dir),
         RepoContext(workspace_dir=project_dir),

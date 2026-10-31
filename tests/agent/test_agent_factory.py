@@ -104,6 +104,63 @@ def test_factory_runs_shell_commands_without_an_approval_policy(tmp_path: Path) 
     assert (tmp_path / "command-ran.txt").read_text() == "unblocked"
 
 
+def test_factory_does_not_expose_list_directory(tmp_path: Path) -> None:
+    exposed: set[str] = set()
+
+    def scripted(messages: Any, info: Any) -> ModelResponse:
+        exposed.update(tool.name for tool in info.function_tools)
+        return ModelResponse(parts=[TextPart("done")])
+
+    async def stream_function(messages: Any, info: Any) -> AsyncIterator[Any]:
+        exposed.update(tool.name for tool in info.function_tools)
+        yield "done"
+
+    model: Any = FunctionModel(scripted, stream_function=stream_function)
+    model.session = MockSession()
+    components = build_agent_components(model, tmp_path)
+
+    asyncio.run(components.agent.run("inspect tools"))
+
+    assert "list_directory" not in exposed
+    assert {
+        "read_file", "write_file", "edit_file", "search_files", "find_files",
+        "create_directory", "file_info", "run_command",
+    } <= exposed
+
+
+def test_factory_shell_lists_hidden_files(tmp_path: Path) -> None:
+    (tmp_path / ".meta").mkdir()
+    (tmp_path / ".meta" / "example.py").write_text("example = True\n")
+    def scripted(messages: Any, info: Any) -> ModelResponse:
+        if _has_tool_return(messages):
+            return ModelResponse(parts=[TextPart("done")])
+        return ModelResponse(parts=[ToolCallPart(
+            "run_command", {"command": "ls -la .meta"}, tool_call_id="call-1",
+        )])
+
+    async def stream_function(messages: Any, info: Any) -> AsyncIterator[Any]:
+        if _has_tool_return(messages):
+            yield "done"
+        else:
+            yield {0: DeltaToolCall(
+                name="run_command", json_args='{"command": "ls -la .meta"}',
+            )}
+
+    model: Any = FunctionModel(scripted, stream_function=stream_function)
+    model.session = MockSession()
+    components = build_agent_components(model, tmp_path)
+
+    result = asyncio.run(components.agent.run("list hidden examples"))
+
+    listings = [
+        str(part.content)
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == "run_command"
+    ]
+    assert any("example.py" in listing for listing in listings), listings
+
+
 def test_factory_applies_persistent_instructions(tmp_path: Path) -> None:
     from pydantic_ai_harness import StepPersistence
 

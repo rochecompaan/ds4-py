@@ -538,7 +538,7 @@ ds4-py writes no coding tools. The default list (section 11) takes them from the
 
 | Capability | Tools | Notes |
 | --- | --- | --- |
-| `FileSystem` | `read_file`, `write_file`, `edit_file`, `list_directory`, `search_files`, `find_files`, `create_directory`, `file_info` | `read_file` returns an image or a PDF as `BinaryContent` |
+| `FileSystem` | `read_file`, `write_file`, `edit_file`, `search_files`, `find_files`, `create_directory`, `file_info` | `read_file` returns an image or a PDF as `BinaryContent` |
 | `Shell` | `run_command`, `start_command`, `check_command`, `stop_command` | `run_command` waits up to 30 seconds by default. `start_command` runs a command in the background, and `check_command` and `stop_command` reach it from later prompts |
 | `ToolOutputLimits` | `read_tool_result` | A large result is saved to a file, and the model gets a preview and a handle to read the rest |
 | `AskUser` | `ask_user_question` | Interactive mode only |
