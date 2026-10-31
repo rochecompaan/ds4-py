@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     FileStepStore,
@@ -148,6 +149,7 @@ class AgentRuntime:
         system: str | None = None,
         interactive: bool = False,
         question_answerer: QuestionAnswerer | None = None,
+        request_limit: int = 50,
     ) -> None:
         self.model = model
         self.project_dir = Path(project_dir)
@@ -162,6 +164,7 @@ class AgentRuntime:
         self._run_task: asyncio.Task[Any] | None = None
         self._interrupted = False
         self._trace_failure: OSError | None = None
+        self._request_limit = request_limit
         self._created_at = self._timestamp()
         self._session_dir = self.store.session_dir(self._session.id)
         self.components = build_agent_components(
@@ -282,9 +285,13 @@ class AgentRuntime:
         run_id: str,
         messages: Sequence[ModelMessage],
         snapshot: ContinuableSnapshot | None = None,
+        failed: bool = False,
     ) -> None:
         """Adopt canonical keys and keep the terminal harness snapshot exact."""
-        self._messages = self.model.binder.adopt(messages)
+        if failed:
+            self._messages = self.model.binder.adopt_failed(messages)
+        else:
+            self._messages = self.model.binder.adopt(messages)
         if snapshot is None:
             snapshot = await self._latest(run_id)
         if snapshot is not None:
@@ -308,6 +315,7 @@ class AgentRuntime:
                 if snapshot is not None:
                     await self._adopt_history(
                         run_id, _bindable(list(snapshot.messages)), snapshot=snapshot,
+                        failed=True,
                     )
                     self._note_title()
             except Exception as caught:  # noqa: BLE001 - preserve and report both failures
@@ -346,6 +354,7 @@ class AgentRuntime:
                     message_history=list(self._messages),
                     conversation_id=self._session.id,
                     run_id=run_id,
+                    usage_limits=UsageLimits(request_limit=self._request_limit),
                     capabilities=[
                         StepPersistence(store=holder.current),
                         _ModelStepTrace(self._session),

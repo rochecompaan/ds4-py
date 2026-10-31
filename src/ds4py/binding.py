@@ -278,6 +278,18 @@ class MessageBinder:
         self._keyed(adopted)
         return adopted
 
+    def adopt_failed(self, messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+        """Drop an unexecuted suffix while preserving bound trailing requests."""
+        bound_keys = {record.key for record in self._records}
+        adopted = self.adopt(messages)
+        bound_indices = [
+            index for index, message in enumerate(adopted)
+            if (message.metadata or {}).get("ds4.key") in bound_keys
+        ]
+        if not bound_indices:
+            return []
+        return adopted[:bound_indices[-1] + 1]
+
     @staticmethod
     def _installed_segment(provenance: _Provenance) -> Segment:
         kind = provenance.kind

@@ -350,7 +350,7 @@ def test_interruption_acceptance_uses_tui_idle_lifecycle(
     config = SimpleNamespace(
         agent="ds4py", executable=(sys.executable, "driver.py"),
         model="model.gguf", backend="cpu", ctx=100,
-        temperature=0.0, seed=1, tokens=32,
+        temperature=0.0, seed=1, tokens=32, request_limit=100,
     )
 
     result = interruption_acceptance(
@@ -367,14 +367,16 @@ def test_restore_processes_run_from_the_original_task_workspace(
     workspace = tmp_path / "task-workspace"
     workspace.mkdir()
     working_directories: list[Path | None] = []
+    commands: list[list[str]] = []
     config = SimpleNamespace(
         executable=(sys.executable, "restore-driver.py", "attempt"),
         model="model.gguf", backend="cpu", ctx=65536,
-        temperature=0.0, seed=1,
+        temperature=0.0, seed=1, tokens=256, request_limit=100,
     )
 
     def complete(command: list[str], **kwargs: Any) -> Any:
         working_directories.append(kwargs.get("cwd"))
+        commands.append(command)
         metadata = Path(command[command.index("--metadata") + 1])
         trace = Path(command[command.index("--trace") + 1])
         case = 1 if trace.name == "case-1.jsonl" else 2
@@ -396,3 +398,7 @@ def test_restore_processes_run_from_the_original_task_workspace(
 
     assert results[0].passed, results[0].detail
     assert working_directories == [workspace, workspace]
+    assert len(commands) == 2
+    for command in commands:
+        assert command[command.index("--tokens") + 1] == "256"
+        assert command[command.index("--request-limit") + 1] == "100"

@@ -191,7 +191,7 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(monkeypatch
     runtime = next(item for item in created if isinstance(item, Runtime))
     assert runtime.kwargs == {
         "read_only": True, "system": "persistent rules",
-        "interactive": False, "question_answerer": None,
+        "interactive": False, "question_answerer": None, "request_limit": 100,
     }
     assert [(turn.role, turn.content) for turn in cast(Any, runtime.loaded)] == [
         ("user", "earlier"), ("assistant", "answer"),

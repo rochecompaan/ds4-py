@@ -27,6 +27,7 @@ from ds4py.prefill_trace import PrefillTraceWriter
 from ds4py.engine.replay import read_replay
 from ds4py.runtime import AgentRuntime
 from ds4py.store import SessionStore
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -301,11 +302,11 @@ class FailingModel(DS4Model):
     async def request_stream(self, messages: Any, model_settings: Any, model_request_parameters: Any,
                              run_context: Any=None) -> AsyncIterator[Any]:
         self.requests_seen += 1
-        if self.requests_seen >= self.fail_from_request:
-            raise RuntimeError("scripted model failure")
         async with super().request_stream(
             messages, model_settings, model_request_parameters, run_context,
         ) as stream:
+            if self.requests_seen >= self.fail_from_request:
+                raise RuntimeError("scripted model failure")
             yield stream
 
 
@@ -351,6 +352,43 @@ def test_failed_run_reports_error_and_keeps_a_loadable_snapshot(tmp_path: Path) 
     last = failed_messages[-1]
     assert isinstance(last, ModelRequest)
     assert any(isinstance(part, ToolReturnPart) for part in last.parts)
+
+
+def test_request_limit_failure_saves_only_executed_bound_history(tmp_path: Path) -> None:
+    project = project_dir(tmp_path)
+    store = SessionStore(tmp_path / "home")
+    with fake_engine(script=scripted_rounds(READ_CALL, "never requested")) as engine:
+        runtime = AgentRuntime(
+            make_model(engine), project, store=store, clock=fixed_clock, request_limit=1,
+        )
+        session_id = runtime.session_id
+
+        async def scenario() -> Any:
+            with pytest.raises(UsageLimitExceeded, match="request_limit"):
+                await runtime.run("read hello")
+            failed_messages = list(runtime.messages)
+            record = await runtime.save()
+            snapshot = await runtime_steps(
+                store.session_dir(session_id) / "steps",
+            ).latest_snapshot(run_id=record.run_id, include_interrupted=True)
+            assert snapshot is not None
+            runtime.model.binder.validate_restore(snapshot.messages, record.segments)
+            return failed_messages, snapshot
+
+        try:
+            failed_messages, saved_snapshot = asyncio.run(scenario())
+        finally:
+            asyncio.run(runtime.close())
+
+    run_ends = [
+        line for line in read_events(store.session_dir(session_id) / "events.jsonl")
+        if line["kind"] == "run_end"
+    ]
+    assert run_ends[-1]["payload"]["status"] == "error"
+    assert "request_limit" in run_ends[-1]["payload"]["error"]
+    assert dump(failed_messages) == dump(saved_snapshot.messages)
+    assert isinstance(failed_messages[-1], ModelResponse)
+    assert any(isinstance(part, ToolCallPart) for part in failed_messages[-1].parts)
 
 
 @pytest.mark.parametrize(("reason", "text", "max_tokens"), [

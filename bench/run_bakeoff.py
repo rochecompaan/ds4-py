@@ -47,6 +47,7 @@ class AgentConfig:
     temperature: float
     seed: int
     tokens: int
+    request_limit: int = 100
 
     def __post_init__(self) -> None:
         if self.agent not in {"c", "ds4py"}:
@@ -106,6 +107,8 @@ def build_agent_command(
 ) -> list[str]:
     """Build equivalent C and ds4-py sampling/task invocations."""
     command = [*config.executable, "--non-interactive"]
+    if config.agent == "ds4py":
+        command.extend(["--request-limit", str(config.request_limit)])
     command.extend([
         "--model", config.model,
         "--backend", config.backend,
@@ -320,6 +323,8 @@ def run_task(
         (attempt_root / "agent.log").write_text(log_text)
         if completed.returncode:
             errors.append(f"attempt {attempt} exited {completed.returncode}")
+            if "request_limit" in log_text:
+                errors.append(f"attempt {attempt} request_limit")
         if config.agent == "ds4py":
             try:
                 save_dir = _save_dir(home)

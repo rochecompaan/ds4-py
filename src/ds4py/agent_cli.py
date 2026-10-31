@@ -32,6 +32,13 @@ def _level(value: str) -> int:
     return level
 
 
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("value must be a positive integer")
+    return number
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="ds4py")
     result.add_argument("--non-interactive", action="store_true")
@@ -45,6 +52,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("-m", "--model", default="ds4flash.gguf")
     result.add_argument("-c", "--ctx", type=int, default=100_000)
     result.add_argument("-n", "--tokens", type=int, default=50_000)
+    result.add_argument("--request-limit", type=_positive_int, default=100)
     result.add_argument("--temp", type=float)
     result.add_argument("--top-p", type=float)
     result.add_argument("--min-p", type=float)
@@ -123,6 +131,7 @@ def open_runtime(
             model, project_dir, read_only=read_only,
             system=args.system, interactive=not args.non_interactive,
             question_answerer=_question_answerer if not args.non_interactive else None,
+            request_limit=args.request_limit,
         )
         try:
             yield runtime

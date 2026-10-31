@@ -117,6 +117,29 @@ def test_agent_commands_share_model_sampling_and_task_prompt(tmp_path: Path) -> 
             assert command[command.index(flag) + 1] == value
     assert "--non-interactive" in c_command and "--yolo" not in c_command
     assert "--non-interactive" in python and "--yolo" not in python
+    assert "--request-limit" not in c_command
+    assert python[python.index("--request-limit") + 1] == "100"
+
+
+def test_request_limit_failure_is_named_in_task_errors(tmp_path: Path) -> None:
+    source = make_exercise(tmp_path)
+    workspace = prepare_exercise(source, tmp_path / "staged", max_attempts=1)
+    executable = tmp_path / "request-limit.py"
+    executable.write_text(
+        FAKE_AGENT
+        + '\nimport sys\nsys.stderr.write("UsageLimitExceeded: request_limit=1\\n")\n'
+        + "raise SystemExit(1)\n"
+    )
+    agent = replace(
+        config(tmp_path), executable=(sys.executable, str(executable)),
+    )
+
+    completed = run_task(
+        workspace, agent, tmp_path / "results",
+        grade_runner=lambda *args: subprocess.CompletedProcess([], 0, stdout="pass", stderr=""),
+    )
+
+    assert "attempt 1 request_limit" in completed.errors
 
 
 def test_failed_first_attempt_feeds_grader_output_to_exactly_one_retry(tmp_path: Path) -> None:

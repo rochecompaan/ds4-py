@@ -94,6 +94,9 @@ class RestoreConfig(Protocol):
     @property
     def seed(self) -> int: ...
 
+    @property
+    def request_limit(self) -> int: ...
+
 
 def _events(path: Path) -> Path:
     if not path.is_file():
@@ -398,6 +401,7 @@ def process_restore_runner(
             "--metadata", str(metadata), "--model", config.model,
             "--backend", config.backend, "--ctx", str(config.ctx),
             "--temp", str(config.temperature), "--seed", str(config.seed),
+            "--request-limit", str(config.request_limit),
             "--tokens", "256", "--trace", str(trace_path),
         ]
         environment = os.environ.copy()
