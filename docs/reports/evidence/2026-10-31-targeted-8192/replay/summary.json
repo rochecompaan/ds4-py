@@ -1,0 +1,307 @@
+{
+  "trace": "/workspace/results/targeted-8192-f5abe79/repo-ctx-command/run-3/repo-ctx-command/ds4py/attempt-1/trace.jsonl",
+  "model": "/workspace/ds4/gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix-0731.gguf",
+  "lib": "/workspace/native/libds4.so",
+  "round_index": 0,
+  "steps": 16,
+  "records": [
+    {
+      "implementation": "worker",
+      "ctx": 256,
+      "prompt_truncated": true,
+      "prompt_tokens": 239,
+      "output": "/workspace/results/replay-8192-f5abe79/worker-256.json",
+      "first_divergence": 0,
+      "terminal": "max_tokens",
+      "expected_prefix": [
+        2581,
+        1309,
+        304,
+        8497,
+        270,
+        4181,
+        14707,
+        304,
+        2572,
+        270,
+        8049,
+        18567,
+        6107,
+        50390,
+        305,
+        33988
+      ],
+      "actual_prefix": [
+        3184,
+        68838,
+        80642,
+        9860,
+        80642,
+        20855,
+        16562,
+        9282,
+        3618,
+        8321,
+        304,
+        270,
+        3946,
+        20289,
+        16,
+        10177
+      ],
+      "token0_top": [
+        {
+          "token": 3184,
+          "text": ",\"",
+          "logit": 39.41246032714844
+        },
+        {
+          "token": 83956,
+          "text": "\uff0c\"",
+          "logit": 22.77515411376953
+        },
+        {
+          "token": 14,
+          "text": ",",
+          "logit": 21.61377716064453
+        },
+        {
+          "token": 95,
+          "text": "}",
+          "logit": 20.472579956054688
+        },
+        {
+          "token": 116991,
+          "text": "},{\"",
+          "logit": 19.49587059020996
+        }
+      ]
+    },
+    {
+      "implementation": "native",
+      "ctx": 256,
+      "prompt_truncated": true,
+      "prompt_tokens": 239,
+      "output": "/workspace/results/replay-8192-f5abe79/native-256.json",
+      "first_divergence": 0,
+      "terminal": "max_tokens",
+      "expected_prefix": [
+        2581,
+        1309,
+        304,
+        8497,
+        270,
+        4181,
+        14707,
+        304,
+        2572,
+        270,
+        8049,
+        18567,
+        6107,
+        50390,
+        305,
+        33988
+      ],
+      "actual_prefix": [
+        3184,
+        68838,
+        80642,
+        9860,
+        80642,
+        20855,
+        16562,
+        9282,
+        3618,
+        8321,
+        304,
+        270,
+        3946,
+        20289,
+        16,
+        10177
+      ],
+      "token0_top": [
+        {
+          "token": 3184,
+          "text": ",\"",
+          "logit": 39.41246032714844
+        },
+        {
+          "token": 83956,
+          "text": "\uff0c\"",
+          "logit": 22.77515411376953
+        },
+        {
+          "token": 14,
+          "text": ",",
+          "logit": 21.61377716064453
+        },
+        {
+          "token": 95,
+          "text": "}",
+          "logit": 20.472579956054688
+        },
+        {
+          "token": 116991,
+          "text": "},{\"",
+          "logit": 19.49587059020996
+        }
+      ]
+    },
+    {
+      "implementation": "worker",
+      "ctx": 8192,
+      "prompt_truncated": false,
+      "prompt_tokens": 2078,
+      "output": "/workspace/results/replay-8192-f5abe79/worker-8192.json",
+      "first_divergence": null,
+      "terminal": "max_tokens",
+      "expected_prefix": [
+        2581,
+        1309,
+        304,
+        8497,
+        270,
+        4181,
+        14707,
+        304,
+        2572,
+        270,
+        8049,
+        18567,
+        6107,
+        50390,
+        305,
+        33988
+      ],
+      "actual_prefix": [
+        2581,
+        1309,
+        304,
+        8497,
+        270,
+        4181,
+        14707,
+        304,
+        2572,
+        270,
+        8049,
+        18567,
+        6107,
+        50390,
+        305,
+        33988
+      ],
+      "token0_top": [
+        {
+          "token": 2581,
+          "text": "We",
+          "logit": 24.91421890258789
+        },
+        {
+          "token": 43,
+          "text": "I",
+          "logit": 24.61614227294922
+        },
+        {
+          "token": 671,
+          "text": "The",
+          "logit": 23.94832992553711
+        },
+        {
+          "token": 5718,
+          "text": "Let",
+          "logit": 23.161123275756836
+        },
+        {
+          "token": 8197,
+          "text": "Now",
+          "logit": 23.14643096923828
+        }
+      ]
+    },
+    {
+      "implementation": "native",
+      "ctx": 8192,
+      "prompt_truncated": false,
+      "prompt_tokens": 2078,
+      "output": "/workspace/results/replay-8192-f5abe79/native-8192.json",
+      "first_divergence": null,
+      "terminal": "max_tokens",
+      "expected_prefix": [
+        2581,
+        1309,
+        304,
+        8497,
+        270,
+        4181,
+        14707,
+        304,
+        2572,
+        270,
+        8049,
+        18567,
+        6107,
+        50390,
+        305,
+        33988
+      ],
+      "actual_prefix": [
+        2581,
+        1309,
+        304,
+        8497,
+        270,
+        4181,
+        14707,
+        304,
+        2572,
+        270,
+        8049,
+        18567,
+        6107,
+        50390,
+        305,
+        33988
+      ],
+      "token0_top": [
+        {
+          "token": 2581,
+          "text": "We",
+          "logit": 24.91421890258789
+        },
+        {
+          "token": 43,
+          "text": "I",
+          "logit": 24.61614227294922
+        },
+        {
+          "token": 671,
+          "text": "The",
+          "logit": 23.94832992553711
+        },
+        {
+          "token": 5718,
+          "text": "Let",
+          "logit": 23.161123275756836
+        },
+        {
+          "token": 8197,
+          "text": "Now",
+          "logit": 23.14643096923828
+        }
+      ]
+    }
+  ],
+  "comparisons": [
+    {
+      "ctx": 256,
+      "worker_native_first_divergence": null
+    },
+    {
+      "ctx": 8192,
+      "worker_native_first_divergence": null
+    }
+  ]
+}

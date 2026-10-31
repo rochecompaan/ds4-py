@@ -224,3 +224,63 @@ If logits match but selected tokens differ, fix sampler/RNG parity. If logits di
 6. **Run the full bake-off only after targeted probes pass.** Reassess performance from clean attempts and separate output volume from engine throughput.
 
 No production code was changed during this analysis; this report is documentation only.
+
+## Live follow-up after the remediation fixes
+
+The targeted runs and probes used ds4-py `f5abe799be725508c7fad4ad58af7ce5d190b442`, ds4 `5379c1c9ac315f1540371b06a3db88491d4059ff`, and Polyglot benchmark `7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f`. The model, CUDA backend, 100,000-token context, temperature 0, seed 1, 8,192-token response budget, and request limit 100 stayed fixed. The native library SHA-256 was `866920c49bc280098ae0f45cff43e287251b442616bfc638d747ba859fc3f830`.
+
+The host used the targeted runner through `/workspace/resume_targeted.py`, which calls the same `run_task` implementation. The wrapper resumed the missing third scale run after correcting `PYTHONPATH=/workspace/ds4-py`; it did not rerun completed cases. The canonical local command remains:
+
+```bash
+python bench/run_targeted.py \
+  --task scale-generator --task repo-ctx-command --repetitions 3 \
+  --model /workspace/ds4/gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix-0731.gguf \
+  --benchmark /workspace/polyglot-benchmark \
+  --repo-root /workspace/ds4-py \
+  --results /workspace/results/targeted-8192-f5abe79
+```
+
+### Targeted results: 0/6 clean passes
+
+| Task | Run | Grader | Agent outcome |
+|---|---:|---|---|
+| `scale-generator` | 1 | PASS | `max_tokens` |
+| `scale-generator` | 2 | PASS | `max_tokens` |
+| `scale-generator` | 3 | FAIL | Clean exit, but no edit and 0/17 tests passed |
+| `repo-ctx-command` | 1 | PASS | `request_limit` after 100 requests |
+| `repo-ctx-command` | 2 | PASS | `max_tokens` |
+| `repo-ctx-command` | 3 | PASS | `max_tokens` |
+
+A passing grader still does not make an attempt clean. The three repository runs passed the grader, but none terminated successfully. The third scale run shows the opposite case: a clean terminal state with no useful work.
+
+### Acceptance probes: Gate 4 and all six restores failed
+
+Gate 4 reached `streaming` and sent Ctrl-C, but generation continued through 7,032 `Token` events, three model steps, and two completed tool calls. No `run_end` or interruption event appeared before the PTY timeout. A separate fake-runtime PTY probe delivered Ctrl-C to the TUI handler, so key delivery works; the live cancellation path still needs diagnosis.
+
+Restore case 2 ran only after a clean case 1. The failures were:
+
+| Save | First failing check |
+|---|---|
+| `scale-generator` run 1 | Case 2 reached the context reserve after case 1 rebuilt 99,164 prompt tokens |
+| `scale-generator` run 2 | Case 1 ended with `max_tokens` |
+| `scale-generator` run 3 | Both cases terminated, but case 1 rebuilt instead of extending and continuation token 41 differed |
+| `repo-ctx-command` run 1 | Case 1 rejected saved history with unprocessed tool calls |
+| `repo-ctx-command` run 2 | Case 1 ended with `max_tokens` |
+| `repo-ctx-command` run 3 | Both cases terminated, but case 1 rebuilt instead of extending and continuation token 68 differed |
+
+These are real restore and continuation blockers, not the earlier 256-token probe-budget failure.
+
+### Replay diagnosis
+
+Two diagnostics used the same model and native library, with worker and direct-native calls compared independently.
+
+1. A control replay used current ds4-py run 3, round 0. At context 8,192, both paths reproduced all 16 traced tokens. At context 256, a shortened 239-token prompt also produced identical worker and native tokens; this shortened case is only a cross-implementation control, not a comparison with the original trace.
+2. The known historical failure used C `scale-generator` attempt 1, round 0 at its original 100,000-token context. Both paths diverged at token 10 with both full prefill and the traced 1,839/948 split prefill. C emitted token 411 (` an`); both replay paths emitted token 270 (` the`). At token 10, the current replay logits were 30.991417 for ` the` and 30.933065 for ` an`. Temperature was 0 and the RNG state was 1. Worker and native logits, selected tokens, positions, and RNG states matched at every captured step.
+
+The replay therefore isolates the mismatch from the Python worker: current worker and direct-native behavior is identical. It does not yet justify an engine patch. The remaining question is why the historical C run selected ` an` when the current native replay prefers ` the`. A current C-side capture of the same prompt must record its logits and sampler inputs before choosing a production fix.
+
+### Evidence and next gate
+
+The concise local evidence is under `docs/reports/evidence/2026-10-31-targeted-8192/`: six targeted records, acceptance summaries and failure logs, and detailed worker/native replay comparisons. Large KV files, session events, and workspaces remain excluded.
+
+Do not start the full bake-off. The prerequisites now are clean targeted termination, working live interruption, valid and equivalent restore continuations, and a C-side replay capture that identifies the historical mismatch.

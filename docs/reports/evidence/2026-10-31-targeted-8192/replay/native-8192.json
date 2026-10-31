@@ -1,0 +1,1451 @@
+{
+  "task_id": "ds4py-trace-replay",
+  "round_index": 0,
+  "source_trace": "/workspace/results/targeted-8192-f5abe79/repo-ctx-command/run-3/repo-ctx-command/ds4py/attempt-1/trace.jsonl",
+  "mode": "native-direct-full",
+  "model": "/workspace/ds4/gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix-0731.gguf",
+  "library": "/workspace/native/installs/tmp73y_8gak/libds4.so",
+  "library_sha256": "866920c49bc280098ae0f45cff43e287251b442616bfc638d747ba859fc3f830",
+  "backend": "cuda",
+  "ctx": 8192,
+  "think": 1,
+  "split_at": null,
+  "prompt_tokens": 2078,
+  "prompt_ids_sha256": "24a8223ff96f7428522a53d137f5fbb8d0586ac833dd6ea85170f26720f35076",
+  "prompt_bytes_sha256": "cea6d0055cc5191b264499c1beee729150193989350c5c55f17a804ed0289b4c",
+  "sync_stages": [
+    {
+      "label": "full",
+      "input_tokens": 2078,
+      "common_prefix": 0,
+      "status": "SyncStatus.DONE",
+      "position": 2078
+    }
+  ],
+  "teacher_stages": [],
+  "initial_rng": 1,
+  "final_rng": 1,
+  "c_sampled_prefix": [
+    2581,
+    1309,
+    304,
+    8497,
+    270,
+    4181,
+    14707,
+    304,
+    2572,
+    270,
+    8049,
+    18567,
+    6107,
+    50390,
+    305,
+    33988
+  ],
+  "ds4py_sampled_prefix": [
+    2581,
+    1309,
+    304,
+    8497,
+    270,
+    4181,
+    14707,
+    304,
+    2572,
+    270,
+    8049,
+    18567,
+    6107,
+    50390,
+    305,
+    33988
+  ],
+  "first_divergence": null,
+  "terminal": "max_tokens",
+  "captures": [
+    {
+      "index": 0,
+      "position": 2078,
+      "prior_sampled_tokens": [],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 2581,
+          "text": "We",
+          "logit": 24.91421890258789
+        },
+        {
+          "token": 43,
+          "text": "I",
+          "logit": 24.61614227294922
+        },
+        {
+          "token": 671,
+          "text": "The",
+          "logit": 23.94832992553711
+        },
+        {
+          "token": 5718,
+          "text": "Let",
+          "logit": 23.161123275756836
+        },
+        {
+          "token": 8197,
+          "text": "Now",
+          "logit": 23.14643096923828
+        },
+        {
+          "token": 10318,
+          "text": "First",
+          "logit": 21.16897201538086
+        },
+        {
+          "token": 50249,
+          "text": "Need",
+          "logit": 21.102970123291016
+        },
+        {
+          "token": 19,
+          "text": "1",
+          "logit": 20.111495971679688
+        },
+        {
+          "token": 39111,
+          "text": "Looking",
+          "logit": 20.028785705566406
+        },
+        {
+          "token": 2337,
+          "text": "This",
+          "logit": 19.457149505615234
+        },
+        {
+          "token": 27679,
+          "text": "---\n",
+          "logit": 19.32808494567871
+        },
+        {
+          "token": 66,
+          "text": "`",
+          "logit": 18.894460678100586
+        }
+      ],
+      "c_expected_token": 2581,
+      "c_expected_logit": 24.91421890258789,
+      "selected_token": 2581
+    },
+    {
+      "index": 1,
+      "position": 2079,
+      "prior_sampled_tokens": [
+        2581
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 1309,
+          "text": " need",
+          "logit": 29.19025993347168
+        },
+        {
+          "token": 4750,
+          "text": "'re",
+          "logit": 23.870872497558594
+        },
+        {
+          "token": 477,
+          "text": " are",
+          "logit": 22.729724884033203
+        },
+        {
+          "token": 5922,
+          "text": "'ll",
+          "logit": 22.161670684814453
+        },
+        {
+          "token": 1531,
+          "text": " should",
+          "logit": 21.019132614135742
+        },
+        {
+          "token": 611,
+          "text": " have",
+          "logit": 20.22162628173828
+        },
+        {
+          "token": 588,
+          "text": " can",
+          "logit": 19.972782135009766
+        },
+        {
+          "token": 1116,
+          "text": " work",
+          "logit": 19.84109878540039
+        },
+        {
+          "token": 759,
+          "text": " will",
+          "logit": 19.443016052246094
+        },
+        {
+          "token": 2231,
+          "text": " must",
+          "logit": 19.02790069580078
+        },
+        {
+          "token": 3557,
+          "text": " got",
+          "logit": 18.858348846435547
+        },
+        {
+          "token": 5270,
+          "text": "'ve",
+          "logit": 18.820507049560547
+        }
+      ],
+      "c_expected_token": 1309,
+      "c_expected_logit": 29.19025993347168,
+      "selected_token": 1309
+    },
+    {
+      "index": 2,
+      "position": 2080,
+      "prior_sampled_tokens": [
+        2581,
+        1309
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 304,
+          "text": " to",
+          "logit": 28.474754333496094
+        },
+        {
+          "token": 1258,
+          "text": " add",
+          "logit": 24.974952697753906
+        },
+        {
+          "token": 8497,
+          "text": " explore",
+          "logit": 24.671100616455078
+        },
+        {
+          "token": 3287,
+          "text": " answer",
+          "logit": 24.336339950561523
+        },
+        {
+          "token": 1309,
+          "text": " need",
+          "logit": 22.380279541015625
+        },
+        {
+          "token": 21719,
+          "text": " modify",
+          "logit": 22.207176208496094
+        },
+        {
+          "token": 1116,
+          "text": " work",
+          "logit": 22.057697296142578
+        },
+        {
+          "token": 51441,
+          "text": " inspect",
+          "logit": 21.665283203125
+        },
+        {
+          "token": 2572,
+          "text": " understand",
+          "logit": 21.430973052978516
+        },
+        {
+          "token": 260,
+          "text": " a",
+          "logit": 21.277381896972656
+        },
+        {
+          "token": 411,
+          "text": " an",
+          "logit": 21.170391082763672
+        },
+        {
+          "token": 1951,
+          "text": " information",
+          "logit": 21.05695915222168
+        }
+      ],
+      "c_expected_token": 304,
+      "c_expected_logit": 28.474754333496094,
+      "selected_token": 304
+    },
+    {
+      "index": 3,
+      "position": 2081,
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 8497,
+          "text": " explore",
+          "logit": 30.132415771484375
+        },
+        {
+          "token": 1258,
+          "text": " add",
+          "logit": 28.8514461517334
+        },
+        {
+          "token": 51441,
+          "text": " inspect",
+          "logit": 28.55089569091797
+        },
+        {
+          "token": 21719,
+          "text": " modify",
+          "logit": 28.399686813354492
+        },
+        {
+          "token": 2572,
+          "text": " understand",
+          "logit": 28.358806610107422
+        },
+        {
+          "token": 1116,
+          "text": " work",
+          "logit": 26.881553649902344
+        },
+        {
+          "token": 15111,
+          "text": " examine",
+          "logit": 26.531999588012695
+        },
+        {
+          "token": 1747,
+          "text": " look",
+          "logit": 26.38386344909668
+        },
+        {
+          "token": 9495,
+          "text": " handle",
+          "logit": 24.894933700561523
+        },
+        {
+          "token": 3287,
+          "text": " answer",
+          "logit": 24.892627716064453
+        },
+        {
+          "token": 19482,
+          "text": " edit",
+          "logit": 24.80511474609375
+        },
+        {
+          "token": 1783,
+          "text": " find",
+          "logit": 24.801467895507812
+        }
+      ],
+      "c_expected_token": 8497,
+      "c_expected_logit": 30.132415771484375,
+      "selected_token": 8497
+    },
+    {
+      "index": 4,
+      "position": 2082,
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        8497
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 270,
+          "text": " the",
+          "logit": 31.271692276000977
+        },
+        {
+          "token": 59761,
+          "text": " repo",
+          "logit": 28.190078735351562
+        },
+        {
+          "token": 26548,
+          "text": " repository",
+          "logit": 27.357990264892578
+        },
+        {
+          "token": 4181,
+          "text": " code",
+          "logit": 26.812223434448242
+        },
+        {
+          "token": 16,
+          "text": ".",
+          "logit": 25.625751495361328
+        },
+        {
+          "token": 8049,
+          "text": " existing",
+          "logit": 25.351612091064453
+        },
+        {
+          "token": 2775,
+          "text": " project",
+          "logit": 25.02003288269043
+        },
+        {
+          "token": 566,
+          "text": " this",
+          "logit": 24.989307403564453
+        },
+        {
+          "token": 72895,
+          "text": " workspace",
+          "logit": 23.96728515625
+        },
+        {
+          "token": 260,
+          "text": " a",
+          "logit": 23.595056533813477
+        },
+        {
+          "token": 1205,
+          "text": " what",
+          "logit": 23.521175384521484
+        },
+        {
+          "token": 411,
+          "text": " an",
+          "logit": 23.396610260009766
+        }
+      ],
+      "c_expected_token": 270,
+      "c_expected_logit": 31.271692276000977,
+      "selected_token": 270
+    },
+    {
+      "index": 5,
+      "position": 2083,
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        8497,
+        270
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 4181,
+          "text": " code",
+          "logit": 31.30859375
+        },
+        {
+          "token": 59761,
+          "text": " repo",
+          "logit": 31.197345733642578
+        },
+        {
+          "token": 26548,
+          "text": " repository",
+          "logit": 31.089937210083008
+        },
+        {
+          "token": 2775,
+          "text": " project",
+          "logit": 27.962467193603516
+        },
+        {
+          "token": 8049,
+          "text": " existing",
+          "logit": 27.67161750793457
+        },
+        {
+          "token": 72895,
+          "text": " workspace",
+          "logit": 27.424013137817383
+        },
+        {
+          "token": 3946,
+          "text": " working",
+          "logit": 26.737751007080078
+        },
+        {
+          "token": 3431,
+          "text": " environment",
+          "logit": 25.77349090576172
+        },
+        {
+          "token": 2573,
+          "text": " current",
+          "logit": 24.293853759765625
+        },
+        {
+          "token": 4456,
+          "text": " structure",
+          "logit": 22.863460540771484
+        },
+        {
+          "token": 4245,
+          "text": " file",
+          "logit": 22.64540672302246
+        },
+        {
+          "token": 20289,
+          "text": " directory",
+          "logit": 22.282875061035156
+        }
+      ],
+      "c_expected_token": 4181,
+      "c_expected_logit": 31.30859375,
+      "selected_token": 4181
+    },
+    {
+      "index": 6,
+      "position": 2084,
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        8497,
+        270,
+        4181
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 14707,
+          "text": "base",
+          "logit": 33.597843170166016
+        },
+        {
+          "token": 16,
+          "text": ".",
+          "logit": 27.65457534790039
+        },
+        {
+          "token": 3811,
+          "text": " base",
+          "logit": 27.124248504638672
+        },
+        {
+          "token": 304,
+          "text": " to",
+          "logit": 26.736907958984375
+        },
+        {
+          "token": 4456,
+          "text": " structure",
+          "logit": 26.601261138916016
+        },
+        {
+          "token": 1257,
+          "text": " first",
+          "logit": 25.94499969482422
+        },
+        {
+          "token": 14,
+          "text": ",",
+          "logit": 24.471345901489258
+        },
+        {
+          "token": 305,
+          "text": " and",
+          "logit": 24.386823654174805
+        },
+        {
+          "token": 26548,
+          "text": " repository",
+          "logit": 24.070539474487305
+        },
+        {
+          "token": 59761,
+          "text": " repo",
+          "logit": 23.699913024902344
+        },
+        {
+          "token": 362,
+          "text": " for",
+          "logit": 21.87358856201172
+        },
+        {
+          "token": 1936,
+          "text": " before",
+          "logit": 21.8563232421875
+        }
+      ],
+      "c_expected_token": 14707,
+      "c_expected_logit": 33.597843170166016,
+      "selected_token": 14707
+    },
+    {
+      "index": 7,
+      "position": 2085,
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        8497,
+        270,
+        4181,
+        14707
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 304,
+          "text": " to",
+          "logit": 31.082456588745117
+        },
+        {
+          "token": 16,
+          "text": ".",
+          "logit": 30.65412712097168
+        },
+        {
+          "token": 1257,
+          "text": " first",
+          "logit": 30.122854232788086
+        },
+        {
+          "token": 4456,
+          "text": " structure",
+          "logit": 27.400196075439453
+        },
+        {
+          "token": 14,
+          "text": ",",
+          "logit": 27.22890853881836
+        },
+        {
+          "token": 305,
+          "text": " and",
+          "logit": 27.127384185791016
+        },
+        {
+          "token": 362,
+          "text": " for",
+          "logit": 24.989837646484375
+        },
+        {
+          "token": 1936,
+          "text": " before",
+          "logit": 24.18967056274414
+        },
+        {
+          "token": 28,
+          "text": ":",
+          "logit": 23.52176284790039
+        },
+        {
+          "token": 343,
+          "text": " (",
+          "logit": 22.380508422851562
+        },
+        {
+          "token": 29,
+          "text": ";",
+          "logit": 21.954214096069336
+        },
+        {
+          "token": 295,
+          "text": " in",
+          "logit": 21.85576629638672
+        }
+      ],
+      "c_expected_token": 304,
+      "c_expected_logit": 31.082456588745117,
+      "selected_token": 304
+    },
+    {
+      "index": 8,
+      "position": 2086,
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        8497,
+        270,
+        4181,
+        14707,
+        304
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 2572,
+          "text": " understand",
+          "logit": 34.95308303833008
+        },
+        {
+          "token": 1783,
+          "text": " find",
+          "logit": 32.350669860839844
+        },
+        {
+          "token": 1258,
+          "text": " add",
+          "logit": 30.062034606933594
+        },
+        {
+          "token": 1762,
+          "text": " see",
+          "logit": 28.554555892944336
+        },
+        {
+          "token": 5991,
+          "text": " figure",
+          "logit": 27.751407623291016
+        },
+        {
+          "token": 3287,
+          "text": " answer",
+          "logit": 27.351037979125977
+        },
+        {
+          "token": 4678,
+          "text": " implement",
+          "logit": 26.76126480102539
+        },
+        {
+          "token": 33147,
+          "text": " locate",
+          "logit": 26.022506713867188
+        },
+        {
+          "token": 1153,
+          "text": " know",
+          "logit": 25.655759811401367
+        },
+        {
+          "token": 5784,
+          "text": " identify",
+          "logit": 25.33837127685547
+        },
+        {
+          "token": 3281,
+          "text": " learn",
+          "logit": 25.198772430419922
+        },
+        {
+          "token": 6119,
+          "text": " determine",
+          "logit": 25.189517974853516
+        }
+      ],
+      "c_expected_token": 2572,
+      "c_expected_logit": 34.95308303833008,
+      "selected_token": 2572
+    },
+    {
+      "index": 9,
+      "position": 2087,
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        8497,
+        270,
+        4181,
+        14707,
+        304,
+        2572
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 270,
+          "text": " the",
+          "logit": 31.139644622802734
+        },
+        {
+          "token": 1205,
+          "text": " what",
+          "logit": 29.16506576538086
+        },
+        {
+          "token": 8049,
+          "text": " existing",
+          "logit": 28.988746643066406
+        },
+        {
+          "token": 4456,
+          "text": " structure",
+          "logit": 28.747913360595703
+        },
+        {
+          "token": 1192,
+          "text": " how",
+          "logit": 27.72188377380371
+        },
+        {
+          "token": 1009,
+          "text": " its",
+          "logit": 27.16006851196289
+        },
+        {
+          "token": 436,
+          "text": " it",
+          "logit": 25.859867095947266
+        },
+        {
+          "token": 16,
+          "text": ".",
+          "logit": 25.357297897338867
+        },
+        {
+          "token": 18567,
+          "text": " interactive",
+          "logit": 25.147682189941406
+        },
+        {
+          "token": 582,
+          "text": " \"",
+          "logit": 24.766712188720703
+        },
+        {
+          "token": 1479,
+          "text": " where",
+          "logit": 24.672489166259766
+        },
+        {
+          "token": 5148,
+          "text": " context",
+          "logit": 24.09579849243164
+        }
+      ],
+      "c_expected_token": 270,
+      "c_expected_logit": 31.139644622802734,
+      "selected_token": 270
+    },
+    {
+      "index": 10,
+      "position": 2088,
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        8497,
+        270,
+        4181,
+        14707,
+        304,
+        2572,
+        270
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 8049,
+          "text": " existing",
+          "logit": 32.286903381347656
+        },
+        {
+          "token": 18567,
+          "text": " interactive",
+          "logit": 31.20046615600586
+        },
+        {
+          "token": 4456,
+          "text": " structure",
+          "logit": 30.398164749145508
+        },
+        {
+          "token": 6107,
+          "text": " command",
+          "logit": 28.3789005279541
+        },
+        {
+          "token": 582,
+          "text": " \"",
+          "logit": 27.074691772460938
+        },
+        {
+          "token": 2573,
+          "text": " current",
+          "logit": 26.884700775146484
+        },
+        {
+          "token": 2775,
+          "text": " project",
+          "logit": 25.881946563720703
+        },
+        {
+          "token": 13973,
+          "text": " architecture",
+          "logit": 25.682701110839844
+        },
+        {
+          "token": 5148,
+          "text": " context",
+          "logit": 24.569238662719727
+        },
+        {
+          "token": 20341,
+          "text": " setup",
+          "logit": 24.398035049438477
+        },
+        {
+          "token": 7231,
+          "text": " task",
+          "logit": 23.627761840820312
+        },
+        {
+          "token": 26548,
+          "text": " repository",
+          "logit": 23.623825073242188
+        }
+      ],
+      "c_expected_token": 8049,
+      "c_expected_logit": 32.286903381347656,
+      "selected_token": 8049
+    },
+    {
+      "index": 11,
+      "position": 2089,
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        8497,
+        270,
+        4181,
+        14707,
+        304,
+        2572,
+        270,
+        8049
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 18567,
+          "text": " interactive",
+          "logit": 32.32500457763672
+        },
+        {
+          "token": 6107,
+          "text": " command",
+          "logit": 30.128475189208984
+        },
+        {
+          "token": 4456,
+          "text": " structure",
+          "logit": 28.66722869873047
+        },
+        {
+          "token": 582,
+          "text": " \"",
+          "logit": 25.72113609313965
+        },
+        {
+          "token": 87107,
+          "text": " slash",
+          "logit": 25.418027877807617
+        },
+        {
+          "token": 13973,
+          "text": " architecture",
+          "logit": 25.243270874023438
+        },
+        {
+          "token": 22586,
+          "text": " commands",
+          "logit": 24.248146057128906
+        },
+        {
+          "token": 20341,
+          "text": " setup",
+          "logit": 23.813636779785156
+        },
+        {
+          "token": 50390,
+          "text": " registry",
+          "logit": 23.67522430419922
+        },
+        {
+          "token": 8843,
+          "text": " structures",
+          "logit": 23.386672973632812
+        },
+        {
+          "token": 2775,
+          "text": " project",
+          "logit": 22.853015899658203
+        },
+        {
+          "token": 8804,
+          "text": " patterns",
+          "logit": 22.815181732177734
+        }
+      ],
+      "c_expected_token": 18567,
+      "c_expected_logit": 32.32500457763672,
+      "selected_token": 18567
+    },
+    {
+      "index": 12,
+      "position": 2090,
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        8497,
+        270,
+        4181,
+        14707,
+        304,
+        2572,
+        270,
+        8049,
+        18567
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 6107,
+          "text": " command",
+          "logit": 35.28498840332031
+        },
+        {
+          "token": 22586,
+          "text": " commands",
+          "logit": 26.03815269470215
+        },
+        {
+          "token": 50390,
+          "text": " registry",
+          "logit": 23.664318084716797
+        },
+        {
+          "token": 83295,
+          "text": " CLI",
+          "logit": 21.737903594970703
+        },
+        {
+          "token": 87107,
+          "text": " slash",
+          "logit": 21.73169708251953
+        },
+        {
+          "token": 5148,
+          "text": " context",
+          "logit": 20.93952751159668
+        },
+        {
+          "token": 11014,
+          "text": " agent",
+          "logit": 20.835872650146484
+        },
+        {
+          "token": 1487,
+          "text": " system",
+          "logit": 20.624347686767578
+        },
+        {
+          "token": 14444,
+          "text": " shell",
+          "logit": 20.570114135742188
+        },
+        {
+          "token": 17,
+          "text": "/",
+          "logit": 20.526878356933594
+        },
+        {
+          "token": 582,
+          "text": " \"",
+          "logit": 20.46599006652832
+        },
+        {
+          "token": 45750,
+          "text": " runtime",
+          "logit": 20.314125061035156
+        }
+      ],
+      "c_expected_token": 6107,
+      "c_expected_logit": 35.28498840332031,
+      "selected_token": 6107
+    },
+    {
+      "index": 13,
+      "position": 2091,
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        8497,
+        270,
+        4181,
+        14707,
+        304,
+        2572,
+        270,
+        8049,
+        18567,
+        6107
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 50390,
+          "text": " registry",
+          "logit": 37.4587516784668
+        },
+        {
+          "token": 4456,
+          "text": " structure",
+          "logit": 26.59365463256836
+        },
+        {
+          "token": 19858,
+          "text": " registration",
+          "logit": 25.689075469970703
+        },
+        {
+          "token": 1487,
+          "text": " system",
+          "logit": 25.628467559814453
+        },
+        {
+          "token": 13973,
+          "text": " architecture",
+          "logit": 24.356903076171875
+        },
+        {
+          "token": 9318,
+          "text": " register",
+          "logit": 24.179306030273438
+        },
+        {
+          "token": 10303,
+          "text": " framework",
+          "logit": 24.130319595336914
+        },
+        {
+          "token": 12807,
+          "text": " infrastructure",
+          "logit": 23.82925796508789
+        },
+        {
+          "token": 12475,
+          "text": " regist",
+          "logit": 23.4857234954834
+        },
+        {
+          "token": 16,
+          "text": ".",
+          "logit": 23.292163848876953
+        },
+        {
+          "token": 64223,
+          "text": " Registry",
+          "logit": 23.098098754882812
+        },
+        {
+          "token": 9963,
+          "text": " implementation",
+          "logit": 22.8056697845459
+        }
+      ],
+      "c_expected_token": 50390,
+      "c_expected_logit": 37.4587516784668,
+      "selected_token": 50390
+    },
+    {
+      "index": 14,
+      "position": 2092,
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        8497,
+        270,
+        4181,
+        14707,
+        304,
+        2572,
+        270,
+        8049,
+        18567,
+        6107,
+        50390
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 305,
+          "text": " and",
+          "logit": 26.403268814086914
+        },
+        {
+          "token": 14,
+          "text": ",",
+          "logit": 26.376060485839844
+        },
+        {
+          "token": 16,
+          "text": ".",
+          "logit": 26.20623016357422
+        },
+        {
+          "token": 4456,
+          "text": " structure",
+          "logit": 22.46505355834961
+        },
+        {
+          "token": 5655,
+          "text": " etc",
+          "logit": 20.104679107666016
+        },
+        {
+          "token": 13973,
+          "text": " architecture",
+          "logit": 19.788543701171875
+        },
+        {
+          "token": 5030,
+          "text": " pattern",
+          "logit": 18.902482986450195
+        },
+        {
+          "token": 343,
+          "text": " (",
+          "logit": 18.796321868896484
+        },
+        {
+          "token": 5392,
+          "text": " style",
+          "logit": 18.137088775634766
+        },
+        {
+          "token": 295,
+          "text": " in",
+          "logit": 17.95501136779785
+        },
+        {
+          "token": 1936,
+          "text": " before",
+          "logit": 17.952041625976562
+        },
+        {
+          "token": 8786,
+          "text": " format",
+          "logit": 17.781963348388672
+        }
+      ],
+      "c_expected_token": 305,
+      "c_expected_logit": 26.403268814086914,
+      "selected_token": 305
+    },
+    {
+      "index": 15,
+      "position": 2093,
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        8497,
+        270,
+        4181,
+        14707,
+        304,
+        2572,
+        270,
+        8049,
+        18567,
+        6107,
+        50390,
+        305
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 33988,
+          "text": " Agent",
+          "logit": 29.924436569213867
+        },
+        {
+          "token": 1192,
+          "text": " how",
+          "logit": 29.809391021728516
+        },
+        {
+          "token": 45750,
+          "text": " runtime",
+          "logit": 28.626567840576172
+        },
+        {
+          "token": 1258,
+          "text": " add",
+          "logit": 27.982521057128906
+        },
+        {
+          "token": 270,
+          "text": " the",
+          "logit": 27.41258430480957
+        },
+        {
+          "token": 11014,
+          "text": " agent",
+          "logit": 25.733814239501953
+        },
+        {
+          "token": 4678,
+          "text": " implement",
+          "logit": 25.535415649414062
+        },
+        {
+          "token": 4456,
+          "text": " structure",
+          "logit": 25.443958282470703
+        },
+        {
+          "token": 8804,
+          "text": " patterns",
+          "logit": 25.385147094726562
+        },
+        {
+          "token": 7379,
+          "text": " built",
+          "logit": 25.229467391967773
+        },
+        {
+          "token": 5392,
+          "text": " style",
+          "logit": 25.089649200439453
+        },
+        {
+          "token": 4524,
+          "text": " related",
+          "logit": 25.012943267822266
+        }
+      ],
+      "c_expected_token": 33988,
+      "c_expected_logit": 29.924436569213867,
+      "selected_token": 33988
+    }
+  ]
+}
