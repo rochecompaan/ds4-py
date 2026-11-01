@@ -9,7 +9,6 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation, LocalWorkspace
 from pydantic_ai_harness import (
     AskUser,
-    FileSystem,
     RepoContext,
     Shell,
     Skills,
@@ -17,6 +16,7 @@ from pydantic_ai_harness import (
 )
 from pydantic_ai_harness.ask_user import Answerer as QuestionAnswerer
 
+from ds4py.capabilities.file_system import DS4FileSystem
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.shell_jobs import DS4ShellJobs
 from ds4py.capabilities.system_notes import DS4SystemNotes
@@ -52,13 +52,14 @@ def build_agent_components(
 
     components: list[AbstractCapability] = [
         LocalWorkspace(project_dir, read_only=read_only),
-        FileSystem(
+        DS4FileSystem(
             tools=(
                 "read_file", "write_file", "edit_file", "search_files",
                 "find_files", "create_directory", "file_info",
             ),
             root_dir=project_dir, cwd=project_dir,
             content_hashes=True, read_only=False,
+            max_read_lines=160, max_read_chars=50_000,
         ),
         Shell(cwd=project_dir),
         DS4ShellJobs(model.session, project_dir),
