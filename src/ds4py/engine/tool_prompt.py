@@ -71,19 +71,24 @@ class ToolPromptGenerator:
         closing = f"</｜DSML｜{parameter}>"
         escaped = "&lt;" + closing[1:]
         doubly_escaped = "&amp;lt;" + closing[1:]
-        suffix = (
-            "</tools>\n\n"
-            "Call example:\n"
+        prefix = (
+            "## Tools\n\n"
+            "You have access to native DSML tools. Invoke tools by writing exactly this shape:\n\n"
             f"<｜DSML｜{calls}>\n"
-            f"<｜DSML｜{invoke} name=\"read\">\n"
-            f"<｜DSML｜{parameter} name=\"path\" string=\"true\">README.md</｜DSML｜{parameter}>\n"
+            f"<｜DSML｜{invoke} name=\"$TOOL_NAME\">\n"
+            f"<｜DSML｜{parameter} name=\"$PARAMETER_NAME\" string=\"true|false\">"
+            f"$PARAMETER_VALUE</｜DSML｜{parameter}>\n"
             f"</｜DSML｜{invoke}>\n"
             f"</｜DSML｜{calls}>\n\n"
-            "Use string=\"false\" for JSON values.\n"
-            f"Escape literal {closing} as {escaped}; write {escaped} literally as {doubly_escaped}. "
-            "Other entities stay unchanged.\n"
+            "Tool calls are not allowed inside <think></think>; finish thinking before emitting DSML.\n\n"
+            "String parameters use raw text and string=\"true\". Numbers and booleans use JSON text and "
+            "string=\"false\".\n\n"
+            "Inside string values only, escape a literal closing parameter tag as "
+            f"{escaped}. To write that escaped spelling literally, use {doubly_escaped}. "
+            "Other HTML entities are unchanged.\n\n"
+            "### Available Tool Schemas\n\n<tools>"
         )
-        return cls._schema_spans(schemas, "# Tools\n\n<tools>", suffix)
+        return cls._schema_spans(schemas, prefix, "</tools>\n")
 
     @classmethod
     def _glm(cls, schemas: Iterable[str]) -> list[ToolPromptSpan]:

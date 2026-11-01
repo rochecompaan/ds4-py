@@ -50,6 +50,9 @@ class PromptBuilder:
 
         if self.family == "deepseek41":
             append("system", self.engine._render_message(prefix, "system", ""))
+        if instructions:
+            append("system", self.message(prefix, "system", instructions + "\n\n"))
+
         tool_tokens = self._tool_tokens(tools)
         if self.family == "glm":
             role = self.engine._render_message(prefix, "system", "")
@@ -58,9 +61,6 @@ class PromptBuilder:
             append("system", self._qwen_open("system") + tool_tokens + self._qwen_close())
         else:
             append("system", tool_tokens)
-
-        if instructions:
-            append("system", self.message(prefix, "system", "\n\n" + instructions))
         return segments
 
     def _tool_tokens(self, tools: Iterable[ToolDefinition]) -> list[int]:

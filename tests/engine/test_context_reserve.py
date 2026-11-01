@@ -33,8 +33,8 @@ def scripted(*tokens: Any) -> Any:
 
 
 @contextmanager
-def chat_session(*tokens: Any, ctx: Any=347, cancel: Any=None, think: Any=ThinkMode.NONE) -> Iterator[Any]:
-    # The default fake chat prompt plus assistant prefix is 345 tokens.
+def chat_session(*tokens: Any, ctx: Any=673, cancel: Any=None, think: Any=ThinkMode.NONE) -> Iterator[Any]:
+    # The default fake chat prompt plus assistant prefix is 671 tokens.
     with ds4py.open(
         "f.gguf",
         ctx=ctx,

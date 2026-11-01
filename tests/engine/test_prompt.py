@@ -114,14 +114,13 @@ def test_glm_assistant_think_marker_avoids_empty_wrapper_and_stays_plain(marker:
         assert contains(ordinary, engine.tokenize("<think></think>", rendered=True))
 
 
-def test_instructions_are_a_separate_prefixed_system_message() -> None:
+def test_instructions_precede_tool_schemas() -> None:
     with fake_engine("glm") as engine:
         builder = PromptBuilder(engine)
         segments = builder.begin((), instructions="rules <arg_key>")
-        assert segments[-1].kind == "system"
-        assert contains(segments[-1].tokens, engine.tokenize("\n\nrules <arg_key>"))
-        assert "# Tools" in decode(engine, flatten(segments[:-1]))
-        assert "# Tools" not in decode(engine, segments[-1].tokens)
+        decoded = decode(engine, flatten(segments))
+        assert decoded.index("rules <arg_key>") < decoded.index("# Tools")
+        assert contains(flatten(segments), engine.tokenize("rules <arg_key>\n\n"))
 
 
 def test_qwen_reasoning_effort_is_a_system_message() -> None:

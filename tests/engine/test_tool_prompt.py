@@ -37,17 +37,22 @@ def deepseek_expected(schemas: Any, *, v41: Any=False) -> str:
     escaped = "&lt;" + closing[1:]
     doubly_escaped = "&amp;lt;" + closing[1:]
     return (
-        "# Tools\n\n"
-        f"<tools>{schemas}</tools>\n\n"
-        "Call example:\n"
+        "## Tools\n\n"
+        "You have access to native DSML tools. Invoke tools by writing exactly this shape:\n\n"
         f"<｜DSML｜{calls}>\n"
-        f"<｜DSML｜{invoke} name=\"read\">\n"
-        f"<｜DSML｜{parameter} name=\"path\" string=\"true\">README.md</｜DSML｜{parameter}>\n"
+        f"<｜DSML｜{invoke} name=\"$TOOL_NAME\">\n"
+        f"<｜DSML｜{parameter} name=\"$PARAMETER_NAME\" string=\"true|false\">"
+        f"$PARAMETER_VALUE</｜DSML｜{parameter}>\n"
         f"</｜DSML｜{invoke}>\n"
         f"</｜DSML｜{calls}>\n\n"
-        "Use string=\"false\" for JSON values.\n"
-        f"Escape literal {closing} as {escaped}; write {escaped} literally as {doubly_escaped}. "
-        "Other entities stay unchanged.\n"
+        "Tool calls are not allowed inside <think></think>; finish thinking before emitting DSML.\n\n"
+        "String parameters use raw text and string=\"true\". Numbers and booleans use JSON text and "
+        "string=\"false\".\n\n"
+        "Inside string values only, escape a literal closing parameter tag as "
+        f"{escaped}. To write that escaped spelling literally, use {doubly_escaped}. "
+        "Other HTML entities are unchanged.\n\n"
+        "### Available Tool Schemas\n\n"
+        f"<tools>{schemas}</tools>\n"
     )
 
 
@@ -141,7 +146,15 @@ def test_every_generated_example_executes_the_intended_call(family: Any) -> None
     from ds4py.engine.tool_syntax.glm import Glm
     from ds4py.engine.tool_syntax.qwen import Qwen
     prompt = ToolPromptGenerator(family).generate([])
-    examples = prompt.split('Call example:\n', 1)[1].split('\n\n', 1)[0]
+    if family.startswith('deepseek'):
+        examples = prompt.split('writing exactly this shape:\n\n', 1)[1].split('\n\n', 1)[0]
+        examples = (examples
+            .replace('$TOOL_NAME', 'read')
+            .replace('$PARAMETER_NAME', 'path')
+            .replace('string="true|false"', 'string="true"')
+            .replace('$PARAMETER_VALUE', 'README.md'))
+    else:
+        examples = prompt.split('Call example:\n', 1)[1].split('\n\n', 1)[0]
     factory = {'glm': Glm, 'qwen': Qwen}.get(family, lambda: Dsml(v41=family == 'deepseek41'))
     # No prose or unsupported teaching stanza may be silently skipped.
     examples = examples.splitlines() if family == 'glm' else [examples]

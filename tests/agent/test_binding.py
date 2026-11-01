@@ -83,6 +83,9 @@ def test_system_and_instruction_parts_are_separate_system_segments() -> None:
             ModelRequest(cast(Any, [SystemPromptPart("system text"), InstructionPart("instruction text")]))
         ], instructions="global")
 
+        decoded = decode(engine, session.transcript.tokens)
+        assert decoded.index("global") < decoded.index("# Tools")
+        assert decoded.index("# Tools") < decoded.index("system text")
         segments = session.transcript.segments[before:][-2:]
         assert [segment.kind for segment in segments] == ["system", "system"]
         assert "system text" in decode(
