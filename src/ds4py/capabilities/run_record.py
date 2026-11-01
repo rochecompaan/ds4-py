@@ -10,7 +10,6 @@ from typing import Any, cast
 from ds4py.engine.lifecycle import SessionEvent
 from ds4py.engine.session import Session
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai_harness.shell import CommandFinishedEvent, CommandStartedEvent
 
 
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
@@ -43,7 +42,7 @@ def _event_payload(event: object) -> dict[str, JsonValue]:
 
 
 class DS4RunRecord(AbstractCapability):
-    """One JSON object per line for harness events and session-bus events.
+    """Subscribe to runtime-bridged harness events and engine events.
 
     Every line carries the timestamp, kind, session id, run id and a JSON-safe
     payload, and each line is flushed by its own open/append/close. A failed
@@ -115,39 +114,25 @@ class DS4RunRecord(AbstractCapability):
 
     def _on_engine_event(self, event: SessionEvent) -> None:
         kind = getattr(event, "kind", type(event).__name__)
-        if kind == "agent_event":
-            return
         payload = dict(getattr(event, "payload", {}) or {})
-        terminal = (payload.get("run_id", self._run_id), payload.get("status"))
-        if kind == "run_end" and terminal == self._written_run_end:
-            self._written_run_end = None
-            return
+        if kind == "agent_event":
+            harness_event = payload.get("event")
+            line = self._line(type(harness_event).__name__, _event_payload(harness_event))
+            line["conversation_id"] = payload.get("conversation_id")
+            if payload.get("run_id") is not None:
+                line["run_id"] = payload["run_id"]
+        else:
+            terminal = (payload.get("run_id", self._run_id), payload.get("status"))
+            if kind == "run_end" and terminal == self._written_run_end:
+                self._written_run_end = None
+                return
+            line = self._line(kind, payload)
         try:
-            self._write(self._line(kind, payload))
+            self._write(line)
         except OSError:
             # Telemetry must never break the engine that is publishing.
             pass
 
     async def on_event(self, ctx: Any, *, event: object) -> None:
-        line = self._line(type(event).__name__, _event_payload(event))
-        line["conversation_id"] = getattr(ctx, "conversation_id", None)
-        run_id = getattr(ctx, "run_id", None)
-        if run_id is not None:
-            line["run_id"] = run_id
-        self._write(line)
-        if not hasattr(self.session, "emit"):
-            return
-        self.session.emit("agent_event", event=event)
-        if isinstance(event, CommandStartedEvent):
-            self.session.emit(
-                "service_started", service="shell", pid=event.pid, status="running",
-            )
-        elif isinstance(event, CommandFinishedEvent):
-            running = event.exit_code is None
-            self.session.emit(
-                "service_status" if running else "service_stopped",
-                service="shell",
-                pid=event.pid,
-                status="running" if running else "stopped",
-                exit_code=event.exit_code,
-            )
+        if self.failure is not None:
+            raise self.failure

@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from prompt_toolkit.utils import get_cwidth
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandStartedEvent
 
-from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.engine.events import Prefill, Synced
 from ds4py.engine.lifecycle import SessionEvent
 from ds4py.engine.plan import Plan
@@ -84,20 +83,22 @@ class RecordSession:
                 listener(event)
 
 
-def test_run_record_republishes_actual_shell_service_events(tmp_path: Path) -> None:
+def test_runtime_bridge_publishes_shell_events_without_a_run_record() -> None:
+    from ds4py.runtime import _HarnessEventBridge
+
     session: Any = RecordSession()
-    record = DS4RunRecord(session, tmp_path / "events.jsonl")
+    bridge = _HarnessEventBridge(session)
     seen = []
     session.on_event(lambda event: seen.append(event))
     ctx = SimpleNamespace(conversation_id="session", run_id="run")
 
     async def scenario() -> None:
-        await record.on_event(ctx, event=CommandStartedEvent(command="sleep 1", pid=321))
-        await record.on_event(ctx, event=CommandFinishedEvent(
+        await bridge.on_event(ctx, event=CommandStartedEvent(command="sleep 1", pid=321))
+        await bridge.on_event(ctx, event=CommandFinishedEvent(
             pid=321, output_path="out", status_path="status",
             exit_code=None, truncated=False,
         ))
-        await record.on_event(ctx, event=CommandFinishedEvent(
+        await bridge.on_event(ctx, event=CommandFinishedEvent(
             pid=321, output_path="out", status_path="status",
             exit_code=0, truncated=False,
         ))
@@ -111,3 +112,6 @@ def test_run_record_republishes_actual_shell_service_events(tmp_path: Path) -> N
     assert services[0].payload["status"] == "running"
     assert services[1].payload["status"] == "running"
     assert services[2].payload["status"] == "stopped"
+    agent_events = [event for event in seen if event.kind == "agent_event"]
+    assert len(agent_events) == 3
+    assert all(event.payload["run_id"] == "run" for event in agent_events)

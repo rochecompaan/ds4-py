@@ -106,3 +106,26 @@ def test_relocate_sends_later_lines_to_the_current_session_directory(tmp_path: P
     kinds = [line["kind"] for line in read_lines(second)]
     assert kinds[0] == "switched" and "saved" not in kinds
     assert read_lines(second)[0]["payload"]["restore_path"] == "kv"
+
+
+def test_run_record_writes_one_bridged_agent_event_from_the_session_bus(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "events.jsonl"
+    with fake_engine() as engine:
+        session = engine.session()
+        record = DS4RunRecord(session, path)
+        ctx = SimpleNamespace(conversation_id="conversation", run_id="run")
+        asyncio.run(record.for_run(ctx))
+        event = SimpleNamespace(parts=[])
+
+        session.emit(
+            "agent_event", event=event,
+            conversation_id="conversation", run_id="run",
+        )
+
+        lines = [line for line in read_lines(path) if line["kind"] == "SimpleNamespace"]
+        assert len(lines) == 1
+        assert lines[0]["conversation_id"] == "conversation"
+        assert lines[0]["run_id"] == "run"
+        assert lines[0]["payload"] == {"parts": []}
