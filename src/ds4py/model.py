@@ -183,7 +183,10 @@ class DS4Model(Model):
             self, params, policy, max_tokens, stop_sequences,
         )
         with self.session.events_on_loop(asyncio.get_running_loop()):
-            yield response
+            try:
+                yield response
+            finally:
+                await response._finish()
 
     async def request(
         self, messages: list[ModelMessage], model_settings: ModelSettings | None,

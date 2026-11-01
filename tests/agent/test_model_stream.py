@@ -179,6 +179,27 @@ def test_closing_event_iteration_binds_only_the_published_partial_response() -> 
     asyncio.run(scenario())
 
 
+def test_stream_context_releases_round_when_iterator_is_retained() -> None:
+    async def scenario() -> None:
+        with fake_engine(script=scripted_text("ab")) as engine:
+            session = engine.session()
+            model = make_model(session)
+            async with model.request_stream(
+                [user()], None, ModelRequestParameters(),
+            ) as stream:
+                iterator = stream.__aiter__()
+                event = await anext(iterator)
+                assert isinstance(event, PartStartEvent)
+                # Keep the iterator alive: the context, not iterator finalization,
+                # owns the native round's cleanup.
+                retained_iterator = iterator
+            assert retained_iterator is not None
+
+            session.append_user("next")
+
+    asyncio.run(scenario())
+
+
 def test_session_bus_listeners_stay_on_the_asyncio_thread() -> None:
     async def scenario() -> None:
         with fake_engine(script=scripted_text("done")) as engine:
