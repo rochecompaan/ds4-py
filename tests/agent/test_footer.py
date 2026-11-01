@@ -84,10 +84,10 @@ class RecordSession:
 
 
 def test_runtime_bridge_publishes_shell_events_without_a_run_record() -> None:
-    from ds4py.runtime import _HarnessEventBridge
+    from ds4py.capabilities.harness_events import HarnessEventBridge
 
     session: Any = RecordSession()
-    bridge = _HarnessEventBridge(session)
+    bridge = HarnessEventBridge(session)
     seen = []
     session.on_event(lambda event: seen.append(event))
     ctx = SimpleNamespace(conversation_id="session", run_id="run")

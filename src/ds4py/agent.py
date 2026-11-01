@@ -18,6 +18,7 @@ from pydantic_ai_harness.ask_user import Answerer as QuestionAnswerer
 
 from ds4py.agent_prompt import DEFAULT_CODING_AGENT_INSTRUCTIONS
 from ds4py.capabilities.file_system import DS4FileSystem
+from ds4py.capabilities.harness_events import HarnessEventBridge
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.shell_jobs import DS4ShellJobs
 from ds4py.capabilities.system_notes import DS4SystemNotes
@@ -74,6 +75,7 @@ def build_agent_components(
             missing_directories="skip",
         ),
         ToolOutputLimits(),
+        HarnessEventBridge(model.session),
         DS4RunRecord(model.session, Path(session_dir or project_dir) / "events.jsonl"),
         Instrumentation(),
         notes,

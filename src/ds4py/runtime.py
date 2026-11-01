@@ -35,7 +35,6 @@ from pydantic_ai_harness.step_persistence import (
 from pydantic_ai_harness.step_persistence import (
     RunRecord as StepRunRecord,
 )
-from pydantic_ai_harness.shell import CommandFinishedEvent, CommandStartedEvent
 
 from ds4py.agent import QuestionAnswerer, build_agent_components
 from ds4py.capabilities.run_record import DS4RunRecord
@@ -123,33 +122,6 @@ class _ModelStepTrace(AbstractCapability):
             "model_step", run_id=ctx.run_id, step_index=ctx.run_step,
         )
         return request_context
-
-
-class _HarnessEventBridge(AbstractCapability):
-    """Publish harness events without depending on the telemetry recorder."""
-
-    def __init__(self, session: Session) -> None:
-        self._session = session
-
-    async def on_event(self, ctx: Any, *, event: object) -> None:
-        run_id = getattr(ctx, "run_id", None)
-        self._session.emit(
-            "agent_event", event=event,
-            conversation_id=getattr(ctx, "conversation_id", None), run_id=run_id,
-        )
-        if isinstance(event, CommandStartedEvent):
-            self._session.emit(
-                "service_started", service="shell", pid=event.pid,
-                status="running", run_id=run_id,
-            )
-        elif isinstance(event, CommandFinishedEvent):
-            running = event.exit_code is None
-            self._session.emit(
-                "service_status" if running else "service_stopped",
-                service="shell", pid=event.pid,
-                status="running" if running else "stopped",
-                exit_code=event.exit_code, run_id=run_id,
-            )
 
 
 class AgentRuntime:
@@ -386,7 +358,6 @@ class AgentRuntime:
                     capabilities=[
                         StepPersistence(store=holder.current),
                         _ModelStepTrace(self._session),
-                        _HarnessEventBridge(self._session),
                     ],
                 )
             except asyncio.CancelledError:

@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 import asyncio
 
 from ds4py.agent import build_agent_components
+from ds4py.engine.lifecycle import SessionEvent
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai_harness import AskUser
@@ -28,6 +29,12 @@ class MockSession:
 
     def on_event(self, listener: Any, kinds: Any=None) -> None:
         self.listeners.append((listener, kinds))
+
+    def emit(self, kind: str, **payload: Any) -> None:
+        event = SessionEvent(kind, "mock-session", payload)
+        for listener, kinds in tuple(self.listeners):
+            if kinds is None or kind in kinds:
+                listener(event)
 
     def close_states(self) -> None:
         for state in self.states.values():
