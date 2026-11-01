@@ -9,9 +9,9 @@ from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from bench.models import TaskRunResult
     from bench.replay_c_traces import ReplayResult
     from bench.restore_check import RestoreResult, RestoreSummary
-    from bench.run_bakeoff import TaskRunResult
 
 
 METRICS = (

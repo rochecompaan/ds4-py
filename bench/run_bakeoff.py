@@ -1,9 +1,8 @@
 """Sequential bakeoff agent runner and per-task evidence collection."""
 
 import argparse
-from dataclasses import dataclass, replace
+from dataclasses import replace
 import json
-import math
 import os
 from pathlib import Path
 import pty
@@ -23,6 +22,7 @@ from bench.workspaces import (
     CommandRunner, GradeResult, Workspace, clone_workspace, grade_workspace,
     load_manifest, prepare_manifest,
 )
+from bench.models import AgentConfig, TaskRunResult
 from bench.replay_c_traces import replay_task_results
 from bench.report import BakeoffReport, build_report
 from bench.restore_check import CheckResult, RestoreSummary, check_result_saves
@@ -35,67 +35,6 @@ from bench.metrics import (
 )
 from ds4py.engine.replay import read_replay
 from ds4py.engine.replay_types import ReplayTrace
-
-
-@dataclass(frozen=True)
-class AgentConfig:
-    agent: str
-    executable: tuple[str, ...]
-    model: str
-    backend: str
-    ctx: int
-    temperature: float
-    seed: int
-    tokens: int
-    request_limit: int = 100
-
-    def __post_init__(self) -> None:
-        if self.agent not in {"c", "ds4py"}:
-            raise ValueError("agent must be 'c' or 'ds4py'")
-        object.__setattr__(self, "executable", tuple(str(item) for item in self.executable))
-
-
-_SUMMARY_FIELDS = frozenset(EventSummary.__dataclass_fields__)
-
-
-@dataclass(frozen=True)
-class TaskRunResult:
-    task_id: str
-    agent: str
-    passed: bool
-    attempts: int
-    summary: EventSummary
-    grader_outputs: tuple[str, ...] = ()
-    attempt_save_dirs: tuple[Path, ...] = ()
-    attempt_trace_paths: tuple[Path, ...] = ()
-    errors: tuple[str, ...] = ()
-    workspace: Path | None = None
-
-    def __post_init__(self) -> None:
-        if self.attempts not in {1, 2}:
-            raise ValueError("attempts must be one or two")
-        for name in ("progress_events", "tokens", "tool_calls", "non_extend_rounds"):
-            value = getattr(self.summary, name)
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise ValueError(f"{name} must be nonnegative")
-        if not math.isfinite(self.summary.wall_seconds) or self.summary.wall_seconds < 0:
-            raise ValueError("wall_seconds must be finite and nonnegative")
-        reuse = self.summary.avg_prefill_reuse
-        if reuse is not None and not 0 <= reuse <= 1:
-            raise ValueError("avg_prefill_reuse must be in [0,1]")
-
-    def __getattr__(self, name: str) -> Any:
-        if name in _SUMMARY_FIELDS:
-            return getattr(self.summary, name)
-        raise AttributeError(f"{type(self).__name__} has no attribute {name!r}")
-
-    @property
-    def save_dir(self) -> Path | None:
-        return self.attempt_save_dirs[-1] if self.attempt_save_dirs else None
-
-    @property
-    def trace_path(self) -> Path | None:
-        return self.attempt_trace_paths[-1] if self.attempt_trace_paths else None
 
 
 def _option_number(value: int | float) -> str:

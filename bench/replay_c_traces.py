@@ -8,16 +8,13 @@ import os
 from pathlib import Path
 import sys
 from collections.abc import Iterable, Sequence
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
-
-if TYPE_CHECKING:
-    from bench.run_bakeoff import AgentConfig, TaskRunResult
+from typing import Protocol
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import ds4py
+from bench.models import TaskRunResult
 from ds4py.engine.decode import GenerateJob
 from ds4py.errors import Ds4pyError
 from ds4py.engine.events import Event, Stopped, Token
@@ -38,6 +35,14 @@ class ReplayMismatch(AssertionError):
 
 class ReplaySelectionError(ValueError):
     """The C trace set is incomplete or inconsistent with the selected model."""
+
+
+class ReplayConfig(Protocol):
+    @property
+    def model(self) -> str: ...
+
+    @property
+    def backend(self) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -296,13 +301,19 @@ def replay_c_traces(
 
 
 def replay_task_results(
-    task_results: Iterable[TaskRunResult], config: AgentConfig, *,
-    lib: str | Path | None = None,
+    task_results: Iterable[TaskRunResult], config: ReplayConfig | str | Path, *,
+    lib: str | Path | None = None, backend: str | None = None,
 ) -> tuple[ReplayResult, ...]:
     """Convert selection/loading failures into gate evidence instead of skipping."""
+    if isinstance(config, (str, Path)):
+        model = config
+        selected_backend = backend or "cpu"
+    else:
+        model = config.model
+        selected_backend = config.backend if backend is None else backend
     try:
         return replay_c_traces(
-            task_results, config.model, lib=lib, backend=config.backend,
+            task_results, model, lib=lib, backend=selected_backend,
         )
     except (Ds4pyError, OSError, ValueError) as error:
         return (ReplayResult("<selection>", -1, False, str(error)),)
@@ -323,12 +334,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     report_path = args.report / "bakeoff.json" if args.report.is_dir() else args.report
     import json
     data = json.loads(report_path.read_text())
-    tasks = cast(
-        list[TaskRunResult],
-        [SimpleNamespace(**item) for item in data.get("tasks", [])],
-    )
-    config = cast(AgentConfig, SimpleNamespace(model=args.model, backend=args.backend))
-    results = replay_task_results(tasks, config, lib=args.lib)
+    tasks = [TaskRunResult.from_dict(item) for item in data.get("tasks", [])]
+    results = replay_task_results(tasks, args.model, lib=args.lib, backend=args.backend)
     gate = update_replay_report(report_path, results)
     for result in results:
         print(

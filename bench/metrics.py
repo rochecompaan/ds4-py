@@ -1,47 +1,15 @@
 """Strict comparison metrics extracted from bakeoff event and trace evidence."""
 
 from collections.abc import Iterable
-from dataclasses import dataclass
 import math
 from typing import Any
 
 from ds4py.engine.replay_types import ReplayTrace
+from bench.models import EventSummary, ToolAccounting
 
 
 class MetricError(ValueError):
     """Evidence is missing or internally inconsistent."""
-
-
-@dataclass(frozen=True)
-class ToolAccounting:
-    parsed: int = 0
-    executed: int = 0
-    refused: int = 0
-    retried: int = 0
-
-    @property
-    def accounted(self) -> int:
-        return self.executed + self.refused + self.retried
-
-    @property
-    def complete(self) -> bool:
-        return self.accounted == self.parsed
-
-
-@dataclass(frozen=True)
-class EventSummary:
-    wall_seconds: float
-    progress_events: int
-    tokens: int
-    tool_calls: int
-    avg_prefill_reuse: float | None
-    non_extend_rounds: int
-    invalid_non_extend_rounds: int = 0
-    allowed_non_extend_rounds: int = 0
-    non_extension_reasons: tuple[str, ...] = ()
-    parser_errors: int = 0
-    tool_accounting: ToolAccounting | None = ToolAccounting()
-    reuse_ratios: tuple[float, ...] = ()
 
 
 def _count(value: object, name: str) -> int:

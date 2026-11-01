@@ -13,12 +13,9 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Awaitable, Callable, Iterator, Sequence
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import Any, Protocol
 
-if TYPE_CHECKING:
-    from bench.run_bakeoff import TaskRunResult
-
+from bench.models import AgentConfig, TaskRunResult
 from ds4py.engine.lifecycle import SessionEvent
 from ds4py.engine.replay import read_replay
 from ds4py.errors import Ds4pyError
@@ -454,19 +451,20 @@ def check_command(argv: Sequence[str]) -> int:
     parser.add_argument("--ctx", type=int, default=100000)
     parser.add_argument("--temp", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--tokens", type=int, default=8192)
+    parser.add_argument("--request-limit", type=int, default=100)
     parser.add_argument("--results", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     data = json.loads(args.report.read_text())
-    tasks = cast(
-        list[TaskRunResult],
-        [SimpleNamespace(**item) for item in data.get("tasks", [])],
-    )
-    config = cast(RestoreConfig, SimpleNamespace(
+    tasks = [TaskRunResult.from_dict(item) for item in data.get("tasks", [])]
+    config = AgentConfig(
+        agent="ds4py",
         executable=(sys.executable, str(Path(__file__).resolve()), "attempt"),
         model=args.model, backend=args.backend, ctx=args.ctx,
         temperature=args.temp, seed=args.seed,
-    ))
+        tokens=args.tokens, request_limit=args.request_limit,
+    )
     results = check_result_saves(
         tasks, config, args.results or args.report.parent / "restores",
     )
