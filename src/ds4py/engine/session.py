@@ -289,8 +289,7 @@ class Session:
     def append_tokens(self, tokens: Sequence[int], kind: str,
                       meta: Mapping | None = None) -> Segment:
         with self._lock:
-            if self._active_round:
-                raise EngineError("a round is open")
+            self._require_idle()
             return self._transcript.append(tokens, kind, meta)
 
     def start_chat(
@@ -301,8 +300,7 @@ class Session:
         Rendering runs on the worker; caller-provided payloads stay plain text.
         """
         with self._lock:
-            if self._active_round:
-                raise EngineError("a round is open")
+            self._require_idle()
             chat_ops.start_chat(self, tools, instructions)
 
     def append_message(
@@ -311,8 +309,7 @@ class Session:
     ) -> Segment:
         """Append one plain-payload chat message with optional provenance metadata."""
         with self._lock:
-            if self._active_round:
-                raise EngineError("a round is open")
+            self._require_idle()
             if images:
                 raise EngineError("image input requires M5 vision support")
             chat_ops._start_if_empty(self)
@@ -323,8 +320,7 @@ class Session:
     def truncate(self, token_count: int) -> None:
         """Truncate between rounds and invalidate checkpoints beyond the new end."""
         with self._lock:
-            if self._active_round:
-                raise EngineError("a round is open")
+            self._require_idle()
             token_count = operator.index(token_count)
             if not 0 <= token_count <= len(self._transcript):
                 raise ValueError("truncate position is outside the transcript")
@@ -341,8 +337,7 @@ class Session:
         iterator. Cancellation cannot still be observed by a native job here.
         """
         with self._lock:
-            if self._active_round:
-                raise EngineError("a round is open")
+            self._require_idle()
             self.truncate(token_count)
             self._worker.call(
                 lambda engine, native: native.rewind(token_count)
@@ -357,8 +352,7 @@ class Session:
         Rendering/tokenization is dispatched to the worker.
         """
         with self._lock:
-            if self._active_round:
-                raise EngineError("a round is open")
+            self._require_idle()
             return chat_ops.append_user(self, text, images)
 
     def append_prefix(self, turns: Iterable[PrefixTurn]) -> None:
@@ -368,8 +362,7 @@ class Session:
         the family's EOS policy. Rendering is dispatched to the worker.
         """
         with self._lock:
-            if self._active_round:
-                raise EngineError("a round is open")
+            self._require_idle()
             chat_ops.append_prefix(self, turns)
 
     def append_tool_results(self, results: Iterable[str]) -> Segment:
@@ -379,8 +372,7 @@ class Session:
         rendering escapes the matching tool-result closing delimiter.
         """
         with self._lock:
-            if self._active_round:
-                raise EngineError("a round is open")
+            self._require_idle()
             return chat_ops.append_tool_results(self, results)
 
     def append_system_note(self, text: str, *, subtype: str | None = None) -> Segment:
@@ -390,8 +382,7 @@ class Session:
         to the worker. ``subtype`` becomes save provenance metadata.
         """
         with self._lock:
-            if self._active_round:
-                raise EngineError("a round is open")
+            self._require_idle()
             return chat_ops.append_system_note(self, text, subtype)
 
     def add_logits_hook(self, hook: Callable[[LogitsView], None]) -> None:
@@ -403,6 +394,7 @@ class Session:
         blocking-I/O APIs; those calls can deadlock the native worker.
         """
         with self._lock:
+            self._require_open()
             if self._active_round:
                 raise EngineError("cannot add a logits hook during an active round")
             self._logits_hooks.append(hook)
@@ -511,8 +503,7 @@ class Session:
         Closing the iterator drains native work.
         """
         with self._lock:
-            if self._active_round:
-                raise EngineError("a round is open")
+            self._require_idle()
             self._active_round = True
         try:
             if self._transcript.chat:
@@ -529,14 +520,18 @@ class Session:
         return self._worker.plan(self._transcript.tokens if tokens is None else tokens)
 
     def checkpoint(self, key: str) -> Checkpointed:
-        event = list(self._job_events(CheckpointJob(key)))[0]
-        assert isinstance(event, Checkpointed)
-        self._checkpoint_tokens[key] = event.tokens
-        return event
+        with self._lock:
+            self._require_idle()
+            event = list(self._job_events(CheckpointJob(key)))[0]
+            assert isinstance(event, Checkpointed)
+            self._checkpoint_tokens[key] = event.tokens
+            return event
 
     def drop_checkpoint(self, key: str) -> None:
-        list(self._job_events(CheckpointJob(key, drop=True)))
-        self._checkpoint_tokens.pop(key, None)
+        with self._lock:
+            self._require_idle()
+            list(self._job_events(CheckpointJob(key, drop=True)))
+            self._checkpoint_tokens.pop(key, None)
 
     def save_payload(self, file: BinaryIO, *, header: bytes) -> Saved:
         """Sync the transcript and write the header plus staged native payload.
@@ -588,6 +583,7 @@ class Session:
         them or use them on another thread. Blocking session or engine calls
         from the callback can deadlock the worker.
         """
+        self._require_open()
         return self._worker.call(lambda e, s: fn(Handles(e.raw, s.raw)))
 
     def cancel(self) -> None:

@@ -368,6 +368,42 @@ def test_fork_emits_only_forked_and_keeps_transcript_kv_checkpoints_and_state() 
         assert session.state("jobs", lambda: CloseCounter()) is state
 
 
+CLOSED_SESSION_OPERATIONS = {
+    "append_tokens": lambda session: session.append_tokens([7], "user"),
+    "start_chat": lambda session: session.start_chat(),
+    "append_message": lambda session: session.append_message("user", "after"),
+    "truncate": lambda session: session.truncate(0),
+    "reconcile_round": lambda session: session.reconcile_round(0),
+    "append_user": lambda session: session.append_user("after"),
+    "append_prefix": lambda session: session.append_prefix(()),
+    "append_tool_results": lambda session: session.append_tool_results(["after"]),
+    "append_system_note": lambda session: session.append_system_note("after"),
+    "add_logits_hook": lambda session: session.add_logits_hook(lambda view: None),
+    "run_round": lambda session: list(session.run_round(max_tokens=1)),
+    "checkpoint": lambda session: session.checkpoint("turn"),
+    "drop_checkpoint": lambda session: session.drop_checkpoint("turn"),
+    "on_worker": lambda session: session.on_worker(lambda handles: None).result(),
+}
+
+
+@pytest.mark.parametrize(
+    "operation", CLOSED_SESSION_OPERATIONS.values(), ids=CLOSED_SESSION_OPERATIONS,
+)
+def test_closed_session_rejects_public_mutation_generation_and_checkpoints(
+    operation: Any,
+) -> None:
+    engine, _ = reset_engine(script=reply(b"ok"))
+    with engine:
+        session = engine.session()
+        session.append_user("before")
+        list(session.run_round(max_tokens=0))
+        session.checkpoint("turn")
+        session.close()
+
+        with pytest.raises(EngineError, match="session is closed"):
+            operation(session)
+
+
 def test_engine_events_are_published_before_the_consumer_receives_them() -> None:
     engine, _ = reset_engine(script=reply(b"ok"))
     with engine:
