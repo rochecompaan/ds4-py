@@ -152,7 +152,9 @@ def append_system_note(
     retire_paused(session)
     builder = PromptBuilder(session._engine)
     tokens = builder.message(session._transcript.tokens, "system", "\n" + text)
-    meta = {"subtype": subtype} if subtype else None
+    meta: dict[str, str] = {"text": text}
+    if subtype:
+        meta["subtype"] = subtype
     return cast(Segment, _append(session, tokens, "note", meta))
 
 

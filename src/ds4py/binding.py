@@ -67,6 +67,8 @@ class _Provenance(Protocol):
     def content_hash(self) -> str: ...
     @property
     def source(self) -> str: ...
+    @property
+    def text(self) -> str | None: ...
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,7 @@ class SegmentProvenance:
     key: str
     content_hash: str
     source: str
+    text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -238,6 +241,7 @@ class MessageBinder:
         self._bound_messages: list[ModelMessage] = []
         self._signature = None
         self._restored = False
+        self._restored_notes: dict[str, list[tuple[str, str | None]]] = {}
 
     def forget(self) -> None:
         """Drop binding state so the next request renders the message list fresh."""
@@ -245,6 +249,25 @@ class MessageBinder:
         self._bound_messages = []
         self._signature = None
         self._restored = False
+        self._restored_notes = {}
+
+    def restore_notes(self, segments: Sequence[_Provenance]) -> None:
+        """Schedule exact saved notes before the message keys that followed them."""
+        restored: dict[str, list[tuple[str, str | None]]] = {}
+        pending: list[tuple[str, str | None]] = []
+        for segment in segments:
+            if segment.kind == "system_note" or segment.kind.startswith("system_note:"):
+                text = getattr(segment, "text", None)
+                if not isinstance(text, str):
+                    raise ValueError("saved note text is required for rendered restore")
+                subtype = segment.kind.partition(":")[2] or None
+                pending.append((text, subtype))
+            elif segment.key and pending:
+                restored.setdefault(segment.key, []).extend(pending)
+                pending = []
+        if pending:
+            raise ValueError("saved note has no following message boundary")
+        self._restored_notes = restored
 
     def adopt(self, messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         """Reconcile bound content by message key without truncating harness history.
@@ -302,6 +325,9 @@ class MessageBinder:
             subtype = kind.split(":", 1)[1] if ":" in kind else ""
             if subtype:
                 meta["subtype"] = subtype
+            text = getattr(provenance, "text", None)
+            if text is not None:
+                meta["text"] = text
             kind = "note"
         return Segment(provenance.start, provenance.end, kind, MappingProxyType(meta))
 
@@ -570,9 +596,12 @@ class MessageBinder:
         for offset, (message, (key, content_hash)) in enumerate(
             zip(messages[common:], keyed[common:]),
         ):
-            if provider is not None and isinstance(message, ModelRequest):
-                for text, subtype in provider.notes(messages[:common + offset + 1]):
+            if isinstance(message, ModelRequest):
+                for text, subtype in self._restored_notes.get(key, ()):
                     chat_ops.append_system_note(self.session, text, subtype)
+                if provider is not None:
+                    for text, subtype in provider.notes(messages[:common + offset + 1]):
+                        chat_ops.append_system_note(self.session, text, subtype)
             message_start, end = self._renderer.append(
                 self.session, message, key, content_hash,
             )
@@ -631,6 +660,7 @@ class MessageBinder:
         exported = []
         for segment in self.session.transcript.segments:
             kind = segment.kind
+            text = segment.meta.get("text") if kind == "note" else None
             if kind == "note":
                 subtype = segment.meta.get("subtype")
                 kind = f"system_note:{subtype}" if subtype else "system_note"
@@ -641,5 +671,6 @@ class MessageBinder:
                 str(segment.meta.get("key", "")),
                 str(segment.meta.get("content_hash", "")),
                 str(segment.meta.get("source", "rendered")),
+                text=str(text) if text is not None else None,
             ))
         return tuple(exported)

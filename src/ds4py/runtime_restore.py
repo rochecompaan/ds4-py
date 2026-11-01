@@ -105,11 +105,17 @@ def restore_snapshot(
         if notes is not None:
             notes.restore_from_segments(session.transcript.segments)
     else:
+        if any(
+            (segment.kind == "system_note" or segment.kind.startswith("system_note:"))
+            and getattr(segment, "text", None) is None
+            for segment in record.segments
+        ):
+            raise ValueError("saved note text is required for rendered restore")
         session.truncate(0)
         binder.forget()
         if notes is not None:
             notes.restore_from_segments(record.segments)
-            notes.sync_from_segments(())
+        binder.restore_notes(record.segments)
     return {
         **outcome,
         "restore_path": "kv" if loaded is not None else "render",

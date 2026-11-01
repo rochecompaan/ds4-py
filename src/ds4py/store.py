@@ -81,6 +81,7 @@ class SegmentProvenance:
     key: str
     content_hash: str
     source: str
+    text: str | None = None
 
     def __post_init__(self) -> None:
         start = _nonnegative(self.start, "segment start")
@@ -91,9 +92,11 @@ class SegmentProvenance:
         object.__setattr__(self, "end", end)
         for name in ("kind", "key", "content_hash", "source"):
             object.__setattr__(self, name, _string(getattr(self, name), f"segment {name}"))
+        if self.text is not None:
+            object.__setattr__(self, "text", _string(self.text, "segment text"))
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        data: dict[str, object] = {
             "start": self.start,
             "end": self.end,
             "kind": self.kind,
@@ -101,6 +104,9 @@ class SegmentProvenance:
             "content_hash": self.content_hash,
             "source": self.source,
         }
+        if self.text is not None:
+            data["text"] = self.text
+        return data
 
     @classmethod
     def from_dict(cls, data: Mapping) -> "SegmentProvenance":
@@ -109,7 +115,7 @@ class SegmentProvenance:
         try:
             return cls(
                 data["start"], data["end"], data["kind"], data["key"],
-                data["content_hash"], data["source"],
+                data["content_hash"], data["source"], text=data.get("text"),
             )
         except KeyError as error:
             raise ValueError(f"segment is missing {error.args[0]!r}") from error

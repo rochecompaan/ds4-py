@@ -107,6 +107,21 @@ def test_save_record_from_dict_preserves_all_segment_provenance() -> None:
     )
 
 
+def test_note_provenance_round_trips_text_and_accepts_legacy_kv_records() -> None:
+    note = SegmentProvenance(
+        0, 1, "system_note:date", "", "", "rendered", text="original date note",
+    )
+
+    encoded = note.to_dict()
+    restored = SegmentProvenance.from_dict(encoded)
+    del encoded["text"]
+    legacy = SegmentProvenance.from_dict(encoded)
+
+    assert restored == note
+    assert restored.text == "original date note"
+    assert legacy.text is None
+
+
 @pytest.mark.parametrize(
     ("tokens", "expected"),
     [

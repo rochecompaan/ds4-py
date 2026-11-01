@@ -490,7 +490,7 @@ class AgentRuntime:
             segments=tuple(
                 SegmentProvenance(
                     segment.start, segment.end, segment.kind, segment.key,
-                    segment.content_hash, segment.source,
+                    segment.content_hash, segment.source, text=segment.text,
                 )
                 for segment in self.model.binder.export_segments()
             ),
