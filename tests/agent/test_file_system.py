@@ -119,6 +119,18 @@ def test_read_schema_uses_configured_default() -> None:
     assert prepared[1] is other
 
 
+def test_agent_exposes_configured_read_schema(tmp_path: Path) -> None:
+    _, exposed = _run_agent(tmp_path)
+
+    schema = exposed["read_file"].parameters_json_schema
+    assert set(schema["properties"]) == {"path", "offset", "limit"}
+    assert schema["required"] == ["path"]
+    assert schema["properties"]["limit"]["default"] is None
+    assert schema["properties"]["limit"]["description"] == (
+        "Maximum number of lines to return (default: 160)."
+    )
+
+
 def test_default_read_returns_160_lines_and_next_offset(tmp_path: Path) -> None:
     (tmp_path / "lines.txt").write_text(
         "".join(f"line-{number:03}\n" for number in range(1, 166))
