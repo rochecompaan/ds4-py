@@ -1,0 +1,1451 @@
+{
+  "task_id": "ds4py-trace-replay",
+  "round_index": 0,
+  "source_trace": "/workspace/results/targeted-8192-f5abe79/repo-ctx-command/run-3/repo-ctx-command/ds4py/attempt-1/trace.jsonl",
+  "mode": "native-direct-full",
+  "model": "/workspace/ds4/gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix-0731.gguf",
+  "library": "/workspace/native/installs/tmp73y_8gak/libds4.so",
+  "library_sha256": "866920c49bc280098ae0f45cff43e287251b442616bfc638d747ba859fc3f830",
+  "backend": "cuda",
+  "ctx": 256,
+  "think": 1,
+  "split_at": null,
+  "prompt_tokens": 239,
+  "prompt_ids_sha256": "58c878f26813033ca7bbf74837fed18257ea840964b22999ea0f331245db06fd",
+  "prompt_bytes_sha256": "418ad2016650689979e3bd13c11247377181f39c9c5a86b19d689675f815f5a4",
+  "sync_stages": [
+    {
+      "label": "full",
+      "input_tokens": 239,
+      "common_prefix": 0,
+      "status": "SyncStatus.DONE",
+      "position": 239
+    }
+  ],
+  "teacher_stages": [],
+  "initial_rng": 1,
+  "final_rng": 1,
+  "c_sampled_prefix": [
+    2581,
+    1309,
+    304,
+    8497,
+    270,
+    4181,
+    14707,
+    304,
+    2572,
+    270,
+    8049,
+    18567,
+    6107,
+    50390,
+    305,
+    33988
+  ],
+  "ds4py_sampled_prefix": [
+    3184,
+    68838,
+    80642,
+    9860,
+    80642,
+    20855,
+    16562,
+    9282,
+    3618,
+    8321,
+    304,
+    270,
+    3946,
+    20289,
+    16,
+    10177
+  ],
+  "first_divergence": 0,
+  "terminal": "max_tokens",
+  "captures": [
+    {
+      "index": 0,
+      "position": 239,
+      "prior_sampled_tokens": [],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 3184,
+          "text": ",\"",
+          "logit": 39.41246032714844
+        },
+        {
+          "token": 83956,
+          "text": "\uff0c\"",
+          "logit": 22.77515411376953
+        },
+        {
+          "token": 14,
+          "text": ",",
+          "logit": 21.61377716064453
+        },
+        {
+          "token": 95,
+          "text": "}",
+          "logit": 20.472579956054688
+        },
+        {
+          "token": 116991,
+          "text": "},{\"",
+          "logit": 19.49587059020996
+        },
+        {
+          "token": 53540,
+          "text": ",&",
+          "logit": 18.956865310668945
+        },
+        {
+          "token": 16,
+          "text": ".",
+          "logit": 18.748441696166992
+        },
+        {
+          "token": 9943,
+          "text": ",'",
+          "logit": 18.736339569091797
+        },
+        {
+          "token": 271,
+          "text": "\n\n",
+          "logit": 18.7357234954834
+        },
+        {
+          "token": 989,
+          "text": ",\n",
+          "logit": 18.432411193847656
+        },
+        {
+          "token": 21447,
+          "text": ",$",
+          "logit": 18.251623153686523
+        },
+        {
+          "token": 2893,
+          "text": ",\n\n",
+          "logit": 18.162511825561523
+        }
+      ],
+      "c_expected_token": 2581,
+      "c_expected_logit": 7.583064556121826,
+      "selected_token": 3184
+    },
+    {
+      "index": 1,
+      "position": 240,
+      "prior_sampled_tokens": [
+        3184
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 68838,
+          "text": "properties",
+          "logit": 34.8663330078125
+        },
+        {
+          "token": 20855,
+          "text": "description",
+          "logit": 26.251523971557617
+        },
+        {
+          "token": 24486,
+          "text": "required",
+          "logit": 25.490428924560547
+        },
+        {
+          "token": 102970,
+          "text": "additional",
+          "logit": 23.917381286621094
+        },
+        {
+          "token": 1631,
+          "text": "any",
+          "logit": 23.29840850830078
+        },
+        {
+          "token": 4611,
+          "text": "type",
+          "logit": 23.179569244384766
+        },
+        {
+          "token": 17173,
+          "text": "items",
+          "logit": 23.089073181152344
+        },
+        {
+          "token": 5211,
+          "text": "include",
+          "logit": 22.07163429260254
+        },
+        {
+          "token": 28258,
+          "text": "dep",
+          "logit": 21.749378204345703
+        },
+        {
+          "token": 12390,
+          "text": "has",
+          "logit": 21.713659286499023
+        },
+        {
+          "token": 791,
+          "text": "one",
+          "logit": 21.584360122680664
+        },
+        {
+          "token": 46172,
+          "text": "parameters",
+          "logit": 21.55043601989746
+        }
+      ],
+      "c_expected_token": 1309,
+      "c_expected_logit": 5.467319965362549,
+      "selected_token": 68838
+    },
+    {
+      "index": 2,
+      "position": 241,
+      "prior_sampled_tokens": [
+        3184,
+        68838
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 80642,
+          "text": "\":{\"",
+          "logit": 38.5810661315918
+        },
+        {
+          "token": 3362,
+          "text": "\":",
+          "logit": 31.301544189453125
+        },
+        {
+          "token": 16562,
+          "text": "\":\"",
+          "logit": 23.30309295654297
+        },
+        {
+          "token": 96893,
+          "text": "\":[",
+          "logit": 20.868396759033203
+        },
+        {
+          "token": 4,
+          "text": "\"",
+          "logit": 19.87565040588379
+        },
+        {
+          "token": 73887,
+          "text": "\"=>",
+          "logit": 17.46306037902832
+        },
+        {
+          "token": 21825,
+          "text": "\":\n",
+          "logit": 16.643978118896484
+        },
+        {
+          "token": 62773,
+          "text": "\"}",
+          "logit": 16.524246215820312
+        },
+        {
+          "token": 3320,
+          "text": "\">",
+          "logit": 15.799262046813965
+        },
+        {
+          "token": 55550,
+          "text": "\\\":",
+          "logit": 15.696256637573242
+        },
+        {
+          "token": 119694,
+          "text": "\":\n\n",
+          "logit": 15.554526329040527
+        },
+        {
+          "token": 52252,
+          "text": "Meta",
+          "logit": 15.372217178344727
+        }
+      ],
+      "c_expected_token": 304,
+      "c_expected_logit": 9.60418701171875,
+      "selected_token": 80642
+    },
+    {
+      "index": 3,
+      "position": 242,
+      "prior_sampled_tokens": [
+        3184,
+        68838,
+        80642
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 9860,
+          "text": "path",
+          "logit": 32.864471435546875
+        },
+        {
+          "token": 9326,
+          "text": "content",
+          "logit": 32.01073455810547
+        },
+        {
+          "token": 8104,
+          "text": "file",
+          "logit": 31.891504287719727
+        },
+        {
+          "token": 20855,
+          "text": "description",
+          "logit": 30.542911529541016
+        },
+        {
+          "token": 16540,
+          "text": "conf",
+          "logit": 29.511781692504883
+        },
+        {
+          "token": 60515,
+          "text": "contents",
+          "logit": 29.032371520996094
+        },
+        {
+          "token": 14707,
+          "text": "base",
+          "logit": 28.142536163330078
+        },
+        {
+          "token": 35261,
+          "text": "hash",
+          "logit": 27.408517837524414
+        },
+        {
+          "token": 6018,
+          "text": "input",
+          "logit": 27.158763885498047
+        },
+        {
+          "token": 7060,
+          "text": "force",
+          "logit": 26.89394760131836
+        },
+        {
+          "token": 7193,
+          "text": "body",
+          "logit": 26.820297241210938
+        },
+        {
+          "token": 20400,
+          "text": "message",
+          "logit": 26.181177139282227
+        }
+      ],
+      "c_expected_token": 8497,
+      "c_expected_logit": 7.436863899230957,
+      "selected_token": 9860
+    },
+    {
+      "index": 4,
+      "position": 243,
+      "prior_sampled_tokens": [
+        3184,
+        68838,
+        80642,
+        9860
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 80642,
+          "text": "\":{\"",
+          "logit": 33.14276885986328
+        },
+        {
+          "token": 10177,
+          "text": "\",\"",
+          "logit": 25.69386863708496
+        },
+        {
+          "token": 16562,
+          "text": "\":\"",
+          "logit": 24.34613037109375
+        },
+        {
+          "token": 84828,
+          "text": "_description",
+          "logit": 22.274566650390625
+        },
+        {
+          "token": 19086,
+          "text": "_file",
+          "logit": 20.790542602539062
+        },
+        {
+          "token": 62773,
+          "text": "\"}",
+          "logit": 19.914161682128906
+        },
+        {
+          "token": 3362,
+          "text": "\":",
+          "logit": 19.61082649230957
+        },
+        {
+          "token": 65,
+          "text": "_",
+          "logit": 19.231855392456055
+        },
+        {
+          "token": 9181,
+          "text": "_b",
+          "logit": 18.2500057220459
+        },
+        {
+          "token": 23007,
+          "text": "_string",
+          "logit": 18.17296028137207
+        },
+        {
+          "token": 46567,
+          "text": "_base",
+          "logit": 17.88924789428711
+        },
+        {
+          "token": 29784,
+          "text": "_with",
+          "logit": 17.86728286743164
+        }
+      ],
+      "c_expected_token": 270,
+      "c_expected_logit": 7.988854885101318,
+      "selected_token": 80642
+    },
+    {
+      "index": 5,
+      "position": 244,
+      "prior_sampled_tokens": [
+        3184,
+        68838,
+        80642,
+        9860,
+        80642
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 20855,
+          "text": "description",
+          "logit": 38.1633415222168
+        },
+        {
+          "token": 14979,
+          "text": "default",
+          "logit": 28.106216430664062
+        },
+        {
+          "token": 4611,
+          "text": "type",
+          "logit": 28.065597534179688
+        },
+        {
+          "token": 43693,
+          "text": "pattern",
+          "logit": 26.94488525390625
+        },
+        {
+          "token": 1631,
+          "text": "any",
+          "logit": 25.373653411865234
+        },
+        {
+          "token": 27328,
+          "text": "allow",
+          "logit": 24.989225387573242
+        },
+        {
+          "token": 10212,
+          "text": "title",
+          "logit": 24.67996597290039
+        },
+        {
+          "token": 28258,
+          "text": "dep",
+          "logit": 24.37730598449707
+        },
+        {
+          "token": 12082,
+          "text": "format",
+          "logit": 24.25030517578125
+        },
+        {
+          "token": 3949,
+          "text": "const",
+          "logit": 24.08893585205078
+        },
+        {
+          "token": 8837,
+          "text": " description",
+          "logit": 23.492258071899414
+        },
+        {
+          "token": 791,
+          "text": "one",
+          "logit": 23.490015029907227
+        }
+      ],
+      "c_expected_token": 4181,
+      "c_expected_logit": 1.7807494401931763,
+      "selected_token": 20855
+    },
+    {
+      "index": 6,
+      "position": 245,
+      "prior_sampled_tokens": [
+        3184,
+        68838,
+        80642,
+        9860,
+        80642,
+        20855
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 16562,
+          "text": "\":\"",
+          "logit": 37.592681884765625
+        },
+        {
+          "token": 3362,
+          "text": "\":",
+          "logit": 29.337890625
+        },
+        {
+          "token": 80642,
+          "text": "\":{\"",
+          "logit": 23.87298583984375
+        },
+        {
+          "token": 15636,
+          "text": ":\"",
+          "logit": 22.34652328491211
+        },
+        {
+          "token": 3320,
+          "text": "\">",
+          "logit": 20.984973907470703
+        },
+        {
+          "token": 5809,
+          "text": "\\n",
+          "logit": 20.625877380371094
+        },
+        {
+          "token": 10177,
+          "text": "\",\"",
+          "logit": 19.73906707763672
+        },
+        {
+          "token": 15073,
+          "text": "\"><",
+          "logit": 19.67185401916504
+        },
+        {
+          "token": 55550,
+          "text": "\\\":",
+          "logit": 19.642024993896484
+        },
+        {
+          "token": 19804,
+          "text": ":\\",
+          "logit": 19.532533645629883
+        },
+        {
+          "token": 10215,
+          "text": "Path",
+          "logit": 19.511516571044922
+        },
+        {
+          "token": 1281,
+          "text": "=\"",
+          "logit": 19.491363525390625
+        }
+      ],
+      "c_expected_token": 14707,
+      "c_expected_logit": 6.75892448425293,
+      "selected_token": 16562
+    },
+    {
+      "index": 7,
+      "position": 246,
+      "prior_sampled_tokens": [
+        3184,
+        68838,
+        80642,
+        9860,
+        80642,
+        20855,
+        16562
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 9282,
+          "text": "File",
+          "logit": 34.563323974609375
+        },
+        {
+          "token": 10215,
+          "text": "Path",
+          "logit": 31.968345642089844
+        },
+        {
+          "token": 102364,
+          "text": "Absolute",
+          "logit": 30.37849998474121
+        },
+        {
+          "token": 76124,
+          "text": "Relative",
+          "logit": 29.340869903564453
+        },
+        {
+          "token": 65886,
+          "text": "Destination",
+          "logit": 28.75196075439453
+        },
+        {
+          "token": 29753,
+          "text": "Target",
+          "logit": 28.23202133178711
+        },
+        {
+          "token": 671,
+          "text": "The",
+          "logit": 27.863170623779297
+        },
+        {
+          "token": 21750,
+          "text": "Write",
+          "logit": 27.039987564086914
+        },
+        {
+          "token": 17797,
+          "text": "Output",
+          "logit": 26.661724090576172
+        },
+        {
+          "token": 8104,
+          "text": "file",
+          "logit": 26.36050033569336
+        },
+        {
+          "token": 35,
+          "text": "A",
+          "logit": 25.871877670288086
+        },
+        {
+          "token": 5840,
+          "text": "New",
+          "logit": 25.827802658081055
+        }
+      ],
+      "c_expected_token": 304,
+      "c_expected_logit": 10.124612808227539,
+      "selected_token": 9282
+    },
+    {
+      "index": 8,
+      "position": 247,
+      "prior_sampled_tokens": [
+        3184,
+        68838,
+        80642,
+        9860,
+        80642,
+        20855,
+        16562,
+        9282
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 3618,
+          "text": " path",
+          "logit": 35.42710876464844
+        },
+        {
+          "token": 304,
+          "text": " to",
+          "logit": 27.662689208984375
+        },
+        {
+          "token": 8321,
+          "text": " relative",
+          "logit": 25.59030532836914
+        },
+        {
+          "token": 469,
+          "text": " or",
+          "logit": 25.05839729309082
+        },
+        {
+          "token": 1487,
+          "text": " system",
+          "logit": 24.22934913635254
+        },
+        {
+          "token": 11536,
+          "text": " creation",
+          "logit": 24.218395233154297
+        },
+        {
+          "token": 2329,
+          "text": " name",
+          "logit": 23.937435150146484
+        },
+        {
+          "token": 5085,
+          "text": " write",
+          "logit": 23.670501708984375
+        },
+        {
+          "token": 6830,
+          "text": " location",
+          "logit": 23.399131774902344
+        },
+        {
+          "token": 343,
+          "text": " (",
+          "logit": 23.21826934814453
+        },
+        {
+          "token": 3445,
+          "text": " content",
+          "logit": 22.896385192871094
+        },
+        {
+          "token": 14148,
+          "text": " absolute",
+          "logit": 22.766273498535156
+        }
+      ],
+      "c_expected_token": 2572,
+      "c_expected_logit": 11.984960556030273,
+      "selected_token": 3618
+    },
+    {
+      "index": 9,
+      "position": 248,
+      "prior_sampled_tokens": [
+        3184,
+        68838,
+        80642,
+        9860,
+        80642,
+        20855,
+        16562,
+        9282,
+        3618
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 8321,
+          "text": " relative",
+          "logit": 33.00319290161133
+        },
+        {
+          "token": 304,
+          "text": " to",
+          "logit": 28.343822479248047
+        },
+        {
+          "token": 343,
+          "text": " (",
+          "logit": 27.52157974243164
+        },
+        {
+          "token": 16,
+          "text": ".",
+          "logit": 27.05340003967285
+        },
+        {
+          "token": 14,
+          "text": ",",
+          "logit": 26.35499382019043
+        },
+        {
+          "token": 362,
+          "text": " for",
+          "logit": 25.180559158325195
+        },
+        {
+          "token": 14148,
+          "text": " absolute",
+          "logit": 23.693706512451172
+        },
+        {
+          "token": 2549,
+          "text": " within",
+          "logit": 23.591733932495117
+        },
+        {
+          "token": 294,
+          "text": " of",
+          "logit": 23.5393123626709
+        },
+        {
+          "token": 10177,
+          "text": "\",\"",
+          "logit": 23.4211483001709
+        },
+        {
+          "token": 295,
+          "text": " in",
+          "logit": 23.152862548828125
+        },
+        {
+          "token": 418,
+          "text": " with",
+          "logit": 22.890064239501953
+        }
+      ],
+      "c_expected_token": 270,
+      "c_expected_logit": 19.325199127197266,
+      "selected_token": 8321
+    },
+    {
+      "index": 10,
+      "position": 249,
+      "prior_sampled_tokens": [
+        3184,
+        68838,
+        80642,
+        9860,
+        80642,
+        20855,
+        16562,
+        9282,
+        3618,
+        8321
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 304,
+          "text": " to",
+          "logit": 32.647369384765625
+        },
+        {
+          "token": 16,
+          "text": ".",
+          "logit": 21.045989990234375
+        },
+        {
+          "token": 3946,
+          "text": " working",
+          "logit": 20.444232940673828
+        },
+        {
+          "token": 343,
+          "text": " (",
+          "logit": 20.441551208496094
+        },
+        {
+          "token": 14,
+          "text": ",",
+          "logit": 20.435453414916992
+        },
+        {
+          "token": 5809,
+          "text": "\\n",
+          "logit": 20.371381759643555
+        },
+        {
+          "token": 270,
+          "text": " the",
+          "logit": 20.019250869750977
+        },
+        {
+          "token": 10177,
+          "text": "\",\"",
+          "logit": 19.366043090820312
+        },
+        {
+          "token": 10276,
+          "text": ".\\",
+          "logit": 18.789154052734375
+        },
+        {
+          "token": 8321,
+          "text": " relative",
+          "logit": 18.72048568725586
+        },
+        {
+          "token": 418,
+          "text": " with",
+          "logit": 18.55750274658203
+        },
+        {
+          "token": 469,
+          "text": " or",
+          "logit": 18.50074005126953
+        }
+      ],
+      "c_expected_token": 8049,
+      "c_expected_logit": 12.410746574401855,
+      "selected_token": 304
+    },
+    {
+      "index": 11,
+      "position": 250,
+      "prior_sampled_tokens": [
+        3184,
+        68838,
+        80642,
+        9860,
+        80642,
+        20855,
+        16562,
+        9282,
+        3618,
+        8321,
+        304
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 270,
+          "text": " the",
+          "logit": 29.661224365234375
+        },
+        {
+          "token": 3946,
+          "text": " working",
+          "logit": 26.28388214111328
+        },
+        {
+          "token": 2573,
+          "text": " current",
+          "logit": 22.146366119384766
+        },
+        {
+          "token": 2775,
+          "text": " project",
+          "logit": 21.263389587402344
+        },
+        {
+          "token": 72895,
+          "text": " workspace",
+          "logit": 21.15467643737793
+        },
+        {
+          "token": 274,
+          "text": " c",
+          "logit": 19.602680206298828
+        },
+        {
+          "token": 20289,
+          "text": " directory",
+          "logit": 19.229843139648438
+        },
+        {
+          "token": 3618,
+          "text": " path",
+          "logit": 19.085426330566406
+        },
+        {
+          "token": 4798,
+          "text": " root",
+          "logit": 19.033161163330078
+        },
+        {
+          "token": 4245,
+          "text": " file",
+          "logit": 18.972888946533203
+        },
+        {
+          "token": 3811,
+          "text": " base",
+          "logit": 18.817901611328125
+        },
+        {
+          "token": 345,
+          "text": " C",
+          "logit": 18.728538513183594
+        }
+      ],
+      "c_expected_token": 18567,
+      "c_expected_logit": 12.378491401672363,
+      "selected_token": 270
+    },
+    {
+      "index": 12,
+      "position": 251,
+      "prior_sampled_tokens": [
+        3184,
+        68838,
+        80642,
+        9860,
+        80642,
+        20855,
+        16562,
+        9282,
+        3618,
+        8321,
+        304,
+        270
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 3946,
+          "text": " working",
+          "logit": 32.703956604003906
+        },
+        {
+          "token": 72895,
+          "text": " workspace",
+          "logit": 23.20372772216797
+        },
+        {
+          "token": 2573,
+          "text": " current",
+          "logit": 23.01772689819336
+        },
+        {
+          "token": 2775,
+          "text": " project",
+          "logit": 21.585783004760742
+        },
+        {
+          "token": 5809,
+          "text": "\\n",
+          "logit": 20.682601928710938
+        },
+        {
+          "token": 4985,
+          "text": " writing",
+          "logit": 20.649551391601562
+        },
+        {
+          "token": 30808,
+          "text": "working",
+          "logit": 20.268274307250977
+        },
+        {
+          "token": 4798,
+          "text": " root",
+          "logit": 19.81267547607422
+        },
+        {
+          "token": 21050,
+          "text": " Working",
+          "logit": 19.66795539855957
+        },
+        {
+          "token": 20289,
+          "text": " directory",
+          "logit": 19.316158294677734
+        },
+        {
+          "token": 818,
+          "text": " <",
+          "logit": 19.169147491455078
+        },
+        {
+          "token": 20255,
+          "text": " coding",
+          "logit": 19.098575592041016
+        }
+      ],
+      "c_expected_token": 6107,
+      "c_expected_logit": 16.361814498901367,
+      "selected_token": 3946
+    },
+    {
+      "index": 13,
+      "position": 252,
+      "prior_sampled_tokens": [
+        3184,
+        68838,
+        80642,
+        9860,
+        80642,
+        20855,
+        16562,
+        9282,
+        3618,
+        8321,
+        304,
+        270,
+        3946
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 20289,
+          "text": " directory",
+          "logit": 32.90866470336914
+        },
+        {
+          "token": 15983,
+          "text": " dir",
+          "logit": 22.125717163085938
+        },
+        {
+          "token": 6315,
+          "text": " direction",
+          "logit": 20.886009216308594
+        },
+        {
+          "token": 5809,
+          "text": "\\n",
+          "logit": 20.4399356842041
+        },
+        {
+          "token": 16,
+          "text": ".",
+          "logit": 19.614938735961914
+        },
+        {
+          "token": 4798,
+          "text": " root",
+          "logit": 19.502208709716797
+        },
+        {
+          "token": 3078,
+          "text": " area",
+          "logit": 19.296844482421875
+        },
+        {
+          "token": 47135,
+          "text": " Directory",
+          "logit": 19.293521881103516
+        },
+        {
+          "token": 62,
+          "text": "\\",
+          "logit": 18.766998291015625
+        },
+        {
+          "token": 10904,
+          "text": " director",
+          "logit": 18.646650314331055
+        },
+        {
+          "token": 10177,
+          "text": "\",\"",
+          "logit": 18.638202667236328
+        },
+        {
+          "token": 101204,
+          "text": "directory",
+          "logit": 18.576065063476562
+        }
+      ],
+      "c_expected_token": 50390,
+      "c_expected_logit": 13.21348762512207,
+      "selected_token": 20289
+    },
+    {
+      "index": 14,
+      "position": 253,
+      "prior_sampled_tokens": [
+        3184,
+        68838,
+        80642,
+        9860,
+        80642,
+        20855,
+        16562,
+        9282,
+        3618,
+        8321,
+        304,
+        270,
+        3946,
+        20289
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 16,
+          "text": ".",
+          "logit": 29.84471893310547
+        },
+        {
+          "token": 14,
+          "text": ",",
+          "logit": 24.710525512695312
+        },
+        {
+          "token": 343,
+          "text": " (",
+          "logit": 24.62868881225586
+        },
+        {
+          "token": 10177,
+          "text": "\",\"",
+          "logit": 24.465850830078125
+        },
+        {
+          "token": 304,
+          "text": " to",
+          "logit": 23.751386642456055
+        },
+        {
+          "token": 29,
+          "text": ";",
+          "logit": 23.194841384887695
+        },
+        {
+          "token": 10276,
+          "text": ".\\",
+          "logit": 22.97979736328125
+        },
+        {
+          "token": 66910,
+          "text": ".\",",
+          "logit": 22.085548400878906
+        },
+        {
+          "token": 2148,
+          "text": ".\"",
+          "logit": 21.197715759277344
+        },
+        {
+          "token": 396,
+          "text": " that",
+          "logit": 21.15281867980957
+        },
+        {
+          "token": 469,
+          "text": " or",
+          "logit": 21.059825897216797
+        },
+        {
+          "token": 362,
+          "text": " for",
+          "logit": 20.653867721557617
+        }
+      ],
+      "c_expected_token": 305,
+      "c_expected_logit": 20.29804229736328,
+      "selected_token": 16
+    },
+    {
+      "index": 15,
+      "position": 254,
+      "prior_sampled_tokens": [
+        3184,
+        68838,
+        80642,
+        9860,
+        80642,
+        20855,
+        16562,
+        9282,
+        3618,
+        8321,
+        304,
+        270,
+        3946,
+        20289,
+        16
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 10177,
+          "text": "\",\"",
+          "logit": 30.830093383789062
+        },
+        {
+          "token": 25023,
+          "text": " Must",
+          "logit": 24.596492767333984
+        },
+        {
+          "token": 2052,
+          "text": " If",
+          "logit": 23.538339614868164
+        },
+        {
+          "token": 6948,
+          "text": " Use",
+          "logit": 23.51165199279785
+        },
+        {
+          "token": 76847,
+          "text": " Existing",
+          "logit": 23.388912200927734
+        },
+        {
+          "token": 15062,
+          "text": " Path",
+          "logit": 23.387895584106445
+        },
+        {
+          "token": 455,
+          "text": " The",
+          "logit": 22.755382537841797
+        },
+        {
+          "token": 6904,
+          "text": " Over",
+          "logit": 22.694931030273438
+        },
+        {
+          "token": 3460,
+          "text": " May",
+          "logit": 22.511676788330078
+        },
+        {
+          "token": 2600,
+          "text": " To",
+          "logit": 22.200448989868164
+        },
+        {
+          "token": 4147,
+          "text": " Do",
+          "logit": 22.161983489990234
+        },
+        {
+          "token": 4550,
+          "text": " Tra",
+          "logit": 22.13005256652832
+        }
+      ],
+      "c_expected_token": 33988,
+      "c_expected_logit": 14.429232597351074,
+      "selected_token": 10177
+    }
+  ]
+}

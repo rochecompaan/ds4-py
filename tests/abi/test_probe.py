@@ -1,3 +1,4 @@
+from typing import Any
 from pathlib import Path
 import shutil
 
@@ -12,16 +13,16 @@ HEADERS = Path(__file__).parents[1] / "fixtures" / "ds4-headers"
 
 
 @pytest.fixture
-def upstream_headers():
+def upstream_headers() -> Path:
     return HEADERS / "upstream"
 
 
 @pytest.fixture
-def fork_headers():
+def fork_headers() -> Path:
     return HEADERS / "fork"
 
 
-def doctored(tmp_path, old, new):
+def doctored(tmp_path: Path, old: str, new: str) -> Path:
     include_dir = tmp_path / "include"
     shutil.copytree(HEADERS / "upstream", include_dir)
     header = include_dir / "ds4.h"
@@ -31,14 +32,14 @@ def doctored(tmp_path, old, new):
     return include_dir
 
 
-def test_core_bindings_compile_against_both_pins(cc, tmp_path, upstream_headers, fork_headers):
+def test_core_bindings_compile_against_both_pins(cc: str, tmp_path: Path, upstream_headers: Path, fork_headers: Path) -> None:
     for inc in (upstream_headers, fork_headers):
         results = probe.probe_signatures(inc, CORE_BINDINGS, cc, tmp_path / inc.name)
         assert set(results) == {binding.name for binding in CORE_BINDINGS}
         assert {n for n, r in results.items() if not r.ok} == set()
 
 
-def test_fork_only_binding_fails_upstream(cc, tmp_path, upstream_headers, fork_headers, ext_site):
+def test_fork_only_binding_fails_upstream(cc: Any, tmp_path: Path, upstream_headers: Any, fork_headers: Any, ext_site: Any) -> None:
     ext = discover_extension_bindings()
     up = probe.probe_signatures(upstream_headers, ext, cc, tmp_path / "u")
     fk = probe.probe_signatures(fork_headers, ext, cc, tmp_path / "f")
@@ -47,7 +48,7 @@ def test_fork_only_binding_fails_upstream(cc, tmp_path, upstream_headers, fork_h
     assert "ds4_engine_sampling_defaults" in up["ds4_engine_sampling_defaults"].message
 
 
-def test_changed_argument_type_fails_its_probe(cc, tmp_path):
+def test_changed_argument_type_fails_its_probe(cc: Any, tmp_path: Path) -> None:
     inc = doctored(tmp_path, "int ds4_session_eval(ds4_session *s, int token,",
                              "int ds4_session_eval(ds4_session *s, long token,")
     results = probe.probe_signatures(inc, CORE_BINDINGS, cc, tmp_path / "w")
@@ -56,20 +57,20 @@ def test_changed_argument_type_fails_its_probe(cc, tmp_path):
     assert all(r.ok for n, r in results.items() if n != "ds4_session_eval")
 
 
-def test_ctypes_structs_match_the_compiled_layout(cc, tmp_path, upstream_headers, fork_headers):
+def test_ctypes_structs_match_the_compiled_layout(cc: Any, tmp_path: Path, upstream_headers: Any, fork_headers: Any) -> None:
     for inc in (upstream_headers, fork_headers):
         compiled = probe.probe_layouts(inc, cc, tmp_path / inc.name)
         assert compiled == {name: struct_layout(cls) for name, cls in STRUCTS.items()}
 
 
-def test_moved_field_changes_the_compiled_layout(cc, tmp_path):
+def test_moved_field_changes_the_compiled_layout(cc: Any, tmp_path: Path) -> None:
     inc = doctored(tmp_path, "    int n_threads;\n    int context_size;",
                              "    int context_size;\n    int n_threads;")
     compiled = probe.probe_layouts(inc, cc, tmp_path / "w")
     assert compiled["ds4_engine_options"] != struct_layout(EngineOptions)
 
 
-def test_header_hashes(upstream_headers, fork_headers):
+def test_header_hashes(upstream_headers: Any, fork_headers: Any) -> None:
     assert probe.headers_known(probe.header_hashes(upstream_headers))
     assert probe.headers_known(probe.header_hashes(fork_headers))
     assert not probe.headers_known({"ds4.h": "unrecognized", "ds4_kvstore.h": "unrecognized"})

@@ -1,0 +1,149 @@
+{
+  "passed": false,
+  "interruption": {
+    "passed": false,
+    "detail": "2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m('\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m\u266f\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m','\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m#\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m').\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3mreplace\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m('\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m\u266d\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m','\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3mb\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m')\r\r\n\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m-\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m Determine\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m if\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m tonic\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m_n\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3morm\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m in\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m SH\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3mARP\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m_\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3mKE\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3mYS\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m ->\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m use\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m sharp\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m list\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m;\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m elif\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m in\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m FL\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3mAT\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m_\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3mKE\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3mYS\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m ->\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m use\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m flat\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\u001b[0m\u001b[?7h\u001b[0;2;3m list\u001b[0m\u001b[0m\u001b[?2004h\u001b[?25l\u001b[0m\u001b[?7l\u001b[0m\u001b[J\u001b[0mds4py>\u001b[0m\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\r\r\n\u001b[0m \b\u001b[7A\u001b[7C\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[?25l\u001b[?7l\u001b[?7h\u001b[0m\u001b[?12l\u001b[?25h\u001b[7D\u001b[J\u001b[0m\u001b[?7h\u001b[?2004l\nPTY driver: PTY timed out"
+  },
+  "restores": [
+    {
+      "task_id": "scale-generator",
+      "repetition": 1,
+      "save_dir": "/workspace/results/targeted-8192-f5abe79/scale-generator/run-1/scale-generator/ds4py/attempt-1/home/sessions/871a1be3591540aaaf3fdf2ae0a56730",
+      "results": [
+        {
+          "save_dir": "/workspace/results/targeted-8192-f5abe79/scale-generator/run-1/scale-generator/ds4py/attempt-1/home/sessions/871a1be3591540aaaf3fdf2ae0a56730",
+          "passed": false,
+          "detail": "restore case 2 exited 1",
+          "case1": {
+            "passed": false,
+            "detail": "not run"
+          },
+          "case2": {
+            "passed": false,
+            "detail": "not run"
+          },
+          "stripped_save_dir": "/workspace/results/acceptance-8192-f5abe79/restores/scale-generator/run-1/scale-generator/attempt-1/restore/stripped-home/sessions/871a1be3591540aaaf3fdf2ae0a56730",
+          "trace_paths": [
+            "/workspace/results/acceptance-8192-f5abe79/restores/scale-generator/run-1/scale-generator/attempt-1/restore/case-1.jsonl"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "scale-generator",
+      "repetition": 2,
+      "save_dir": "/workspace/results/targeted-8192-f5abe79/scale-generator/run-2/scale-generator/ds4py/attempt-1/home/sessions/79cc8e9361434103b52bae29ec57ea44",
+      "results": [
+        {
+          "save_dir": "/workspace/results/targeted-8192-f5abe79/scale-generator/run-2/scale-generator/ds4py/attempt-1/home/sessions/79cc8e9361434103b52bae29ec57ea44",
+          "passed": false,
+          "detail": "restore case 1 exited 1",
+          "case1": {
+            "passed": false,
+            "detail": "not run"
+          },
+          "case2": {
+            "passed": false,
+            "detail": "not run"
+          },
+          "stripped_save_dir": "/workspace/results/acceptance-8192-f5abe79/restores/scale-generator/run-2/scale-generator/attempt-1/restore/stripped-home/sessions/79cc8e9361434103b52bae29ec57ea44",
+          "trace_paths": []
+        }
+      ]
+    },
+    {
+      "task_id": "scale-generator",
+      "repetition": 3,
+      "save_dir": "/workspace/results/targeted-8192-f5abe79/scale-generator/run-3/scale-generator/ds4py/attempt-1/home/sessions/739d6ab6fef849b8a3c4caa5609906d1",
+      "results": [
+        {
+          "save_dir": "/workspace/results/targeted-8192-f5abe79/scale-generator/run-3/scale-generator/ds4py/attempt-1/home/sessions/739d6ab6fef849b8a3c4caa5609906d1",
+          "passed": false,
+          "detail": "case 1 follow-up plan was rebuild, not extend; token 41 differs: case 1=36455 case 2=4678",
+          "case1": {
+            "passed": false,
+            "detail": "case 1"
+          },
+          "case2": {
+            "passed": true,
+            "detail": "case 2"
+          },
+          "stripped_save_dir": "/workspace/results/acceptance-8192-f5abe79/restores/scale-generator/run-3/scale-generator/attempt-1/restore/stripped-home/sessions/739d6ab6fef849b8a3c4caa5609906d1",
+          "trace_paths": [
+            "/workspace/results/acceptance-8192-f5abe79/restores/scale-generator/run-3/scale-generator/attempt-1/restore/case-1.jsonl",
+            "/workspace/results/acceptance-8192-f5abe79/restores/scale-generator/run-3/scale-generator/attempt-1/restore/case-2.jsonl"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "repo-ctx-command",
+      "repetition": 1,
+      "save_dir": "/workspace/results/targeted-8192-f5abe79/repo-ctx-command/run-1/repo-ctx-command/ds4py/attempt-1/home/sessions/f22dde685a154d449c29a6011460f1cb",
+      "results": [
+        {
+          "save_dir": "/workspace/results/targeted-8192-f5abe79/repo-ctx-command/run-1/repo-ctx-command/ds4py/attempt-1/home/sessions/f22dde685a154d449c29a6011460f1cb",
+          "passed": false,
+          "detail": "restore case 1 exited 1",
+          "case1": {
+            "passed": false,
+            "detail": "not run"
+          },
+          "case2": {
+            "passed": false,
+            "detail": "not run"
+          },
+          "stripped_save_dir": "/workspace/results/acceptance-8192-f5abe79/restores/repo-ctx-command/run-1/repo-ctx-command/attempt-1/restore/stripped-home/sessions/f22dde685a154d449c29a6011460f1cb",
+          "trace_paths": []
+        }
+      ]
+    },
+    {
+      "task_id": "repo-ctx-command",
+      "repetition": 2,
+      "save_dir": "/workspace/results/targeted-8192-f5abe79/repo-ctx-command/run-2/repo-ctx-command/ds4py/attempt-1/home/sessions/5480a1c6cdb343358b3db31d72256078",
+      "results": [
+        {
+          "save_dir": "/workspace/results/targeted-8192-f5abe79/repo-ctx-command/run-2/repo-ctx-command/ds4py/attempt-1/home/sessions/5480a1c6cdb343358b3db31d72256078",
+          "passed": false,
+          "detail": "restore case 1 exited 1",
+          "case1": {
+            "passed": false,
+            "detail": "not run"
+          },
+          "case2": {
+            "passed": false,
+            "detail": "not run"
+          },
+          "stripped_save_dir": "/workspace/results/acceptance-8192-f5abe79/restores/repo-ctx-command/run-2/repo-ctx-command/attempt-1/restore/stripped-home/sessions/5480a1c6cdb343358b3db31d72256078",
+          "trace_paths": []
+        }
+      ]
+    },
+    {
+      "task_id": "repo-ctx-command",
+      "repetition": 3,
+      "save_dir": "/workspace/results/targeted-8192-f5abe79/repo-ctx-command/run-3/repo-ctx-command/ds4py/attempt-1/home/sessions/2896fd9a01b94bca86478dbe7343dc52",
+      "results": [
+        {
+          "save_dir": "/workspace/results/targeted-8192-f5abe79/repo-ctx-command/run-3/repo-ctx-command/ds4py/attempt-1/home/sessions/2896fd9a01b94bca86478dbe7343dc52",
+          "passed": false,
+          "detail": "case 1 follow-up plan was rebuild, not extend; token 68 differs: case 1=16 case 2=339",
+          "case1": {
+            "passed": false,
+            "detail": "case 1"
+          },
+          "case2": {
+            "passed": true,
+            "detail": "case 2"
+          },
+          "stripped_save_dir": "/workspace/results/acceptance-8192-f5abe79/restores/repo-ctx-command/run-3/repo-ctx-command/attempt-1/restore/stripped-home/sessions/2896fd9a01b94bca86478dbe7343dc52",
+          "trace_paths": [
+            "/workspace/results/acceptance-8192-f5abe79/restores/repo-ctx-command/run-3/repo-ctx-command/attempt-1/restore/case-1.jsonl",
+            "/workspace/results/acceptance-8192-f5abe79/restores/repo-ctx-command/run-3/repo-ctx-command/attempt-1/restore/case-2.jsonl"
+          ]
+        }
+      ]
+    }
+  ]
+}

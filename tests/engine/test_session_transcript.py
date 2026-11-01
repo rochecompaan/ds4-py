@@ -1,4 +1,5 @@
 """Public history observation must not bypass exclusive round ownership."""
+from typing import Any, cast
 import threading
 
 import pytest
@@ -14,7 +15,7 @@ from ds4py.engine.events import Stopped, Synced, Token
     ("extend", ([7],)),
     ("truncate", (0,)),
 ])
-def test_public_transcript_has_no_mutators(round_open, method, args):
+def test_public_transcript_has_no_mutators(round_open: Any, method: Any, args: Any) -> None:
     with ds4py.open("f.gguf", ctx=64, native=FakeNative()) as engine:
         session = engine.session()
         session.append_tokens([5, 6], "user")
@@ -38,11 +39,11 @@ def test_public_transcript_has_no_mutators(round_open, method, args):
         assert view.tokens == (5, 6, 7)  # A retained view observes later guarded writes.
 
 
-def test_retained_view_observes_worker_commits_without_exposing_writes(monkeypatch):
+def test_retained_view_observes_worker_commits_without_exposing_writes(monkeypatch: pytest.MonkeyPatch) -> None:
     evaluating, release = threading.Event(), threading.Event()
     original_eval = FakeSession.eval
 
-    def blocked_eval(self, token):
+    def blocked_eval(self: Any, token: Any) -> Any:
         if token == 99:
             evaluating.set()
             assert release.wait(5), "eval release timed out"
@@ -68,7 +69,7 @@ def test_retained_view_observes_worker_commits_without_exposing_writes(monkeypat
             ]
             assert tokens == (5, 6) and len(segments) == 1
             with pytest.raises(TypeError):
-                view.segments[0].meta["label"] = "changed"
+                cast(Any, view.segments[0].meta)["label"] = "changed"
         finally:
             release.set()
             rnd.close()

@@ -1,7 +1,7 @@
 """Token acceptance and commit policy separated from native decode steps."""
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
-from typing import Callable, Protocol
+from typing import Callable, Protocol, cast
 
 from ds4py._native.protocol import EngineHandle, SessionHandle
 from ds4py.errors import EngineError
@@ -33,7 +33,7 @@ class GenerateJob:
     resume: bool = False
     sampled_tokens: list[int] = field(default_factory=list)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.stream is not None and self.stream.control is not self.control:
             raise ValueError("stream and job control must be identical")
 
@@ -41,7 +41,7 @@ class GenerateJob:
 class DecodeContext:
     def __init__(self, engine: EngineHandle, job: GenerateJob, *, limit: int,
                  limit_reason: str, cancelled: Callable[[], bool],
-                 emit: Callable[[Event], None], session: SessionHandle | None = None):
+                 emit: Callable[[Event], None], session: SessionHandle | None = None) -> None:
         self.rng = job.rng.state
         self.reason: str | None = None
         self._engine, self._job = engine, job
@@ -54,22 +54,23 @@ class DecodeContext:
             job.stream.sampled_tokens if job.stream is not None else job.sampled_tokens
         )
         self._logits_view = (
-            LogitsView(session, engine.info().vocab_size) if job.logits_hooks else None
+            LogitsView(cast(SessionHandle, session), engine.info().vocab_size)
+            if job.logits_hooks else None
         )
         self._verdict = Verdict.CONTINUE
-        self._event_buffer = None
+        self._event_buffer: list[Event] | None = None
         self.finalized = False
         self._finish_parser: bool | None = None
 
-    def buffer_events(self):
+    def buffer_events(self) -> None:
         self._event_buffer = []
 
-    def flush_events(self):
+    def flush_events(self) -> None:
         events, self._event_buffer = self._event_buffer, None
         for event in events or ():
             self._emit(event)
 
-    def _publish(self, event):
+    def _publish(self, event: Event) -> None:
         if self._event_buffer is None:
             self._emit(event)
         else:
@@ -240,4 +241,5 @@ def generate(engine: EngineHandle, session: SessionHandle, job: GenerateJob, *,
             else:
                 raise EngineError("decode returned no tokens")
     ctx.finalize()
+    assert ctx.reason is not None
     return ctx.reason

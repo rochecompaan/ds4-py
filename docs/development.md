@@ -44,6 +44,13 @@ The above `pytest` run needs no ds4 source tree, native library, or model.
 It tests the Python code and synthetic native contracts.
 It does not prove that model inference works on your hardware.
 
+Run the Python type and annotation checks:
+
+```bash
+uv run --extra agent pyright
+uv run --extra agent ruff check src bench tests
+```
+
 When you change packaging or CI configuration, run the relevant checks:
 
 ```bash

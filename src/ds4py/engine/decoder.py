@@ -11,13 +11,13 @@ _PENDING_LIMIT = 16
 
 class Decoder:
     """Display-only UTF-8/think-marker decoding, local to one assistant round."""
-    def __init__(self, *, thinking=False):
+    def __init__(self, *, thinking: bool = False) -> None:
         self.thinking = thinking
         self._pending = bytearray()
         self._utf8 = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
     @staticmethod
-    def _emit(deltas, text, thinking):
+    def _emit(deltas: list[TextDelta], text: str, thinking: bool) -> None:
         if not text:
             return
         if deltas and deltas[-1].thinking == thinking:
@@ -25,11 +25,13 @@ class Decoder:
         else:
             deltas.append(TextDelta(text, thinking))
 
-    def _decode(self, data, deltas, *, final=False):
+    def _decode(
+        self, data: bytes, deltas: list[TextDelta], *, final: bool = False,
+    ) -> None:
         text = self._utf8.decode(data, final=final)
         self._emit(deltas, text, self.thinking)
 
-    def _marker_boundary(self, deltas):
+    def _marker_boundary(self, deltas: list[TextDelta]) -> None:
         # A valid codepoint cannot span an ASCII marker. If invalid bytes are
         # pending, attribute their deterministic replacement to the old side.
         self._decode(b"", deltas, final=True)

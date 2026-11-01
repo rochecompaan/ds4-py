@@ -1,5 +1,6 @@
 """Shared byte-stream state for family-specific tool parsers."""
-from .model import Snapshot
+from ds4py._native.protocol import EngineInfo
+from .model import Snapshot, ToolCall
 
 _THINK_OPEN = b"<think>"
 _THINK_CLOSE = b"</think>"
@@ -13,45 +14,45 @@ class ToolParser:
 
     Own it on the decode worker; do not feed it concurrently.
     """
-    def __init__(self):
+    def __init__(self) -> None:
         self.state = "SEARCH"
         self.raw = bytearray()
         self.parse_pos = 0
-        self.error = None
+        self.error: str | None = None
         self.param_close_prefix = False
         self.in_think = False
         self.dsml_in_think = False
-        self._calls = []
+        self._calls: list[ToolCall] = []
         self._active = False
         self._pending = bytearray()
         self._marker_tail = bytearray()
         self._forms = tuple(self._opening_forms())
 
-    def _opening_forms(self):
+    def _opening_forms(self) -> tuple[tuple[bytes, bool], ...]:
         raise NotImplementedError
 
-    def _start(self, implicit_invoke):
+    def _start(self, implicit_invoke: bool) -> None:
         raise NotImplementedError
 
-    def _parse(self):
+    def _parse(self) -> None:
         raise NotImplementedError
 
-    def _update_param_close_prefix(self):
+    def _update_param_close_prefix(self) -> None:
         self.param_close_prefix = False
 
-    def _snapshot(self):
+    def _snapshot(self) -> Snapshot:
         return Snapshot(
             self.state, bytes(self.raw), tuple(self._calls), self.error,
             self.param_close_prefix, self.in_think, self.dsml_in_think,
         )
 
-    def _fail(self, message):
+    def _fail(self, message: str) -> None:
         self.state = "ERROR"
         self.error = message
         self._calls.clear()
         self.param_close_prefix = False
 
-    def feed(self, data: bytes):
+    def feed(self, data: bytes) -> Snapshot:
         """Consume bytes incrementally; terminal DONE/ERROR snapshots remain stable."""
         if self.state in ("DONE", "ERROR"):
             return self._snapshot()
@@ -73,7 +74,7 @@ class ToolParser:
         else:
             self._feed_inactive(byte)
 
-    def _feed_inactive(self, byte):
+    def _feed_inactive(self, byte: int) -> None:
         self._pending.append(byte)
         while self._pending and self.state not in ("DONE", "ERROR"):
             pending = bytes(self._pending)
@@ -97,7 +98,7 @@ class ToolParser:
             del self._pending[0]
             self._note_ordinary_byte(ordinary)
 
-    def _note_ordinary_byte(self, byte):
+    def _note_ordinary_byte(self, byte: int) -> None:
         self._marker_tail.append(byte)
         maximum = max(map(len, _DSML_MARKERS))
         if len(self._marker_tail) > maximum:
@@ -112,7 +113,7 @@ class ToolParser:
             self._fail("DSML markup outside a valid tool_calls block")
         self._pending.clear()
 
-    def finish(self):
+    def finish(self) -> Snapshot:
         """Finalize end-of-generation syntax, rejecting unfinished active calls."""
         if self.state in ("DONE", "ERROR"):
             return self._snapshot()
@@ -124,7 +125,7 @@ class ToolParser:
             self._fail("incomplete tool-call opening marker")
         return self._snapshot()
 
-    def _finish_active(self):
+    def _finish_active(self) -> None:
         self._fail("incomplete tool-call stanza")
 
     def wants_greedy_sampling(self) -> bool:
@@ -143,7 +144,7 @@ class ToolParser:
         return False
 
 
-def make_parser(info):
+def make_parser(info: EngineInfo) -> ToolParser:
     """Select a fresh parser from engine family flags; performs no native calls."""
     from .dsml import Dsml
     if info.is_qwen4:

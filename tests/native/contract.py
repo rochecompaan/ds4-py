@@ -1,13 +1,14 @@
+from typing import Any
 import ctypes
 import pytest
 from ds4py._native.protocol import SyncStatus
 from ds4py.errors import EngineError
 
-def rebuilt_argmax(s, tokens):
+def rebuilt_argmax(s: Any, tokens: Any) -> Any:
     s.invalidate(); s.sync(tokens)
     return s.argmax()
 
-def check_extend_matches_rebuild(engine, prompt):
+def check_extend_matches_rebuild(engine: Any, prompt: Any) -> None:
     s = engine.create_session(len(prompt) + 64)
     assert s.sync(prompt[:-2]) is SyncStatus.DONE and s.pos() == len(prompt) - 2
     events = []
@@ -17,7 +18,7 @@ def check_extend_matches_rebuild(engine, prompt):
     assert chunks[-1] == ("prefill_chunk", len(prompt), len(prompt))
     assert s.argmax() == rebuilt_argmax(s, prompt)
 
-def check_common_prefix(engine, prompt):
+def check_common_prefix(engine: Any, prompt: Any) -> None:
     assert prompt[-1] != prompt[0]
     s = engine.create_session(len(prompt) + 64)
     s.sync(prompt)
@@ -26,7 +27,7 @@ def check_common_prefix(engine, prompt):
     s.sync(diverged); assert s.tokens() == diverged
     s.invalidate(); assert s.common_prefix(diverged) == 0
 
-def check_eval_rewind_and_greedy(engine, prompt):
+def check_eval_rewind_and_greedy(engine: Any, prompt: Any) -> None:
     s = engine.create_session(len(prompt) + 64)
     s.sync(prompt)
     tok = s.argmax()
@@ -35,7 +36,7 @@ def check_eval_rewind_and_greedy(engine, prompt):
     s.rewind(len(prompt)); assert s.tokens() == list(prompt)
     s.sync(prompt); assert s.argmax() == tok      # rewind usually invalidates; sync rebuilds
 
-def check_snapshot_restore_matches_rebuild(engine, prompt):
+def check_snapshot_restore_matches_rebuild(engine: Any, prompt: Any) -> None:
     s = engine.create_session(len(prompt) + 64)
     s.sync(prompt[:4]); snap = s.save_snapshot()
     assert snap.nbytes > 0 and s.payload_bytes() > 0
@@ -46,12 +47,12 @@ def check_snapshot_restore_matches_rebuild(engine, prompt):
     s.sync(prompt)
     assert s.argmax() == rebuilt_argmax(s, prompt)
 
-def check_cancel_interrupts(engine, prompt):
+def check_cancel_interrupts(engine: Any, prompt: Any) -> None:
     s = engine.create_session(len(prompt) + 64)
     assert s.sync(prompt, cancel=lambda: True) is SyncStatus.INTERRUPTED
     assert s.pos() < len(prompt)
 
-def check_context_errors(engine, prompt):
+def check_context_errors(engine: Any, prompt: Any) -> None:
     s = engine.create_session(len(prompt))
     with pytest.raises(EngineError): s.sync(prompt)           # needs one free slot
     with pytest.raises(EngineError): s.sync([])

@@ -1,20 +1,25 @@
 """Per-assistant-round parser, control matching, and display stream state."""
 
+from collections.abc import Callable, Iterable
+
+from ds4py._native.protocol import EngineInfo
 from .decoder import Decoder
-from .events import Thinking, ToolCalls, ToolSyntax
+from .events import Event, TextDelta, Thinking, ToolCalls, ToolSyntax
 from .pause import ControlSpan
 from .tool_syntax import make_parser
 
 
 class RoundStream:
-    def __init__(self, info, think_mode, *, control: ControlSpan | None = None):
+    def __init__(
+        self, info: EngineInfo, think_mode: int, *, control: ControlSpan | None = None,
+    ) -> None:
         thinking = int(think_mode) in (1, 2, 3, 4) or 1001 <= int(think_mode) <= 1100
         self.parser = make_parser(info)
         self.parser.in_think = thinking
         self.decoder = Decoder(thinking=thinking)
         self.control = control or ControlSpan()
         self.snapshot = self.parser.feed(b"")
-        self.sampled_tokens = []
+        self.sampled_tokens: list[int] = []
         self.think_tokens = 0
         self.finalized = False
         self._control_pending = bytearray()
@@ -30,7 +35,9 @@ class RoundStream:
     def stop_sequence(self) -> bytes | None:
         return self.control.stop_sequence
 
-    def _publish(self, deltas, emit):
+    def _publish(
+        self, deltas: Iterable[TextDelta], emit: Callable[[Event], None],
+    ) -> None:
         if self.snapshot.in_think != self._last_thinking:
             self._last_thinking = self.snapshot.in_think
             emit(Thinking(self._last_thinking))
@@ -40,11 +47,11 @@ class RoundStream:
         for delta in deltas:
             emit(delta)
 
-    def _match_control(self, data):
+    def _match_control(self, data: bytes) -> None:
         if data and self.control.sequences:
             self.control.feed(data)
 
-    def _observe_control(self, data):
+    def _observe_control(self, data: bytes) -> None:
         # Control scans sampled bytes, not display deltas. Only actual think
         # markers outside argument values are withheld from the matcher.
         markers = (b"<think>", b"</think>")
@@ -69,7 +76,7 @@ class RoundStream:
                 del self._control_pending[:1]
         self.snapshot = self.parser._snapshot()
 
-    def observe(self, token, data, emit):
+    def observe(self, token: int, data: bytes, emit: Callable[[Event], None]) -> None:
         self.sampled_tokens.append(token)
         was_thinking = self.snapshot.in_think
         self._observe_control(data)
@@ -85,7 +92,7 @@ class RoundStream:
         self.control.resume()
         self.finalized = False
 
-    def finalize(self, *, parser, emit):
+    def finalize(self, *, parser: bool, emit: Callable[[Event], None]) -> None:
         if self.finalized:
             return
         if parser:
@@ -98,14 +105,14 @@ class RoundStream:
         self._publish(deltas, emit)
 
     @property
-    def malformed(self):
+    def malformed(self) -> bool:
         return self.snapshot.state == "ERROR" or self.snapshot.dsml_in_think
 
     @property
-    def complete(self):
+    def complete(self) -> bool:
         return self.snapshot.state == "DONE" and not self.snapshot.dsml_in_think
 
-    def emit_calls(self, emit):
+    def emit_calls(self, emit: Callable[[Event], None]) -> None:
         if self._calls_emitted or not self.complete:
             return
         self._calls_emitted = True

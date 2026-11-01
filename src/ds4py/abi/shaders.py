@@ -1,6 +1,6 @@
 """Copy and verify the Metal source bundle; never change the process environment."""
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path, PurePosixPath
 import re
 import shutil
@@ -29,7 +29,7 @@ def copy_metal_sources(source_root: Path, destination_root: Path) -> dict[str, s
         raise BuildError(f"cannot copy Metal sources: {exc}." + _REBUILD) from exc
 
 
-def _records(hashes: Mapping[str, str]):
+def _records(hashes: Mapping[str, str]) -> Iterator[tuple[str, str]]:
     if not isinstance(hashes, Mapping) or not hashes:
         raise AbiMismatch("Metal shader records are missing or invalid." + _REBUILD)
     for relative, digest in hashes.items():

@@ -1,3 +1,4 @@
+from typing import Any
 import pytest
 
 from ds4py.engine.tool_syntax.dsml import Dsml
@@ -6,7 +7,7 @@ from ds4py.engine.tool_syntax.qwen import Qwen
 
 
 @pytest.mark.parametrize('family', ['dsml', 'dsml41', 'glm', 'qwen'])
-def test_each_call_retains_its_own_canonical_stanza_at_every_split(family):
+def test_each_call_retains_its_own_canonical_stanza_at_every_split(family: Any) -> None:
     if family.startswith('dsml'):
         v41 = family == 'dsml41'
         invoke, calls = (' invoke', ' calls') if v41 else ('invoke', 'tool_calls')

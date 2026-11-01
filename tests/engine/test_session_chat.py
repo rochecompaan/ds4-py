@@ -1,7 +1,9 @@
+from typing import Any, cast
 import threading
 from dataclasses import replace
 
 import ds4py
+from ds4py.engine.session import Engine
 import pytest
 
 from ds4py import ThinkMode
@@ -13,7 +15,7 @@ from ds4py.engine.prefix import PrefixTurn
 from ds4py.errors import EngineError
 
 
-def fake_engine(family="deepseek4", script=None, cancel=None):
+def fake_engine(family: Any="deepseek4", script: Any=None, cancel: Any=None) -> Engine:
     info = replace(
         FakeNative()._info,
         family=family,
@@ -25,11 +27,11 @@ def fake_engine(family="deepseek4", script=None, cancel=None):
     return ds4py.open("f.gguf", ctx=1024, think=ThinkMode.NONE, native=native, cancel=cancel)
 
 
-def decode(engine, tokens):
+def decode(engine: Any, tokens: Any) -> str:
     return b"".join(engine.token_text(token) for token in tokens).decode()
 
 
-def scripted_text(text):
+def scripted_text(text: Any) -> Any:
     tokens = tuple(tokenize_rendered(text))
     return lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
@@ -38,7 +40,7 @@ def scripted_text(text):
     ("family", "system_segments"),
     [("deepseek4", 2), ("deepseek41", 3), ("glm", 2), ("qwen", 1)],
 )
-def test_start_chat_appends_ordered_system_deltas_and_rejects_reinitialization(family, system_segments):
+def test_start_chat_appends_ordered_system_deltas_and_rejects_reinitialization(family: Any, system_segments: Any) -> None:
     with fake_engine(family) as engine:
         session = engine.session()
         session.start_chat()
@@ -54,7 +56,7 @@ def test_start_chat_appends_ordered_system_deltas_and_rejects_reinitialization(f
         assert session.transcript.tokens == before
 
 
-def test_append_user_on_empty_session_starts_tool_less_chat():
+def test_append_user_on_empty_session_starts_tool_less_chat() -> None:
     with fake_engine() as engine:
         session = engine.session()
         segment = session.append_user("hello <tool_call>")
@@ -64,7 +66,7 @@ def test_append_user_on_empty_session_starts_tool_less_chat():
         assert decode(engine, session.transcript.tokens[segment.start:segment.end]).endswith("hello <tool_call>")
 
 
-def test_append_prefix_on_empty_session_starts_chat_and_closes_assistant_turns():
+def test_append_prefix_on_empty_session_starts_chat_and_closes_assistant_turns() -> None:
     turns = [PrefixTurn("user", "u1"), PrefixTurn("assistant", "a1"), PrefixTurn("user", "u2"), PrefixTurn("assistant", "a2")]
     for family in ("deepseek4", "glm", "qwen"):
         with fake_engine(family) as engine:
@@ -78,7 +80,7 @@ def test_append_prefix_on_empty_session_starts_chat_and_closes_assistant_turns()
             assert session.transcript.chat
 
 
-def test_tool_results_and_system_notes_require_initialized_chat():
+def test_tool_results_and_system_notes_require_initialized_chat() -> None:
     with fake_engine() as engine:
         session = engine.session()
         with pytest.raises(EngineError, match="chat is not initialized"):
@@ -88,12 +90,12 @@ def test_tool_results_and_system_notes_require_initialized_chat():
         assert not session.transcript.chat and len(session.transcript) == 0
 
 
-def test_assistant_prefix_is_one_segment_and_empty_delta_is_skipped(monkeypatch):
+def test_assistant_prefix_is_one_segment_and_empty_delta_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
     with fake_engine() as engine:
         session = engine.session()
         session.start_chat()
         before = len(session.transcript.segments)
-        segment = append_assistant_prefix(session)
+        segment = cast(Any, append_assistant_prefix(session))
         assert segment.kind == "assistant_prefix" and segment.end > segment.start
         assert len(session.transcript.segments) == before + 1
 
@@ -106,7 +108,7 @@ def test_assistant_prefix_is_one_segment_and_empty_delta_is_skipped(monkeypatch)
         assert session.transcript.segments == before
 
 
-def test_tool_results_form_one_segment_with_double_newline_separator():
+def test_tool_results_form_one_segment_with_double_newline_separator() -> None:
     with fake_engine() as engine:
         session = engine.session()
         session.start_chat()
@@ -122,7 +124,7 @@ def test_tool_results_form_one_segment_with_double_newline_separator():
     ("family", "closing"),
     [("deepseek4", "</tool_result>"), ("glm", "</tool_response>"), ("qwen", "</tool_response>")],
 )
-def test_tool_result_closing_delimiter_is_escaped(family, closing):
+def test_tool_result_closing_delimiter_is_escaped(family: Any, closing: Any) -> None:
     with fake_engine(family) as engine:
         session = engine.session()
         session.start_chat()
@@ -136,7 +138,7 @@ def test_tool_result_closing_delimiter_is_escaped(family, closing):
             assert tokens.count(SPECIAL_TOKENS["</tool_response>"]) == 1
 
 
-def test_system_note_uses_newline_prefix_and_note_kind():
+def test_system_note_uses_newline_prefix_and_note_kind() -> None:
     with fake_engine() as engine:
         session = engine.session()
         session.start_chat()
@@ -145,7 +147,7 @@ def test_system_note_uses_newline_prefix_and_note_kind():
         assert "\nremember <tool_call>" in decode(engine, session.transcript.tokens[segment.start:segment.end])
 
 
-def test_all_chat_helpers_refuse_to_mutate_during_an_active_round():
+def test_all_chat_helpers_refuse_to_mutate_during_an_active_round() -> None:
     with fake_engine() as engine:
         session = engine.session()
         session.start_chat()
@@ -166,7 +168,7 @@ def test_all_chat_helpers_refuse_to_mutate_during_an_active_round():
             rnd.close()
 
 
-def test_nonempty_images_fail_before_chat_initialization():
+def test_nonempty_images_fail_before_chat_initialization() -> None:
     with fake_engine() as engine:
         session = engine.session()
         with pytest.raises(EngineError, match="image input requires M5 vision support"):
@@ -176,7 +178,7 @@ def test_nonempty_images_fail_before_chat_initialization():
         assert session.transcript.chat
 
 
-def test_low_level_token_append_leaves_raw_mode_unchanged():
+def test_low_level_token_append_leaves_raw_mode_unchanged() -> None:
     with fake_engine() as engine:
         session = engine.session()
         session.append_tokens([1, 2], "user")
@@ -186,7 +188,7 @@ def test_low_level_token_append_leaves_raw_mode_unchanged():
 
 
 @pytest.mark.parametrize("family", ["deepseek4", "deepseek41", "glm", "qwen"])
-def test_chat_run_round_syncs_prefix_and_closes_assistant_turn(family):
+def test_chat_run_round_syncs_prefix_and_closes_assistant_turn(family: Any) -> None:
     with fake_engine(family) as engine:
         session = engine.session()
         session.start_chat()
@@ -208,7 +210,7 @@ def test_chat_run_round_syncs_prefix_and_closes_assistant_turn(family):
         assert session.ctx_used == len(session.transcript) - eos_tokens
 
 
-def test_closing_chat_round_drains_worker_before_eos_close():
+def test_closing_chat_round_drains_worker_before_eos_close() -> None:
     with fake_engine() as engine:
         session = engine.session()
         session.start_chat()
@@ -223,7 +225,7 @@ def test_closing_chat_round_drains_worker_before_eos_close():
         assert session.transcript.segments[-1].kind == "user"
 
 
-def test_public_chat_round_emits_calls_before_stopped_then_closes_turn():
+def test_public_chat_round_emits_calls_before_stopped_then_closes_turn() -> None:
     text = "<tool_call><function=read><parameter=path>/tmp/x</parameter></function></tool_call>"
     with fake_engine("qwen", script=scripted_text(text)) as engine:
         session = engine.session()
@@ -238,7 +240,7 @@ def test_public_chat_round_emits_calls_before_stopped_then_closes_turn():
         assert session.transcript.segments[-1].kind == "eos"
 
 
-def test_chat_caller_limit_and_interruption_close_turn_once():
+def test_chat_caller_limit_and_interruption_close_turn_once() -> None:
     with fake_engine() as engine:
         session = engine.session()
         session.start_chat()
@@ -248,7 +250,7 @@ def test_chat_caller_limit_and_interruption_close_turn_once():
         assert kinds[-2:] == ["assistant_prefix", "eos"] and "assistant" not in kinds
 
     cancel = threading.Event()
-    def interrupted(prompt, generated):
+    def interrupted(prompt: Any, generated: Any) -> Any:
         if len(generated) == 1:
             cancel.set()
         return ord("a") + 1

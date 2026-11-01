@@ -10,7 +10,7 @@ from ds4py.abi.check import check_library, check_live, format_report
 from ds4py.errors import Ds4pyError
 
 
-def main(argv: list[str] | None = None) -> int:
+def _core_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="ds4py")
     commands = parser.add_subparsers(dest="command", required=True)
     build = commands.add_parser("build", help="build a checked libds4")
@@ -70,3 +70,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ds4py: {exc}", file=sys.stderr)
         return 1
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] in {"build", "check", "raw"}:
+        return _core_main(args)
+    if "--raw" in args:
+        args.remove("--raw")
+        return _core_main(["raw", *args])
+    from ds4py.agent_cli import main as agent_main
+    return agent_main(args)

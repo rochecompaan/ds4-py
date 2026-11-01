@@ -1,3 +1,4 @@
+from typing import Any
 import json
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from ds4py.engine.tool_syntax.glm import Glm
 from ds4py.engine.tool_syntax.qwen import Qwen
 
 
-def load_cases():
+def load_cases() -> Any:
     cases = []
     fixture_root = Path(__file__).parents[2] / "fixtures" / "tool_syntax"
     for syntax in ("dsml", "glm", "qwen"):
@@ -25,7 +26,7 @@ def load_cases():
     return tuple(cases)
 
 
-def new_parser(case):
+def new_parser(case: Any) -> Any:
     if case["syntax"] == "dsml":
         return Dsml(v41=case.get("v41", False))
     if case["syntax"] == "glm":
@@ -33,7 +34,7 @@ def new_parser(case):
     return Qwen()
 
 
-def run_chunks(case, chunks):
+def run_chunks(case: Any, chunks: Any) -> Any:
     parser = new_parser(case)
     streamed = None
     for chunk in chunks:
@@ -57,11 +58,11 @@ def run_chunks(case, chunks):
     }
 
 
-def simple_case(syntax, v41=False):
+def simple_case(syntax: Any, v41: Any=False) -> dict[str, Any]:
     return {"syntax": syntax, "v41": v41, "id": f"simple-{syntax}-{v41}"}
 
 
-def simple_stanza(syntax, v41=False, value="abc"):
+def simple_stanza(syntax: Any, v41: Any=False, value: Any="abc") -> str:
     if syntax == "glm":
         return f"<tool_call>echo<arg_key>value</arg_key><arg_value>{value}</arg_value></tool_call>"
     if syntax == "qwen":
@@ -74,10 +75,10 @@ def simple_stanza(syntax, v41=False, value="abc"):
 
 
 @pytest.fixture(params=load_cases(), ids=lambda case: case["id"])
-def parser_case(request):
+def parser_case(request: pytest.FixtureRequest) -> Any:
     return request.param
 
 
 @pytest.fixture
-def parse_chunks():
+def parse_chunks() -> Any:
     return run_chunks

@@ -1,0 +1,38 @@
+repository: https://github.com/Aider-AI/polyglot-benchmark.git
+commit: 7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f
+selection_seed: 20261021
+model: ds4f-q2
+ctx: 100000
+temperature: 0
+seed: 1
+max_attempts: 2
+exercises:
+  - python/exercises/practice/scale-generator
+  - python/exercises/practice/affine-cipher
+  - python/exercises/practice/zipper
+  - python/exercises/practice/grep
+  - python/exercises/practice/go-counting
+  - python/exercises/practice/proverb
+  - python/exercises/practice/tree-building
+  - python/exercises/practice/dot-dsl
+  - python/exercises/practice/paasio
+  - python/exercises/practice/variable-length-quantity
+repository_tasks:
+  - id: repo-glm-close
+    patch: patches/glm-off-by-one.patch
+    visible_test: tests/engine/tool_syntax/test_glm.py
+    prompt: |
+      Fix the planted off-by-one defect in GLM's incremental </arg_value> close
+      handling. A close delimiter split across input chunks must be recognized,
+      including a split immediately before its final byte. Keep the public parser
+      behavior unchanged otherwise. Run tests/engine/tool_syntax/test_glm.py and
+      do not weaken or edit the regression tests.
+  - id: repo-ctx-command
+    grader: graders/test_ctx_command.py
+    prompt: |
+      Add a /ctx slash command to the existing interactive command registry.
+      With runtime.ctx_used=123 and runtime.ctx=1000, it must return a status
+      containing "123 used" and "877 remaining". Add the matching AgentRuntime
+      context properties if needed. /ctx must appear in / completion, take no
+      arguments, and must not append history, mutate/save/switch the session, or
+      call model/native generation. Follow the existing built-in command style.

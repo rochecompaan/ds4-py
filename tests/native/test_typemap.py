@@ -1,3 +1,4 @@
+from typing import Any
 import ctypes
 import pytest
 from ds4py._native import typemap, structs
@@ -15,10 +16,10 @@ from ds4py.errors import TypeMapError
     ("unsigned long long f(unsigned int, void *p)", "unsigned long long f(unsigned int, void *)"),
     ("void f(void)", "void f(void)"),
 ])
-def test_normal_form(text, normal):
+def test_normal_form(text: Any, normal: Any) -> None:
     assert typemap.normalize_prototype(text) == normal
 
-def test_ctypes_signature_maps_pointers_structs_and_callbacks():
+def test_ctypes_signature_maps_pointers_structs_and_callbacks() -> None:
     p = typemap.parse_prototype(
         "void ds4_session_set_progress(ds4_session *s, ds4_session_progress_fn fn, void *ud)")
     assert typemap.ctypes_signature(p) == (None, [ctypes.c_void_p, structs.PROGRESS_FN, ctypes.c_void_p])
@@ -28,15 +29,15 @@ def test_ctypes_signature_maps_pointers_structs_and_callbacks():
     p = typemap.parse_prototype("int ds4_session_sync(ds4_session *s, const ds4_tokens *prompt, char *err, size_t errlen)")
     assert typemap.ctypes_signature(p)[1][1] is ctypes.POINTER(structs.Tokens)
 
-def test_unknown_type_is_an_error_naming_type_and_function():
+def test_unknown_type_is_an_error_naming_type_and_function() -> None:
     with pytest.raises(TypeMapError, match=r"ds4_widget.*ds4_frob"):
         typemap.ctypes_signature(typemap.parse_prototype("int ds4_frob(ds4_widget *w)"))
 
-def test_probe_declaration():
+def test_probe_declaration() -> None:
     p = typemap.parse_prototype("char *ds4_token_text(ds4_engine *e, int token, size_t *len)")
     assert typemap.probe_declaration(p) == "char *(*ds4py_probe)(ds4_engine *, int, size_t *)"
 
-def test_struct_layout_walks_nested_fields():
+def test_struct_layout_walks_nested_fields() -> None:
     layout = structs.struct_layout(structs.EngineOptions)
     assert layout.size == ctypes.sizeof(structs.EngineOptions)
     assert layout.fields["model_path"] == 0
@@ -57,7 +58,7 @@ def test_struct_layout_walks_nested_fields():
     ("ds4_backend", ctypes.c_int), ("ds4_think_mode", ctypes.c_int),
     ("ds4_log_type", ctypes.c_int),
 ])
-def test_scalar_and_scalar_pointer_mapping(c_type, expected):
+def test_scalar_and_scalar_pointer_mapping(c_type: Any, expected: Any) -> None:
     proto = typemap.parse_prototype(f"{c_type} f({c_type} *value)")
     assert typemap.ctypes_signature(proto) == (expected, [ctypes.POINTER(expected)])
 
@@ -70,34 +71,34 @@ def test_scalar_and_scalar_pointer_mapping(c_type, expected):
     ("ds4_engine **", ctypes.POINTER(ctypes.c_void_p)),
     ("ds4_session **", ctypes.POINTER(ctypes.c_void_p)),
 ])
-def test_special_pointer_mapping(c_type, expected):
+def test_special_pointer_mapping(c_type: Any, expected: Any) -> None:
     assert typemap.ctypes_signature(typemap.parse_prototype(f"{c_type} f(void)")) == (expected, [])
 
 
-def test_cancel_callback_mapping():
+def test_cancel_callback_mapping() -> None:
     proto = typemap.parse_prototype("void f(ds4_session_cancel_fn cancel)")
     assert typemap.ctypes_signature(proto) == (None, [structs.CANCEL_FN])
 
 
 @pytest.mark.parametrize("c_type", ["void", "FILE", "ds4_engine", "ds4_tokens", "int **", "ds4_widget *"])
-def test_unlisted_parameter_types_are_rejected(c_type):
+def test_unlisted_parameter_types_are_rejected(c_type: Any) -> None:
     proto = typemap.parse_prototype(f"int f({c_type} value)")
     with pytest.raises(TypeMapError, match="in f; add it to"):
         typemap.ctypes_signature(proto)
 
 
-def test_normal_form_relocates_const_and_accepts_unnamed_parameters():
+def test_normal_form_relocates_const_and_accepts_unnamed_parameters() -> None:
     assert typemap.normalize_prototype("char const* f(ds4_tokens const*, uint64_t)") == (
         "const char *f(const ds4_tokens *, uint64_t)")
 
 
 @pytest.mark.parametrize("text", ["", "int f", "int f(int x", "int f(int x,)", "int f(int x) trailing"])
-def test_malformed_prototypes_raise_type_map_error(text):
+def test_malformed_prototypes_raise_type_map_error(text: Any) -> None:
     with pytest.raises(TypeMapError):
         typemap.parse_prototype(text)
 
 
-def test_nested_layout_offsets_include_parent_offset():
+def test_nested_layout_offsets_include_parent_offset() -> None:
     layout = structs.struct_layout(structs.EngineOptions)
     assert layout.fields["distributed.layers.start"] == (
         structs.EngineOptions.distributed.offset + structs.DistributedOptions.layers.offset)

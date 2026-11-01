@@ -1,5 +1,6 @@
 """ABI diagnostics and opt-in model-backed sync/restore checks."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 import time
@@ -87,7 +88,9 @@ LIVE_TEXT = (
 LIVE_CHECKPOINT = "live-check"
 
 
-def _timed_sync(worker, tokens, clock):
+def _timed_sync(
+    worker: EngineWorker, tokens: Sequence[int], clock: Callable[[], float],
+) -> tuple[Synced, float]:
     start = clock()
     synced = None
     seconds = 0.0
@@ -99,8 +102,8 @@ def _timed_sync(worker, tokens, clock):
     return synced, seconds
 
 
-def _greedy_run(worker, count):
-    tokens = []
+def _greedy_run(worker: EngineWorker, count: int) -> tuple[list[int], str]:
+    tokens: list[int] = []
     for event in worker.submit(GenerateJob(SamplingPolicy(temperature=0.0), Rng(1),
                                           count, Transcript())):
         if isinstance(event, Token):
@@ -110,7 +113,9 @@ def _greedy_run(worker, count):
     raise EngineError("ds4py check --live generation did not stop")
 
 
-def _compare_runs(a, b):
+def _compare_runs(
+    a: tuple[list[int], str], b: tuple[list[int], str],
+) -> dict[str, bool | str | int]:
     left, left_reason = a
     right, right_reason = b
     if a == b:

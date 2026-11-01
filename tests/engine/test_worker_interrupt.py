@@ -1,4 +1,5 @@
 """Startup Ctrl+C must stop the owner thread before propagating to the caller."""
+from typing import Any
 import subprocess
 import sys
 import textwrap
@@ -7,7 +8,7 @@ import pytest
 
 
 @pytest.mark.parametrize("startup_fails", [False, True])
-def test_startup_sigint_closes_resources_on_owner_before_reraising(startup_fails):
+def test_startup_sigint_closes_resources_on_owner_before_reraising(startup_fails: Any) -> None:
     probe = textwrap.dedent(r'''
         import os
         import signal

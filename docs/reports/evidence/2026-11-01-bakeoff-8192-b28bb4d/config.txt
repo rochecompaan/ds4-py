@@ -1,0 +1,6 @@
+ds4py_revision=b28bb4d75a22200e59c5e7f6343db9565d2d6703
+ds4_revision=5379c1c9ac315f1540371b06a3db88491d4059ff
+polyglot_revision=7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f
+native_sha256=866920c49bc280098ae0f45cff43e287251b442616bfc638d747ba859fc3f830
+model=/workspace/ds4/gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix-0731.gguf
+backend=cuda ctx=100000 tokens=8192 request_limit=100 temperature=0 seed=1 tasks=12 agents=c,ds4py

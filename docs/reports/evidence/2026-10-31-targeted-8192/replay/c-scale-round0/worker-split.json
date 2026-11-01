@@ -1,0 +1,1540 @@
+{
+  "task_id": "scale-generator",
+  "round_index": 0,
+  "source_trace": "/home/roche/projects/satyrn/ds4-py-results/tokens-8192/results/scale-generator/c/attempt-1/trace.txt",
+  "mode": "split",
+  "model": "/workspace/ds4/gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix-0731.gguf",
+  "library": "/workspace/native/installs/tmp73y_8gak/libds4.so",
+  "library_sha256": "866920c49bc280098ae0f45cff43e287251b442616bfc638d747ba859fc3f830",
+  "backend": "cuda",
+  "ctx": 100000,
+  "think": 1,
+  "split_at": 1839,
+  "prompt_tokens": 2787,
+  "prompt_ids_sha256": "96f8f08ce8716f01caac494af55129cdc47643a62eb21451c165feca7e280bd4",
+  "prompt_bytes_sha256": "aed6f4a8fae1600c27d817cad71c36333b99c14e807d03c310d4cf5e43c04a17",
+  "sync_stages": [
+    {
+      "label": "split-prefix",
+      "input_tokens": 1839,
+      "prefill_events": 12,
+      "last_prefill": {
+        "done": 1839,
+        "total": 1839,
+        "cached_prefix": 0,
+        "tps": 1394.4056506927884
+      },
+      "synced": [
+        {
+          "pos": 1839,
+          "plan": {
+            "kind": "rebuild",
+            "reused": 0,
+            "to_prefill": 1839,
+            "fits": true,
+            "checkpoint": null
+          },
+          "prefilled": 1839
+        }
+      ]
+    },
+    {
+      "label": "split-full",
+      "input_tokens": 2787,
+      "prefill_events": 9,
+      "last_prefill": {
+        "done": 903,
+        "total": 948,
+        "cached_prefix": 1839,
+        "tps": 1020.6903994520901
+      },
+      "synced": [
+        {
+          "pos": 2787,
+          "plan": {
+            "kind": "extend",
+            "reused": 1839,
+            "to_prefill": 948,
+            "fits": true,
+            "checkpoint": null
+          },
+          "prefilled": 948
+        }
+      ]
+    }
+  ],
+  "teacher_stages": [],
+  "initial_rng": 1,
+  "final_rng": 1,
+  "c_sampled_prefix": [
+    2581,
+    1309,
+    304,
+    2572,
+    270,
+    7231,
+    16,
+    1162,
+    8777,
+    1277,
+    411,
+    8509,
+    12275,
+    343,
+    72335,
+    538
+  ],
+  "ds4py_sampled_prefix": [
+    2581,
+    1309,
+    304,
+    2572,
+    270,
+    7231,
+    16,
+    1162,
+    8777,
+    1277,
+    270,
+    18825,
+    1478,
+    582,
+    44626,
+    61185
+  ],
+  "first_divergence": 10,
+  "terminal": "max_tokens",
+  "captures": [
+    {
+      "index": 0,
+      "position": 2787,
+      "in_think": true,
+      "think_tokens": 0,
+      "parser_state": "SEARCH",
+      "prior_sampled_tokens": [],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "top_k": 0,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 2581,
+          "text": "We",
+          "logit": 28.198013305664062
+        },
+        {
+          "token": 671,
+          "text": "The",
+          "logit": 25.302579879760742
+        },
+        {
+          "token": 43,
+          "text": "I",
+          "logit": 24.760547637939453
+        },
+        {
+          "token": 5718,
+          "text": "Let",
+          "logit": 22.194049835205078
+        },
+        {
+          "token": 9544,
+          "text": "Here",
+          "logit": 20.449804306030273
+        },
+        {
+          "token": 50249,
+          "text": "Need",
+          "logit": 20.371870040893555
+        },
+        {
+          "token": 66,
+          "text": "`",
+          "logit": 19.833480834960938
+        },
+        {
+          "token": 4246,
+          "text": "There",
+          "logit": 19.802364349365234
+        },
+        {
+          "token": 2337,
+          "text": "This",
+          "logit": 19.765865325927734
+        },
+        {
+          "token": 39111,
+          "text": "Looking",
+          "logit": 19.24380874633789
+        },
+        {
+          "token": 8197,
+          "text": "Now",
+          "logit": 18.887969970703125
+        },
+        {
+          "token": 1124,
+          "text": "In",
+          "logit": 18.548625946044922
+        }
+      ],
+      "c_expected_token": 2581,
+      "c_expected_logit": 28.198013305664062,
+      "selected_token": 2581
+    },
+    {
+      "index": 1,
+      "position": 2788,
+      "in_think": true,
+      "think_tokens": 1,
+      "parser_state": "SEARCH",
+      "prior_sampled_tokens": [
+        2581
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "top_k": 0,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 1309,
+          "text": " need",
+          "logit": 31.42926788330078
+        },
+        {
+          "token": 477,
+          "text": " are",
+          "logit": 26.283458709716797
+        },
+        {
+          "token": 611,
+          "text": " have",
+          "logit": 24.407718658447266
+        },
+        {
+          "token": 4750,
+          "text": "'re",
+          "logit": 23.08688735961914
+        },
+        {
+          "token": 1531,
+          "text": " should",
+          "logit": 22.794782638549805
+        },
+        {
+          "token": 2090,
+          "text": " don",
+          "logit": 21.55943489074707
+        },
+        {
+          "token": 1733,
+          "text": " read",
+          "logit": 21.20664405822754
+        },
+        {
+          "token": 5922,
+          "text": "'ll",
+          "logit": 20.905603408813477
+        },
+        {
+          "token": 5270,
+          "text": "'ve",
+          "logit": 20.676494598388672
+        },
+        {
+          "token": 4067,
+          "text": " appear",
+          "logit": 20.621183395385742
+        },
+        {
+          "token": 3557,
+          "text": " got",
+          "logit": 20.60797882080078
+        },
+        {
+          "token": 588,
+          "text": " can",
+          "logit": 20.485523223876953
+        }
+      ],
+      "c_expected_token": 1309,
+      "c_expected_logit": 31.42926788330078,
+      "selected_token": 1309
+    },
+    {
+      "index": 2,
+      "position": 2789,
+      "in_think": true,
+      "think_tokens": 2,
+      "parser_state": "SEARCH",
+      "prior_sampled_tokens": [
+        2581,
+        1309
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "top_k": 0,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 304,
+          "text": " to",
+          "logit": 28.816648483276367
+        },
+        {
+          "token": 3287,
+          "text": " answer",
+          "logit": 27.183645248413086
+        },
+        {
+          "token": 9487,
+          "text": " solve",
+          "logit": 24.950687408447266
+        },
+        {
+          "token": 6476,
+          "text": " respond",
+          "logit": 24.49969482421875
+        },
+        {
+          "token": 2572,
+          "text": " understand",
+          "logit": 23.192415237426758
+        },
+        {
+          "token": 4678,
+          "text": " implement",
+          "logit": 22.775676727294922
+        },
+        {
+          "token": 6009,
+          "text": " pick",
+          "logit": 22.26415252685547
+        },
+        {
+          "token": 1214,
+          "text": " act",
+          "logit": 22.214998245239258
+        },
+        {
+          "token": 13047,
+          "text": " decide",
+          "logit": 20.73725700378418
+        },
+        {
+          "token": 2906,
+          "text": " build",
+          "logit": 20.73357582092285
+        },
+        {
+          "token": 1747,
+          "text": " look",
+          "logit": 20.429311752319336
+        },
+        {
+          "token": 1309,
+          "text": " need",
+          "logit": 20.346710205078125
+        }
+      ],
+      "c_expected_token": 304,
+      "c_expected_logit": 28.816648483276367,
+      "selected_token": 304
+    },
+    {
+      "index": 3,
+      "position": 2790,
+      "in_think": true,
+      "think_tokens": 3,
+      "parser_state": "SEARCH",
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "top_k": 0,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 2572,
+          "text": " understand",
+          "logit": 30.29922103881836
+        },
+        {
+          "token": 9487,
+          "text": " solve",
+          "logit": 29.264204025268555
+        },
+        {
+          "token": 4678,
+          "text": " implement",
+          "logit": 28.81487274169922
+        },
+        {
+          "token": 1747,
+          "text": " look",
+          "logit": 27.54357147216797
+        },
+        {
+          "token": 51441,
+          "text": " inspect",
+          "logit": 27.09534454345703
+        },
+        {
+          "token": 8497,
+          "text": " explore",
+          "logit": 26.07469940185547
+        },
+        {
+          "token": 3287,
+          "text": " answer",
+          "logit": 25.786685943603516
+        },
+        {
+          "token": 1116,
+          "text": " work",
+          "logit": 25.753307342529297
+        },
+        {
+          "token": 5085,
+          "text": " write",
+          "logit": 25.710800170898438
+        },
+        {
+          "token": 2906,
+          "text": " build",
+          "logit": 25.598731994628906
+        },
+        {
+          "token": 6476,
+          "text": " respond",
+          "logit": 25.58719825744629
+        },
+        {
+          "token": 5991,
+          "text": " figure",
+          "logit": 25.206295013427734
+        }
+      ],
+      "c_expected_token": 2572,
+      "c_expected_logit": 30.29922103881836,
+      "selected_token": 2572
+    },
+    {
+      "index": 4,
+      "position": 2791,
+      "in_think": true,
+      "think_tokens": 4,
+      "parser_state": "SEARCH",
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        2572
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "top_k": 0,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 270,
+          "text": " the",
+          "logit": 32.372806549072266
+        },
+        {
+          "token": 1205,
+          "text": " what",
+          "logit": 31.11200714111328
+        },
+        {
+          "token": 566,
+          "text": " this",
+          "logit": 27.85856056213379
+        },
+        {
+          "token": 5148,
+          "text": " context",
+          "logit": 27.829246520996094
+        },
+        {
+          "token": 7231,
+          "text": " task",
+          "logit": 27.21010971069336
+        },
+        {
+          "token": 28,
+          "text": ":",
+          "logit": 26.985755920410156
+        },
+        {
+          "token": 16,
+          "text": ".",
+          "logit": 25.311752319335938
+        },
+        {
+          "token": 2573,
+          "text": " current",
+          "logit": 23.953723907470703
+        },
+        {
+          "token": 3431,
+          "text": " environment",
+          "logit": 23.621932983398438
+        },
+        {
+          "token": 1132,
+          "text": " our",
+          "logit": 23.593048095703125
+        },
+        {
+          "token": 8049,
+          "text": " existing",
+          "logit": 23.15658187866211
+        },
+        {
+          "token": 3967,
+          "text": " user",
+          "logit": 22.965015411376953
+        }
+      ],
+      "c_expected_token": 270,
+      "c_expected_logit": 32.372806549072266,
+      "selected_token": 270
+    },
+    {
+      "index": 5,
+      "position": 2792,
+      "in_think": true,
+      "think_tokens": 5,
+      "parser_state": "SEARCH",
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        2572,
+        270
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "top_k": 0,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 7231,
+          "text": " task",
+          "logit": 31.259435653686523
+        },
+        {
+          "token": 5148,
+          "text": " context",
+          "logit": 28.172208786010742
+        },
+        {
+          "token": 3295,
+          "text": " problem",
+          "logit": 27.65447235107422
+        },
+        {
+          "token": 2573,
+          "text": " current",
+          "logit": 27.167945861816406
+        },
+        {
+          "token": 3431,
+          "text": " environment",
+          "logit": 27.059574127197266
+        },
+        {
+          "token": 8509,
+          "text": " exercise",
+          "logit": 27.025890350341797
+        },
+        {
+          "token": 7717,
+          "text": " actual",
+          "logit": 26.54067039489746
+        },
+        {
+          "token": 72895,
+          "text": " workspace",
+          "logit": 26.043590545654297
+        },
+        {
+          "token": 8049,
+          "text": " existing",
+          "logit": 25.976985931396484
+        },
+        {
+          "token": 3967,
+          "text": " user",
+          "logit": 25.5677490234375
+        },
+        {
+          "token": 2775,
+          "text": " project",
+          "logit": 25.000713348388672
+        },
+        {
+          "token": 3530,
+          "text": " full",
+          "logit": 24.84945297241211
+        }
+      ],
+      "c_expected_token": 7231,
+      "c_expected_logit": 31.259435653686523,
+      "selected_token": 7231
+    },
+    {
+      "index": 6,
+      "position": 2793,
+      "in_think": true,
+      "think_tokens": 6,
+      "parser_state": "SEARCH",
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        2572,
+        270,
+        7231
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "top_k": 0,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 16,
+          "text": ".",
+          "logit": 35.01770782470703
+        },
+        {
+          "token": 28,
+          "text": ":",
+          "logit": 27.713233947753906
+        },
+        {
+          "token": 5148,
+          "text": " context",
+          "logit": 27.37717056274414
+        },
+        {
+          "token": 305,
+          "text": " and",
+          "logit": 27.084491729736328
+        },
+        {
+          "token": 8068,
+          "text": " fully",
+          "logit": 26.372032165527344
+        },
+        {
+          "token": 538,
+          "text": " from",
+          "logit": 25.39946174621582
+        },
+        {
+          "token": 509,
+          "text": " at",
+          "logit": 25.238983154296875
+        },
+        {
+          "token": 295,
+          "text": " in",
+          "logit": 24.64774513244629
+        },
+        {
+          "token": 2155,
+          "text": " here",
+          "logit": 24.541275024414062
+        },
+        {
+          "token": 14,
+          "text": ",",
+          "logit": 24.521392822265625
+        },
+        {
+          "token": 4456,
+          "text": " structure",
+          "logit": 23.942468643188477
+        },
+        {
+          "token": 17,
+          "text": "/",
+          "logit": 23.688846588134766
+        }
+      ],
+      "c_expected_token": 16,
+      "c_expected_logit": 35.01770782470703,
+      "selected_token": 16
+    },
+    {
+      "index": 7,
+      "position": 2794,
+      "in_think": true,
+      "think_tokens": 7,
+      "parser_state": "SEARCH",
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        2572,
+        270,
+        7231,
+        16
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "top_k": 0,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 1162,
+          "text": " This",
+          "logit": 31.96918487548828
+        },
+        {
+          "token": 983,
+          "text": " It",
+          "logit": 31.622806549072266
+        },
+        {
+          "token": 455,
+          "text": " The",
+          "logit": 30.99539566040039
+        },
+        {
+          "token": 1350,
+          "text": " We",
+          "logit": 29.977985382080078
+        },
+        {
+          "token": 2454,
+          "text": " There",
+          "logit": 29.924999237060547
+        },
+        {
+          "token": 4480,
+          "text": " Let",
+          "logit": 27.31662940979004
+        },
+        {
+          "token": 88836,
+          "text": " Looks",
+          "logit": 27.03172492980957
+        },
+        {
+          "token": 30221,
+          "text": " Lik",
+          "logit": 26.001014709472656
+        },
+        {
+          "token": 15557,
+          "text": " Based",
+          "logit": 25.956161499023438
+        },
+        {
+          "token": 32763,
+          "text": " Looking",
+          "logit": 25.364322662353516
+        },
+        {
+          "token": 10037,
+          "text": " User",
+          "logit": 25.07750701904297
+        },
+        {
+          "token": 54861,
+          "text": " Probably",
+          "logit": 24.810504913330078
+        }
+      ],
+      "c_expected_token": 1162,
+      "c_expected_logit": 31.96918487548828,
+      "selected_token": 1162
+    },
+    {
+      "index": 8,
+      "position": 2795,
+      "in_think": true,
+      "think_tokens": 8,
+      "parser_state": "SEARCH",
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        2572,
+        270,
+        7231,
+        16,
+        1162
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "top_k": 0,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 8777,
+          "text": " looks",
+          "logit": 34.87351989746094
+        },
+        {
+          "token": 9238,
+          "text": " appears",
+          "logit": 34.288795471191406
+        },
+        {
+          "token": 344,
+          "text": " is",
+          "logit": 33.09160614013672
+        },
+        {
+          "token": 6179,
+          "text": " seems",
+          "logit": 32.0455207824707
+        },
+        {
+          "token": 23332,
+          "text": " reads",
+          "logit": 26.584388732910156
+        },
+        {
+          "token": 53293,
+          "text": " resembles",
+          "logit": 25.413829803466797
+        },
+        {
+          "token": 11907,
+          "text": " sounds",
+          "logit": 25.23611068725586
+        },
+        {
+          "token": 4888,
+          "text": " likely",
+          "logit": 23.42996597290039
+        },
+        {
+          "token": 17157,
+          "text": " references",
+          "logit": 23.362506866455078
+        },
+        {
+          "token": 61810,
+          "text": " smells",
+          "logit": 23.313486099243164
+        },
+        {
+          "token": 3051,
+          "text": " text",
+          "logit": 23.240493774414062
+        },
+        {
+          "token": 4230,
+          "text": " says",
+          "logit": 23.23325538635254
+        }
+      ],
+      "c_expected_token": 8777,
+      "c_expected_logit": 34.87351989746094,
+      "selected_token": 8777
+    },
+    {
+      "index": 9,
+      "position": 2796,
+      "in_think": true,
+      "think_tokens": 9,
+      "parser_state": "SEARCH",
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        2572,
+        270,
+        7231,
+        16,
+        1162,
+        8777
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "top_k": 0,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 1277,
+          "text": " like",
+          "logit": 36.990692138671875
+        },
+        {
+          "token": 4888,
+          "text": " likely",
+          "logit": 24.682079315185547
+        },
+        {
+          "token": 4032,
+          "text": " similar",
+          "logit": 24.594144821166992
+        },
+        {
+          "token": 9045,
+          "text": " exactly",
+          "logit": 24.325332641601562
+        },
+        {
+          "token": 18902,
+          "text": " identical",
+          "logit": 23.824613571166992
+        },
+        {
+          "token": 411,
+          "text": " an",
+          "logit": 22.889400482177734
+        },
+        {
+          "token": 260,
+          "text": " a",
+          "logit": 22.85654067993164
+        },
+        {
+          "token": 3546,
+          "text": " lik",
+          "logit": 22.791465759277344
+        },
+        {
+          "token": 1855,
+          "text": " very",
+          "logit": 22.599750518798828
+        },
+        {
+          "token": 538,
+          "text": " from",
+          "logit": 22.276607513427734
+        },
+        {
+          "token": 41021,
+          "text": " suspicious",
+          "logit": 22.18060302734375
+        },
+        {
+          "token": 10881,
+          "text": " familiar",
+          "logit": 21.956371307373047
+        }
+      ],
+      "c_expected_token": 1277,
+      "c_expected_logit": 36.990692138671875,
+      "selected_token": 1277
+    },
+    {
+      "index": 10,
+      "position": 2797,
+      "in_think": true,
+      "think_tokens": 10,
+      "parser_state": "SEARCH",
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        2572,
+        270,
+        7231,
+        16,
+        1162,
+        8777,
+        1277
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "top_k": 0,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 270,
+          "text": " the",
+          "logit": 30.972061157226562
+        },
+        {
+          "token": 411,
+          "text": " an",
+          "logit": 30.899456024169922
+        },
+        {
+          "token": 260,
+          "text": " a",
+          "logit": 29.850910186767578
+        },
+        {
+          "token": 12846,
+          "text": " instructions",
+          "logit": 26.351295471191406
+        },
+        {
+          "token": 579,
+          "text": " we",
+          "logit": 26.086830139160156
+        },
+        {
+          "token": 436,
+          "text": " it",
+          "logit": 25.459321975708008
+        },
+        {
+          "token": 18825,
+          "text": " Exerc",
+          "logit": 25.24475860595703
+        },
+        {
+          "token": 582,
+          "text": " \"",
+          "logit": 23.39641571044922
+        },
+        {
+          "token": 1234,
+          "text": " two",
+          "logit": 23.186229705810547
+        },
+        {
+          "token": 8509,
+          "text": " exercise",
+          "logit": 22.979324340820312
+        },
+        {
+          "token": 16453,
+          "text": " classic",
+          "logit": 22.738861083984375
+        },
+        {
+          "token": 17073,
+          "text": " exercises",
+          "logit": 22.318185806274414
+        }
+      ],
+      "c_expected_token": 411,
+      "c_expected_logit": 30.899456024169922,
+      "selected_token": 270
+    },
+    {
+      "index": 11,
+      "position": 2798,
+      "in_think": true,
+      "think_tokens": 11,
+      "parser_state": "SEARCH",
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        2572,
+        270,
+        7231,
+        16,
+        1162,
+        8777,
+        1277,
+        270
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "top_k": 0,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 18825,
+          "text": " Exerc",
+          "logit": 30.25157356262207
+        },
+        {
+          "token": 582,
+          "text": " \"",
+          "logit": 28.243871688842773
+        },
+        {
+          "token": 16453,
+          "text": " classic",
+          "logit": 27.525569915771484
+        },
+        {
+          "token": 5912,
+          "text": " exerc",
+          "logit": 24.160646438598633
+        },
+        {
+          "token": 26769,
+          "text": " Exercise",
+          "logit": 23.18360137939453
+        },
+        {
+          "token": 8509,
+          "text": " exercise",
+          "logit": 22.965959548950195
+        },
+        {
+          "token": 15726,
+          "text": " musical",
+          "logit": 22.592872619628906
+        },
+        {
+          "token": 107860,
+          "text": " Scala",
+          "logit": 22.115257263183594
+        },
+        {
+          "token": 17765,
+          "text": " classical",
+          "logit": 21.951065063476562
+        },
+        {
+          "token": 46280,
+          "text": " Exercises",
+          "logit": 21.90635871887207
+        },
+        {
+          "token": 40767,
+          "text": " Classic",
+          "logit": 21.755170822143555
+        },
+        {
+          "token": 17073,
+          "text": " exercises",
+          "logit": 21.610950469970703
+        }
+      ],
+      "c_expected_token": 8509,
+      "c_expected_logit": 22.965959548950195,
+      "selected_token": 18825
+    },
+    {
+      "index": 12,
+      "position": 2799,
+      "in_think": true,
+      "think_tokens": 12,
+      "parser_state": "SEARCH",
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        2572,
+        270,
+        7231,
+        16,
+        1162,
+        8777,
+        1277,
+        270,
+        18825
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "top_k": 0,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 1478,
+          "text": "ism",
+          "logit": 44.57695770263672
+        },
+        {
+          "token": 54075,
+          "text": "ISM",
+          "logit": 29.436540603637695
+        },
+        {
+          "token": 10784,
+          "text": "ismo",
+          "logit": 28.11402130126953
+        },
+        {
+          "token": 45355,
+          "text": "isma",
+          "logit": 27.870342254638672
+        },
+        {
+          "token": 18446,
+          "text": "isme",
+          "logit": 26.1285343170166
+        },
+        {
+          "token": 38930,
+          "text": "ismus",
+          "logit": 25.347156524658203
+        },
+        {
+          "token": 4692,
+          "text": "ises",
+          "logit": 24.907148361206055
+        },
+        {
+          "token": 10666,
+          "text": "isms",
+          "logit": 23.90774154663086
+        },
+        {
+          "token": 278,
+          "text": "is",
+          "logit": 23.737506866455078
+        },
+        {
+          "token": 16135,
+          "text": ".io",
+          "logit": 22.83567237854004
+        },
+        {
+          "token": 55959,
+          "text": "iset",
+          "logit": 22.7861385345459
+        },
+        {
+          "token": 123668,
+          "text": "rism",
+          "logit": 22.33563232421875
+        }
+      ],
+      "c_expected_token": 12275,
+      "c_expected_logit": 7.968048095703125,
+      "selected_token": 1478
+    },
+    {
+      "index": 13,
+      "position": 2800,
+      "in_think": true,
+      "think_tokens": 13,
+      "parser_state": "SEARCH",
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        2572,
+        270,
+        7231,
+        16,
+        1162,
+        8777,
+        1277,
+        270,
+        18825,
+        1478
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "top_k": 0,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 582,
+          "text": " \"",
+          "logit": 32.99526596069336
+        },
+        {
+          "token": 3295,
+          "text": " problem",
+          "logit": 26.817211151123047
+        },
+        {
+          "token": 107860,
+          "text": " Scala",
+          "logit": 25.31464958190918
+        },
+        {
+          "token": 8509,
+          "text": " exercise",
+          "logit": 24.834331512451172
+        },
+        {
+          "token": 3608,
+          "text": " `",
+          "logit": 24.80109405517578
+        },
+        {
+          "token": 5146,
+          "text": " music",
+          "logit": 23.665498733520508
+        },
+        {
+          "token": 127787,
+          "text": " chromatic",
+          "logit": 23.415512084960938
+        },
+        {
+          "token": 15255,
+          "text": " Python",
+          "logit": 22.714317321777344
+        },
+        {
+          "token": 25986,
+          "text": " piano",
+          "logit": 22.565216064453125
+        },
+        {
+          "token": 7617,
+          "text": " scale",
+          "logit": 22.089834213256836
+        },
+        {
+          "token": 15726,
+          "text": " musical",
+          "logit": 22.05377960205078
+        },
+        {
+          "token": 87006,
+          "text": " scala",
+          "logit": 21.996883392333984
+        }
+      ],
+      "c_expected_token": 343,
+      "c_expected_logit": 18.085573196411133,
+      "selected_token": 582
+    },
+    {
+      "index": 14,
+      "position": 2801,
+      "in_think": true,
+      "think_tokens": 14,
+      "parser_state": "SEARCH",
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        2572,
+        270,
+        7231,
+        16,
+        1162,
+        8777,
+        1277,
+        270,
+        18825,
+        1478,
+        582
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "top_k": 0,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 44626,
+          "text": "Scale",
+          "logit": 32.94226837158203
+        },
+        {
+          "token": 36452,
+          "text": "scale",
+          "logit": 32.811126708984375
+        },
+        {
+          "token": 25099,
+          "text": "mus",
+          "logit": 29.425058364868164
+        },
+        {
+          "token": 7508,
+          "text": "Sc",
+          "logit": 29.183238983154297
+        },
+        {
+          "token": 1822,
+          "text": "sc",
+          "logit": 27.74020767211914
+        },
+        {
+          "token": 74217,
+          "text": "music",
+          "logit": 27.648014068603516
+        },
+        {
+          "token": 41368,
+          "text": "Music",
+          "logit": 26.327030181884766
+        },
+        {
+          "token": 2425,
+          "text": "Ch",
+          "logit": 26.235172271728516
+        },
+        {
+          "token": 74930,
+          "text": "chrom",
+          "logit": 26.170026779174805
+        },
+        {
+          "token": 70,
+          "text": "d",
+          "logit": 25.539466857910156
+        },
+        {
+          "token": 25360,
+          "text": "Mus",
+          "logit": 25.385467529296875
+        },
+        {
+          "token": 38,
+          "text": "D",
+          "logit": 25.33066177368164
+        }
+      ],
+      "c_expected_token": 72335,
+      "c_expected_logit": 14.808326721191406,
+      "selected_token": 44626
+    },
+    {
+      "index": 15,
+      "position": 2802,
+      "in_think": true,
+      "think_tokens": 15,
+      "parser_state": "SEARCH",
+      "prior_sampled_tokens": [
+        2581,
+        1309,
+        304,
+        2572,
+        270,
+        7231,
+        16,
+        1162,
+        8777,
+        1277,
+        270,
+        18825,
+        1478,
+        582,
+        44626
+      ],
+      "rng_before": 1,
+      "sampling": {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "min_p": 0.05,
+        "top_k": 0,
+        "seed": 1
+      },
+      "top_logits": [
+        {
+          "token": 61185,
+          "text": " Generator",
+          "logit": 33.87253189086914
+        },
+        {
+          "token": 4,
+          "text": "\"",
+          "logit": 30.593685150146484
+        },
+        {
+          "token": 5219,
+          "text": " Gener",
+          "logit": 26.160320281982422
+        },
+        {
+          "token": 46223,
+          "text": "Generator",
+          "logit": 26.03223419189453
+        },
+        {
+          "token": 72781,
+          "text": " Maker",
+          "logit": 25.86900520324707
+        },
+        {
+          "token": 52382,
+          "text": " Creator",
+          "logit": 25.784629821777344
+        },
+        {
+          "token": 330,
+          "text": " T",
+          "logit": 25.685386657714844
+        },
+        {
+          "token": 79109,
+          "text": " Tun",
+          "logit": 23.941184997558594
+        },
+        {
+          "token": 7896,
+          "text": " Gen",
+          "logit": 23.929119110107422
+        },
+        {
+          "token": 23794,
+          "text": " generator",
+          "logit": 23.556522369384766
+        },
+        {
+          "token": 489,
+          "text": " G",
+          "logit": 23.44053840637207
+        },
+        {
+          "token": 25542,
+          "text": " Garden",
+          "logit": 23.140052795410156
+        }
+      ],
+      "c_expected_token": 538,
+      "c_expected_logit": 15.991469383239746,
+      "selected_token": 61185
+    }
+  ]
+}

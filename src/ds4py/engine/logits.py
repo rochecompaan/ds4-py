@@ -3,6 +3,8 @@
 from array import array
 from collections.abc import Sequence
 
+from ds4py._native.protocol import SessionHandle
+
 
 class LogitsView:
     """A worker-thread view passed to each registered pre-sample hook.
@@ -16,14 +18,14 @@ class LogitsView:
     deadlock the worker. Use only this view and hook-owned state.
     """
 
-    def __init__(self, session, vocab_size: int):
+    def __init__(self, session: SessionHandle, vocab_size: int) -> None:
         self._session = session
         self._vocab_size = vocab_size
         self._buffer = array("f", [0.0]) * vocab_size
         self._position = 0
         self._in_think = False
         self._think_tokens = 0
-        self._parser_state = None
+        self._parser_state: str | None = None
         self._sampled_tokens: Sequence[int] = ()
         self._sampled_snapshot: tuple[int, ...] | None = None
 
@@ -43,7 +45,7 @@ class LogitsView:
         return self._think_tokens
 
     @property
-    def parser_state(self):
+    def parser_state(self) -> str | None:
         """Current parser phase, or None for raw rounds."""
         return self._parser_state
 
@@ -55,8 +57,9 @@ class LogitsView:
         return self._sampled_snapshot
 
     def _update(
-        self, *, position, in_think, think_tokens, parser_state, sampled_tokens
-    ):
+        self, *, position: int, in_think: bool, think_tokens: int,
+        parser_state: str | None, sampled_tokens: Sequence[int],
+    ) -> None:
         self._position = position
         self._in_think = in_think
         self._think_tokens = think_tokens
@@ -64,7 +67,7 @@ class LogitsView:
         self._sampled_tokens = sampled_tokens
         self._sampled_snapshot = None
 
-    def logits(self):
+    def logits(self) -> memoryview:
         """Copy and return a view of this invocation's reusable float buffer."""
         self._session.copy_logits(self._buffer)
         return memoryview(self._buffer)

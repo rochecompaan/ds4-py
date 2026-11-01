@@ -6,6 +6,7 @@ from ctypes import (
     c_uint8, c_uint32, c_uint64, c_void_p,
 )
 from dataclasses import dataclass
+from typing import Any
 
 
 PROGRESS_FN = CFUNCTYPE(None, c_void_p, c_char_p, c_int, c_int)
@@ -36,6 +37,14 @@ class SessionSnapshot(ctypes.Structure):
         ("ptr", POINTER(c_uint8)),
         ("len", c_uint64),
         ("cap", c_uint64),
+    ]
+
+
+class SessionPayloadFile(ctypes.Structure):
+    _c_name_ = "ds4_session_payload_file"
+    _fields_ = [
+        ("path", c_char_p),
+        ("bytes", c_uint64),
     ]
 
 
@@ -138,6 +147,7 @@ STRUCTS: dict[str, type[ctypes.Structure]] = {
     "ds4_tokens": Tokens,
     "ds4_token_score": TokenScore,
     "ds4_session_snapshot": SessionSnapshot,
+    "ds4_session_payload_file": SessionPayloadFile,
     "ds4_distributed_layers": DistributedLayers,
     "ds4_distributed_options": DistributedOptions,
     "ds4_tp_options": TpOptions,
@@ -154,7 +164,7 @@ def struct_layout(cls: type[ctypes.Structure]) -> StructLayout:
     """Record offsets, including nested fields relative to the outer struct."""
     fields = {}
 
-    def walk(current, prefix, base):
+    def walk(current: Any, prefix: str, base: int) -> None:
         for name, field_type in current._fields_:
             offset = base + getattr(current, name).offset
             path = prefix + name

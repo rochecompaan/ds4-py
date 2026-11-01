@@ -1,4 +1,5 @@
 """Bounded real-SIGINT regression, isolated from pytest's signal handling."""
+from typing import Any
 import subprocess
 import sys
 import textwrap
@@ -8,7 +9,7 @@ import pytest
 
 @pytest.mark.parametrize("phase", ["sync", "generation"])
 @pytest.mark.parametrize("signals", [1, 2])
-def test_caller_sigint_drains_before_releasing_round(phase, signals):
+def test_caller_sigint_drains_before_releasing_round(phase: Any, signals: Any) -> None:
     probe = textwrap.dedent(r'''
         import os
         import signal
@@ -143,7 +144,7 @@ def test_caller_sigint_drains_before_releasing_round(phase, signals):
 
 
 @pytest.mark.parametrize("phase", ["sync", "generation"])
-def test_interrupt_after_end_dequeue_releases_round(phase):
+def test_interrupt_after_end_dequeue_releases_round(phase: Any) -> None:
     probe = textwrap.dedent(r'''
         import sys
         import ds4py
@@ -208,7 +209,7 @@ def test_interrupt_after_end_dequeue_releases_round(phase):
     assert result.stdout.strip() == f"lost END recovered {phase}"
 
 
-def test_lost_end_with_completion_after_receive_wait_still_terminates():
+def test_lost_end_with_completion_after_receive_wait_still_terminates() -> None:
     probe = textwrap.dedent(r'''
         import threading
         from queue import SimpleQueue

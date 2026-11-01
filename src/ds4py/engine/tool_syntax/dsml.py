@@ -6,6 +6,7 @@ from types import MappingProxyType
 from .base import ToolParser
 from .model import ToolArgument, ToolCall
 from .text import unescape_tool_text
+from typing import Never
 
 _ASCII_SPACE = b" \t\r\n"
 _CLOSE_PREFIX = "</｜DSML｜".encode()
@@ -14,7 +15,7 @@ _BAR = "｜".encode()
 
 class Dsml(ToolParser):
     """Streaming DeepSeek DSML parser; v41 selects the spaced tag spellings."""
-    def __init__(self, *, v41: bool = False):
+    def __init__(self, *, v41: bool = False) -> None:
         self.v41 = v41
         self._calls_name = " calls" if v41 else "tool_calls"
         self._invoke_name = " invoke" if v41 else "invoke"
@@ -24,15 +25,15 @@ class Dsml(ToolParser):
         self._param_close_text = f"</｜DSML｜{self._parameter_name}>"
         self._param_close = self._param_close_text.encode()
         self._call_start = 0
-        self._current_name = None
-        self._args = {}
-        self._param_name = None
+        self._current_name: str | None = None
+        self._args: dict[str, ToolArgument] = {}
+        self._param_name: str | None = None
         self._param_is_string = False
         self._param_value_start = 0
         self._param_scan_pos = 0
         super().__init__()
 
-    def _opening_forms(self):
+    def _opening_forms(self) -> tuple[tuple[bytes, bool], ...]:
         missing_bar = f"<DSML｜{self._calls_name}>".encode()
         invoke_missing_bar = f"<DSML｜{self._invoke_name}".encode()
         return (
@@ -42,7 +43,7 @@ class Dsml(ToolParser):
             (invoke_missing_bar, True),
         )
 
-    def _start(self, implicit_invoke):
+    def _start(self, implicit_invoke: bool) -> None:
         self.state = "STRUCTURAL"
         self._active = True
         self.raw.extend(self._canonical_start)
@@ -51,15 +52,15 @@ class Dsml(ToolParser):
             self.raw.extend(self._canonical_invoke)
 
     @staticmethod
-    def _skip_space(data, position):
+    def _skip_space(data: bytes | bytearray, position: int) -> int:
         while position < len(data) and data[position] in _ASCII_SPACE:
             position += 1
         return position
 
-    def _close_prefix(self, name):
+    def _close_prefix(self, name: str) -> bytes:
         return f"</｜DSML｜{name}".encode()
 
-    def _close_tag_at(self, position, name):
+    def _close_tag_at(self, position: int, name: str) -> int | None:
         prefix = self._close_prefix(name)
         if not self.raw.startswith(prefix, position):
             return None
@@ -71,7 +72,7 @@ class Dsml(ToolParser):
         return None
 
     @staticmethod
-    def _attr(tag, name):
+    def _attr(tag: bytes, name: str) -> bytes | None:
         pattern = name.encode() + b'=\"'
         start = tag.find(pattern)
         if start < 0:
@@ -82,20 +83,20 @@ class Dsml(ToolParser):
             return None
         return tag[start:end]
 
-    def _open_tag_is(self, tag, name):
+    def _open_tag_is(self, tag: bytes, name: str) -> bool:
         prefix = f"<｜DSML｜{name}".encode()
         if not tag.startswith(prefix):
             return False
         return tag[len(prefix):len(prefix) + 1] in (b">", b" ", b"\t", b"\r", b"\n")
 
-    def _decode(self, value, description):
+    def _decode(self, value: bytes | bytearray, description: str) -> str | None:
         try:
             return bytes(value).decode()
         except UnicodeDecodeError:
             self._fail(f"{description} is not valid UTF-8")
             return None
 
-    def _push_current(self, end):
+    def _push_current(self, end: int) -> None:
         if self._current_name is not None:
             args = MappingProxyType({
                 name: deepcopy(argument.value) for name, argument in self._args.items()
@@ -108,7 +109,7 @@ class Dsml(ToolParser):
         self._args = {}
         self._param_name = None
 
-    def _parse(self):
+    def _parse(self) -> None:
         while self.state in ("STRUCTURAL", "PARAM_VALUE"):
             if self.state == "PARAM_VALUE":
                 if not self._parse_parameter_value():
@@ -136,7 +137,7 @@ class Dsml(ToolParser):
             if self.state == "ERROR":
                 return
 
-    def _parse_close(self, name, *, done):
+    def _parse_close(self, name: str, *, done: bool) -> bool:
         end = self._close_tag_at(self.parse_pos, name)
         if end is None:
             return False
@@ -148,7 +149,7 @@ class Dsml(ToolParser):
             self.state = "DONE"
         return True
 
-    def _parse_invoke(self, tag, end):
+    def _parse_invoke(self, tag: bytes, end: int) -> None:
         name = self._attr(tag, "name")
         name = self._decode(name, "tool invoke name") if name is not None else None
         if not name:
@@ -159,7 +160,7 @@ class Dsml(ToolParser):
         self._args = {}
         self.parse_pos = end
 
-    def _parse_parameter(self, tag, end):
+    def _parse_parameter(self, tag: bytes, end: int) -> None:
         name = self._attr(tag, "name")
         name = self._decode(name, "tool parameter name") if name is not None else None
         if not name:
@@ -172,7 +173,7 @@ class Dsml(ToolParser):
         self._param_scan_pos = end
         self.state = "PARAM_VALUE"
 
-    def _find_parameter_close(self):
+    def _find_parameter_close(self) -> tuple[int, int] | None:
         cursor = self._param_scan_pos
         while True:
             candidate = self.raw.find(_CLOSE_PREFIX, cursor)
@@ -189,7 +190,7 @@ class Dsml(ToolParser):
                 return None
             cursor = candidate + 1
 
-    def _parse_parameter_value(self):
+    def _parse_parameter_value(self) -> bool:
         found = self._find_parameter_close()
         if found is None:
             return False
@@ -206,8 +207,10 @@ class Dsml(ToolParser):
             except (json.JSONDecodeError, ValueError):
                 self._fail(f"tool parameter {self._param_name!r} requires valid JSON")
                 return True
-        self._args[self._param_name] = ToolArgument(
-            self._param_name, value, self._param_is_string
+        param_name = self._param_name
+        assert param_name is not None
+        self._args[param_name] = ToolArgument(
+            param_name, value, self._param_is_string
         )
         self._param_name = None
         self.param_close_prefix = False
@@ -216,10 +219,10 @@ class Dsml(ToolParser):
         return True
 
     @staticmethod
-    def _reject_json_constant(value):
+    def _reject_json_constant(value: str) -> Never:
         raise ValueError(f"invalid JSON constant: {value}")
 
-    def _update_param_close_prefix(self):
+    def _update_param_close_prefix(self) -> None:
         tail = bytes(self.raw[-64:])
         start = tail.rfind(b"<")
         if start < 0:
@@ -228,7 +231,7 @@ class Dsml(ToolParser):
         matches, complete = self._parameter_close_tail(tail[start:])
         self.param_close_prefix = matches and not complete
 
-    def _parameter_close_tail(self, tail):
+    def _parameter_close_tail(self, tail: bytes) -> tuple[bool, bool]:
         prefix = self._param_close[:-1]
         if len(tail) <= len(prefix):
             return prefix.startswith(tail), False

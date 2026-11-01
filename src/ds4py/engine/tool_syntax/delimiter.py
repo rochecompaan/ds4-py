@@ -3,7 +3,7 @@ from copy import deepcopy
 from types import MappingProxyType
 
 from .base import ToolParser
-from .model import ToolCall
+from .model import ToolArgument, ToolCall
 
 _ASCII_SPACE = b" \t\r\n"
 _START = b"<tool_call>"
@@ -16,20 +16,20 @@ class DelimiterParser(ToolParser):
     _parameter_close: bytes
     _family: str
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._after_call = False
         self._call_start = 0
-        self._current_name = None
-        self._args = {}
-        self._param_name = None
+        self._current_name: str | None = None
+        self._args: dict[str, ToolArgument] = {}
+        self._param_name: str | None = None
         self._param_value_start = 0
         self._param_scan_pos = 0
         super().__init__()
 
-    def _opening_forms(self):
+    def _opening_forms(self) -> tuple[tuple[bytes, bool], ...]:
         return ((_START, False),)
 
-    def _start(self, implicit_invoke):
+    def _start(self, implicit_invoke: bool) -> None:
         self.state = "STRUCTURAL"
         self._active = True
         self._call_start = len(self.raw)
@@ -37,23 +37,23 @@ class DelimiterParser(ToolParser):
         self.parse_pos = len(self.raw)
 
     @staticmethod
-    def _skip_space(data, position):
+    def _skip_space(data: bytes | bytearray, position: int) -> int:
         while position < len(data) and data[position] in _ASCII_SPACE:
             position += 1
         return position
 
-    def _partial(self, prefix, position):
+    def _partial(self, prefix: bytes, position: int) -> bool:
         remaining = bytes(self.raw[position:])
         return len(remaining) < len(prefix) and prefix.startswith(remaining)
 
-    def _decode(self, value, description):
+    def _decode(self, value: bytes | bytearray, description: str) -> str | None:
         try:
             return bytes(value).decode()
         except UnicodeDecodeError:
             self._fail(f"{description} is not valid UTF-8")
             return None
 
-    def _push_current(self):
+    def _push_current(self) -> None:
         if self._current_name is not None:
             args = MappingProxyType({
                 name: deepcopy(argument.value) for name, argument in self._args.items()
@@ -64,7 +64,7 @@ class DelimiterParser(ToolParser):
         self._args = {}
         self._param_name = None
 
-    def _parse(self):
+    def _parse(self) -> None:
         while self.state in ("STRUCTURAL", "PARAM_VALUE"):
             if self.state == "PARAM_VALUE":
                 if not self._parse_parameter_value():
@@ -91,22 +91,22 @@ class DelimiterParser(ToolParser):
             self._parse_parameter()
             return
 
-    def _parse_call(self):
+    def _parse_call(self) -> bool:
         raise NotImplementedError
 
-    def _parse_parameter(self):
+    def _parse_parameter(self) -> None:
         raise NotImplementedError
 
-    def _parse_parameter_value(self):
+    def _parse_parameter_value(self) -> bool:
         raise NotImplementedError
 
-    def _parse_call_close(self):
+    def _parse_call_close(self) -> bool:
         self.parse_pos += len(self._call_close)
         self._push_current()
         self._after_call = True
         return True
 
-    def _parse_after_call(self):
+    def _parse_after_call(self) -> None:
         if self.raw.startswith(_START, self.parse_pos):
             self._call_start = self.parse_pos
             self.parse_pos += len(_START)
@@ -118,14 +118,14 @@ class DelimiterParser(ToolParser):
         del self.raw[self.parse_pos:]
         self.state = "DONE"
 
-    def _update_param_close_prefix(self):
+    def _update_param_close_prefix(self) -> None:
         tail = bytes(self.raw[-len(self._parameter_close):])
         start = tail.rfind(b"<")
         self.param_close_prefix = (
             start >= 0 and self._parameter_close.startswith(tail[start:])
         )
 
-    def _finish_active(self):
+    def _finish_active(self) -> None:
         trailing = self.raw[self.parse_pos:]
         if self._after_call and all(byte in _ASCII_SPACE for byte in trailing):
             self.parse_pos = len(self.raw)

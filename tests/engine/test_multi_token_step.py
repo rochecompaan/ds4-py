@@ -1,3 +1,5 @@
+from typing import Any
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -20,20 +22,20 @@ DSML = ("<｜DSML｜tool_calls><｜DSML｜invoke name=\"read\">"
         "</｜DSML｜invoke></｜DSML｜tool_calls>")
 
 
-def scripted(tokens):
+def scripted(tokens: Any) -> Any:
     tokens = tuple(tokens)
     return lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
 
 @pytest.fixture
-def workers():
+def workers() -> Iterator[Any]:
     created = []
     yield created
     for worker in created:
         worker.close()
 
 
-def run_step(workers, tokens, blocks, *, max_tokens=1000, chat=False, logits_hooks=(), step_type=FakeMultiTokenStep, cancelled=lambda: False):
+def run_step(workers: Any, tokens: Any, blocks: Any, *, max_tokens: Any=1000, chat: Any=False, logits_hooks: Any=(), step_type: Any=FakeMultiTokenStep, cancelled: Any=lambda: False) -> Any:
     worker = EngineWorker(
         FakeNative(script=scripted(tokens)), EngineConfig(Path("f"), ctx=1024),
     )
@@ -51,8 +53,8 @@ def run_step(workers, tokens, blocks, *, max_tokens=1000, chat=False, logits_hoo
     step = step_type(blocks)
     events, token_positions = [], []
 
-    def execute(engine, session):
-        def emit(event):
+    def execute(engine: Any, session: Any) -> Any:
+        def emit(event: Any) -> None:
             events.append(event)
             if isinstance(event, Token):
                 token_positions.append((event.id, session.pos(), len(transcript)))
@@ -70,11 +72,11 @@ def run_step(workers, tokens, blocks, *, max_tokens=1000, chat=False, logits_hoo
     return reason, events, transcript, worker, step, token_positions, error
 
 
-def token_ids(events):
+def token_ids(events: Any) -> Any:
     return [event.id for event in events if isinstance(event, Token)]
 
 
-def test_first_stop_token_has_no_eval_or_commit(workers):
+def test_first_stop_token_has_no_eval_or_commit(workers: Any) -> None:
     reason, events, transcript, worker, step, positions, error = run_step(workers, [0], [])
     assert error is None and reason == "stop_token" and events == [Stopped("stop_token")]
     assert transcript.tokens == (5, 6) and positions == []
@@ -82,7 +84,7 @@ def test_first_stop_token_has_no_eval_or_commit(workers):
     assert not [call for call in worker.call(lambda e, s: s.calls).result() if call[0] == "eval"]
 
 
-def test_later_stop_rewinds_before_publishing_kept_tokens(workers):
+def test_later_stop_rewinds_before_publishing_kept_tokens(workers: Any) -> None:
     a, b, later = 98, 99, 100
     reason, events, transcript, worker, step, positions, error = run_step(
         workers, [a, b, 0, later], [[b, 0, later]],
@@ -94,7 +96,7 @@ def test_later_stop_rewinds_before_publishing_kept_tokens(workers):
     assert all(pos == length for _, pos, length in positions)
 
 
-def test_budget_stop_discards_remaining_block(workers):
+def test_budget_stop_discards_remaining_block(workers: Any) -> None:
     tokens = [98, 99, 100, 101]
     reason, events, transcript, worker, step, positions, error = run_step(
         workers, tokens, [tokens[1:]], max_tokens=2,
@@ -105,7 +107,7 @@ def test_budget_stop_discards_remaining_block(workers):
     assert all(pos == length for _, pos, length in positions)
 
 
-def test_tool_boundary_discards_later_drafts(workers):
+def test_tool_boundary_discards_later_drafts(workers: Any) -> None:
     stanza = tokenize_rendered(DSML)
     tokens = stanza + tokenize_rendered("TAIL")
     reason, events, transcript, worker, step, positions, error = run_step(
@@ -119,7 +121,7 @@ def test_tool_boundary_discards_later_drafts(workers):
     assert all(pos == length for _, pos, length in positions)
 
 
-def test_drafts_are_capped_at_sixteen_and_sampling_resumes(workers):
+def test_drafts_are_capped_at_sixteen_and_sampling_resumes(workers: Any) -> None:
     tokens = list(range(1, 41))
     blocks = [tokens[1:], *block_chunks(tokens[17:])]
     reason, events, transcript, worker, step, positions, error = run_step(workers, tokens, blocks)
@@ -129,7 +131,7 @@ def test_drafts_are_capped_at_sixteen_and_sampling_resumes(workers):
     assert worker.call(lambda e, s: s.pos()).result() == len(transcript)
 
 
-def test_empty_engine_block_raises_without_new_events(workers):
+def test_empty_engine_block_raises_without_new_events(workers: Any) -> None:
     reason, events, transcript, worker, step, positions, error = run_step(workers, [98], [None])
     assert reason is None and isinstance(error, EngineError)
     assert str(error) == "decode returned no tokens"
@@ -137,7 +139,7 @@ def test_empty_engine_block_raises_without_new_events(workers):
     assert worker.call(lambda e, s: s.pos()).result() == 2
 
 
-def test_empty_block_after_kept_block_raises_without_changing_position(workers):
+def test_empty_block_after_kept_block_raises_without_changing_position(workers: Any) -> None:
     reason, events, transcript, worker, step, positions, error = run_step(
         workers, [98, 99], [[], None],
     )
@@ -147,7 +149,7 @@ def test_empty_block_after_kept_block_raises_without_changing_position(workers):
     assert worker.call(lambda e, s: s.pos()).result() == len(transcript) == 3
 
 
-def test_logits_hooks_fall_back_to_plain_step(workers):
+def test_logits_hooks_fall_back_to_plain_step(workers: Any) -> None:
     class NonconformingStep(FakeMultiTokenStep):
         hooks_every_sample = False
 
@@ -160,7 +162,7 @@ def test_logits_hooks_fall_back_to_plain_step(workers):
     assert step.block_sizes == []
 
 
-def test_no_logits_hooks_keep_the_multi_token_step(workers):
+def test_no_logits_hooks_keep_the_multi_token_step(workers: Any) -> None:
     reason, events, transcript, _worker, step, _positions, error = run_step(
         workers, [98, 99], [[99]],
     )
@@ -169,10 +171,10 @@ def test_no_logits_hooks_keep_the_multi_token_step(workers):
     assert step.block_sizes == [2]
 
 
-def test_hook_changed_draft_cuts_block_and_hooks_see_each_committed_prefix(workers):
+def test_hook_changed_draft_cuts_block_and_hooks_see_each_committed_prefix(workers: Any) -> None:
     seen = []
 
-    def hook(view):
+    def hook(view: Any) -> None:
         seen.append((view.position, view.sampled_tokens))
         if view.sampled_tokens == (98,):
             view.bias(100, 2.0)
@@ -188,7 +190,7 @@ def test_hook_changed_draft_cuts_block_and_hooks_see_each_committed_prefix(worke
     assert worker.call(lambda e, s: s.pos()).result() == len(transcript)
 
 
-def test_cancellation_mid_block_rewinds_the_uncommitted_tail(workers):
+def test_cancellation_mid_block_rewinds_the_uncommitted_tail(workers: Any) -> None:
     checks = iter([False, False, False, True])
     reason, events, transcript, worker, _, positions, error = run_step(
         workers, [98, 99, 100, 101], [[99, 100, 101]],

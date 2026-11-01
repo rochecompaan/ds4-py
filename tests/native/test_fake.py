@@ -1,3 +1,4 @@
+from typing import Any
 import ctypes
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -11,17 +12,17 @@ from ds4py.errors import EngineError, MissingBinding
 from contract import CONTRACT
 
 
-def engine(**kwargs):
+def engine(**kwargs: Any) -> Any:
     return FakeNative(**kwargs).open_engine(EngineConfig(Path("fake.gguf")))
 
 
 @pytest.mark.parametrize("check", CONTRACT, ids=lambda f: f.__name__)
-def test_contract(check):
+def test_contract(check: Any) -> None:
     e = engine()
     check(e, e.tokenize("The quick brown fox"))
 
 
-def test_tokenizer_round_trips_bytes():
+def test_tokenizer_round_trips_bytes() -> None:
     e = engine()
     assert b"".join(e.token_text(t) for t in e.tokenize("héllo")) == "héllo".encode()
     assert e.tokenize("héllo", rendered=True) == e.tokenize("héllo")
@@ -32,7 +33,7 @@ def test_tokenizer_round_trips_bytes():
     assert engine(info=custom).info() == custom
 
 
-def test_progress_events_follow_ds4():
+def test_progress_events_follow_ds4() -> None:
     clock = FakeClock()
     s = engine(chunk=4, clock=clock, chunk_seconds=0.05).create_session(64)
     s.sync(list(range(1, 7)))
@@ -44,7 +45,7 @@ def test_progress_events_follow_ds4():
     assert s.calls == [("sync", 6), ("sync", 10)]
 
 
-def test_cancel_keeps_the_partial_prefix_valid():
+def test_cancel_keeps_the_partial_prefix_valid() -> None:
     s = engine(chunk=4).create_session(64)
     seen = []
     status = s.sync(list(range(1, 17)), progress=lambda *e: seen.append(e), cancel=lambda: len(seen) >= 2)
@@ -54,7 +55,7 @@ def test_cancel_keeps_the_partial_prefix_valid():
     assert s.calls[-1] == ("sync", 12)
 
 
-def test_script_drives_sampling_and_calls_are_logged():
+def test_script_drives_sampling_and_calls_are_logged() -> None:
     s = engine(script=reply(b"hi")).create_session(64)
     s.sync([5, 6])
     out = []
@@ -65,9 +66,9 @@ def test_script_drives_sampling_and_calls_are_logged():
     assert ("eval", FAKE_EOS) not in s.calls and s.calls[0] == ("sync", 2)
 
 
-def test_script_inputs_rng_and_snapshot_generated_state():
+def test_script_inputs_rng_and_snapshot_generated_state() -> None:
     inputs = []
-    def script(prompt, generated):
+    def script(prompt: Any, generated: Any) -> Any:
         inputs.append((list(prompt), list(generated)))
         return len(generated) + 20
     s = engine(script=script).create_session(64)
@@ -92,7 +93,7 @@ def test_script_inputs_rng_and_snapshot_generated_state():
         s.load_snapshot(snap)
 
 
-def test_sync_rebuilds_instead_of_reusing_a_partial_match():
+def test_sync_rebuilds_instead_of_reusing_a_partial_match() -> None:
     s = engine().create_session(64)
     s.sync([1, 2, 3, 4])
     s.sync([1, 2, 9])
@@ -112,7 +113,7 @@ def test_sync_rebuilds_instead_of_reusing_a_partial_match():
     assert s.calls[-1] == ("sync", 0)
 
 
-def test_eval_context_full_and_token_copy():
+def test_eval_context_full_and_token_copy() -> None:
     s = engine().create_session(3)
     s.sync([1, 2])
     s.eval(3)
@@ -126,7 +127,7 @@ def test_eval_context_full_and_token_copy():
 
 @pytest.mark.parametrize("state", ["fresh", "invalidated", "rewound"])
 @pytest.mark.parametrize("operation", ["eval", "save_snapshot"])
-def test_invalid_checkpoint_operations_leave_state_unchanged(state, operation):
+def test_invalid_checkpoint_operations_leave_state_unchanged(state: Any, operation: Any) -> None:
     s = engine().create_session(64)
     if state != "fresh":
         s.sync([1, 2, 3])
@@ -145,7 +146,7 @@ def test_invalid_checkpoint_operations_leave_state_unchanged(state, operation):
     assert not s.checkpoint_valid()
 
 
-def test_snapshot_cannot_resurrect_rewound_checkpoint():
+def test_snapshot_cannot_resurrect_rewound_checkpoint() -> None:
     s = engine().create_session(64)
     s.sync([1, 2, 3])
     s.rewind(2)
@@ -161,7 +162,7 @@ def test_snapshot_cannot_resurrect_rewound_checkpoint():
     assert s.tokens() == [1, 2, 4] and s.checkpoint_valid()
 
 
-def test_bind(ext_site):
+def test_bind(ext_site: Any) -> None:
     native = FakeNative(bindings={"ds4_engine_layer_count": lambda e: 43},
                         absent={"ds4_engine_sampling_defaults"})
     assert native.bind("ds4_engine_layer_count")(None) == 43
@@ -175,18 +176,18 @@ def test_bind(ext_site):
 
 @pytest.mark.parametrize("text, expected", [("0", 1000), ("100", 1100), ("050", 1050),
     ("101", None), ("", None), ("-1", None), ("+1", None), (" 1", None), ("１", None), ("high", None)])
-def test_think_level(text, expected):
+def test_think_level(text: Any, expected: Any) -> None:
     assert FakeNative().parse_think_level(text) == expected
 
 
-def test_think_context():
+def test_think_context() -> None:
     n = FakeNative()
     assert n.think_mode_for_context(ThinkMode.MAX, 393215) == ThinkMode.HIGH
     assert n.think_mode_for_context(ThinkMode.MAX, 393216) == ThinkMode.MAX
     assert n.think_mode_for_context(ThinkMode.LOW, 64) == ThinkMode.LOW
 
 
-def test_thread_confinement_and_close():
+def test_thread_confinement_and_close() -> None:
     e = engine()
     s = e.create_session(64)
     assert e.raw == id(e) and s.raw == id(s)
@@ -208,7 +209,7 @@ def test_thread_confinement_and_close():
         e.info()
 
 
-def test_fake_logits_can_be_copied_set_and_are_invalidated_by_eval():
+def test_fake_logits_can_be_copied_set_and_are_invalidated_by_eval() -> None:
     from array import array
 
     # The fake normally prefers 7, then 9, then EOS.
@@ -232,7 +233,7 @@ def test_fake_logits_can_be_copied_set_and_are_invalidated_by_eval():
 
 
 @pytest.mark.parametrize("operation", ["sync", "rewind", "snapshot"])
-def test_fake_logits_cache_is_invalidated_by_state_changes(operation):
+def test_fake_logits_cache_is_invalidated_by_state_changes(operation: Any) -> None:
     from array import array
 
     s = engine(script=lambda prompt, generated: 7).create_session(64)
@@ -252,7 +253,7 @@ def test_fake_logits_cache_is_invalidated_by_state_changes(operation):
     assert s.argmax() == 7
 
 
-def test_think_mode_none_stops_at_think_opener():
+def test_think_mode_none_stops_at_think_opener() -> None:
     from ds4py import ThinkMode
     from ds4py._native.fake_chat import tokenize_rendered
     native = FakeNative()

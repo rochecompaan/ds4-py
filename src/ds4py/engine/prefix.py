@@ -16,7 +16,9 @@ class PrefixError(ValueError):
     pass
 
 
-def _marker_at(data: bytes, position: int):
+def _marker_at(
+    data: bytes, position: int,
+) -> tuple[Literal["user", "assistant"], int] | None:
     if data.startswith(b"USER:", position):
         return "user", 5
     if data.startswith(b"ASSISTANT:", position):

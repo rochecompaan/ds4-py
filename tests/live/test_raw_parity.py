@@ -1,3 +1,5 @@
+from typing import Any
+from pathlib import Path
 import os
 import subprocess
 import sys
@@ -12,7 +14,7 @@ from ds4py.abi.shaders import metal_source_env
 PROMPT = "The three primary colors are"
 
 @pytest.mark.live
-def test_raw_matches_ds4_agent(live_lib, tmp_path):
+def test_raw_matches_ds4_agent(live_lib: Any, tmp_path: Path) -> None:
     agent = os.environ.get("DS4_AGENT") or pytest.skip("DS4_AGENT is not set")
     manifest = Manifest.read(manifest_path(live_lib))
     backend = manifest.backend

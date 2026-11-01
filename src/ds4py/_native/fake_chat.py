@@ -1,5 +1,11 @@
 """Deterministic fake-vocabulary mirror of ds4's native chat rendering."""
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
 from .protocol import ThinkMode
+
+if TYPE_CHECKING:
+    from .fake import FakeEngine
 
 
 _SPECIAL_TEXTS = (
@@ -58,12 +64,12 @@ def special_token_text(token: int) -> bytes | None:
     return _SPECIAL_TEXT_BY_ID.get(token)
 
 
-def think_enabled(mode) -> bool:
+def think_enabled(mode: int) -> bool:
     value = int(mode)
     return value in (ThinkMode.LOW, ThinkMode.MEDIUM, ThinkMode.HIGH, ThinkMode.MAX) or 1001 <= value <= 1100
 
 
-def chat_begin(engine) -> list[int]:
+def chat_begin(engine: FakeEngine) -> list[int]:
     info = engine.info()
     if info.is_qwen4:
         return []
@@ -73,7 +79,7 @@ def chat_begin(engine) -> list[int]:
     return engine.tokenize("<｜begin▁of▁sentence｜>", rendered=True)
 
 
-def think_prefix(engine, prefix, mode) -> list[int]:
+def think_prefix(engine: FakeEngine, prefix: Sequence[int], mode: int) -> list[int]:
     info = engine.info()
     if info.is_glm_dsa:
         effort = None
@@ -120,15 +126,15 @@ def _escape_closing(text: str, closing: str) -> str:
     return "".join(output)
 
 
-def _qwen_open(engine, role):
+def _qwen_open(engine: FakeEngine, role: str) -> list[int]:
     return engine.tokenize("<|im_start|>", rendered=True) + engine.tokenize(role + "\n")
 
 
-def _qwen_close(engine):
+def _qwen_close(engine: FakeEngine) -> list[int]:
     return engine.tokenize("<|im_end|>", rendered=True) + engine.tokenize("\n")
 
 
-def _qwen_message(engine, role, content):
+def _qwen_message(engine: FakeEngine, role: str, content: str) -> list[int]:
     if role in ("tool", "function"):
         return (
             _qwen_open(engine, "user")
@@ -142,7 +148,7 @@ def _qwen_message(engine, role, content):
     return _qwen_open(engine, name) + body + _qwen_close(engine)
 
 
-def _glm_message(engine, role, content):
+def _glm_message(engine: FakeEngine, role: str, content: str) -> list[int]:
     if role in ("system", "developer"):
         return engine.tokenize("<|system|>", rendered=True) + engine.tokenize(content, rendered=True)
     if role == "assistant":
@@ -159,14 +165,16 @@ def _glm_message(engine, role, content):
     return engine.tokenize("<|user|>", rendered=True) + engine.tokenize(content)
 
 
-def _deepseek41_system_marker(prefix):
+def _deepseek41_system_marker(prefix: Sequence[int]) -> list[int]:
     roles = {text: SPECIAL_TOKENS[text] for text in ("<｜System｜>", "<｜User｜>", "<｜Assistant｜>")}
     if any(token in (roles["<｜User｜>"], roles["<｜Assistant｜>"]) for token in prefix):
         return [roles["<｜System｜>"]]
     return [] if roles["<｜System｜>"] in prefix else [roles["<｜System｜>"]]
 
 
-def _deepseek_message(engine, prefix, role, content):
+def _deepseek_message(
+    engine: FakeEngine, prefix: Sequence[int], role: str, content: str,
+) -> list[int]:
     if role in ("system", "developer"):
         marker = _deepseek41_system_marker(prefix) if engine.info().is_deepseek41 else []
         return marker + engine.tokenize(content)
@@ -183,7 +191,9 @@ def _deepseek_message(engine, prefix, role, content):
     return engine.tokenize("<｜User｜>", rendered=True) + engine.tokenize(content)
 
 
-def render_message(engine, prefix, role, content) -> list[int]:
+def render_message(
+    engine: FakeEngine, prefix: Sequence[int], role: str, content: str,
+) -> list[int]:
     info = engine.info()
     if info.is_qwen4:
         return _qwen_message(engine, role, content)
@@ -192,7 +202,9 @@ def render_message(engine, prefix, role, content) -> list[int]:
     return _deepseek_message(engine, prefix, role, content)
 
 
-def assistant_prefix(engine, prefix, mode) -> list[int]:
+def assistant_prefix(
+    engine: FakeEngine, prefix: Sequence[int], mode: int,
+) -> list[int]:
     info = engine.info()
     if info.is_qwen4:
         suffix = engine.tokenize("\n" if think_enabled(mode) else "\n\n")
@@ -209,7 +221,7 @@ def assistant_prefix(engine, prefix, mode) -> list[int]:
     return opening + engine.tokenize(marker, rendered=True)
 
 
-def qwen_reasoning_effort(mode) -> str | None:
+def qwen_reasoning_effort(mode: int) -> str | None:
     if mode in (ThinkMode.HIGH, ThinkMode.MAX):
         return _QWEN_XHIGH
     if mode == ThinkMode.LOW:
