@@ -33,7 +33,8 @@ class DS4FileSystem(FileSystem):
         default=None, init=False, repr=False, compare=False,
     )
 
-    def get_toolset(self) -> AbstractToolset[Any]:
+    # FileSystem's declared return union excludes its supported toolset wrappers.
+    def get_toolset(self) -> AbstractToolset[Any]:  # pyright: ignore[reportIncompatibleMethodOverride]
         if self._prepared_toolset is None:
             self._prepared_toolset = PreparedToolset(
                 super().get_toolset(),

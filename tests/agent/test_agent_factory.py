@@ -161,6 +161,26 @@ def test_factory_shell_lists_hidden_files(tmp_path: Path) -> None:
     assert any("example.py" in listing for listing in listings), listings
 
 
+def test_factory_applies_default_coding_instructions(tmp_path: Path) -> None:
+    from ds4py.agent_prompt import DEFAULT_CODING_AGENT_INSTRUCTIONS
+
+    def scripted(messages: Any, info: Any) -> ModelResponse:
+        return ModelResponse(parts=[TextPart("done")])
+
+    async def stream_function(messages: Any, info: Any) -> AsyncIterator[Any]:
+        yield "done"
+
+    model: Any = FunctionModel(scripted, stream_function=stream_function)
+    model.session = MockSession()
+    components = build_agent_components(model, tmp_path)
+
+    result = asyncio.run(components.agent.run("hello"))
+
+    first_message = result.all_messages()[0]
+    assert isinstance(first_message, ModelRequest)
+    assert first_message.instructions == DEFAULT_CODING_AGENT_INSTRUCTIONS
+
+
 def test_factory_applies_persistent_instructions(tmp_path: Path) -> None:
     from pydantic_ai_harness import StepPersistence
 

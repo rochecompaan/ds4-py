@@ -16,6 +16,7 @@ from pydantic_ai_harness import (
 )
 from pydantic_ai_harness.ask_user import Answerer as QuestionAnswerer
 
+from ds4py.agent_prompt import DEFAULT_CODING_AGENT_INSTRUCTIONS
 from ds4py.capabilities.file_system import DS4FileSystem
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.shell_jobs import DS4ShellJobs
@@ -80,7 +81,8 @@ def build_agent_components(
     if interactive:
         components.append(AskUser(answerer=question_answerer))
 
-    options: AgentOptions = {"capabilities": components}
-    if system is not None:
-        options["instructions"] = system
+    options: AgentOptions = {
+        "capabilities": components,
+        "instructions": system if system is not None else DEFAULT_CODING_AGENT_INSTRUCTIONS,
+    }
     return AgentComponents(agent=Agent(model, **options), components=components)
