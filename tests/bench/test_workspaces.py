@@ -57,7 +57,7 @@ def commit_repo(root: Any) -> Any:
     return git(root, "rev-parse", "HEAD")
 
 
-def test_exercise_has_visible_starter_and_temporarily_mounted_hidden_tests(tmp_path: Path) -> None:
+def test_exercise_has_visible_starter_and_grader_owned_hidden_tests(tmp_path: Path) -> None:
     source = make_exercise(tmp_path)
     workspace = prepare_exercise(source, tmp_path / "staged")
 
@@ -66,6 +66,24 @@ def test_exercise_has_visible_starter_and_temporarily_mounted_hidden_tests(tmp_p
     ).read_text()
     assert (workspace.agent_dir / "solution.py").is_file()
     assert not (workspace.agent_dir / HIDDEN_TEST).exists()
+    assert (workspace.grader_dir / HIDDEN_TEST).is_file()
+
+
+def test_real_grading_leaves_no_hidden_source_or_bytecode_in_agent_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
+    source = make_exercise(tmp_path)
+    workspace = prepare_exercise(source, tmp_path / "staged")
+
+    result = grade_workspace(workspace)
+
+    assert result.passed, result.output
+    hidden_artifacts = [
+        path for path in workspace.agent_dir.rglob("*")
+        if Path(HIDDEN_TEST).stem in path.name
+    ]
+    assert hidden_artifacts == []
     assert (workspace.grader_dir / HIDDEN_TEST).is_file()
 
     result = grade_workspace(workspace)
@@ -106,7 +124,8 @@ def test_attempts_stop_at_two_and_cleanup_survives_failures(tmp_path: Path) -> N
 
     def fail(command: Any, cwd: Any, env: Any) -> Any:
         assert cwd == workspace.grader_dir
-        assert (workspace.agent_dir / HIDDEN_TEST).is_file()
+        assert not (workspace.agent_dir / HIDDEN_TEST).exists()
+        assert str(workspace.grader_dir / HIDDEN_TEST) in command
         return subprocess.CompletedProcess(command, 1, stdout="still failing", stderr="")
 
     grades = run_attempts(workspace, agent, runner=fail)

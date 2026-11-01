@@ -1,11 +1,10 @@
 """Pinned bakeoff workspace staging and hidden-test grading.
 
-Agents see only ``Workspace.agent_dir``. Test files live in the separate
-``grader_dir`` and are mounted only for the duration of one grading call.
+Agents see only ``Workspace.agent_dir``. Hidden test files stay in the
+separate ``grader_dir`` during grading.
 """
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from io import BytesIO
 import os
@@ -192,40 +191,6 @@ def clone_workspace(workspace: Workspace, destination: str | Path) -> Workspace:
     return replace(workspace, agent_dir=agent_dir, grader_dir=grader_dir)
 
 
-@contextmanager
-def _mounted_tests(workspace: Workspace) -> Iterator[None]:
-    backups: dict[Path, bytes | None] = {}
-    mounted: list[Path] = []
-    try:
-        for name in workspace.hidden_tests:
-            source = workspace.grader_dir / name
-            destination = workspace.agent_dir / name
-            if not source.is_file():
-                raise PreparationError(f"{workspace.task_id}: hidden test is missing: {name}")
-            if destination.is_symlink() or not destination.resolve().is_relative_to(
-                workspace.agent_dir.resolve()
-            ):
-                raise PreparationError(f"{workspace.task_id}: unsafe test mount: {name}")
-            backups[destination] = destination.read_bytes() if destination.is_file() else None
-            _copy_file(source, destination)
-            mounted.append(destination)
-        yield
-    finally:
-        for destination in reversed(mounted):
-            original = backups[destination]
-            if original is None:
-                destination.unlink(missing_ok=True)
-            else:
-                destination.write_bytes(original)
-            parent = destination.parent
-            while parent != workspace.agent_dir:
-                try:
-                    parent.rmdir()
-                except OSError:
-                    break
-                parent = parent.parent
-
-
 def _combined_output(completed: subprocess.CompletedProcess[Any]) -> str:
     stdout = completed.stdout or ""
     stderr = completed.stderr or ""
@@ -240,7 +205,7 @@ def _combined_output(completed: subprocess.CompletedProcess[Any]) -> str:
 def grade_workspace(
     workspace: Workspace, *, runner: CommandRunner | None = None,
 ) -> GradeResult:
-    """Mount hidden tests, capture one grading result, then unmount them."""
+    """Run hidden tests from grader storage with explicit solution imports."""
     if not workspace.test_paths:
         raise PreparationError(f"{workspace.task_id}: no grading tests configured")
     grader_config = workspace.grader_dir / "pytest.ini"
@@ -249,21 +214,26 @@ def grade_workspace(
     # Python must not import an agent-provided sitecustomize during startup.
     bootstrap = (
         "import sys; import pytest; "
-        "sys.path.insert(0, sys.argv.pop(1)); "
+        "sys.path[:0] = [sys.argv.pop(1), sys.argv.pop(1)]; "
         "raise SystemExit(pytest.main(sys.argv[1:]))"
     )
     command = [
         sys.executable, "-c", bootstrap, str(workspace.agent_dir / "src"),
+        str(workspace.agent_dir),
         "-q", "-c", str(grader_config),
         f"--rootdir={workspace.grader_dir}", "--noconftest",
-        "-p", "no:cacheprovider",
-        *(str(workspace.agent_dir / name) for name in workspace.test_paths),
+        "-p", "no:cacheprovider", "--import-mode=importlib",
+        *(str(
+            (workspace.grader_dir if name in workspace.hidden_tests else workspace.agent_dir)
+            / name
+        ) for name in workspace.test_paths),
     ]
     environment = os.environ.copy()
+    agent_root = workspace.agent_dir.resolve()
     agent_src = (workspace.agent_dir / "src").resolve()
     pythonpath = [
         entry for entry in environment.get("PYTHONPATH", "").split(os.pathsep)
-        if entry and Path(entry).resolve() != agent_src
+        if entry and Path(entry).resolve() not in {agent_root, agent_src}
     ]
     if pythonpath:
         environment["PYTHONPATH"] = os.pathsep.join(pythonpath)
@@ -276,8 +246,7 @@ def grade_workspace(
         ) -> subprocess.CompletedProcess[Any]:
             return subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
         command_runner = default_runner
-    with _mounted_tests(workspace):
-        completed = command_runner(command, workspace.grader_dir, environment)
+    completed = command_runner(command, workspace.grader_dir, environment)
     return GradeResult(completed.returncode == 0, _combined_output(completed))
 
 
