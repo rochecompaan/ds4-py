@@ -74,6 +74,30 @@ def test_first_request_renders_tools_and_binds_each_message() -> None:
         assert all(segment.content_hash for segment in keyed)
 
 
+def test_restore_binds_an_ordered_subsequence_of_canonical_history() -> None:
+    with fake_engine() as engine:
+        session = engine.session()
+        binder = MessageBinder(session)
+        canonical = [
+            user("first"),
+            ModelResponse([TextPart("omitted answer")]),
+            user("omitted request"),
+            ModelResponse([TextPart("last answer")]),
+        ]
+        bound = [canonical[0], canonical[3]]
+        binder.prepare(bound)
+        provenance = binder.export_segments()
+
+        restored = MessageBinder(session)
+        restored.restore(canonical, provenance)
+
+        assert len(canonical) == 4
+        assert restored._bound_messages == bound
+        assert [record.key for record in restored._records] == [
+            cast(Any, message.metadata)["ds4.key"] for message in bound
+        ]
+
+
 def test_system_and_instruction_parts_are_separate_system_segments() -> None:
     with fake_engine() as engine:
         session = engine.session()

@@ -361,12 +361,12 @@ class MessageBinder:
         hash: a record and its snapshot are written by one save, so the order is
         fixed, and the hash proves the snapshot still describes the tokens.
         """
-        installed, records = self._restore_state(
+        installed, records, bound_messages = self._restore_state(
             messages, segments, loaded=len(self.session.transcript),
         )
         self.session._transcript.install(installed)
         self._records = records
-        self._bound_messages = deepcopy(list(messages))
+        self._bound_messages = deepcopy(bound_messages)
         self._signature = None
         self._restored = True
 
@@ -375,7 +375,7 @@ class MessageBinder:
         messages: Sequence[ModelMessage],
         segments: Sequence[_Provenance],
         loaded: int | None,
-    ) -> tuple[list[Segment], list[_BoundMessage]]:
+    ) -> tuple[list[Segment], list[_BoundMessage], list[ModelMessage]]:
         messages = list(messages)
         _validate(messages)
         installed = []
@@ -420,20 +420,29 @@ class MessageBinder:
                 ranges[provenance.key][0] = pending_prefix
             pending_prefix = None
 
-        if len(keys) != len(messages):
-            raise EngineError(
-                f"the save record holds {len(keys)} keyed messages, "
-                f"the snapshot has {len(messages)}"
-            )
+        positions: dict[str, int] = {}
+        for index, message in enumerate(messages):
+            key = (message.metadata or {}).get("ds4.key")
+            if key is None:
+                continue
+            if key in positions:
+                raise EngineError(f"the snapshot has duplicate message key {key!r}")
+            positions[key] = index
+
         records = []
-        for message, key in zip(messages, keys):
-            metadata = dict(message.metadata or {})
-            existing = metadata.get("ds4.key")
-            if existing != key:
+        bound_messages = []
+        previous = -1
+        for key in keys:
+            position = positions.get(key)
+            if position is None:
                 raise EngineError(
-                    f"the snapshot message key {existing!r} is not the save "
-                    f"record key {key!r}"
+                    f"the save record message key {key!r} is absent from the snapshot"
                 )
+            if position <= previous:
+                raise EngineError(
+                    f"the save record message key {key!r} is out of snapshot order"
+                )
+            message = messages[position]
             content_hash = _content_hash(message)
             if content_hash != hashes[key]:
                 raise EngineError(
@@ -441,8 +450,10 @@ class MessageBinder:
                     "does not match the snapshot"
                 )
             records.append(_BoundMessage(key, content_hash, ranges[key][0], ranges[key][1]))
+            bound_messages.append(message)
+            previous = position
 
-        return installed, records
+        return installed, records, bound_messages
 
     @staticmethod
     def _trailing_request(messages: Sequence[ModelMessage]) -> bool:
