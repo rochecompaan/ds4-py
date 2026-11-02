@@ -1,6 +1,6 @@
 # Gate 4 structured interruption driver design
 
-**Status:** Proposed for approval
+**Status:** Approved
 **Date:** 2026-11-02
 **Gate:** Gate 4 — interruption and follow-up
 
