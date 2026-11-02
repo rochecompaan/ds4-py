@@ -253,6 +253,7 @@ class EngineWorker:
                     finally:
                         item.events.queue.put(_END)
                         item.events.finished.set()
+                del item
 
     def _plan(self, session: SessionHandle, tokens: Sequence[int]) -> Plan:
         return plan_sync(

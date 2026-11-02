@@ -22,6 +22,16 @@ class RecordingStep:
         PlainStep().run(session, ctx)
 
 
+def stop_then_next(prompt: Any, generated: Any) -> Any:
+    stop = tuple(byte + 1 for byte in b"stop")
+    source = (
+        b"next"
+        if any(tuple(prompt[index : index + len(stop)]) == stop for index in range(len(prompt) - len(stop) + 1))
+        else b"stop"
+    )
+    return source[len(generated)] + 1 if len(generated) < len(source) else 0
+
+
 @pytest.mark.parametrize("chat", [False, True], ids=["raw", "chat"])
 def test_session_forwards_the_installed_step(chat: bool) -> None:
     with ds4py.open("f.gguf", think=ThinkMode.NONE, native=FakeNative(script=reply(b"ok"))) as engine:
@@ -68,17 +78,7 @@ def test_active_round_rejects_step_changes() -> None:
 
 @pytest.mark.parametrize("chat", [False, True], ids=["raw", "chat"])
 def test_paused_round_rejects_step_changes(chat: bool) -> None:
-    stop = tuple(byte + 1 for byte in b"stop")
-
-    def script(prompt: Any, generated: Any) -> Any:
-        source = (
-            b"next"
-            if any(tuple(prompt[index : index + len(stop)]) == stop for index in range(len(prompt) - len(stop) + 1))
-            else b"stop"
-        )
-        return source[len(generated)] + 1 if len(generated) < len(source) else 0
-
-    with ds4py.open("f.gguf", think=ThinkMode.NONE, native=FakeNative(script=script)) as engine:
+    with ds4py.open("f.gguf", think=ThinkMode.NONE, native=FakeNative(script=stop_then_next)) as engine:
         session = engine.session()
         if chat:
             session.append_user("hi")
@@ -87,6 +87,19 @@ def test_paused_round_rejects_step_changes(chat: bool) -> None:
         assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped("stop_sequence")
         with pytest.raises(EngineError, match="paused round"):
             session.set_decode_step(None)
+
+
+def test_raw_stop_sequence_resume_uses_the_same_step() -> None:
+    with ds4py.open("f.gguf", native=FakeNative(script=stop_then_next)) as engine:
+        session = engine.session()
+        session.append_tokens([5, 6], "user")
+        step = RecordingStep()
+        session.set_decode_step(step)
+
+        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped("stop_sequence")
+        assert step.calls == 1
+        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped("stop_token")
+        assert step.calls == 2
 
 
 def test_reserve_resume_uses_the_same_step() -> None:
@@ -124,6 +137,8 @@ def test_closing_the_session_releases_the_step() -> None:
         step = RecordingStep()
         step_ref = weakref.ref(step)
         session.set_decode_step(step)
+        session.append_tokens([5, 6], "user")
+        assert list(session.run_round())[-1] == Stopped("stop_token")
         session.close()
         del step
         gc.collect()
