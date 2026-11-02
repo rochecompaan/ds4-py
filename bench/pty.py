@@ -227,6 +227,8 @@ def drive_interruption_pty(  # noqa: C901, PLR0912, PLR0913, PLR0915 - The struc
                     if kind == "Token":
                         child.write("\x03")
                         awaiting = "interrupted Stopped"
+                        # The remaining snapshot records predate Ctrl+C.
+                        break
                 elif awaiting == "interrupted Stopped":
                     if _stopped_interrupt(record):
                         interrupted = True
@@ -237,6 +239,8 @@ def drive_interruption_pty(  # noqa: C901, PLR0912, PLR0913, PLR0915 - The struc
                             raise RuntimeError("interrupted run ended with an error")  # noqa: TRY301
                         child.write(follow_up + "\n")
                         awaiting = "follow-up run_start"
+                        # Only events appended after the follow-up can satisfy it.
+                        break
                 elif awaiting == "follow-up run_start":
                     if kind == "run_start" and run_id is not None and run_id != initial_run:
                         follow_up_run = run_id
@@ -246,6 +250,7 @@ def drive_interruption_pty(  # noqa: C901, PLR0912, PLR0913, PLR0915 - The struc
                         raise RuntimeError("follow-up run did not succeed")  # noqa: TRY301
                     child.write("/exit\n")
                     awaiting = "clean process exit"
+                    break
             if child.poll() is not None:
                 while child.read_available(0):
                     pass
