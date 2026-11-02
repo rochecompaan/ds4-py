@@ -117,10 +117,14 @@ def test_mtp_path_lifetime(stub_engine: Any, tmp_path: Path) -> None:
     engine, _ = stub_engine
     options = engine_options(EngineConfig(tmp_path / "model.gguf", mtp_path=tmp_path / "drafter.gguf"))
     opened = NativeEngine(engine._lib, 0x1234, options, InstanceLock.acquire(tmp_path / "mtp.lock"))
+    encoded_path = os.fsencode(tmp_path / "drafter.gguf")
     try:
         del options
         gc.collect()
-        assert opened._options.mtp_path == os.fsencode(tmp_path / "drafter.gguf")
+        assert opened._options.mtp_path == encoded_path
+        objects = opened._options._objects
+        assert objects is not None
+        assert encoded_path in objects.values()
     finally:
         opened.close()
 
