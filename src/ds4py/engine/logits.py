@@ -1,9 +1,12 @@
-"""Lazy, reusable access to the live logits and committed decode metadata."""
+"""Lazy logits access and canonical-plus-staged pre-sample decode metadata."""
 
 from array import array
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
-from ds4py._native.protocol import SessionHandle
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from ds4py._native.protocol import SessionHandle
 
 
 class LogitsView:
@@ -13,8 +16,10 @@ class LogitsView:
     are copied only when logits() is called; the returned memory view remains
     backed by that same buffer on later calls.
 
-    Hooks must not call engine, session, harness, cancellation, or blocking-I/O
-    APIs. They run synchronously on the native worker thread, so those calls can
+    During multi-token staging, metadata includes the accepted tentative prefix;
+    transcript and public events still change only after native commit. Hooks
+    must not call engine, session, harness, cancellation, or blocking-I/O APIs.
+    They run synchronously on the native worker thread, so those calls can
     deadlock the worker. Use only this view and hook-owned state.
     """
 
@@ -31,7 +36,7 @@ class LogitsView:
 
     @property
     def position(self) -> int:
-        """Native position before this sample."""
+        """Logical canonical-plus-staged position before this sample."""
         return self._position
 
     @property
@@ -41,7 +46,7 @@ class LogitsView:
 
     @property
     def think_tokens(self) -> int:
-        """Committed tokens counted in the current think block."""
+        """Canonical plus staged tokens counted in the current think block."""
         return self._think_tokens
 
     @property
@@ -51,14 +56,19 @@ class LogitsView:
 
     @property
     def sampled_tokens(self) -> tuple[int, ...]:
-        """Immutable history of committed sampled IDs for this assistant round."""
+        """Immutable canonical-plus-staged sampled IDs for this assistant round."""
         if self._sampled_snapshot is None:
             self._sampled_snapshot = tuple(self._sampled_tokens)
         return self._sampled_snapshot
 
     def _update(
-        self, *, position: int, in_think: bool, think_tokens: int,
-        parser_state: str | None, sampled_tokens: Sequence[int],
+        self,
+        *,
+        position: int,
+        in_think: bool,
+        think_tokens: int,
+        parser_state: str | None,
+        sampled_tokens: Sequence[int],
     ) -> None:
         self._position = position
         self._in_think = in_think
@@ -75,9 +85,7 @@ class LogitsView:
     def set_logits(self, values: Sequence[float]) -> None:
         """Replace native logits after checking the exact vocabulary length."""
         if len(values) != self._vocab_size:
-            raise ValueError(
-                f"logits buffer must equal the vocabulary size ({self._vocab_size})"
-            )
+            raise ValueError(f"logits buffer must equal the vocabulary size ({self._vocab_size})")
         self._session.set_logits(values)
 
     def bias(self, token_id: int, delta: float) -> None:

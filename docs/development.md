@@ -36,20 +36,31 @@ The included `.envrc` loads devenv.
 Install the Python dependencies and run the portable tests:
 
 ```bash
-uv sync --dev
-uv run pytest -m "not build and not live" -q
+uv sync --frozen --extra agent
+uv run --frozen --extra agent pytest -m "not build and not live" -q
 ```
 
 The above `pytest` run needs no ds4 source tree, native library, or model.
 It tests the Python code and synthetic native contracts.
 It does not prove that model inference works on your hardware.
 
-Run the Python type and annotation checks:
+Install the prek hook once, then run the same static quality gate used by CI:
 
 ```bash
-uv run --extra agent pyright
-uv run --extra agent ruff check src bench tests
+uv run prek install
+uv run --frozen --extra agent prek run --all-files --show-diff-on-failure
 ```
+
+The gate includes Ruff lint and formatting, ty, TOML, YAML, JSON, GitHub workflow schema checks, actionlint, and general file hygiene.
+Run ty directly when you need its complete diagnostics without the other hooks:
+
+```bash
+uv run --frozen --extra agent ty check
+```
+
+Use `TypeIs`, not `TypeGuard`, for custom narrowing validators.
+Prefer precise types, generics, and `object`; keep `Any` only at reviewed dynamic boundaries.
+See [`AGENTS.md`](../AGENTS.md) for the complete typing and lint policy.
 
 When you change packaging or CI configuration, run the relevant checks:
 

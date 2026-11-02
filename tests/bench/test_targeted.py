@@ -1,19 +1,19 @@
 """Independent targeted bakeoff repetitions with retained evidence."""
 
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-import sys
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
+import bench.run_targeted as targeted
 from bench.metrics import EventSummary
 from bench.run_bakeoff import TaskRunResult
 from bench.workspaces import Workspace
-import bench.run_targeted as targeted
 
 
 def workspace(root: Path, task_id: str) -> Workspace:
@@ -119,9 +119,7 @@ def test_targeted_runs_each_task_three_times_independently(
         for task_id in ("scale-generator", "repo-ctx-command")
         for repetition in range(1, 4)
     ]
-    assert all(
-        call[1].tokens == 8192 and call[1].request_limit == 100 for call in calls
-    )
+    assert all(call[1].tokens == 8192 and call[1].request_limit == 100 for call in calls)
 
     data = json.loads((results / "targeted.json").read_text())
     assert len(data) == 6

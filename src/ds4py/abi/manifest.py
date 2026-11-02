@@ -1,17 +1,22 @@
 """Persist probe evidence and validate it against installed declarations."""
 
-from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 import os
-from pathlib import Path
 import tempfile
-from typing import Sequence
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ds4py._native.bindings import Binding
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from ds4py._json import JsonValue
+    from ds4py._native.bindings import Binding
 from ds4py._native.structs import StructLayout
 from ds4py._native.typemap import TYPE_MAP_VERSION
 from ds4py.errors import AbiMismatch
+
 from .pins import KNOWN_HEADERS
 
 MANIFEST_NAME = "libds4.abi.json"
@@ -48,30 +53,31 @@ class Manifest:
     headers_known: bool
     bindings: dict[str, BindingRecord]
     layouts: dict[str, StructLayout]
-    live_checks: dict[str, dict] = field(default_factory=dict)
+    live_checks: dict[str, dict[str, JsonValue]] = field(default_factory=dict)
     metal_sources: dict[str, str] = field(default_factory=dict)
 
     @classmethod
-    def read(cls, path: Path) -> "Manifest":
+    def read(cls, path: Path) -> Manifest:
         data = json.loads(path.read_text())
-        data["bindings"] = {name: BindingRecord(**record)
-                            for name, record in data["bindings"].items()}
-        data["layouts"] = {name: StructLayout(**layout)
-                           for name, layout in data["layouts"].items()}
+        data["bindings"] = {name: BindingRecord(**record) for name, record in data["bindings"].items()}
+        data["layouts"] = {name: StructLayout(**layout) for name, layout in data["layouts"].items()}
         return cls(**data)
 
     def write(self, path: Path) -> None:
-        temporary = None
+        temporary: Path | None = None
         try:
             with tempfile.NamedTemporaryFile(
-                mode="w", dir=path.parent, prefix=f".{path.name}.", delete=False,
+                mode="w",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                delete=False,
             ) as stream:
                 temporary = Path(stream.name)
                 json.dump(asdict(self), stream, indent=2)
                 stream.write("\n")
-            os.replace(temporary, path)
+            os.replace(temporary, path)  # noqa: PTH105 - Keep the atomic OS seam patchable in tests.
         finally:
-            if temporary is not None:
+            if temporary is not None:  # ty: ignore[redundant-condition-strict]  # Early failures precede assignment.
                 temporary.unlink(missing_ok=True)
 
 
@@ -82,8 +88,11 @@ class Validation:
     warnings: tuple[str, ...]
 
 
-def validate(
-    m: Manifest, *, lib_sha256: str, bindings: Sequence[Binding],
+def validate(  # noqa: PLR0912 - ABI validation checks independent manifest contracts.
+    m: Manifest,
+    *,
+    lib_sha256: str,
+    bindings: Sequence[Binding],
     layouts: dict[str, StructLayout],
 ) -> Validation:
     if m.backend == "metal" and (not isinstance(m.metal_sources, dict) or not m.metal_sources):
@@ -103,28 +112,20 @@ def validate(
                 f"\nbut ds4py declares\n  {binding.normalized}" + _REBUILD
             )
         if type(record.ok) is not bool:
-            raise AbiMismatch(
-                f"{binding.name}: probe result must be a boolean." + _REBUILD
-            )
+            raise AbiMismatch(f"{binding.name}: probe result must be a boolean." + _REBUILD)
         if not record.ok and binding.required:
-            raise AbiMismatch(
-                f"{binding.name}: required signature probe failed: {record.message}" + _REBUILD
-            )
+            raise AbiMismatch(f"{binding.name}: required signature probe failed: {record.message}" + _REBUILD)
         (available if record.ok else absent).add(binding.name)
     for name, expected in layouts.items():
         actual = m.layouts.get(name)
         if actual is None:
             raise AbiMismatch(f"{name}: no layout recorded." + _REBUILD)
         if actual.size != expected.size:
-            raise AbiMismatch(
-                f"{name}: size {actual.size} differs from {expected.size}." + _REBUILD
-            )
+            raise AbiMismatch(f"{name}: size {actual.size} differs from {expected.size}." + _REBUILD)
         for field_name, offset in expected.fields.items():
             recorded = actual.fields.get(field_name)
             if recorded != offset:
-                raise AbiMismatch(
-                    f"{name}.{field_name}: offset {recorded} differs from {offset}." + _REBUILD
-                )
+                raise AbiMismatch(f"{name}.{field_name}: offset {recorded} differs from {offset}." + _REBUILD)
     warnings = tuple(
         f"unknown header {name}: {digest[:12]}"
         for name, digest in m.headers.items()

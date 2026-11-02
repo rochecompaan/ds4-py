@@ -2,19 +2,24 @@
 
 import argparse
 import asyncio
-from contextlib import contextmanager, nullcontext
-from collections.abc import Iterator
-from pathlib import Path
 import sys
+from contextlib import contextmanager, nullcontext
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ds4py import ThinkMode
+from ds4py._native.protocol import THINK_LEVEL_BASE
 from ds4py.errors import Ds4pyError
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
+
     from ds4py.runtime import AgentRuntime
 
+
+_MAX_THINK_LEVEL = 100
 
 _THINK_MODES = {
     "none": ThinkMode.NONE,
@@ -27,7 +32,7 @@ _THINK_MODES = {
 
 def _level(value: str) -> int:
     level = int(value)
-    if not 1 <= level <= 100:
+    if not 1 <= level <= _MAX_THINK_LEVEL:
         raise argparse.ArgumentTypeError("think level must be between 1 and 100")
     return level
 
@@ -60,15 +65,12 @@ def parser() -> argparse.ArgumentParser:
     think = result.add_mutually_exclusive_group()
     think.add_argument("--think", nargs="?", const="high", choices=tuple(_THINK_MODES))
     think.add_argument("--think-level", type=_level)
-    think.add_argument("--think-max", dest="think_mode", action="store_const",
-                       const=ThinkMode.MAX)
-    think.add_argument("--nothink", dest="think_mode", action="store_const",
-                       const=ThinkMode.NONE)
+    think.add_argument("--think-max", dest="think_mode", action="store_const", const=ThinkMode.MAX)
+    think.add_argument("--nothink", dest="think_mode", action="store_const", const=ThinkMode.NONE)
     backends = result.add_mutually_exclusive_group()
     backends.add_argument("--backend")
     for backend in ("cpu", "metal", "cuda"):
-        backends.add_argument(f"--{backend}", dest="backend", action="store_const",
-                              const=backend)
+        backends.add_argument(f"--{backend}", dest="backend", action="store_const", const=backend)
     result.add_argument("-t", "--threads", type=int, default=0)
     result.add_argument("--lib", type=Path)
     return result
@@ -76,15 +78,15 @@ def parser() -> argparse.ArgumentParser:
 
 def _think_mode(args: argparse.Namespace) -> int:
     if args.think_mode is not None:
-        return args.think_mode
+        return int(args.think_mode)
     if args.think_level is not None:
-        return 1000 + args.think_level
+        return THINK_LEVEL_BASE + int(args.think_level)
     if args.think is not None:
         return _THINK_MODES[args.think]
     return ThinkMode.HIGH
 
 
-async def _question_answerer(request: "AskUserRequest") -> "AskUserResponse":
+async def _question_answerer(request: AskUserRequest) -> AskUserResponse:
     """Read AskUser choices and return its typed response."""
     from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserResponse
 
@@ -94,9 +96,8 @@ async def _question_answerer(request: "AskUserRequest") -> "AskUserResponse":
     for question in request.questions:
         print(question.question, file=sys.stderr, flush=True)
         for index, option in enumerate(question.options, 1):
-            description = f" — {option.description}" if option.description else ""
+            description = f" — {option.description}" if bool(option.description) else ""
             print(f"  {index}. {option.label}{description}", file=sys.stderr, flush=True)
-        prompt = "Choices (comma-separated)" if question.multi_select else "Choice"
         answer = sys.stdin.readline()
         if answer == "":
             return AskUserResponse(cancelled=True)
@@ -109,8 +110,11 @@ async def _question_answerer(request: "AskUserRequest") -> "AskUserResponse":
 
 @contextmanager
 def open_runtime(
-    args: argparse.Namespace, project_dir: str | Path, *, read_only: bool = False,
-) -> Iterator["AgentRuntime"]:
+    args: argparse.Namespace,
+    project_dir: str | Path,
+    *,
+    read_only: bool = False,
+) -> Generator[AgentRuntime]:
     """Open the canonical agent stack with its CLI interaction services."""
     from ds4py import open as open_engine
     from ds4py.engine.sampling import SamplingPolicy
@@ -118,18 +122,29 @@ def open_runtime(
     from ds4py.runtime import AgentRuntime
 
     with open_engine(
-        args.model, ctx=args.ctx, backend=args.backend, think=_think_mode(args),
-        seed=args.seed, threads=args.threads, lib=args.lib,
+        args.model,
+        ctx=args.ctx,
+        backend=args.backend,
+        think=_think_mode(args),
+        seed=args.seed,
+        threads=args.threads,
+        lib=args.lib,
     ) as engine:
         session = engine.session()
         sampling = SamplingPolicy.for_engine(
-            engine.info, temperature=args.temp, top_p=args.top_p,
-            min_p=args.min_p, seed=args.seed,
+            engine.info,
+            temperature=args.temp,
+            top_p=args.top_p,
+            min_p=args.min_p,
+            seed=args.seed,
         )
         model = DS4Model(session, sampling=sampling, max_tokens=args.tokens)
         runtime = AgentRuntime(
-            model, project_dir, read_only=read_only,
-            system=args.system, interactive=not args.non_interactive,
+            model,
+            project_dir,
+            read_only=read_only,
+            system=args.system,
+            interactive=not args.non_interactive,
             question_answerer=_question_answerer if not args.non_interactive else None,
             request_limit=args.request_limit,
         )
@@ -152,10 +167,12 @@ def command(args: argparse.Namespace) -> int:
             runtime.load_prefix(load_prefix(args.prefix_file))
         trace = (
             PrefillTraceWriter(
-                runtime.model.session, args.trace,
+                runtime.model.session,
+                args.trace,
                 think=runtime.model.session.engine.think,
             )
-            if args.trace is not None else nullcontext()
+            if args.trace is not None
+            else nullcontext()
         )
         with trace:
             if args.non_interactive:
@@ -163,7 +180,7 @@ def command(args: argparse.Namespace) -> int:
             return asyncio.run(_run_tui(runtime, prompt))
 
 
-async def _run_tui(runtime: "AgentRuntime", prompt: str | None) -> int:
+async def _run_tui(runtime: AgentRuntime, prompt: str | None) -> int:
     from ds4py.tui import TUI
 
     tui = TUI(runtime)

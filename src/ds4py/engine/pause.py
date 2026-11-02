@@ -1,6 +1,17 @@
 """Bounded UTF-8 stop matching and resumable control-span state."""
 
-from typing import Iterable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+
+@dataclass(frozen=True)
+class ControlSpanState:
+    matcher_states: tuple[int, ...]
+    stop_sequence: bytes | None
+    active_stop_sequences: tuple[bytes, ...]
 
 
 def _failure_table(sequence: bytes) -> tuple[int, ...]:
@@ -20,8 +31,8 @@ class StopSequenceMatcher:
 
     def __init__(self, sequences: Iterable[bytes] = ()) -> None:
         normalized = []
-        for sequence in sequences:
-            sequence = bytes(sequence)
+        for raw in sequences:
+            sequence = bytes(raw)
             if not sequence:
                 raise ValueError("stop sequences must not be empty")
             sequence.decode("utf-8")
@@ -64,6 +75,24 @@ class ControlSpan:
         self.matcher = StopSequenceMatcher(sequences)
         self.stop_sequence: bytes | None = None
         self.active_stop_sequences: list[bytes] = []
+
+    def capture(self) -> ControlSpanState:
+        return ControlSpanState(
+            tuple(self.matcher._states),
+            self.stop_sequence,
+            tuple(self.active_stop_sequences),
+        )
+
+    def restore(self, state: ControlSpanState) -> None:
+        self.matcher._states[:] = state.matcher_states
+        self.stop_sequence = state.stop_sequence
+        self.active_stop_sequences = list(state.active_stop_sequences)
+
+    def fork(self) -> ControlSpan:
+        control = ControlSpan(self.sequences)
+        control.matcher._tables = self.matcher._tables
+        control.restore(self.capture())
+        return control
 
     @property
     def sequences(self) -> tuple[bytes, ...]:

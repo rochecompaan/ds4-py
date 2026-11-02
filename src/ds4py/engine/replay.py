@@ -1,12 +1,16 @@
 """Read token-level ds4-agent traces for deterministic live replay."""
+
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-import re
+from typing import Never
+
+from ds4py._native.protocol import THINK_LEVEL_BASE
 
 from .ds4py_replay import read_ds4py
 from .replay_types import _THINK_NAMES, ReplayError, ReplayRound, ReplayTrace
-from typing import Never
 
+_MAX_THINK_LEVEL = 100
 
 _TIMESTAMP = re.compile(
     r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?"
@@ -22,9 +26,9 @@ _GENERATION = re.compile(
     r"^generation finished tool_round=(-?\d+) generated=(-?\d+) "
     r"carried=(-?\d+) context_limited=(-?\d+)$"
 )
-_WORKER = re.compile(
-    r"^agent worker start ctx=(\S+) backend=(\S+) model=(.*?) trace=(\S+)$"
-)
+_WORKER = re.compile(r"^agent worker start ctx=(\S+) backend=(\S+) model=(.*?) trace=(\S+)$")
+
+
 @dataclass
 class _Block:
     label: str
@@ -48,14 +52,14 @@ class _Round:
     prefix_only: bool = False
 
 
-def _think_mode(value: str, reader: "_Reader", line: int) -> int:
+def _think_mode(value: str, reader: _Reader, line: int) -> int:
     if value in _THINK_NAMES:
         return _THINK_NAMES[value]
     if value.isdecimal():
         level = int(value)
-        if 1 <= level <= 100:
-            return 1000 + level
-    reader.error("unsupported think name", line)
+        if 1 <= level <= _MAX_THINK_LEVEL:
+            return THINK_LEVEL_BASE + level
+    return reader.error("unsupported think name", line)
 
 
 def read_replay(path: str | Path) -> ReplayTrace:
@@ -106,7 +110,9 @@ class _Reader:
             self.error("no replay rounds")
         return ReplayTrace(self.ctx, self.model, tuple(self.rounds))
 
-    def dispatch(self, text: str) -> None:
+    def dispatch(  # noqa: PLR0912 - Trace dispatch handles each distinct record family.
+        self, text: str
+    ) -> None:
         if "raw one-shot prompt mode: skipping agent system prompt" in text:
             self.error("raw traces are not replayable")
         if self.block is not None:
@@ -154,7 +160,9 @@ class _Reader:
         self.ctx = ctx
         self.model = match.group(3)
 
-    def start_block(self, text: str) -> None:
+    def start_block(  # noqa: C901, PLR0912 - Trace block validation mirrors each label contract.
+        self, text: str
+    ) -> None:
         match = _TOKENS.fullmatch(text)
         if match is None:
             self.error("malformed token block")
@@ -207,7 +215,8 @@ class _Reader:
             self.current.sampled.append(token_id)
             return
         block = self.block
-        assert block is not None
+        if block is None:
+            raise AssertionError("token line requires an open block")
         expected = block.start + len(block.ids)
         if index != expected:
             self.error("non-contiguous token index in token block")
@@ -219,7 +228,8 @@ class _Reader:
 
     def finish_block(self) -> None:
         block = self.block
-        assert block is not None
+        if block is None:
+            raise AssertionError("finish requires an open block")
         self.block = None
         ids = tuple(block.ids)
         if block.label == "initial_system_prompt":
@@ -229,11 +239,12 @@ class _Reader:
             self.can_compact = False
         else:
             current = self.current
-            assert current is not None and self.base is not None
+            if current is None or self.base is None:
+                raise AssertionError("suffix requires a round and base history")
             expected = current.prompt_length - current.cached
             if len(ids) != expected:
                 self.error("suffix length does not match prefill", block.line)
-            current.prompt = self.base[:current.cached] + ids
+            current.prompt = self.base[: current.cached] + ids
 
     def prefill(self, text: str) -> None:
         match = _PREFILL.fullmatch(text)
@@ -243,13 +254,11 @@ class _Reader:
             self.error("second prefill before generation finished")
         if self.base is None:
             self.error("missing initial system prompt")
-        number, transcript, prompt_length, cached, suffix_length = (
-            int(value) for value in match.groups()[:5]
-        )
+        number, transcript, prompt_length, cached, suffix_length = (int(value) for value in match.groups()[:5])
         think = _think_mode(match.group(6), self, self.line)
         if self.rounds:
             next_number = self.rounds[-1].number + 1
-            valid_number = number == 0 or number == next_number
+            valid_number = number in (0, next_number)
         else:
             valid_number = number in (0, 1)
         if not valid_number:
@@ -265,7 +274,12 @@ class _Reader:
         if suffix_length != prompt_length - cached:
             self.error("suffix length does not match prefill")
         self.current = _Round(
-            number, transcript, prompt_length, cached, suffix_length, think,
+            number,
+            transcript,
+            prompt_length,
+            cached,
+            suffix_length,
+            think,
         )
         self.can_compact = False
 
@@ -284,15 +298,17 @@ class _Reader:
         if carried < 0 or limited not in (0, 1):
             self.error("invalid generation flags")
         current.context_limited = bool(limited)
-        self.rounds.append(ReplayRound(
-            number=current.number,
-            prompt=current.prompt,
-            sampled=tuple(current.sampled),
-            think=current.think,
-            cached=current.cached,
-            context_limited=current.context_limited,
-            prefix_only=current.prefix_only,
-        ))
+        self.rounds.append(
+            ReplayRound(
+                number=current.number,
+                prompt=current.prompt,
+                sampled=tuple(current.sampled),
+                think=current.think,
+                cached=current.cached,
+                context_limited=current.context_limited,
+                prefix_only=current.prefix_only,
+            )
+        )
         self.base = current.prompt + tuple(current.sampled)
         self.current = None
         self.can_compact = True

@@ -1,7 +1,11 @@
 """Parse typed answers to harness multiple-choice questions."""
+
 from __future__ import annotations
 
-from pydantic_ai_harness.ask_user import Question
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pydantic_ai_harness.ask_user import Question
 
 
 def selected_labels(question: Question, answer: str) -> tuple[str, ...] | None:

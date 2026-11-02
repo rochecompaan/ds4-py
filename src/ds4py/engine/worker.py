@@ -1,25 +1,47 @@
 """Serial job execution and native resource ownership on one daemon thread."""
+
 import threading
 import time
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import Future
 from contextlib import ExitStack
 from dataclasses import dataclass
 from queue import Empty, SimpleQueue
-from typing import Any, BinaryIO, Callable, Generic, Iterator, Sequence, TypeVar
+from typing import TYPE_CHECKING, BinaryIO, cast, override
+
+from typing_extensions import sentinel
 
 from ds4py._native.protocol import (
-    EngineConfig, EngineHandle, EngineInfo, Native, SessionHandle, Snapshot, SyncStatus,
+    EngineConfig,
+    EngineHandle,
+    EngineInfo,
+    Native,
+    SessionHandle,
+    Snapshot,
+    SyncStatus,
 )
-from ds4py.errors import CheckpointError, EmptyPromptError, EngineError
+from ds4py.errors import CheckpointError, EmptyPromptError, EngineError, WorkerPoisonedError
+
 from .decode import GenerateJob, generate
-from .events import Checkpointed, Dropped, Event, Interrupted, Loaded, Prefill, Saved, Stopped, Synced
+from .events import (
+    Checkpointed,
+    Dropped,
+    Event,
+    Interrupted,
+    Loaded,
+    Prefill,
+    Saved,
+    Stopped,
+    Synced,
+)
 from .plan import Plan, plan_sync
-from .transcript import Transcript
+
+if TYPE_CHECKING:
+    from .transcript import Transcript
 
 SYSTEM = "system"
-T = TypeVar("T")
-_END = object()
-_STOP = object()
+_END = sentinel("_END")
+_STOP = sentinel("_STOP")
 
 
 @dataclass(frozen=True)
@@ -48,7 +70,7 @@ class SavePayloadJob:
 
     def __post_init__(self) -> None:
         if not isinstance(self.header, bytes):
-            raise ValueError("payload header must be bytes")
+            raise ValueError("payload header must be bytes")  # noqa: TRY004 - Preserve the job validation contract.
 
 
 @dataclass(frozen=True)
@@ -73,10 +95,11 @@ class _JobEvents(Iterator[Event]):
     """A resumable event channel with an independent native-completion barrier."""
 
     def __init__(self) -> None:
-        self.queue: SimpleQueue[Any] = SimpleQueue()
+        self.queue: SimpleQueue[Event | BaseException | _END] = SimpleQueue()
         self.finished = threading.Event()
         self._exhausted = False
 
+    @override
     def __next__(self) -> Event:
         if self._exhausted:
             raise StopIteration
@@ -123,16 +146,22 @@ class _Submission:
 
 
 @dataclass(frozen=True)
-class _Call(Generic[T]):
-    fn: Callable[[EngineHandle, SessionHandle], T]
-    future: Future[T]
+class _Call:
+    fn: Callable[[EngineHandle, SessionHandle], object]
+    future: Future[object]
 
 
 class EngineWorker:
-    def __init__(self, native: Native, config: EngineConfig, *,
-                 cancel: threading.Event | None = None,
-                 clock: Callable[[], float] = time.monotonic,
-                 checkpoint_budget_bytes: int = 1 << 30, throttle: float = 0.1) -> None:
+    def __init__(  # noqa: PLR0913 - Worker configuration mirrors native execution needs.
+        self,
+        native: Native,
+        config: EngineConfig,
+        *,
+        cancel: threading.Event | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        checkpoint_budget_bytes: int = 1 << 30,
+        throttle: float = 0.1,
+    ) -> None:
         message = "checkpoint_budget_bytes must be a non-negative integer"
         if isinstance(checkpoint_budget_bytes, bool) or not isinstance(checkpoint_budget_bytes, int):
             raise TypeError(message)
@@ -143,9 +172,10 @@ class EngineWorker:
         self._clock, self._throttle = clock, throttle
         self._checkpoint_budget_bytes = checkpoint_budget_bytes
         self._checkpoints: dict[str, tuple[tuple[int, ...], Snapshot]] = {}
-        self._queue: SimpleQueue[Any] = SimpleQueue()
+        self._queue: SimpleQueue[_Submission | _Call | _STOP] = SimpleQueue()
         self._lock = threading.Lock()
         self._closed = False
+        self._poisoned_by: BaseException | None = None
         ready: Future[EngineInfo] = Future()
         self._thread = threading.Thread(target=self._run, args=(config, ready), daemon=True)
         self._thread.start()
@@ -157,7 +187,7 @@ class EngineWorker:
             self.close()
             raise
 
-    def _enqueue(self, item: object) -> None:
+    def _enqueue(self, item: _Submission | _Call | _STOP) -> None:
         # Serialize admission with the stop marker, including concurrent close().
         with self._lock:
             if self._closed:
@@ -169,14 +199,21 @@ class EngineWorker:
         self._enqueue(_Submission(job, events))
         return events
 
-    def call(self, fn: Callable[[EngineHandle, SessionHandle], T]) -> Future[T]:
-        future = Future()
-        self._enqueue(_Call(fn, future))
+    def call[T](self, fn: Callable[[EngineHandle, SessionHandle], T]) -> Future[T]:
+        future: Future[T] = Future()
+        self._enqueue(_Call(fn, cast("Future[object]", future)))
         return future
 
     def plan(self, tokens: Sequence[int]) -> Plan:
         target = tuple(tokens)
         return self.call(lambda e, s: self._plan(s, target)).result()
+
+    def _poison(self, error: BaseException) -> None:
+        self._poisoned_by = error
+
+    def _reject_if_poisoned(self) -> None:
+        if self._poisoned_by is not None:
+            raise WorkerPoisonedError("engine worker is poisoned") from self._poisoned_by
 
     def close(self) -> None:
         with self._lock:
@@ -200,7 +237,7 @@ class EngineWorker:
                 cleanup.callback(session.close)
                 cleanup.callback(self._close_checkpoints)
                 ready.set_result(engine.info())
-            except BaseException as error:
+            except BaseException as error:  # noqa: BLE001 - Report every startup failure to the caller.
                 ready.set_exception(error)
                 return
             while True:
@@ -211,29 +248,38 @@ class EngineWorker:
                     if not item.future.set_running_or_notify_cancel():
                         continue
                     try:
+                        self._reject_if_poisoned()
                         result = item.fn(engine, session)
-                    except BaseException as error:
+                    except BaseException as error:  # noqa: BLE001 - Transfer every call failure to its Future.
                         item.future.set_exception(error)
                     else:
                         item.future.set_result(result)
                 else:
                     try:
+                        self._reject_if_poisoned()
                         self._execute(engine, session, item.job, item.events.queue.put)
-                    except BaseException as error:
+                    except BaseException as error:  # noqa: BLE001 - Publish every job failure on its event channel.
                         item.events.queue.put(error)
                     finally:
                         item.events.queue.put(_END)
                         item.events.finished.set()
+                del item
 
     def _plan(self, session: SessionHandle, tokens: Sequence[int]) -> Plan:
         return plan_sync(
-            tokens, live=session.tokens(), live_valid=session.checkpoint_valid(),
+            tokens,
+            live=session.tokens(),
+            live_valid=session.checkpoint_valid(),
             checkpoints={key: tokens for key, (tokens, _) in self._checkpoints.items()},
-            ctx=session.ctx(), restore_enabled=self._native.restore_enabled,
+            ctx=session.ctx(),
+            restore_enabled=self._native.restore_enabled,
         )
 
     def _execute(
-        self, engine: EngineHandle, session: SessionHandle, job: Job,
+        self,
+        engine: EngineHandle,
+        session: SessionHandle,
+        job: Job,
         emit: Callable[[Event], None],
     ) -> None:
         if isinstance(job, SyncJob):
@@ -243,8 +289,15 @@ class EngineWorker:
         elif isinstance(job, ResetJob):
             self._reset(session)
         elif isinstance(job, GenerateJob):
-            reason = generate(engine, session, job,
-                              cancelled=self.cancel_event.is_set, emit=emit)
+            reason = generate(
+                engine,
+                session,
+                job,
+                cancelled=self.cancel_event.is_set,
+                emit=emit,
+                step=job.decode_step,
+                poison=self._poison,
+            )
             if reason == "interrupted":
                 self.cancel_event.clear()
             emit(Stopped(reason))
@@ -256,16 +309,17 @@ class EngineWorker:
             raise EngineError(f"unsupported engine job: {type(job).__name__}")
 
     def _sync(
-        self, session: SessionHandle, tokens: Sequence[int],
+        self,
+        session: SessionHandle,
+        tokens: Sequence[int],
         emit: Callable[[Event], None],
     ) -> SyncStatus:
         plan = self._plan(session, tokens)
         if not plan.fits:
-            raise EngineError(
-                f"prompt of {len(tokens)} tokens does not fit a context of {session.ctx()}"
-            )
+            raise EngineError(f"prompt of {len(tokens)} tokens does not fit a context of {session.ctx()}")
         if plan.kind == "restore":
-            assert plan.checkpoint is not None
+            if plan.checkpoint is None:
+                raise AssertionError("restore plan requires a checkpoint")
             session.load_snapshot(self._checkpoints[plan.checkpoint][1])
         common = session.common_prefix(tokens)
         cached = common if common == session.pos() else 0
@@ -298,7 +352,10 @@ class EngineWorker:
         return status
 
     def _save_payload(
-        self, session: SessionHandle, job: SavePayloadJob, emit: Callable[[Event], None],
+        self,
+        session: SessionHandle,
+        job: SavePayloadJob,
+        emit: Callable[[Event], None],
     ) -> None:
         status = self._sync(session, job.tokens, emit)
         if status is not SyncStatus.DONE:
@@ -311,15 +368,16 @@ class EngineWorker:
             staged.write(job.file)
             written = job.file.tell() - start - len(job.header)
             if written != payload_bytes:
-                raise EngineError(
-                    f"staged payload wrote {written} bytes, declared {payload_bytes}"
-                )
+                raise EngineError(f"staged payload wrote {written} bytes, declared {payload_bytes}")
         finally:
             staged.close()
         emit(Saved(len(job.tokens), payload_bytes))
 
     def _load_payload(
-        self, session: SessionHandle, job: LoadPayloadJob, emit: Callable[[Event], None],
+        self,
+        session: SessionHandle,
+        job: LoadPayloadJob,
+        emit: Callable[[Event], None],
     ) -> None:
         session.load_payload(job.file, job.payload_bytes)
         tokens = session.tokens()
@@ -345,7 +403,10 @@ class EngineWorker:
         self._close_checkpoints()
 
     def _checkpoint(
-        self, session: SessionHandle, job: CheckpointJob, emit: Callable[[Event], None],
+        self,
+        session: SessionHandle,
+        job: CheckpointJob,
+        emit: Callable[[Event], None],
     ) -> None:
         if job.drop:
             if job.key not in self._checkpoints:
@@ -359,8 +420,7 @@ class EngineWorker:
             raise CheckpointError("checkpoint creation is disabled (checkpoint_budget_bytes=0)")
         if not session.checkpoint_valid() or session.pos() <= 0:
             raise CheckpointError("no valid state to checkpoint")
-        retained = sum(snapshot.nbytes for key, (_, snapshot) in self._checkpoints.items()
-                       if key != job.key)
+        retained = sum(snapshot.nbytes for key, (_, snapshot) in self._checkpoints.items() if key != job.key)
         error = f"checkpoint_budget_bytes ({budget}) exceeded; drop a checkpoint first"
         if retained + session.payload_bytes() > budget:
             raise CheckpointError(error)

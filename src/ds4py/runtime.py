@@ -8,14 +8,12 @@ handles: one prompt is one harness run, saves and restores go through
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from typing import Any, BinaryIO, TypedDict
+from typing import TYPE_CHECKING, BinaryIO, TypedDict, override
 from uuid import uuid4
 
-from pydantic_ai import AgentRunResult
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     ModelMessage,
@@ -24,8 +22,6 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestContext
-from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
@@ -39,13 +35,20 @@ from pydantic_ai_harness.step_persistence import (
 from ds4py.agent import QuestionAnswerer, build_agent_components
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.system_notes import DS4SystemNotes
-from ds4py.engine.lifecycle import Listener, SessionEvent
-from ds4py.engine.prefix import PrefixTurn
-from ds4py.engine.session import Session
-from ds4py.errors import Ds4pyError, EngineError, StoreError
-from ds4py.model import DS4Model
+from ds4py.errors import EngineError, StoreError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Sequence
+
+    from pydantic_ai import AgentRunResult
+    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.tools import RunContext
+
+    from ds4py.engine.lifecycle import Listener, SessionEvent
+    from ds4py.engine.prefix import PrefixTurn
+    from ds4py.engine.session import Session
+    from ds4py.model import DS4Model
 from ds4py.runtime_restore import (
-    RestoreOutcome,
     RestoreResult,
     plan_restore,
     restore_snapshot,
@@ -115,11 +118,16 @@ class _ModelStepTrace(AbstractCapability):
     def __init__(self, session: Session) -> None:
         self._session = session
 
+    @override
     async def before_model_request(
-        self, ctx: RunContext[Any], request_context: ModelRequestContext,
+        self,
+        ctx: RunContext[object],
+        request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         self._session.emit(
-            "model_step", run_id=ctx.run_id, step_index=ctx.run_step,
+            "model_step",
+            run_id=ctx.run_id,
+            step_index=ctx.run_step,
         )
         return request_context
 
@@ -135,10 +143,10 @@ class AgentRuntime:
     An instance is confined to the event-loop thread that creates it. ``run``
     rejects an overlapping prompt. ``save``, ``switch``, ``new``, ``fork``, and
     ``close`` cancel and await an active run before changing state. ``cancel``
-    requests native cancellation without waiting for the run to finish.
+    requests agent and native cancellation without waiting for the run to finish.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - Runtime composition mirrors the agent feature set.
         self,
         model: DS4Model,
         project_dir: str | Path,
@@ -161,7 +169,7 @@ class AgentRuntime:
         self._status = "idle"
         self._closed = False
         self._running = False
-        self._run_task: asyncio.Task[Any] | None = None
+        self._run_task: asyncio.Task[AgentRunResult[object]] | None = None
         self._interrupted = False
         self._trace_failure: OSError | None = None
         self._request_limit = request_limit
@@ -190,7 +198,8 @@ class AgentRuntime:
             # fresh render byte-identical to the transcript it was saved from.
             self._notes.clock = self._clock
         self._session.on_event(
-            self._on_engine_event, kinds={"Interrupted", "Stopped", "trace_error"},
+            self._on_engine_event,
+            kinds={"Interrupted", "Stopped", "trace_error"},
         )
 
     @property
@@ -218,7 +227,10 @@ class AgentRuntime:
         return self._session.engine.config.ctx
 
     def on_event(
-        self, listener: Listener, *, kinds: Iterable[str] | None = None,
+        self,
+        listener: Listener,
+        *,
+        kinds: Iterable[str] | None = None,
     ) -> Callable[[], None]:
         """Subscribe to session events; returns the unsubscribe call."""
         return self._session.on_event(listener, kinds=kinds)
@@ -237,7 +249,8 @@ class AgentRuntime:
     def _holder(self) -> SessionStepStore:
         session_id = self._session.id
         return self._session.state(
-            "step_store", lambda: SessionStepStore(self._step_store(session_id)),
+            "step_store",
+            lambda: SessionStepStore(self._step_store(session_id)),
         )
 
     def _on_engine_event(self, event: SessionEvent) -> None:
@@ -277,7 +290,8 @@ class AgentRuntime:
         """Return the newest snapshot; propagate storage failures to the run."""
         holder = self._holder()
         return await holder.current.latest_snapshot(
-            run_id=run_id, include_interrupted=True,
+            run_id=run_id,
+            include_interrupted=True,
         )
 
     async def _adopt_history(
@@ -285,6 +299,7 @@ class AgentRuntime:
         run_id: str,
         messages: Sequence[ModelMessage],
         snapshot: ContinuableSnapshot | None = None,
+        *,
         failed: bool = False,
     ) -> None:
         """Adopt canonical keys and keep the terminal harness snapshot exact."""
@@ -314,7 +329,9 @@ class AgentRuntime:
                 snapshot = await self._latest(run_id)
                 if snapshot is not None:
                     await self._adopt_history(
-                        run_id, _bindable(list(snapshot.messages)), snapshot=snapshot,
+                        run_id,
+                        _bindable(list(snapshot.messages)),
+                        snapshot=snapshot,
                         failed=True,
                     )
                     self._note_title()
@@ -327,12 +344,10 @@ class AgentRuntime:
             run_id=run_id,
             status=status,
             error=None if error is None else str(error),
-            persistence_error=(
-                None if persistence_error is None else str(persistence_error)
-            ),
+            persistence_error=(None if persistence_error is None else str(persistence_error)),
         )
 
-    async def run(self, prompt: str) -> AgentRunResult[Any]:
+    async def run(self, prompt: str) -> AgentRunResult[object]:  # noqa: PLR0915 - One run owns its full persistence lifecycle.
         """Run one prompt as one harness run and record its terminal status."""
         self._require_open()
         if self._running:
@@ -365,7 +380,9 @@ class AgentRuntime:
                 raise
             except BaseException as error:
                 await self._fail(
-                    run_id, "interrupted" if self._interrupted else "error", error,
+                    run_id,
+                    "interrupted" if self._interrupted else "error",  # ty: ignore[redundant-condition-strict]  # Cancellation can set this during await.
+                    error,
                 )
                 raise
             try:
@@ -398,9 +415,11 @@ class AgentRuntime:
             self._running = False
 
     def cancel(self) -> None:
-        """Cancel the active run's engine work; a no-op while idle."""
+        """Cancel the active agent run and its engine work; a no-op while idle."""
         if self._status == "running":
             self._session.cancel()
+            if self._run_task is not None:
+                self._run_task.cancel()
 
     def set_hints(self, enabled: bool) -> None:
         """Change the system-note setting used by the next request."""
@@ -452,12 +471,12 @@ class AgentRuntime:
             return saved.payload_bytes
 
         payload_bytes = self.store.write_kv_stream_atomic(
-            session_dir / "session.kv", write_payload,
+            session_dir / "session.kv",
+            write_payload,
         )
         if written.get("tokens") != len(tokens) or written.get("payload_bytes") != payload_bytes:
             raise EngineError(
-                f"the native payload covers {written.get('tokens')} tokens, "
-                f"the transcript has {len(tokens)}"
+                f"the native payload covers {written.get('tokens')} tokens, the transcript has {len(tokens)}"
             )
 
         snapshot = ContinuableSnapshot(
@@ -467,9 +486,13 @@ class AgentRuntime:
             conversation_id=session_id,
             agent_name="ds4py",
         )
-        await holder.current.register_run(StepRunRecord(
-            run_id=run_id, conversation_id=session_id, agent_name="ds4py",
-        ))
+        await holder.current.register_run(
+            StepRunRecord(
+                run_id=run_id,
+                conversation_id=session_id,
+                agent_name="ds4py",
+            )
+        )
         await holder.current.save_snapshot(snapshot)
 
         info = self._session.engine.info
@@ -489,8 +512,13 @@ class AgentRuntime:
             tokens_sha256=token_digest(tokens),
             segments=tuple(
                 SegmentProvenance(
-                    segment.start, segment.end, segment.kind, segment.key,
-                    segment.content_hash, segment.source, text=segment.text,
+                    segment.start,
+                    segment.end,
+                    segment.kind,
+                    segment.key,
+                    segment.content_hash,
+                    segment.source,
+                    text=segment.text,
                 )
                 for segment in self.model.binder.export_segments()
             ),
@@ -503,14 +531,16 @@ class AgentRuntime:
         prefix = f"{self._session.id}{_SAVE_PREFIX}"
         runs = await store.list_runs(conversation_id=self._session.id)
         numbers = [
-            int(run.run_id[len(prefix):])
+            int(run.run_id[len(prefix) :])
             for run in runs
-            if run.run_id.startswith(prefix) and run.run_id[len(prefix):].isdigit()
+            if run.run_id.startswith(prefix) and run.run_id[len(prefix) :].isdigit()
         ]
         return f"{prefix}{max(numbers, default=0) + 1}"
 
     def _abort_restore(
-        self, snapshot: ContinuableSnapshot, record: SaveRecord,
+        self,
+        snapshot: ContinuableSnapshot,
+        record: SaveRecord,
     ) -> None:
         """Leave the committed target empty, never paired with old native state."""
         self._session.reconcile_round(0)
@@ -530,10 +560,12 @@ class AgentRuntime:
         self.store.validate_for_engine(record, self._session.engine.info)
         session_dir = self.store.session_dir(record.session_id)
         snapshots = await self._step_store(record.session_id).list_snapshots(
-            run_id=record.run_id, include_interrupted=True,
+            run_id=record.run_id,
+            include_interrupted=True,
         )
         snapshot = next(
-            (item for item in snapshots if item.step_index == record.step_index), None,
+            (item for item in snapshots if item.step_index == record.step_index),
+            None,
         )
         if snapshot is None:
             raise StoreError(
@@ -549,7 +581,7 @@ class AgentRuntime:
         )
         if self._record is not None:
             self._record.relocate(session_dir / "events.jsonl")
-        outcome: RestoreOutcome = {}
+        outcome: dict[str, object] = {}
 
         def restore() -> RestoreResult:
             try:

@@ -1,11 +1,11 @@
 """Workspace isolation, hidden grading, and retry behavior for the agent bake-off."""
-from typing import Any
 
-from dataclasses import replace
 import json
-from pathlib import Path
 import subprocess
 import sys
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -24,48 +24,43 @@ from bench.workspaces import (
     verify_benchmark,
 )
 
-
 EXERCISE = Path("python/exercises/practice/tiny")
 HIDDEN_TEST = EXERCISE.name + "_test.py"
 
 
-def make_exercise(root: Any, initial: Any="good") -> Any:
+def make_exercise(root: Any, initial: Any = "good") -> Any:
     source = root / "benchmark" / EXERCISE
     (source / ".docs").mkdir(parents=True)
     (source / ".meta").mkdir()
     (source / "__pycache__").mkdir()
-    (source / ".docs" / "instructions.md").write_text(
-        "Implement value() so it returns 'good'.\n"
+    (source / ".docs" / "instructions.md").write_text("Implement value() so it returns 'good'.\n")
+    (source / ".docs" / "instructions.append.md").write_text("Return the value without changing its type.\n")
+    (source / ".meta" / "config.json").write_text(
+        json.dumps(
+            {
+                "files": {
+                    "solution": ["solution.py", "support.py"],
+                    "test": [HIDDEN_TEST],
+                    "example": [".meta/example.py"],
+                }
+            }
+        )
     )
-    (source / ".docs" / "instructions.append.md").write_text(
-        "Return the value without changing its type.\n"
-    )
-    (source / ".meta" / "config.json").write_text(json.dumps({
-        "files": {
-            "solution": ["solution.py", "support.py"],
-            "test": [HIDDEN_TEST],
-            "example": [".meta/example.py"],
-        }
-    }))
-    (source / ".meta" / "example.py").write_text(
-        "def value():\n    return 'good'\n"
-    )
+    (source / ".meta" / "example.py").write_text("def value():\n    return 'good'\n")
     (source / "solution.py").write_text(f"def value():\n    return {initial!r}\n")
     (source / "support.py").write_text("SUPPORT = True\n")
-    (source / HIDDEN_TEST).write_text(
-        "from solution import value\n\n"
-        "def test_value():\n"
-        "    assert value() == 'good'\n"
-    )
-    (source / "__pycache__" / "tiny_test.cpython-314-pytest-9.1.1.pyc").write_bytes(
-        b"compiled hidden test"
-    )
+    (source / HIDDEN_TEST).write_text("from solution import value\n\ndef test_value():\n    assert value() == 'good'\n")
+    (source / "__pycache__" / "tiny_test.cpython-314-pytest-9.1.1.pyc").write_bytes(b"compiled hidden test")
     return source
 
 
 def git(cwd: Any, *args: Any) -> str:
     return subprocess.run(
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True,
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
 
 
@@ -83,12 +78,9 @@ def test_exercise_stages_only_student_inputs_with_visible_docs(tmp_path: Path) -
     source = make_exercise(tmp_path)
     workspace = prepare_exercise(source, tmp_path / "staged")
 
-    assert (workspace.agent_dir / "TASK.md").read_text() == (
-        source / ".docs" / "instructions.md"
-    ).read_text()
+    assert (workspace.agent_dir / "TASK.md").read_text() == (source / ".docs" / "instructions.md").read_text()
     assert {
-        str(path.relative_to(workspace.agent_dir))
-        for path in workspace.agent_dir.rglob("*") if path.is_file()
+        str(path.relative_to(workspace.agent_dir)) for path in workspace.agent_dir.rglob("*") if path.is_file()
     } == {
         "TASK.md",
         "docs/instructions.md",
@@ -100,17 +92,21 @@ def test_exercise_stages_only_student_inputs_with_visible_docs(tmp_path: Path) -
     assert (workspace.grader_dir / HIDDEN_TEST).is_file()
 
 
-@pytest.mark.parametrize("config", [
-    pytest.param(None, id="missing-config"),
-    pytest.param("{not json", id="invalid-json"),
-    pytest.param({"files": {}}, id="missing-solution"),
-    pytest.param({"files": {"solution": "solution.py"}}, id="not-a-list"),
-    pytest.param({"files": {"solution": []}}, id="empty-list"),
-    pytest.param({"files": {"solution": [42]}}, id="non-string-entry"),
-    pytest.param({"files": {"solution": ["bad\0name.py"]}}, id="nul-path"),
-])
+@pytest.mark.parametrize(
+    "config",
+    [
+        pytest.param(None, id="missing-config"),
+        pytest.param("{not json", id="invalid-json"),
+        pytest.param({"files": {}}, id="missing-solution"),
+        pytest.param({"files": {"solution": "solution.py"}}, id="not-a-list"),
+        pytest.param({"files": {"solution": []}}, id="empty-list"),
+        pytest.param({"files": {"solution": [42]}}, id="non-string-entry"),
+        pytest.param({"files": {"solution": ["bad\0name.py"]}}, id="nul-path"),
+    ],
+)
 def test_exercise_rejects_missing_or_malformed_student_configuration(
-    tmp_path: Path, config: Any,
+    tmp_path: Path,
+    config: Any,
 ) -> None:
     source = make_exercise(tmp_path)
     config_path = source / ".meta" / "config.json"
@@ -125,24 +121,26 @@ def test_exercise_rejects_missing_or_malformed_student_configuration(
         prepare_exercise(source, tmp_path / "staged")
 
 
-@pytest.mark.parametrize("relative", [
-    pytest.param("../outside.py", id="parent-traversal"),
-    pytest.param("/absolute.py", id="absolute"),
-    pytest.param(HIDDEN_TEST, id="hidden-test"),
-    pytest.param(".meta/example.py", id="grading-metadata"),
-    pytest.param("__pycache__/solution.pyc", id="bytecode-cache"),
-    pytest.param("missing.py", id="missing-file"),
-    pytest.param(".", id="directory"),
-])
+@pytest.mark.parametrize(
+    "relative",
+    [
+        pytest.param("../outside.py", id="parent-traversal"),
+        pytest.param("/absolute.py", id="absolute"),
+        pytest.param(HIDDEN_TEST, id="hidden-test"),
+        pytest.param(".meta/example.py", id="grading-metadata"),
+        pytest.param("__pycache__/solution.pyc", id="bytecode-cache"),
+        pytest.param("missing.py", id="missing-file"),
+        pytest.param(".", id="directory"),
+    ],
+)
 def test_exercise_rejects_unsafe_or_grading_student_paths(
-    tmp_path: Path, relative: str,
+    tmp_path: Path,
+    relative: str,
 ) -> None:
     source = make_exercise(tmp_path)
     (source.parent / "outside.py").write_text("OUTSIDE = True\n")
     (source / "__pycache__" / "solution.pyc").write_bytes(b"bytecode")
-    (source / ".meta" / "config.json").write_text(json.dumps({
-        "files": {"solution": [relative]}
-    }))
+    (source / ".meta" / "config.json").write_text(json.dumps({"files": {"solution": [relative]}}))
     destination = tmp_path / "staged"
 
     with pytest.raises(PreparationError):
@@ -155,9 +153,7 @@ def test_exercise_rejects_solution_symlink_escaping_source(tmp_path: Path) -> No
     outside = tmp_path / "outside.py"
     outside.write_text("OUTSIDE = True\n")
     (source / "linked.py").symlink_to(outside)
-    (source / ".meta" / "config.json").write_text(json.dumps({
-        "files": {"solution": ["linked.py"]}
-    }))
+    (source / ".meta" / "config.json").write_text(json.dumps({"files": {"solution": ["linked.py"]}}))
     destination = tmp_path / "staged"
 
     with pytest.raises(PreparationError):
@@ -165,21 +161,25 @@ def test_exercise_rejects_solution_symlink_escaping_source(tmp_path: Path) -> No
     assert not destination.exists()
 
 
-@pytest.mark.parametrize(("declared", "target", "is_directory"), [
-    pytest.param("innocent.py", ".meta/example.py", False, id="example-file-alias"),
-    pytest.param("innocent.py", HIDDEN_TEST, False, id="test-file-alias"),
-    pytest.param("alias/example.py", ".meta", True, id="example-directory-alias"),
-    pytest.param(f"alias/{HIDDEN_TEST}", ".", True, id="test-directory-alias"),
-])
+@pytest.mark.parametrize(
+    ("declared", "target", "is_directory"),
+    [
+        pytest.param("innocent.py", ".meta/example.py", False, id="example-file-alias"),
+        pytest.param("innocent.py", HIDDEN_TEST, False, id="test-file-alias"),
+        pytest.param("alias/example.py", ".meta", True, id="example-directory-alias"),
+        pytest.param(f"alias/{HIDDEN_TEST}", ".", True, id="test-directory-alias"),
+    ],
+)
 def test_exercise_rejects_symlink_aliases_to_grading_inputs(
-    tmp_path: Path, declared: str, target: str, is_directory: bool,
+    tmp_path: Path,
+    declared: str,
+    target: str,
+    is_directory: bool,
 ) -> None:
     source = make_exercise(tmp_path)
     link = source / (Path(declared).parts[0] if is_directory else declared)
     link.symlink_to(source / target, target_is_directory=is_directory)
-    (source / ".meta" / "config.json").write_text(json.dumps({
-        "files": {"solution": [declared]}
-    }))
+    (source / ".meta" / "config.json").write_text(json.dumps({"files": {"solution": [declared]}}))
     destination = tmp_path / "staged"
 
     with pytest.raises(PreparationError):
@@ -189,7 +189,8 @@ def test_exercise_rejects_symlink_aliases_to_grading_inputs(
 
 @pytest.mark.parametrize("name", ["leak.txt", "instructions.md"])
 def test_exercise_rejects_documentation_symlinks_outside_source(
-    tmp_path: Path, name: str,
+    tmp_path: Path,
+    name: str,
 ) -> None:
     source = make_exercise(tmp_path)
     outside = tmp_path / "outside.txt"
@@ -206,7 +207,8 @@ def test_exercise_rejects_documentation_symlinks_outside_source(
 
 @pytest.mark.parametrize("target", [".meta/example.py", HIDDEN_TEST])
 def test_exercise_rejects_documentation_aliases_to_grading_inputs(
-    tmp_path: Path, target: str,
+    tmp_path: Path,
+    target: str,
 ) -> None:
     source = make_exercise(tmp_path)
     (source / ".docs" / "alias.txt").symlink_to(source / target)
@@ -217,12 +219,16 @@ def test_exercise_rejects_documentation_aliases_to_grading_inputs(
     assert not destination.exists()
 
 
-@pytest.mark.parametrize("relative", [
-    "__pycache__/hidden.pyc",
-    ".pytest_cache/secret",
-])
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "__pycache__/hidden.pyc",
+        ".pytest_cache/secret",
+    ],
+)
 def test_exercise_rejects_documentation_artifacts(
-    tmp_path: Path, relative: str,
+    tmp_path: Path,
+    relative: str,
 ) -> None:
     source = make_exercise(tmp_path)
     artifact = source / ".docs" / relative
@@ -236,7 +242,8 @@ def test_exercise_rejects_documentation_artifacts(
 
 
 def test_real_grading_leaves_no_hidden_source_or_bytecode_in_agent_workspace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
     source = make_exercise(tmp_path)
@@ -244,7 +251,8 @@ def test_real_grading_leaves_no_hidden_source_or_bytecode_in_agent_workspace(
 
     def assert_no_grading_artifacts() -> None:
         artifacts = [
-            path for path in workspace.agent_dir.rglob("*")
+            path
+            for path in workspace.agent_dir.rglob("*")
             if (
                 Path(HIDDEN_TEST).stem in path.name
                 or "__pycache__" in path.parts
@@ -310,17 +318,16 @@ def test_attempts_stop_at_two_and_cleanup_survives_failures(tmp_path: Path) -> N
     assert not (workspace.agent_dir / HIDDEN_TEST).exists()
 
 
-def test_agents_receive_separate_but_equivalent_workspace_copies(tmp_path: Path) -> None:
+def test_agents_receive_separate_but_equivalent_workspace_copies(
+    tmp_path: Path,
+) -> None:
     source = make_exercise(tmp_path)
     staged = prepare_exercise(source, tmp_path / "staged")
     c_workspace = clone_workspace(staged, tmp_path / "c")
     python_workspace = clone_workspace(staged, tmp_path / "ds4py")
 
     def files(root: Any) -> Any:
-        return {
-            str(path.relative_to(root)): path.read_bytes()
-            for path in root.rglob("*") if path.is_file()
-        }
+        return {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()}
 
     assert files(c_workspace.agent_dir) == files(python_workspace.agent_dir)
     assert c_workspace.agent_dir != python_workspace.agent_dir
@@ -370,8 +377,11 @@ def test_ctx_repository_copy_keeps_hidden_grader_outside(tmp_path: Path) -> None
     external_grader.write_text("# hidden behavioral grader\n")
 
     workspace = prepare_repository_task(
-        repo, tmp_path / "staged", task_id="repo-ctx-command",
-        prompt="Add /ctx without generation.", grader=external_grader,
+        repo,
+        tmp_path / "staged",
+        task_id="repo-ctx-command",
+        prompt="Add /ctx without generation.",
+        grader=external_grader,
     )
 
     assert (workspace.agent_dir / "TASK.md").read_text() == "Add /ctx without generation."
@@ -383,16 +393,22 @@ def test_ctx_repository_copy_keeps_hidden_grader_outside(tmp_path: Path) -> None
 
 def test_glm_patch_fails_focused_test_and_clean_tree_passes(tmp_path: Path) -> None:
     repo = Path(__file__).parents[2]
-    common: dict[str, Any] = dict(
+    common: dict[str, Any] = dict(  # noqa: C408 - Keyword-built task context is clearer here.
         prompt="Fix the GLM close boundary without editing tests.",
         visible_test="tests/engine/tool_syntax/test_glm.py",
     )
     clean = prepare_repository_task(
-        repo, tmp_path / "clean", task_id="repo-glm-clean", **common,
+        repo,
+        tmp_path / "clean",
+        task_id="repo-glm-clean",
+        **common,
     )
     patched = prepare_repository_task(
-        repo, tmp_path / "patched", task_id="repo-glm-close",
-        patch=repo / "bench" / "patches" / "glm-off-by-one.patch", **common,
+        repo,
+        tmp_path / "patched",
+        task_id="repo-glm-close",
+        patch=repo / "bench" / "patches" / "glm-off-by-one.patch",
+        **common,
     )
 
     clean_result = grade_workspace(clean)
@@ -403,22 +419,20 @@ def test_glm_patch_fails_focused_test_and_clean_tree_passes(tmp_path: Path) -> N
     assert "test_glm" in patched_result.output
 
 
-def test_workspace_cannot_bypass_grading_with_startup_or_pytest_configuration(tmp_path: Path) -> None:
+def test_workspace_cannot_bypass_grading_with_startup_or_pytest_configuration(
+    tmp_path: Path,
+) -> None:
     source = make_exercise(tmp_path, initial="bad")
     workspace = prepare_exercise(source, tmp_path / "staged")
     agent_dir = workspace.agent_dir
-    (agent_dir / "conftest.py").write_text(
-        "import solution\nsolution.value = lambda: 'good'\n"
-    )
-    (agent_dir / "workspace_bypass.py").write_text(
-        "import solution\nsolution.value = lambda: 'good'\n"
-    )
+    (agent_dir / "conftest.py").write_text("import solution\nsolution.value = lambda: 'good'\n")
+    (agent_dir / "workspace_bypass.py").write_text("import solution\nsolution.value = lambda: 'good'\n")
     (agent_dir / "pytest.ini").write_text("[pytest]\naddopts = -p workspace_bypass\n")
     (agent_dir / "src").mkdir()
     (agent_dir / "src" / "sitecustomize.py").write_text(
         "from pathlib import Path\n"
         f"Path({str(agent_dir / 'solution.py')!r}).write_text("
-        '"def value():\\n    return \'good\'\\n")\n'
+        "\"def value():\\n    return 'good'\\n\")\n"
     )
 
     result = grade_workspace(workspace)

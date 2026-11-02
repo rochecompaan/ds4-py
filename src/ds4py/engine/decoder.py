@@ -1,5 +1,7 @@
 """Display-only assistant text decoder."""
+
 import codecs
+from dataclasses import dataclass
 
 from .events import TextDelta
 
@@ -9,12 +11,34 @@ _MARKERS = (_THINK_OPEN, _THINK_CLOSE)
 _PENDING_LIMIT = 16
 
 
+@dataclass(frozen=True)
+class DecoderState:
+    thinking: bool
+    pending: bytes
+    utf8_state: tuple[bytes, int]
+
+
 class Decoder:
     """Display-only UTF-8/think-marker decoding, local to one assistant round."""
+
     def __init__(self, *, thinking: bool = False) -> None:
         self.thinking = thinking
         self._pending = bytearray()
         self._utf8 = codecs.getincrementaldecoder("utf-8")(errors="replace")
+
+    def capture(self) -> DecoderState:
+        return DecoderState(self.thinking, bytes(self._pending), self._utf8.getstate())
+
+    def restore(self, state: DecoderState) -> None:
+        self.thinking = state.thinking
+        self._pending = bytearray(state.pending)
+        self._utf8.reset()
+        self._utf8.setstate(state.utf8_state)
+
+    def fork(self) -> Decoder:
+        decoder = Decoder(thinking=self.thinking)
+        decoder.restore(self.capture())
+        return decoder
 
     @staticmethod
     def _emit(deltas: list[TextDelta], text: str, thinking: bool) -> None:
@@ -26,7 +50,11 @@ class Decoder:
             deltas.append(TextDelta(text, thinking))
 
     def _decode(
-        self, data: bytes, deltas: list[TextDelta], *, final: bool = False,
+        self,
+        data: bytes,
+        deltas: list[TextDelta],
+        *,
+        final: bool = False,
     ) -> None:
         text = self._utf8.decode(data, final=final)
         self._emit(deltas, text, self.thinking)

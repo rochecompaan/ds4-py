@@ -1,9 +1,10 @@
 """Default ds4-py agent composition."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation, LocalWorkspace
@@ -22,7 +23,9 @@ from ds4py.capabilities.harness_events import HarnessEventBridge
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.shell_jobs import DS4ShellJobs
 from ds4py.capabilities.system_notes import DS4SystemNotes
-from ds4py.model import DS4Model
+
+if TYPE_CHECKING:
+    from ds4py.model import DS4Model
 
 
 class AgentOptions(TypedDict, total=False):
@@ -36,7 +39,7 @@ class AgentComponents:
     components: list[AbstractCapability]
 
 
-def build_agent_components(
+def build_agent_components(  # noqa: PLR0913 - Agent composition mirrors the runtime feature set.
     model: DS4Model,
     project_dir: str | Path,
     *,
@@ -56,12 +59,20 @@ def build_agent_components(
         LocalWorkspace(project_dir, read_only=read_only),
         DS4FileSystem(
             tools=(
-                "read_file", "write_file", "edit_file", "search_files",
-                "find_files", "create_directory", "file_info",
+                "read_file",
+                "write_file",
+                "edit_file",
+                "search_files",
+                "find_files",
+                "create_directory",
+                "file_info",
             ),
-            root_dir=project_dir, cwd=project_dir,
-            content_hashes=True, read_only=False,
-            max_read_lines=160, max_read_chars=50_000,
+            root_dir=project_dir,
+            cwd=project_dir,
+            content_hashes=True,
+            read_only=False,
+            max_read_lines=160,
+            max_read_chars=50_000,
         ),
         Shell(cwd=project_dir),
         DS4ShellJobs(model.session, project_dir),

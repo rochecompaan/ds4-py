@@ -1,8 +1,9 @@
-from typing import Any
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
+from fake_steps import FakeMultiTokenStep, block_chunks
 
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
@@ -15,11 +16,12 @@ from ds4py.engine.stream import RoundStream
 from ds4py.engine.transcript import Transcript
 from ds4py.engine.worker import EngineWorker, SyncJob
 from ds4py.errors import EngineError
-from fake_steps import FakeMultiTokenStep, block_chunks
 
-DSML = ("<｜DSML｜tool_calls><｜DSML｜invoke name=\"read\">"
-        "<｜DSML｜parameter name=\"path\" string=\"true\">/tmp/x</｜DSML｜parameter>"
-        "</｜DSML｜invoke></｜DSML｜tool_calls>")
+DSML = (
+    '<｜DSML｜tool_calls><｜DSML｜invoke name="read">'
+    '<｜DSML｜parameter name="path" string="true">/tmp/x</｜DSML｜parameter>'
+    "</｜DSML｜invoke></｜DSML｜tool_calls>"
+)
 
 
 def scripted(tokens: Any) -> Any:
@@ -35,9 +37,20 @@ def workers() -> Iterator[Any]:
         worker.close()
 
 
-def run_step(workers: Any, tokens: Any, blocks: Any, *, max_tokens: Any=1000, chat: Any=False, logits_hooks: Any=(), step_type: Any=FakeMultiTokenStep, cancelled: Any=lambda: False) -> Any:
+def run_step(
+    workers: Any,
+    tokens: Any,
+    blocks: Any,
+    *,
+    max_tokens: Any = 1000,
+    chat: Any = False,
+    logits_hooks: Any = (),
+    step_type: Any = FakeMultiTokenStep,
+    cancelled: Any = lambda: False,
+) -> Any:
     worker = EngineWorker(
-        FakeNative(script=scripted(tokens)), EngineConfig(Path("f"), ctx=1024),
+        FakeNative(script=scripted(tokens)),
+        EngineConfig(Path("f"), ctx=1024),
     )
     workers.append(worker)
     transcript = Transcript()
@@ -45,8 +58,12 @@ def run_step(workers: Any, tokens: Any, blocks: Any, *, max_tokens: Any=1000, ch
     list(worker.submit(SyncJob((5, 6))))
     stream = RoundStream(worker.info, ThinkMode.NONE) if chat else None
     job = GenerateJob(
-        SamplingPolicy(), Rng(1), max_tokens, transcript,
-        think_mode=ThinkMode.NONE if chat else None, stream=stream,
+        SamplingPolicy(),
+        Rng(1),
+        max_tokens,
+        transcript,
+        think_mode=ThinkMode.NONE if chat else None,
+        stream=stream,
         control=stream.control if stream is not None else ControlSpan(),
         logits_hooks=logits_hooks,
     )
@@ -58,8 +75,14 @@ def run_step(workers: Any, tokens: Any, blocks: Any, *, max_tokens: Any=1000, ch
             events.append(event)
             if isinstance(event, Token):
                 token_positions.append((event.id, session.pos(), len(transcript)))
+
         reason = generate(
-            engine, session, job, cancelled=cancelled, emit=emit, step=step,
+            engine,
+            session,
+            job,
+            cancelled=cancelled,
+            emit=emit,
+            step=step,
         )
         events.append(Stopped(reason))
         return reason
@@ -77,29 +100,35 @@ def token_ids(events: Any) -> Any:
 
 
 def test_first_stop_token_has_no_eval_or_commit(workers: Any) -> None:
-    reason, events, transcript, worker, step, positions, error = run_step(workers, [0], [])
+    reason, events, transcript, worker, _step, positions, error = run_step(workers, [0], [])
     assert error is None and reason == "stop_token" and events == [Stopped("stop_token")]
     assert transcript.tokens == (5, 6) and positions == []
     assert worker.call(lambda e, s: s.pos()).result() == 2
     assert not [call for call in worker.call(lambda e, s: s.calls).result() if call[0] == "eval"]
 
 
-def test_later_stop_rewinds_before_publishing_kept_tokens(workers: Any) -> None:
+def test_later_stop_publishes_kept_tokens_without_evaluating_tail(workers: Any) -> None:
     a, b, later = 98, 99, 100
-    reason, events, transcript, worker, step, positions, error = run_step(
-        workers, [a, b, 0, later], [[b, 0, later]],
+    reason, events, transcript, worker, _step, positions, error = run_step(
+        workers,
+        [a, b, 0, later],
+        [[b, 0, later]],
     )
     assert error is None and reason == "stop_token"
     assert token_ids(events) == [a, b] and transcript.tokens == (5, 6, a, b)
     assert worker.call(lambda e, s: s.pos()).result() == len(transcript) == 4
-    assert ("rewind", 4) in worker.call(lambda e, s: s.calls).result()
+    calls = worker.call(lambda e, s: s.calls).result()
+    assert [call for call in calls if call[0] == "eval"] == [("eval", a), ("eval", b)]
     assert all(pos == length for _, pos, length in positions)
 
 
 def test_budget_stop_discards_remaining_block(workers: Any) -> None:
     tokens = [98, 99, 100, 101]
-    reason, events, transcript, worker, step, positions, error = run_step(
-        workers, tokens, [tokens[1:]], max_tokens=2,
+    reason, events, transcript, worker, _step, positions, error = run_step(
+        workers,
+        tokens,
+        [tokens[1:]],
+        max_tokens=2,
     )
     assert error is None and reason == "max_tokens"
     assert token_ids(events) == tokens[:2] and transcript.tokens == (5, 6, *tokens[:2])
@@ -110,8 +139,11 @@ def test_budget_stop_discards_remaining_block(workers: Any) -> None:
 def test_tool_boundary_discards_later_drafts(workers: Any) -> None:
     stanza = tokenize_rendered(DSML)
     tokens = stanza + tokenize_rendered("TAIL")
-    reason, events, transcript, worker, step, positions, error = run_step(
-        workers, tokens, block_chunks(tokens), chat=True,
+    reason, events, transcript, worker, _step, positions, error = run_step(
+        workers,
+        tokens,
+        block_chunks(tokens),
+        chat=True,
     )
     assert error is None and reason == "tool_call_complete"
     assert token_ids(events) == stanza
@@ -124,7 +156,7 @@ def test_tool_boundary_discards_later_drafts(workers: Any) -> None:
 def test_drafts_are_capped_at_sixteen_and_sampling_resumes(workers: Any) -> None:
     tokens = list(range(1, 41))
     blocks = [tokens[1:], *block_chunks(tokens[17:])]
-    reason, events, transcript, worker, step, positions, error = run_step(workers, tokens, blocks)
+    reason, events, transcript, worker, step, _positions, error = run_step(workers, tokens, blocks)
     assert error is None and reason == "stop_token"
     assert token_ids(events) == tokens and transcript.tokens == (5, 6, *tokens)
     assert step.block_sizes == [17, 17, 6]
@@ -132,16 +164,20 @@ def test_drafts_are_capped_at_sixteen_and_sampling_resumes(workers: Any) -> None
 
 
 def test_empty_engine_block_raises_without_new_events(workers: Any) -> None:
-    reason, events, transcript, worker, step, positions, error = run_step(workers, [98], [None])
+    reason, events, transcript, worker, _step, positions, error = run_step(workers, [98], [None])
     assert reason is None and isinstance(error, EngineError)
     assert str(error) == "decode returned no tokens"
     assert events == [] and transcript.tokens == (5, 6) and positions == []
     assert worker.call(lambda e, s: s.pos()).result() == 2
 
 
-def test_empty_block_after_kept_block_raises_without_changing_position(workers: Any) -> None:
-    reason, events, transcript, worker, step, positions, error = run_step(
-        workers, [98, 99], [[], None],
+def test_empty_block_after_kept_block_raises_without_changing_position(
+    workers: Any,
+) -> None:
+    reason, events, transcript, worker, _step, _positions, error = run_step(
+        workers,
+        [98, 99],
+        [[], None],
     )
     assert reason is None and isinstance(error, EngineError)
     assert str(error) == "decode returned no tokens"
@@ -154,7 +190,10 @@ def test_logits_hooks_fall_back_to_plain_step(workers: Any) -> None:
         hooks_every_sample = False
 
     reason, events, transcript, _worker, step, _positions, error = run_step(
-        workers, [98, 99], [[99]], logits_hooks=(lambda view: None,),
+        workers,
+        [98, 99],
+        [[99]],
+        logits_hooks=(lambda view: None,),
         step_type=NonconformingStep,
     )
     assert error is None and reason == "stop_token"
@@ -164,14 +203,18 @@ def test_logits_hooks_fall_back_to_plain_step(workers: Any) -> None:
 
 def test_no_logits_hooks_keep_the_multi_token_step(workers: Any) -> None:
     reason, events, transcript, _worker, step, _positions, error = run_step(
-        workers, [98, 99], [[99]],
+        workers,
+        [98, 99],
+        [[99]],
     )
     assert error is None and reason == "stop_token"
     assert token_ids(events) == [98, 99] and transcript.tokens == (5, 6, 98, 99)
     assert step.block_sizes == [2]
 
 
-def test_hook_changed_draft_cuts_block_and_hooks_see_each_committed_prefix(workers: Any) -> None:
+def test_hook_changed_draft_cuts_block_and_hooks_see_each_committed_prefix(
+    workers: Any,
+) -> None:
     seen = []
 
     def hook(view: Any) -> None:
@@ -180,7 +223,10 @@ def test_hook_changed_draft_cuts_block_and_hooks_see_each_committed_prefix(worke
             view.bias(100, 2.0)
 
     reason, events, transcript, worker, step, _, error = run_step(
-        workers, [98, 99, 101], [[99, 101]], logits_hooks=(hook,),
+        workers,
+        [98, 99, 101],
+        [[99, 101]],
+        logits_hooks=(hook,),
     )
     assert error is None and reason == "stop_token"
     assert token_ids(events) == [98, 100, 101]
@@ -190,14 +236,17 @@ def test_hook_changed_draft_cuts_block_and_hooks_see_each_committed_prefix(worke
     assert worker.call(lambda e, s: s.pos()).result() == len(transcript)
 
 
-def test_cancellation_mid_block_rewinds_the_uncommitted_tail(workers: Any) -> None:
+def test_cancellation_mid_block_publishes_only_the_evaluated_prefix(workers: Any) -> None:
     checks = iter([False, False, False, True])
     reason, events, transcript, worker, _, positions, error = run_step(
-        workers, [98, 99, 100, 101], [[99, 100, 101]],
+        workers,
+        [98, 99, 100, 101],
+        [[99, 100, 101]],
         cancelled=lambda: next(checks, True),
     )
-    assert error is None and reason == 'interrupted'
+    assert error is None and reason == "interrupted"
     assert token_ids(events) == [98, 99] and transcript.tokens == (5, 6, 98, 99)
     assert worker.call(lambda e, s: s.pos()).result() == len(transcript)
-    assert ('rewind', 4) in worker.call(lambda e, s: s.calls).result()
+    calls = worker.call(lambda e, s: s.calls).result()
+    assert [call for call in calls if call[0] == "eval"] == [("eval", 98), ("eval", 99)]
     assert all(pos == length for _, pos, length in positions)
