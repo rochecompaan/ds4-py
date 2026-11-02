@@ -1,15 +1,16 @@
 """Compile isolated signature checks and measure public C struct layouts."""
 
+import hashlib
+import subprocess
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-import hashlib
 from pathlib import Path
-import subprocess
-from typing import Sequence
 
 from ds4py._native.bindings import Binding
 from ds4py._native.structs import STRUCTS, StructLayout, struct_layout
 from ds4py._native.typemap import parse_prototype, probe_declaration
+
 from .pins import HEADER_FILES, KNOWN_HEADERS
 
 
@@ -20,10 +21,7 @@ class ProbeResult:
 
 
 def header_hashes(include_dir: Path) -> dict[str, str]:
-    return {
-        name: hashlib.sha256((include_dir / name).read_bytes()).hexdigest()
-        for name in HEADER_FILES
-    }
+    return {name: hashlib.sha256((include_dir / name).read_bytes()).hexdigest() for name in HEADER_FILES}
 
 
 def headers_known(hashes: dict[str, str]) -> bool:
@@ -31,7 +29,10 @@ def headers_known(hashes: dict[str, str]) -> bool:
 
 
 def probe_signatures(
-    include_dir: Path, bindings: Sequence[Binding], cc: str, workdir: Path,
+    include_dir: Path,
+    bindings: Sequence[Binding],
+    cc: str,
+    workdir: Path,
 ) -> dict[str, ProbeResult]:
     """Compile each declaration independently, retaining compiler diagnostics."""
     workdir.mkdir(parents=True, exist_ok=True)
@@ -39,15 +40,21 @@ def probe_signatures(
     def compile_binding(binding: Binding) -> tuple[str, ProbeResult]:
         source = workdir / f"{binding.name}.c"
         declaration = probe_declaration(parse_prototype(binding.prototype))
-        source.write_text(
-            '#include "ds4.h"\n#include "ds4_kvstore.h"\n'
-            f"{declaration} = {binding.name};\n"
-        )
+        source.write_text(f'#include "ds4.h"\n#include "ds4_kvstore.h"\n{declaration} = {binding.name};\n')
         result = subprocess.run(
-            [cc, "-std=c11", "-c", "-o", "/dev/null",
-             "-Werror=incompatible-pointer-types",
-             "-Werror=implicit-function-declaration", f"-I{include_dir}", str(source)],
-            capture_output=True, text=True,
+            [
+                cc,
+                "-std=c11",
+                "-c",
+                "-o",
+                "/dev/null",
+                "-Werror=incompatible-pointer-types",
+                "-Werror=implicit-function-declaration",
+                f"-I{include_dir}",
+                str(source),
+            ],
+            capture_output=True,
+            text=True,
         )
         return binding.name, ProbeResult(result.returncode == 0, result.stderr)
 
@@ -59,25 +66,31 @@ def probe_layouts(include_dir: Path, cc: str, workdir: Path) -> dict[str, Struct
     """Build and run a program reporting sizeof and nested offsetof values."""
     workdir.mkdir(parents=True, exist_ok=True)
     lines = [
-        '#include "ds4.h"', '#include "ds4_kvstore.h"',
-        "#include <stddef.h>", "#include <stdio.h>", "int main(void) {",
+        '#include "ds4.h"',
+        '#include "ds4_kvstore.h"',
+        "#include <stddef.h>",
+        "#include <stdio.h>",
+        "int main(void) {",
     ]
     for name, cls in STRUCTS.items():
         lines.append(f'printf("{name} size %zu\\n", sizeof({name}));')
         for field in struct_layout(cls).fields:
-            lines.append(
-                f'printf("{name} field {field} %zu\\n", offsetof({name}, {field}));'
-            )
+            lines.append(f'printf("{name} field {field} %zu\\n", offsetof({name}, {field}));')
     lines.append("return 0;\n}")
     source = workdir / "layouts.c"
     executable = (workdir / "layouts").resolve()
     source.write_text("\n".join(lines) + "\n")
     subprocess.run(
         [cc, "-std=c11", f"-I{include_dir}", str(source), "-o", str(executable)],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     result = subprocess.run(
-        [str(executable)], capture_output=True, text=True, check=True,
+        [str(executable)],
+        capture_output=True,
+        text=True,
+        check=True,
     )
     layouts = {}
     for line in result.stdout.splitlines():

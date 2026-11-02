@@ -1,20 +1,19 @@
 """ABI diagnostics and opt-in model-backed sync/restore checks."""
 
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-import time
-from typing import Callable
 
 from ds4py._native.api import LibNative
-from ds4py._native.protocol import EngineConfig
-from ds4py.engine.worker import EngineWorker, SyncJob, CheckpointJob, GenerateJob
-from ds4py.engine.events import Synced, Token, Stopped
-from ds4py.engine.sampling import SamplingPolicy, Rng
-from ds4py.engine.transcript import Transcript
-
 from ds4py._native.loader import load_library, resolve_lib_path
+from ds4py._native.protocol import EngineConfig
+from ds4py.engine.events import Stopped, Synced, Token
+from ds4py.engine.sampling import Rng, SamplingPolicy
+from ds4py.engine.transcript import Transcript
+from ds4py.engine.worker import CheckpointJob, EngineWorker, GenerateJob, SyncJob
 from ds4py.errors import AbiError, EngineError
+
 from .manifest import Manifest, Validation, manifest_path
 
 
@@ -34,8 +33,11 @@ def check_library(lib: str | Path | None) -> CheckReport:
     except AbiError as exc:
         return CheckReport(path, None, None, {}, str(exc))
     checked = library.validation.available | library.validation.absent
-    extensions = {name: record.source for name, record in library.manifest.bindings.items()
-                  if name in checked and record.source != "core"}
+    extensions = {
+        name: record.source
+        for name, record in library.manifest.bindings.items()
+        if name in checked and record.source != "core"
+    }
     return CheckReport(library.path, library.manifest, library.validation, extensions, None)
 
 
@@ -43,11 +45,18 @@ def format_report(r: CheckReport) -> str:
     if r.error is not None:
         return f"library:  {r.lib_path}\nerror:    {r.error}"
     m, v = r.manifest, r.validation
-    assert m is not None and v is not None
-    tree = (f"{m.source_path} at {m.source_commit[:12]}" if m.source_commit is not None
-            else f"{m.source_path} (not a git checkout)")
-    lines = [f"library:  {r.lib_path} ({m.backend})", f"ds4 tree: {tree}",
-             f"headers:  {'known' if m.headers_known else 'unknown'}"]
+    assert m is not None
+    assert v is not None
+    tree = (
+        f"{m.source_path} at {m.source_commit[:12]}"
+        if m.source_commit is not None
+        else f"{m.source_path} (not a git checkout)"
+    )
+    lines = [
+        f"library:  {r.lib_path} ({m.backend})",
+        f"ds4 tree: {tree}",
+        f"headers:  {'known' if m.headers_known else 'unknown'}",
+    ]
     for warning in v.warnings:
         lines.append(
             f"          warning: {warning.replace(': ', ' ', 1)}; "
@@ -55,9 +64,11 @@ def format_report(r: CheckReport) -> str:
         )
     required = sum(m.bindings[name].required for name in v.available)
     lines.extend(["layouts:  ok", f"bindings: {required} required ok"])
-    optional = [name for name in m.bindings
-                if name in v.available | v.absent
-                and (not m.bindings[name].required or name in r.extensions)]
+    optional = [
+        name
+        for name in m.bindings
+        if name in v.available | v.absent and (not m.bindings[name].required or name in r.extensions)
+    ]
     for name in optional:
         status = "absent" if name in v.absent else "present"
         source = r.extensions.get(name, m.bindings[name].source)
@@ -89,7 +100,9 @@ LIVE_CHECKPOINT = "live-check"
 
 
 def _timed_sync(
-    worker: EngineWorker, tokens: Sequence[int], clock: Callable[[], float],
+    worker: EngineWorker,
+    tokens: Sequence[int],
+    clock: Callable[[], float],
 ) -> tuple[Synced, float]:
     start = clock()
     synced = None
@@ -104,8 +117,7 @@ def _timed_sync(
 
 def _greedy_run(worker: EngineWorker, count: int) -> tuple[list[int], str]:
     tokens: list[int] = []
-    for event in worker.submit(GenerateJob(SamplingPolicy(temperature=0.0), Rng(1),
-                                          count, Transcript())):
+    for event in worker.submit(GenerateJob(SamplingPolicy(temperature=0.0), Rng(1), count, Transcript())):
         if isinstance(event, Token):
             tokens.append(event.id)
         elif isinstance(event, Stopped):
@@ -114,25 +126,37 @@ def _greedy_run(worker: EngineWorker, count: int) -> tuple[list[int], str]:
 
 
 def _compare_runs(
-    a: tuple[list[int], str], b: tuple[list[int], str],
+    a: tuple[list[int], str],
+    b: tuple[list[int], str],
 ) -> dict[str, bool | str | int]:
     left, left_reason = a
     right, right_reason = b
     if a == b:
-        return {"ok": True,
-                "message": f"{len(left)} greedy tokens after a restore match a rebuild",
-                "tokens": len(left)}
+        return {
+            "ok": True,
+            "message": f"{len(left)} greedy tokens after a restore match a rebuild",
+            "tokens": len(left),
+        }
     i = 0
     while i < min(len(left), len(right)) and left[i] == right[i]:
         i += 1
     x = left[i] if i < len(left) else f"end ({left_reason})"
     y = right[i] if i < len(right) else f"end ({right_reason})"
-    return {"ok": False, "message": f"the runs differ at token {i}: {x} after a restore, "
-            f"{y} after a rebuild", "tokens": len(left)}
+    return {
+        "ok": False,
+        "message": f"the runs differ at token {i}: {x} after a restore, {y} after a rebuild",
+        "tokens": len(left),
+    }
 
 
-def run_live_checks(worker: EngineWorker, *, clock: Callable[[], float] = time.monotonic,
-                    prefix: int = 2048, tail: int = 64, generate: int = 256) -> dict[str, dict]:
+def run_live_checks(
+    worker: EngineWorker,
+    *,
+    clock: Callable[[], float] = time.monotonic,
+    prefix: int = 2048,
+    tail: int = 64,
+    generate: int = 256,
+) -> dict[str, dict]:
     """Compare planned reuse counts and greedy restore/rebuild output, not speed."""
     ctx = worker.call(lambda e, s: s.ctx()).result()
     if prefix + generate + 1 > ctx:
@@ -143,7 +167,7 @@ def run_live_checks(worker: EngineWorker, *, clock: Callable[[], float] = time.m
         text += LIVE_TEXT
         tokens = worker.call(lambda e, s: e.tokenize(text)).result()
     tokens = tokens[:prefix]
-    _timed_sync(worker, tokens[:prefix - tail], clock)
+    _timed_sync(worker, tokens[: prefix - tail], clock)
     list(worker.submit(CheckpointJob(LIVE_CHECKPOINT)))
     extend = _timed_sync(worker, tokens, clock)
     worker.call(lambda e, s: s.invalidate()).result()
@@ -159,24 +183,32 @@ def run_live_checks(worker: EngineWorker, *, clock: Callable[[], float] = time.m
     for step, (event, _) in steps.items():
         expected = prefix if step == "rebuild" else tail
         plan = event.plan
-        if plan.kind != step or plan.to_prefill != expected or (
-                step == "restore" and plan.checkpoint != LIVE_CHECKPOINT):
-            message = (f"the {step} sync planned {plan.kind} of {plan.to_prefill} tokens, "
-                       f"expected {step} of {expected}")
+        if (
+            plan.kind != step
+            or plan.to_prefill != expected
+            or (step == "restore" and plan.checkpoint != LIVE_CHECKPOINT)
+        ):
+            message = f"the {step} sync planned {plan.kind} of {plan.to_prefill} tokens, expected {step} of {expected}"
         elif event.prefilled != plan.to_prefill:
-            message = (f"the {step} sync prefilled {event.prefilled} tokens; "
-                       f"its plan prefills {plan.to_prefill}")
+            message = f"the {step} sync prefilled {event.prefilled} tokens; its plan prefills {plan.to_prefill}"
         if message is not None:
             break
     ok = message is None
     if ok:
-        message = (f"extend of {tail} tokens took {extend[1]:.3f} s, "
-                   f"restore of {tail} took {restore[1]:.3f} s, "
-                   f"rebuild of {prefix} took {rebuild[1]:.3f} s")
-    return {"sync_plans": {"ok": ok, "message": message,
-                           "prefilled": {k: v[0].prefilled for k, v in steps.items()},
-                           "seconds": {k: v[1] for k, v in steps.items()}},
-            "restore": _compare_runs(a, b)}
+        message = (
+            f"extend of {tail} tokens took {extend[1]:.3f} s, "
+            f"restore of {tail} took {restore[1]:.3f} s, "
+            f"rebuild of {prefix} took {rebuild[1]:.3f} s"
+        )
+    return {
+        "sync_plans": {
+            "ok": ok,
+            "message": message,
+            "prefilled": {k: v[0].prefilled for k, v in steps.items()},
+            "seconds": {k: v[1] for k, v in steps.items()},
+        },
+        "restore": _compare_runs(a, b),
+    }
 
 
 def check_live(lib: str | Path | None, model: Path, *, ctx: int = 4096) -> CheckReport:

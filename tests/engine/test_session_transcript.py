@@ -1,6 +1,7 @@
 """Public history observation must not bypass exclusive round ownership."""
-from typing import Any, cast
+
 import threading
+from typing import Any, cast
 
 import pytest
 
@@ -10,11 +11,14 @@ from ds4py.engine.events import Stopped, Synced, Token
 
 
 @pytest.mark.parametrize("round_open", [False, True])
-@pytest.mark.parametrize("method,args", [
-    ("append", ([7], "user")),
-    ("extend", ([7],)),
-    ("truncate", (0,)),
-])
+@pytest.mark.parametrize(
+    "method,args",
+    [
+        ("append", ([7], "user")),
+        ("extend", ([7],)),
+        ("truncate", (0,)),
+    ],
+)
 def test_public_transcript_has_no_mutators(round_open: Any, method: Any, args: Any) -> None:
     with ds4py.open("f.gguf", ctx=64, native=FakeNative()) as engine:
         session = engine.session()
@@ -36,10 +40,16 @@ def test_public_transcript_has_no_mutators(round_open: Any, method: Any, args: A
         finally:
             rnd.close()
         session.append_tokens([7], "user")
-        assert view.tokens == (5, 6, 7)  # A retained view observes later guarded writes.
+        assert view.tokens == (
+            5,
+            6,
+            7,
+        )  # A retained view observes later guarded writes.
 
 
-def test_retained_view_observes_worker_commits_without_exposing_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_retained_view_observes_worker_commits_without_exposing_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     evaluating, release = threading.Event(), threading.Event()
     original_eval = FakeSession.eval
 
@@ -59,17 +69,22 @@ def test_retained_view_observes_worker_commits_without_exposing_writes(monkeypat
         try:
             assert next(event for event in rnd if isinstance(event, Token)) == Token(98, b"a")
             assert evaluating.wait(5)
-            for method, args in [("append", ([7], "user")), ("extend", ([7],)), ("truncate", (0,))]:
+            for method, args in [
+                ("append", ([7], "user")),
+                ("extend", ([7],)),
+                ("truncate", (0,)),
+            ]:
                 with pytest.raises(AttributeError):
                     getattr(view, method)(*args)
             assert view.tokens == (5, 6, 98)
             assert len(view) == 3
             assert [(s.start, s.end, s.kind) for s in view.segments] == [
-                (0, 2, "user"), (2, 3, "assistant"),
+                (0, 2, "user"),
+                (2, 3, "assistant"),
             ]
             assert tokens == (5, 6) and len(segments) == 1
             with pytest.raises(TypeError):
-                cast(Any, view.segments[0].meta)["label"] = "changed"
+                cast("Any", view.segments[0].meta)["label"] = "changed"
         finally:
             release.set()
             rnd.close()

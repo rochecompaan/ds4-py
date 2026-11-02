@@ -1,4 +1,5 @@
 """Shared lifecycle for GLM and Qwen delimiter-based tool calls."""
+
 from copy import deepcopy
 from types import MappingProxyType
 
@@ -55,10 +56,8 @@ class DelimiterParser(ToolParser):
 
     def _push_current(self) -> None:
         if self._current_name is not None:
-            args = MappingProxyType({
-                name: deepcopy(argument.value) for name, argument in self._args.items()
-            })
-            raw = bytes(self.raw[self._call_start:self.parse_pos]).decode()
+            args = MappingProxyType({name: deepcopy(argument.value) for name, argument in self._args.items()})
+            raw = bytes(self.raw[self._call_start : self.parse_pos]).decode()
             self._calls.append(ToolCall(self._current_name, args, raw))
         self._current_name = None
         self._args = {}
@@ -115,18 +114,16 @@ class DelimiterParser(ToolParser):
         if self._partial(_START, self.parse_pos):
             return
         # The first non-tool byte belongs to ordinary output, not the stanza.
-        del self.raw[self.parse_pos:]
+        del self.raw[self.parse_pos :]
         self.state = "DONE"
 
     def _update_param_close_prefix(self) -> None:
-        tail = bytes(self.raw[-len(self._parameter_close):])
+        tail = bytes(self.raw[-len(self._parameter_close) :])
         start = tail.rfind(b"<")
-        self.param_close_prefix = (
-            start >= 0 and self._parameter_close.startswith(tail[start:])
-        )
+        self.param_close_prefix = start >= 0 and self._parameter_close.startswith(tail[start:])
 
     def _finish_active(self) -> None:
-        trailing = self.raw[self.parse_pos:]
+        trailing = self.raw[self.parse_pos :]
         if self._after_call and all(byte in _ASCII_SPACE for byte in trailing):
             self.parse_pos = len(self.raw)
             self._after_call = False

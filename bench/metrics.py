@@ -63,7 +63,9 @@ def _reuse(plan: object) -> tuple[str, int, int]:
 
 
 def summarize_events(
-    events: Iterable[dict[str, Any]], *, wall_seconds: float,
+    events: Iterable[dict[str, Any]],
+    *,
+    wall_seconds: float,
 ) -> EventSummary:
     """Summarize one attempt's JSONL records without inventing missing values."""
     records = list(events)
@@ -171,7 +173,11 @@ def summarize_events(
 
 
 def metrics_from_trace(
-    trace: ReplayTrace, *, wall_seconds: float, progress_events: int, tool_calls: int,
+    trace: ReplayTrace,
+    *,
+    wall_seconds: float,
+    progress_events: int,
+    tool_calls: int,
 ) -> EventSummary:
     """Extract C metrics when no JSONL harness event stream is available."""
     rounds = list(trace.rounds)
@@ -215,13 +221,13 @@ def combine_summaries(summaries: Iterable[EventSummary]) -> EventSummary:
     ratios = tuple(ratio for value in values for ratio in value.reuse_ratios)
     accounting = None
     if all(value.tool_accounting is not None for value in values):
-        accounting = ToolAccounting(*(
-            sum(value.tool_accounting.__dict__[field] for value in values)
-            for field in ("parsed", "executed", "refused", "retried")
-        ))
-    reasons = tuple(dict.fromkeys(
-        reason for value in values for reason in value.non_extension_reasons
-    ))
+        accounting = ToolAccounting(
+            *(
+                sum(value.tool_accounting.__dict__[field] for value in values)
+                for field in ("parsed", "executed", "refused", "retried")
+            )
+        )
+    reasons = tuple(dict.fromkeys(reason for value in values for reason in value.non_extension_reasons))
     return EventSummary(
         wall_seconds=sum(value.wall_seconds for value in values),
         progress_events=sum(value.progress_events for value in values),

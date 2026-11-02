@@ -3,19 +3,52 @@
     "source": "C test_agent_qwen_tool_parser_chunked_multi_arg",
     "input": "intro <tool_call>\n<function=bash>\n<parameter=command>\nprintf hi\n</parameter>\n<parameter=refresh_sec>\n1\n</parameter>\n</function>\n</tool_call>",
     "state": "DONE",
-    "calls": [{"name": "bash", "args": {"command": "printf hi", "refresh_sec": 1}}]
+    "calls": [
+      {
+        "name": "bash",
+        "args": {
+          "command": "printf hi",
+          "refresh_sec": 1
+        }
+      }
+    ]
   },
   {
     "source": "spec: remove one framing newline and preserve all other whitespace",
     "input": "<tool_call><function=write><parameter=content>\n\n  x \n\n</parameter><parameter=tabs>\t value \t</parameter></function></tool_call>",
     "state": "DONE",
-    "calls": [{"name": "write", "args": {"content": "\n  x \n", "tabs": "\t value \t"}}]
+    "calls": [
+      {
+        "name": "write",
+        "args": {
+          "content": "\n  x \n",
+          "tabs": "\t value \t"
+        }
+      }
+    ]
   },
   {
     "source": "spec: Qwen JSON value kinds",
     "input": "<tool_call><function=json><parameter=object>\n{\"a\":1}\n</parameter><parameter=array>\n[1,2]\n</parameter><parameter=number>\n2.5\n</parameter><parameter=yes>\ntrue\n</parameter><parameter=no>\nfalse\n</parameter><parameter=nothing>\nnull\n</parameter></function></tool_call>",
     "state": "DONE",
-    "calls": [{"name": "json", "args": {"object": {"a": 1}, "array": [1, 2], "number": 2.5, "yes": true, "no": false, "nothing": null}}]
+    "calls": [
+      {
+        "name": "json",
+        "args": {
+          "object": {
+            "a": 1
+          },
+          "array": [
+            1,
+            2
+          ],
+          "number": 2.5,
+          "yes": true,
+          "no": false,
+          "nothing": null
+        }
+      }
+    ]
   },
   {
     "source": "spec: malformed bracketed JSON is ERROR",
@@ -27,13 +60,33 @@
     "source": "C test_agent_qwen_tool_parser_two_calls_and_error two calls plus trailing whitespace",
     "input": "<tool_call><function=list><parameter=path>\n.\n</parameter></function></tool_call>\n<tool_call><function=read><parameter=path>\n/tmp/x\n</parameter></function></tool_call> \t\n",
     "state": "DONE",
-    "calls": [{"name": "list", "args": {"path": "."}}, {"name": "read", "args": {"path": "/tmp/x"}}]
+    "calls": [
+      {
+        "name": "list",
+        "args": {
+          "path": "."
+        }
+      },
+      {
+        "name": "read",
+        "args": {
+          "path": "/tmp/x"
+        }
+      }
+    ]
   },
   {
     "source": "C test_agent_tool_argument_literal_markup Qwen case",
     "input": "<tool_call><function=write><parameter=content>\n<p>&amp; &lt;</p> </tool_call> </think> &lt;/parameter> &amp;lt;/parameter>\n</parameter></function></tool_call>",
     "state": "DONE",
-    "calls": [{"name": "write", "args": {"content": "<p>&amp; &lt;</p> </tool_call> </think> </parameter> &lt;/parameter>"}}]
+    "calls": [
+      {
+        "name": "write",
+        "args": {
+          "content": "<p>&amp; &lt;</p> </tool_call> </think> </parameter> &lt;/parameter>"
+        }
+      }
+    ]
   },
   {
     "source": "C test_agent_qwen_tool_parser_two_calls_and_error missing function close",
@@ -76,6 +129,13 @@
     "trace_sha256": "c9f599ef764d69f72df47819f51fdfd83be5e97c82e658051a7249a418fed016",
     "input": "Run the tests.\n</think>\n\n<tool_call>\n<function=bash>\n<parameter=command>\nuv run --frozen pytest -v 2>&1 | tail -15\n</parameter>\n</function>\n</tool_call>",
     "state": "DONE",
-    "calls": [{"name": "bash", "args": {"command": "uv run --frozen pytest -v 2>&1 | tail -15"}}]
+    "calls": [
+      {
+        "name": "bash",
+        "args": {
+          "command": "uv run --frozen pytest -v 2>&1 | tail -15"
+        }
+      }
+    ]
   }
 ]

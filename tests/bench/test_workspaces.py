@@ -1,9 +1,9 @@
 """Workspace isolation, hidden grading, and retry behavior for the agent bake-off."""
-from typing import Any
 
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -21,29 +21,26 @@ from bench.workspaces import (
     verify_benchmark,
 )
 
-
 EXERCISE = Path("python/exercises/practice/tiny")
 HIDDEN_TEST = EXERCISE.name + "_test.py"
 
 
-def make_exercise(root: Any, initial: Any="good") -> Any:
+def make_exercise(root: Any, initial: Any = "good") -> Any:
     source = root / "benchmark" / EXERCISE
     (source / ".docs").mkdir(parents=True)
-    (source / ".docs" / "instructions.md").write_text(
-        "Implement value() so it returns 'good'.\n"
-    )
+    (source / ".docs" / "instructions.md").write_text("Implement value() so it returns 'good'.\n")
     (source / "solution.py").write_text(f"def value():\n    return {initial!r}\n")
-    (source / HIDDEN_TEST).write_text(
-        "from solution import value\n\n"
-        "def test_value():\n"
-        "    assert value() == 'good'\n"
-    )
+    (source / HIDDEN_TEST).write_text("from solution import value\n\ndef test_value():\n    assert value() == 'good'\n")
     return source
 
 
 def git(cwd: Any, *args: Any) -> str:
     return subprocess.run(
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True,
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
 
 
@@ -57,20 +54,21 @@ def commit_repo(root: Any) -> Any:
     return git(root, "rev-parse", "HEAD")
 
 
-def test_exercise_has_visible_starter_and_grader_owned_hidden_tests(tmp_path: Path) -> None:
+def test_exercise_has_visible_starter_and_grader_owned_hidden_tests(
+    tmp_path: Path,
+) -> None:
     source = make_exercise(tmp_path)
     workspace = prepare_exercise(source, tmp_path / "staged")
 
-    assert (workspace.agent_dir / "TASK.md").read_text() == (
-        source / ".docs" / "instructions.md"
-    ).read_text()
+    assert (workspace.agent_dir / "TASK.md").read_text() == (source / ".docs" / "instructions.md").read_text()
     assert (workspace.agent_dir / "solution.py").is_file()
     assert not (workspace.agent_dir / HIDDEN_TEST).exists()
     assert (workspace.grader_dir / HIDDEN_TEST).is_file()
 
 
 def test_real_grading_leaves_no_hidden_source_or_bytecode_in_agent_workspace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
     source = make_exercise(tmp_path)
@@ -79,10 +77,7 @@ def test_real_grading_leaves_no_hidden_source_or_bytecode_in_agent_workspace(
     result = grade_workspace(workspace)
 
     assert result.passed, result.output
-    hidden_artifacts = [
-        path for path in workspace.agent_dir.rglob("*")
-        if Path(HIDDEN_TEST).stem in path.name
-    ]
+    hidden_artifacts = [path for path in workspace.agent_dir.rglob("*") if Path(HIDDEN_TEST).stem in path.name]
     assert hidden_artifacts == []
     assert (workspace.grader_dir / HIDDEN_TEST).is_file()
 
@@ -136,17 +131,16 @@ def test_attempts_stop_at_two_and_cleanup_survives_failures(tmp_path: Path) -> N
     assert not (workspace.agent_dir / HIDDEN_TEST).exists()
 
 
-def test_agents_receive_separate_but_equivalent_workspace_copies(tmp_path: Path) -> None:
+def test_agents_receive_separate_but_equivalent_workspace_copies(
+    tmp_path: Path,
+) -> None:
     source = make_exercise(tmp_path)
     staged = prepare_exercise(source, tmp_path / "staged")
     c_workspace = clone_workspace(staged, tmp_path / "c")
     python_workspace = clone_workspace(staged, tmp_path / "ds4py")
 
     def files(root: Any) -> Any:
-        return {
-            str(path.relative_to(root)): path.read_bytes()
-            for path in root.rglob("*") if path.is_file()
-        }
+        return {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()}
 
     assert files(c_workspace.agent_dir) == files(python_workspace.agent_dir)
     assert c_workspace.agent_dir != python_workspace.agent_dir
@@ -181,8 +175,11 @@ def test_ctx_repository_copy_keeps_hidden_grader_outside(tmp_path: Path) -> None
     external_grader.write_text("# hidden behavioral grader\n")
 
     workspace = prepare_repository_task(
-        repo, tmp_path / "staged", task_id="repo-ctx-command",
-        prompt="Add /ctx without generation.", grader=external_grader,
+        repo,
+        tmp_path / "staged",
+        task_id="repo-ctx-command",
+        prompt="Add /ctx without generation.",
+        grader=external_grader,
     )
 
     assert (workspace.agent_dir / "TASK.md").read_text() == "Add /ctx without generation."
@@ -199,11 +196,17 @@ def test_glm_patch_fails_focused_test_and_clean_tree_passes(tmp_path: Path) -> N
         visible_test="tests/engine/tool_syntax/test_glm.py",
     )
     clean = prepare_repository_task(
-        repo, tmp_path / "clean", task_id="repo-glm-clean", **common,
+        repo,
+        tmp_path / "clean",
+        task_id="repo-glm-clean",
+        **common,
     )
     patched = prepare_repository_task(
-        repo, tmp_path / "patched", task_id="repo-glm-close",
-        patch=repo / "bench" / "patches" / "glm-off-by-one.patch", **common,
+        repo,
+        tmp_path / "patched",
+        task_id="repo-glm-close",
+        patch=repo / "bench" / "patches" / "glm-off-by-one.patch",
+        **common,
     )
 
     clean_result = grade_workspace(clean)
@@ -214,22 +217,20 @@ def test_glm_patch_fails_focused_test_and_clean_tree_passes(tmp_path: Path) -> N
     assert "test_glm" in patched_result.output
 
 
-def test_workspace_cannot_bypass_grading_with_startup_or_pytest_configuration(tmp_path: Path) -> None:
+def test_workspace_cannot_bypass_grading_with_startup_or_pytest_configuration(
+    tmp_path: Path,
+) -> None:
     source = make_exercise(tmp_path, initial="bad")
     workspace = prepare_exercise(source, tmp_path / "staged")
     agent_dir = workspace.agent_dir
-    (agent_dir / "conftest.py").write_text(
-        "import solution\nsolution.value = lambda: 'good'\n"
-    )
-    (agent_dir / "workspace_bypass.py").write_text(
-        "import solution\nsolution.value = lambda: 'good'\n"
-    )
+    (agent_dir / "conftest.py").write_text("import solution\nsolution.value = lambda: 'good'\n")
+    (agent_dir / "workspace_bypass.py").write_text("import solution\nsolution.value = lambda: 'good'\n")
     (agent_dir / "pytest.ini").write_text("[pytest]\naddopts = -p workspace_bypass\n")
     (agent_dir / "src").mkdir()
     (agent_dir / "src" / "sitecustomize.py").write_text(
         "from pathlib import Path\n"
         f"Path({str(agent_dir / 'solution.py')!r}).write_text("
-        '"def value():\\n    return \'good\'\\n")\n'
+        "\"def value():\\n    return 'good'\\n\")\n"
     )
 
     result = grade_workspace(workspace)

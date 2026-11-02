@@ -24,10 +24,7 @@ def _json_safe(value: object) -> JsonValue:
     if isinstance(value, (list, tuple, set, frozenset)):
         return [_json_safe(item) for item in value]
     if is_dataclass(value) and not isinstance(value, type):
-        return {
-            field.name: _json_safe(getattr(value, field.name))
-            for field in fields(value)
-        }
+        return {field.name: _json_safe(getattr(value, field.name)) for field in fields(value)}
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return str(value)

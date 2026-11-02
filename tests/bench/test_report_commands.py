@@ -1,4 +1,5 @@
 """Report-reading commands deserialize real typed benchmark contracts."""
+
 from pathlib import Path
 import json
 import sys
@@ -32,8 +33,13 @@ def task_record(task_id: str, agent: str) -> dict[str, Any]:
             "non_extension_reasons": [],
             "parser_errors": 0,
             "tool_accounting": {
-                "parsed": 0, "executed": 0, "refused": 0, "retried": 0,
-            } if agent == "ds4py" else None,
+                "parsed": 0,
+                "executed": 0,
+                "refused": 0,
+                "retried": 0,
+            }
+            if agent == "ds4py"
+            else None,
             "reuse_ratios": [0.5],
         },
         "grader_outputs": [],
@@ -53,8 +59,11 @@ def write_report(path: Path, tasks: list[dict[str, Any]]) -> None:
     [([], 8192, 100), (["--tokens", "4096", "--request-limit", "7"], 4096, 7)],
 )
 def test_restore_check_deserializes_tasks_and_complete_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    options: list[str], tokens: int, request_limit: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    options: list[str],
+    tokens: int,
+    request_limit: int,
 ) -> None:
     report = tmp_path / "bakeoff.json"
     write_report(report, [task_record("task", "ds4py")])
@@ -66,9 +75,15 @@ def test_restore_check_deserializes_tasks_and_complete_config(
 
     monkeypatch.setattr("bench.restore_check.check_result_saves", check)
 
-    status = check_command([
-        "--report", str(report), "--model", "/model.gguf", *options,
-    ])
+    status = check_command(
+        [
+            "--report",
+            str(report),
+            "--model",
+            "/model.gguf",
+            *options,
+        ]
+    )
 
     assert status == 0
     assert len(captured["tasks"]) == 1
@@ -80,7 +95,8 @@ def test_restore_check_deserializes_tasks_and_complete_config(
 
 
 def test_replay_command_deserializes_all_c_tasks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     report = tmp_path / "bakeoff.json"
     write_report(report, [task_record(f"task-{index}", "c") for index in range(12)])
@@ -92,13 +108,20 @@ def test_replay_command_deserializes_all_c_tasks(
 
     monkeypatch.setattr("bench.replay_c_traces.replay_task_results", replay)
     monkeypatch.setattr(
-        "bench.report.update_replay_report", lambda *args: GateResult(True, "captured"),
+        "bench.report.update_replay_report",
+        lambda *args: GateResult(True, "captured"),
     )
 
-    status = replay_main([
-        "--report", str(report), "--model", str(tmp_path / "model.gguf"),
-        "--backend", "cuda",
-    ])
+    status = replay_main(
+        [
+            "--report",
+            str(report),
+            "--model",
+            str(tmp_path / "model.gguf"),
+            "--backend",
+            "cuda",
+        ]
+    )
 
     assert status == 0
     assert len(captured["tasks"]) == 12

@@ -2,10 +2,10 @@
 
 import asyncio
 import re
+from typing import Any, Never, cast
 
 from ds4py.runtime import AgentRuntime
 from ds4py.tui_commands import SlashCommandRegistry, install_builtin_commands
-from typing import Any, Never, cast
 
 
 class ForbiddenModel:
@@ -47,7 +47,8 @@ def test_ctx_command_reports_usage_without_generation_or_mutation() -> None:
     registry = SlashCommandRegistry()
     exited: list[bool] = []
     install_builtin_commands(
-        registry, cast(AgentRuntime, runtime),
+        registry,
+        cast("AgentRuntime", runtime),
         request_exit=lambda: exited.append(True),
     )
 

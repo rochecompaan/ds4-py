@@ -1,4 +1,5 @@
 """Deterministic fake-vocabulary mirror of ds4's native chat rendering."""
+
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -10,21 +11,34 @@ if TYPE_CHECKING:
 
 _SPECIAL_TEXTS = (
     "<｜begin▁of▁sentence｜>",
-    "<｜System｜>", "<｜User｜>", "<｜Assistant｜>",
-    "<|system|>", "<|user|>", "<|assistant|>", "<|observation|>", "<sop>",
-    "<think>", "</think>",
-    "<tool_call>", "</tool_call>",
-    "<arg_key>", "</arg_key>",
-    "<arg_value>", "</arg_value>",
-    "<tool_response>", "</tool_response>",
-    "<|im_start|>", "<|im_end|>",
+    "<｜System｜>",
+    "<｜User｜>",
+    "<｜Assistant｜>",
+    "<|system|>",
+    "<|user|>",
+    "<|assistant|>",
+    "<|observation|>",
+    "<sop>",
+    "<think>",
+    "</think>",
+    "<tool_call>",
+    "</tool_call>",
+    "<arg_key>",
+    "</arg_key>",
+    "<arg_value>",
+    "</arg_value>",
+    "<tool_response>",
+    "</tool_response>",
+    "<|im_start|>",
+    "<|im_end|>",
     "｜DSML｜",
 )
 SPECIAL_TOKENS = {text: 257 + index for index, text in enumerate(_SPECIAL_TEXTS)}
 _SPECIAL_TEXT_BY_ID = {token: text.encode() for text, token in SPECIAL_TOKENS.items()}
 _RENDERED_TOKENS = sorted(
     ((text.encode(), token) for text, token in SPECIAL_TOKENS.items()),
-    key=lambda item: len(item[0]), reverse=True,
+    key=lambda item: len(item[0]),
+    reverse=True,
 )
 VOCAB_SIZE = max(SPECIAL_TOKENS.values()) + 1
 
@@ -173,7 +187,10 @@ def _deepseek41_system_marker(prefix: Sequence[int]) -> list[int]:
 
 
 def _deepseek_message(
-    engine: FakeEngine, prefix: Sequence[int], role: str, content: str,
+    engine: FakeEngine,
+    prefix: Sequence[int],
+    role: str,
+    content: str,
 ) -> list[int]:
     if role in ("system", "developer"):
         marker = _deepseek41_system_marker(prefix) if engine.info().is_deepseek41 else []
@@ -184,15 +201,17 @@ def _deepseek_message(
             opening += engine.tokenize("</think>", rendered=True)
         return opening + engine.tokenize(content)
     if role in ("tool", "function"):
-        return (
-            engine.tokenize("<｜User｜>", rendered=True)
-            + engine.tokenize("<tool_result>" + _escape_closing(content, "</tool_result>") + "</tool_result>")
+        return engine.tokenize("<｜User｜>", rendered=True) + engine.tokenize(
+            "<tool_result>" + _escape_closing(content, "</tool_result>") + "</tool_result>"
         )
     return engine.tokenize("<｜User｜>", rendered=True) + engine.tokenize(content)
 
 
 def render_message(
-    engine: FakeEngine, prefix: Sequence[int], role: str, content: str,
+    engine: FakeEngine,
+    prefix: Sequence[int],
+    role: str,
+    content: str,
 ) -> list[int]:
     info = engine.info()
     if info.is_qwen4:
@@ -203,7 +222,9 @@ def render_message(
 
 
 def assistant_prefix(
-    engine: FakeEngine, prefix: Sequence[int], mode: int,
+    engine: FakeEngine,
+    prefix: Sequence[int],
+    mode: int,
 ) -> list[int]:
     info = engine.info()
     if info.is_qwen4:

@@ -114,8 +114,13 @@ class SegmentProvenance:
             raise ValueError("a segment must be an object")
         try:
             return cls(
-                data["start"], data["end"], data["kind"], data["key"],
-                data["content_hash"], data["source"], text=data.get("text"),
+                data["start"],
+                data["end"],
+                data["kind"],
+                data["key"],
+                data["content_hash"],
+                data["source"],
+                text=data.get("text"),
             )
         except KeyError as error:
             raise ValueError(f"segment is missing {error.args[0]!r}") from error
@@ -145,10 +150,24 @@ class SaveRecord:
         object.__setattr__(self, "version", _integer(self.version, "version"))
         if self.version != SAVE_FORMAT_VERSION:
             raise ValueError(f"unsupported save record version {self.version}")
-        for name in ("session_id", "conversation_id", "run_id", "title",
-                     "created_at", "last_used", "tokens_sha256"):
+        for name in (
+            "session_id",
+            "conversation_id",
+            "run_id",
+            "title",
+            "created_at",
+            "last_used",
+            "tokens_sha256",
+        ):
             object.__setattr__(self, name, _string(getattr(self, name), name))
-        for name in ("step_index", "model_id", "quant_bits", "ctx", "payload_bytes", "tokens"):
+        for name in (
+            "step_index",
+            "model_id",
+            "quant_bits",
+            "ctx",
+            "payload_bytes",
+            "tokens",
+        ):
             object.__setattr__(self, name, _nonnegative(getattr(self, name), name))
         digest = self.tokens_sha256
         if len(digest) != 64 or any(char not in "0123456789abcdefABCDEF" for char in digest):
@@ -162,32 +181,21 @@ class SaveRecord:
     def _check_coverage(self) -> None:
         if self.tokens == 0:
             if self.segments:
-                raise ValueError(
-                    "segments must be empty for a zero-token transcript"
-                )
+                raise ValueError("segments must be empty for a zero-token transcript")
             return
         if not self.segments:
-            raise ValueError(
-                f"segments do not cover {self.tokens} tokens: the list is empty"
-            )
+            raise ValueError(f"segments do not cover {self.tokens} tokens: the list is empty")
         expected = 0
         for segment in self.segments:
             if segment.start != expected:
                 raise ValueError(
-                    "segments overlap or have a gap: expected start token "
-                    f"{expected}, got start token {segment.start}"
+                    f"segments overlap or have a gap: expected start token {expected}, got start token {segment.start}"
                 )
             if segment.end > self.tokens:
-                raise ValueError(
-                    f"segments extend beyond {self.tokens} tokens: end token "
-                    f"{segment.end}"
-                )
+                raise ValueError(f"segments extend beyond {self.tokens} tokens: end token {segment.end}")
             expected = segment.end
         if expected != self.tokens:
-            raise ValueError(
-                f"segments have a gap: they end at token {expected}, "
-                f"not {self.tokens}"
-            )
+            raise ValueError(f"segments have a gap: they end at token {expected}, not {self.tokens}")
 
     def to_dict(self) -> dict[str, object]:
         self._check_coverage()
@@ -214,9 +222,21 @@ class SaveRecord:
         if not isinstance(data, Mapping):
             raise ValueError("a save record must be an object")
         names = (
-            "version", "session_id", "conversation_id", "run_id", "step_index",
-            "model_id", "quant_bits", "ctx", "title", "created_at", "last_used",
-            "payload_bytes", "tokens", "tokens_sha256", "segments",
+            "version",
+            "session_id",
+            "conversation_id",
+            "run_id",
+            "step_index",
+            "model_id",
+            "quant_bits",
+            "ctx",
+            "title",
+            "created_at",
+            "last_used",
+            "payload_bytes",
+            "tokens",
+            "tokens_sha256",
+            "segments",
         )
         missing = [name for name in names if name not in data]
         if missing:
@@ -248,7 +268,10 @@ def _atomic_write(path: Path, chunks: Sequence[bytes]) -> None:
     replaced = False
     try:
         with tempfile.NamedTemporaryFile(
-            dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False,
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
         ) as file:
             temporary = Path(file.name)
             for chunk in chunks:
@@ -302,10 +325,7 @@ class SessionStore:
             with path.open("rb") as file:
                 payload_bytes, remaining = self._checked_kv_header(file, path)
                 if payload_bytes > remaining:
-                    raise StoreError(
-                        f"{path}: truncated payload: expected {payload_bytes} "
-                        f"bytes, got {remaining}"
-                    )
+                    raise StoreError(f"{path}: truncated payload: expected {payload_bytes} bytes, got {remaining}")
                 if remaining != payload_bytes:
                     raise StoreError(f"{path}: extra undeclared payload data")
                 return payload_bytes
@@ -315,18 +335,12 @@ class SessionStore:
     def _checked_kv_header(self, file: BinaryIO, path: Path) -> tuple[int, int]:
         raw = file.read(KV_HEADER.size)
         if len(raw) != KV_HEADER.size:
-            raise StoreError(
-                f"{path}: truncated header: expected {KV_HEADER.size} "
-                f"bytes, got {len(raw)}"
-            )
+            raise StoreError(f"{path}: truncated header: expected {KV_HEADER.size} bytes, got {len(raw)}")
         magic, version, payload_bytes = KV_HEADER.unpack(raw)
         if magic != KV_MAGIC:
             raise StoreError(f"{path}: bad KV magic {magic!r}")
         if version != KV_VERSION:
-            raise StoreError(
-                f"{path}: unsupported KV version {version}, "
-                f"expected {KV_VERSION}"
-            )
+            raise StoreError(f"{path}: unsupported KV version {version}, expected {KV_VERSION}")
         remaining = max(0, os.fstat(file.fileno()).st_size - KV_HEADER.size)
         return payload_bytes, remaining
 
@@ -339,16 +353,15 @@ class SessionStore:
                 file.seek(KV_HEADER.size)
                 payload = file.read(payload_bytes)
                 if len(payload) != payload_bytes:
-                    raise StoreError(
-                        f"{path}: truncated payload: expected {payload_bytes} "
-                        f"bytes, got {len(payload)}"
-                    )
+                    raise StoreError(f"{path}: truncated payload: expected {payload_bytes} bytes, got {len(payload)}")
                 return payload
         except OSError as error:
             raise StoreError(f"{path}: cannot read KV file: {error}") from error
 
     def write_kv_stream_atomic(
-        self, path: str | os.PathLike, write_payload: Callable[[BinaryIO], int],
+        self,
+        path: str | os.PathLike,
+        write_payload: Callable[[BinaryIO], int],
     ) -> int:
         """Stream a payload into the KV file and publish it at one rename.
 
@@ -366,22 +379,22 @@ class SessionStore:
         replaced = False
         try:
             with tempfile.NamedTemporaryFile(
-                dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False,
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
             ) as file:
                 temporary = Path(file.name)
                 payload_bytes = _nonnegative(
-                    write_payload(cast(BinaryIO, file)), "payload byte count",
+                    write_payload(cast(BinaryIO, file)),
+                    "payload byte count",
                 )
                 if payload_bytes > _MAX_UINT64:
-                    raise StoreError(
-                        f"{path}: payload of {payload_bytes} bytes does not fit "
-                        "the KV header"
-                    )
+                    raise StoreError(f"{path}: payload of {payload_bytes} bytes does not fit the KV header")
                 position = file.tell()
                 if position != KV_HEADER.size + payload_bytes:
                     raise StoreError(
-                        f"{path}: payload declared {payload_bytes} bytes, "
-                        f"wrote {max(0, position - KV_HEADER.size)}"
+                        f"{path}: payload declared {payload_bytes} bytes, wrote {max(0, position - KV_HEADER.size)}"
                     )
                 file.seek(0)
                 file.write(KV_HEADER.pack(KV_MAGIC, KV_VERSION, payload_bytes))
@@ -401,9 +414,14 @@ class SessionStore:
         """Serialize and atomically publish one save record."""
         path = Path(path)
         try:
-            encoded = json.dumps(
-                record.to_dict(), indent=2, ensure_ascii=False,
-            ).encode("utf-8") + b"\n"
+            encoded = (
+                json.dumps(
+                    record.to_dict(),
+                    indent=2,
+                    ensure_ascii=False,
+                ).encode("utf-8")
+                + b"\n"
+            )
         except ValueError as error:
             raise StoreError(f"{path}: invalid save record: {error}") from error
         _atomic_write(path, (encoded,))
@@ -429,17 +447,19 @@ class SessionStore:
     def find(self, prefix: str) -> tuple[SaveRecord, Path]:
         """Resolve a unique save by session-id prefix and return its record path."""
         sessions = self.root / "sessions"
-        names = sorted(
-            entry.name for entry in sessions.iterdir()
-            if entry.is_dir() and entry.name.startswith(prefix)
-            and (entry / _SAVE_FILE).is_file()
-        ) if sessions.is_dir() else []
+        names = (
+            sorted(
+                entry.name
+                for entry in sessions.iterdir()
+                if entry.is_dir() and entry.name.startswith(prefix) and (entry / _SAVE_FILE).is_file()
+            )
+            if sessions.is_dir()
+            else []
+        )
         if not names:
             raise StoreError(f"unknown session prefix {prefix!r}")
         if len(names) > 1:
-            raise StoreError(
-                f"ambiguous session prefix {prefix!r}: {', '.join(names)}"
-            )
+            raise StoreError(f"ambiguous session prefix {prefix!r}: {', '.join(names)}")
         path = sessions / names[0] / _SAVE_FILE
         return self.read_record(path), path
 

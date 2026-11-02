@@ -1,11 +1,12 @@
 """Copy and verify the Metal source bundle; never change the process environment."""
 
-from collections.abc import Iterator, Mapping
-from pathlib import Path, PurePosixPath
 import re
 import shutil
+from collections.abc import Iterator, Mapping
+from pathlib import Path, PurePosixPath
 
 from ds4py.errors import AbiMismatch, BuildError
+
 from .manifest import file_sha256
 
 _REBUILD = " Run `ds4py build` to rebuild the library and its Metal sources."
@@ -36,8 +37,7 @@ def _records(hashes: Mapping[str, str]) -> Iterator[tuple[str, str]]:
         if not isinstance(relative, str):
             raise AbiMismatch("Metal shader paths must be relative strings." + _REBUILD)
         path = PurePosixPath(relative)
-        if (len(path.parts) != 2 or path.parts[0] != "metal"
-                or path.suffix != ".metal" or path.as_posix() != relative):
+        if len(path.parts) != 2 or path.parts[0] != "metal" or path.suffix != ".metal" or path.as_posix() != relative:
             raise AbiMismatch(f"invalid Metal shader path: {relative!r}." + _REBUILD)
         if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
             raise AbiMismatch(f"invalid Metal shader hash for {relative}." + _REBUILD)
@@ -56,7 +56,9 @@ def _check_hash(path: Path, digest: str, label: str) -> None:
 
 
 def metal_source_env(
-    lib_dir: Path, hashes: Mapping[str, str], overrides: Mapping[str, str] | None = None,
+    lib_dir: Path,
+    hashes: Mapping[str, str],
+    overrides: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     """Validate all bundled and effective files, preserving explicit override strings."""
     result = {}

@@ -29,7 +29,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 
-def fake_engine(*, family: str="deepseek4", script: Any=None, think: ThinkMode=ThinkMode.NONE) -> Engine:
+def fake_engine(*, family: str = "deepseek4", script: Any = None, think: ThinkMode = ThinkMode.NONE) -> Engine:
     info = replace(
         FakeNative()._info,
         name="fake-ds4",
@@ -44,12 +44,10 @@ def fake_engine(*, family: str="deepseek4", script: Any=None, think: ThinkMode=T
 
 def scripted_text(text: str) -> Callable[[Sequence[int], Sequence[int]], int]:
     tokens = tuple(tokenize_rendered(text))
-    return lambda prompt, generated: (
-        tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
-    )
+    return lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
 
-def user(text: str="hello") -> ModelRequest:
+def user(text: str = "hello") -> ModelRequest:
     return ModelRequest([UserPromptPart(text)])
 
 
@@ -57,10 +55,14 @@ def make_model(session: Any, **kwargs: Any) -> DS4Model:
     return DS4Model(session, sampling=SamplingPolicy(seed=1), **kwargs)
 
 
-def request(model: Any, messages: Any=None, settings: Any=None, params: Any=None) -> ModelResponse:
-    return asyncio.run(model.request(
-        list(messages or [user()]), settings, params or ModelRequestParameters(),
-    ))
+def request(model: Any, messages: Any = None, settings: Any = None, params: Any = None) -> ModelResponse:
+    return asyncio.run(
+        model.request(
+            list(messages or [user()]),
+            settings,
+            params or ModelRequestParameters(),
+        )
+    )
 
 
 def native_calls(session: Any) -> list[Any]:
@@ -111,13 +113,16 @@ def test_request_prepares_settings_and_uses_concrete_sampling_policy() -> None:
         assert samples[0] == (0.25, 7, 0.8, 0.05)
 
 
-@pytest.mark.parametrize("field,value", [
-    ("temperature", None),
-    ("temperature", math.nan),
-    ("top_p", math.inf),
-    ("min_p", -math.inf),
-    ("top_k", None),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("temperature", None),
+        ("temperature", math.nan),
+        ("top_p", math.inf),
+        ("min_p", -math.inf),
+        ("top_k", None),
+    ],
+)
 def test_request_rejects_missing_or_nonfinite_sampling_before_binding(field: Any, value: Any) -> None:
     with fake_engine() as engine:
         session = engine.session()
@@ -164,10 +169,7 @@ def test_text_and_thinking_deltas_become_distinct_parts_with_token_usage() -> No
 
 
 def test_tool_calls_have_stable_ids_and_preserve_sampled_raw_syntax() -> None:
-    raw = (
-        "<tool_call>\n<function=read>\n<parameter=path>\n/tmp/x\n</parameter>\n"
-        "</function>\n</tool_call>"
-    )
+    raw = "<tool_call>\n<function=read>\n<parameter=path>\n/tmp/x\n</parameter>\n</function>\n</tool_call>"
     with fake_engine(family="qwen", script=scripted_text(raw)) as engine:
         response = request(make_model(engine.session()))
 
@@ -211,19 +213,26 @@ def test_real_agent_renders_instructions_once_and_invalidates_changes() -> None:
 
             def occurrences(tokens: Any, needle: Any) -> Any:
                 return [
-                    index for index in range(len(tokens) - len(needle) + 1)
-                    if tokens[index:index + len(needle)] == needle
+                    index
+                    for index in range(len(tokens) - len(needle) + 1)
+                    if tokens[index : index + len(needle)] == needle
                 ]
 
             locations = occurrences(session.transcript.tokens, marker)
             assert len(locations) == 1
-            assert len([
-                segment for segment in session.transcript.segments
-                if any(
-                    segment.start <= location and location + len(marker) <= segment.end
-                    for location in locations
+            assert (
+                len(
+                    [
+                        segment
+                        for segment in session.transcript.segments
+                        if any(
+                            segment.start <= location and location + len(marker) <= segment.end
+                            for location in locations
+                        )
+                    ]
                 )
-            ]) == 1
+                == 1
+            )
 
             replacement = "replacement instruction marker"
             change = model.binder.prepare(result.all_messages(), instructions=replacement)
@@ -246,8 +255,7 @@ def test_real_agent_executes_function_tool_and_samples_its_result_next_round() -
 
     def contains(prompt: Any, marker: Any) -> bool:
         return any(
-            tuple(prompt[index:index + len(marker)]) == marker
-            for index in range(len(prompt) - len(marker) + 1)
+            tuple(prompt[index : index + len(marker)]) == marker for index in range(len(prompt) - len(marker) + 1)
         )
 
     def script(prompt: Any, generated: Any) -> Any:
@@ -272,8 +280,11 @@ def test_real_agent_executes_function_tool_and_samples_its_result_next_round() -
             assert len(responses) == 2
             assert isinstance(responses[0].parts[0], ToolCallPart)
             returns = [
-                part for message in result.all_messages() if isinstance(message, ModelRequest)
-                for part in message.parts if isinstance(part, ToolReturnPart)
+                part
+                for message in result.all_messages()
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, ToolReturnPart)
             ]
             assert len(returns) == 1
             assert returns[0].tool_name == "add"
@@ -299,7 +310,10 @@ def test_adopt_uses_stable_keys_without_collapsing_harness_history() -> None:
         adopted = binder.adopt(history)
 
         assert [cast(Any, message.parts[0]).content for message in adopted] == [
-            "question-one", "answer-one", "question-two", "answer-two",
+            "question-one",
+            "answer-one",
+            "question-two",
+            "answer-two",
         ]
         assert [cast(Any, message.metadata)["ds4.key"] for message in adopted] == [
             cast(Any, message.metadata)["ds4.key"] for message in history

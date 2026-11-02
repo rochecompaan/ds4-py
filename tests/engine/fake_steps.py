@@ -1,18 +1,20 @@
 """Scripted speculative decode blocks for engine tests."""
+
 from typing import Any
+
 from ds4py.engine.decode import Verdict
 from ds4py.errors import EngineError
 
 
 def block_chunks(tokens: Any) -> Any:
     tokens = list(tokens)
-    return [tokens[start + 1:start + 17] for start in range(0, len(tokens), 17)]
+    return [tokens[start + 1 : start + 17] for start in range(0, len(tokens), 17)]
 
 
 class FakeMultiTokenStep:
     hooks_every_sample = True
 
-    def __init__(self, blocks: Any=()) -> None:
+    def __init__(self, blocks: Any = ()) -> None:
         self.blocks = iter(blocks)
         self.block_sizes = []
 
@@ -29,7 +31,11 @@ class FakeMultiTokenStep:
             ctx.before_sample()
             policy = ctx.sampling()
             sampled = session.sample(
-                policy.temperature, policy.top_k, policy.top_p, policy.min_p, ctx.rng,
+                policy.temperature,
+                policy.top_k,
+                policy.top_p,
+                policy.min_p,
+                ctx.rng,
             )
             if sampled < 0:
                 raise EngineError("cannot sample: the session state is not valid; sync first")

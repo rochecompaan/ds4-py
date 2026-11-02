@@ -2,14 +2,14 @@
 
 import argparse
 import os
-from pathlib import Path
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from bench.workspaces import (  # noqa: E402
+from bench.workspaces import (
     BenchError,
     load_manifest,
     prepare_manifest,
@@ -20,9 +20,7 @@ from bench.workspaces import (  # noqa: E402
 def benchmark_checkout(argument: str | None = None) -> Path:
     value = argument or os.environ.get("POLYGLOT_BENCHMARK")
     if not value:
-        raise BenchError(
-            "set POLYGLOT_BENCHMARK to the pinned Aider polyglot-benchmark checkout"
-        )
+        raise BenchError("set POLYGLOT_BENCHMARK to the pinned Aider polyglot-benchmark checkout")
     return Path(value).expanduser().resolve()
 
 
@@ -32,14 +30,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--manifest", type=Path, default=script.with_name("bakeoff.yaml"))
     parser.add_argument("--benchmark", help="defaults to POLYGLOT_BENCHMARK")
     parser.add_argument(
-        "--output", type=Path, default=script.parent / "results" / "workspaces",
+        "--output",
+        type=Path,
+        default=script.parent / "results" / "workspaces",
     )
     parser.add_argument(
-        "--repo-root", type=Path, default=script.parents[1],
+        "--repo-root",
+        type=Path,
+        default=script.parents[1],
         help="ds4-py checkout whose HEAD supplies both repository tasks",
     )
     parser.add_argument(
-        "--check-only", action="store_true",
+        "--check-only",
+        action="store_true",
         help="verify the pinned checkout and exercise inputs without writing workspaces",
     )
     args = parser.parse_args(argv)
@@ -54,7 +57,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         else:
             workspaces = prepare_manifest(
-                manifest, args.output, benchmark, args.repo_root,
+                manifest,
+                args.output,
+                benchmark,
+                args.repo_root,
             )
             print(f"prepared {len(workspaces)} tasks under {args.output}")
     except BenchError as error:

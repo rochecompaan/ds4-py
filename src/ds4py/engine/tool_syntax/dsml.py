@@ -1,12 +1,13 @@
 """Incremental DeepSeek DSML tool-call parser."""
-from copy import deepcopy
+
 import json
+from copy import deepcopy
 from types import MappingProxyType
+from typing import Never
 
 from .base import ToolParser
 from .model import ToolArgument, ToolCall
 from .text import unescape_tool_text
-from typing import Never
 
 _ASCII_SPACE = b" \t\r\n"
 _CLOSE_PREFIX = "</｜DSML｜".encode()
@@ -15,6 +16,7 @@ _BAR = "｜".encode()
 
 class Dsml(ToolParser):
     """Streaming DeepSeek DSML parser; v41 selects the spaced tag spellings."""
+
     def __init__(self, *, v41: bool = False) -> None:
         self.v41 = v41
         self._calls_name = " calls" if v41 else "tool_calls"
@@ -67,13 +69,13 @@ class Dsml(ToolParser):
         cursor = self._skip_space(self.raw, position + len(prefix))
         if self.raw.startswith(_BAR, cursor):
             cursor = self._skip_space(self.raw, cursor + len(_BAR))
-        if cursor < len(self.raw) and self.raw[cursor:cursor + 1] == b">":
+        if cursor < len(self.raw) and self.raw[cursor : cursor + 1] == b">":
             return cursor + 1
         return None
 
     @staticmethod
     def _attr(tag: bytes, name: str) -> bytes | None:
-        pattern = name.encode() + b'=\"'
+        pattern = name.encode() + b'="'
         start = tag.find(pattern)
         if start < 0:
             return None
@@ -87,7 +89,7 @@ class Dsml(ToolParser):
         prefix = f"<｜DSML｜{name}".encode()
         if not tag.startswith(prefix):
             return False
-        return tag[len(prefix):len(prefix) + 1] in (b">", b" ", b"\t", b"\r", b"\n")
+        return tag[len(prefix) : len(prefix) + 1] in (b">", b" ", b"\t", b"\r", b"\n")
 
     def _decode(self, value: bytes | bytearray, description: str) -> str | None:
         try:
@@ -98,10 +100,8 @@ class Dsml(ToolParser):
 
     def _push_current(self, end: int) -> None:
         if self._current_name is not None:
-            args = MappingProxyType({
-                name: deepcopy(argument.value) for name, argument in self._args.items()
-            })
-            raw = self._decode(self.raw[self._call_start:end], "tool call raw")
+            args = MappingProxyType({name: deepcopy(argument.value) for name, argument in self._args.items()})
+            raw = self._decode(self.raw[self._call_start : end], "tool call raw")
             if raw is None:
                 return
             self._calls.append(ToolCall(self._current_name, args, raw))
@@ -125,7 +125,7 @@ class Dsml(ToolParser):
             end = self.raw.find(b">", self.parse_pos)
             if end < 0:
                 return
-            tag = bytes(self.raw[self.parse_pos:end + 1])
+            tag = bytes(self.raw[self.parse_pos : end + 1])
             if self._open_tag_is(tag, self._invoke_name):
                 self._parse_invoke(tag, end + 1)
             elif self._open_tag_is(tag, self._parameter_name):
@@ -178,9 +178,7 @@ class Dsml(ToolParser):
         while True:
             candidate = self.raw.find(_CLOSE_PREFIX, cursor)
             if candidate < 0:
-                self._param_scan_pos = max(
-                    self._param_value_start, len(self.raw) - len(_CLOSE_PREFIX) + 1
-                )
+                self._param_scan_pos = max(self._param_value_start, len(self.raw) - len(_CLOSE_PREFIX) + 1)
                 return None
             end = self._close_tag_at(candidate, self._parameter_name)
             if end is not None:
@@ -195,7 +193,7 @@ class Dsml(ToolParser):
         if found is None:
             return False
         end, after = found
-        value_bytes = bytes(self.raw[self._param_value_start:end])
+        value_bytes = bytes(self.raw[self._param_value_start : end])
         text = self._decode(value_bytes, f"tool parameter {self._param_name!r}")
         if text is None:
             return True
@@ -204,14 +202,12 @@ class Dsml(ToolParser):
         else:
             try:
                 value = json.loads(text, parse_constant=self._reject_json_constant)
-            except (json.JSONDecodeError, ValueError):
+            except json.JSONDecodeError, ValueError:
                 self._fail(f"tool parameter {self._param_name!r} requires valid JSON")
                 return True
         param_name = self._param_name
         assert param_name is not None
-        self._args[param_name] = ToolArgument(
-            param_name, value, self._param_is_string
-        )
+        self._args[param_name] = ToolArgument(param_name, value, self._param_is_string)
         self._param_name = None
         self.param_close_prefix = False
         self.parse_pos = after

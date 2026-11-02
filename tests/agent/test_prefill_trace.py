@@ -1,8 +1,8 @@
-from typing import Any
 import json
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -16,11 +16,7 @@ from ds4py.engine.plan import Plan
 from ds4py.engine.replay import ReplayError, read_replay
 from ds4py.prefill_trace import PrefillTraceWriter
 
-
-TOOL_TEXT = (
-    "<tool_call><function=read><parameter=path>/tmp/x</parameter>"
-    "</function></tool_call>"
-)
+TOOL_TEXT = "<tool_call><function=read><parameter=path>/tmp/x</parameter></function></tool_call>"
 
 
 def scripted_rounds(*texts: Any) -> Any:
@@ -53,7 +49,8 @@ def test_text_and_tool_rounds_append_replayable_records(tmp_path: Path, monkeypa
 
         session.on_event(observe)
         monkeypatch.setattr(
-            session, "append_tool_results",
+            session,
+            "append_tool_results",
             lambda results: (_ for _ in ()).throw(AssertionError("trace executed a tool")),
         )
         with PrefillTraceWriter(session, path, think=engine.think) as writer:
@@ -73,9 +70,14 @@ def test_text_and_tool_rounds_append_replayable_records(tmp_path: Path, monkeypa
     assert len(trace.rounds) == 2
     assert len(path.read_text().splitlines()) == 2
 
-    for index, (round_, events, (prompt, cached)) in enumerate(zip(
-        trace.rounds, (text_events, tool_events), observed, strict=True,
-    )):
+    for index, (round_, events, (prompt, cached)) in enumerate(
+        zip(
+            trace.rounds,
+            (text_events, tool_events),
+            observed,
+            strict=True,
+        )
+    ):
         sampled = tuple(event.id for event in events if isinstance(event, Token))
         assert round_.number == index
         assert round_.prompt == prompt
@@ -89,7 +91,7 @@ def test_text_and_tool_rounds_append_replayable_records(tmp_path: Path, monkeypa
     assert [record["step_index"] for record in records] == [0, 0]
     assert [record["round_index"] for record in records] == [0, 1]
     for record, round_ in zip(records, trace.rounds, strict=True):
-        assert tuple(record["prefill_suffix"]) == round_.prompt[round_.cached:]
+        assert tuple(record["prefill_suffix"]) == round_.prompt[round_.cached :]
 
 
 class TraceSession(SessionLifecycle):
@@ -98,11 +100,11 @@ class TraceSession(SessionLifecycle):
         self.transcript = SimpleNamespace(tokens=tokens)
 
 
-def synced(pos: Any, reused: Any=0) -> Synced:
+def synced(pos: Any, reused: Any = 0) -> Synced:
     return Synced(pos, Plan("extend", reused, pos - reused, True, None), 0)
 
 
-def emit_round(session: Any, run_id: Any, *, fail: Any=False, repeated_sync: Any=False) -> None:
+def emit_round(session: Any, run_id: Any, *, fail: Any = False, repeated_sync: Any = False) -> None:
     session.emit("run_start", run_id=run_id)
     session.emit("Synced", event=synced(2, 1))
     session.emit("Token", event=Token(3, b"a"))
@@ -148,7 +150,9 @@ def test_writer_rejects_an_existing_c_text_trace(tmp_path: Path) -> None:
         PrefillTraceWriter(session, path, think=1)
 
 
-def test_failed_round_keeps_committed_tokens_and_ignores_save_only_sync(tmp_path: Path) -> None:
+def test_failed_round_keeps_committed_tokens_and_ignores_save_only_sync(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "trace.jsonl"
     session: Any = TraceSession([1, 2, 3, 4])
     with PrefillTraceWriter(session, path, think=1):
@@ -160,7 +164,9 @@ def test_failed_round_keeps_committed_tokens_and_ignores_save_only_sync(tmp_path
     assert records[0]["sampled"] == [3]
 
 
-def test_repeated_sync_preserves_original_prompt_and_all_samples(tmp_path: Path) -> None:
+def test_repeated_sync_preserves_original_prompt_and_all_samples(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "trace.jsonl"
     session: Any = TraceSession([1, 2, 3, 4])
     with PrefillTraceWriter(session, path, think=1):
@@ -173,7 +179,8 @@ def test_repeated_sync_preserves_original_prompt_and_all_samples(tmp_path: Path)
 
 
 def test_trace_write_failure_publishes_an_error_event(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session: Any = TraceSession([1, 2, 3, 4])
     events = []
@@ -213,13 +220,16 @@ def write_record(tmp_path: Path, value: Any) -> Any:
     return path
 
 
-@pytest.mark.parametrize("mutate,fragment", [
-    (lambda value: value.pop("prompt"), "missing field"),
-    (lambda value: value.update(cached=2), r"cached \+ prefill_suffix"),
-    (lambda value: value.update(prefill_suffix=[9, 3]), "suffix does not match"),
-    (lambda value: value.update(sampled="4"), "sampled"),
-    (lambda value: value.update(round_index=True), "round_index"),
-])
+@pytest.mark.parametrize(
+    "mutate,fragment",
+    [
+        (lambda value: value.pop("prompt"), "missing field"),
+        (lambda value: value.update(cached=2), r"cached \+ prefill_suffix"),
+        (lambda value: value.update(prefill_suffix=[9, 3]), "suffix does not match"),
+        (lambda value: value.update(sampled="4"), "sampled"),
+        (lambda value: value.update(round_index=True), "round_index"),
+    ],
+)
 def test_ds4py_replay_records_fail_loudly(tmp_path: Path, mutate: Any, fragment: Any) -> None:
     value = dict(VALID)
     mutate(value)
@@ -229,7 +239,9 @@ def test_ds4py_replay_records_fail_loudly(tmp_path: Path, mutate: Any, fragment:
     assert f"{path}:1:" in str(caught.value)
 
 
-def test_ds4py_replay_rejects_regressing_harness_steps_within_a_run(tmp_path: Path) -> None:
+def test_ds4py_replay_rejects_regressing_harness_steps_within_a_run(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "trace.jsonl"
     first = dict(VALID, step_index=2)
     second = dict(VALID, step_index=1, round_index=1)
@@ -239,7 +251,9 @@ def test_ds4py_replay_rejects_regressing_harness_steps_within_a_run(tmp_path: Pa
         read_replay(path)
 
 
-def test_ds4py_replay_rejects_regressing_steps_in_an_interleaved_run(tmp_path: Path) -> None:
+def test_ds4py_replay_rejects_regressing_steps_in_an_interleaved_run(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "trace.jsonl"
     records = [
         dict(VALID, run_id="A", step_index=2, round_index=0),

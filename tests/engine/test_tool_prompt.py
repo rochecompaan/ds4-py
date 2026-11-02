@@ -11,7 +11,11 @@ DEFINITIONS = [
     ToolDefinition(
         "read",
         "Read a file.",
-        {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+        {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
     ),
     ToolDefinition(
         "edit",
@@ -29,7 +33,7 @@ DEFINITIONS = [
 ]
 
 
-def deepseek_expected(schemas: Any, *, v41: Any=False) -> str:
+def deepseek_expected(schemas: Any, *, v41: Any = False) -> str:
     calls = " calls" if v41 else "tool_calls"
     invoke = " invoke" if v41 else "invoke"
     parameter = " parameter" if v41 else "parameter"
@@ -40,14 +44,14 @@ def deepseek_expected(schemas: Any, *, v41: Any=False) -> str:
         "## Tools\n\n"
         "You have access to native DSML tools. Invoke tools by writing exactly this shape:\n\n"
         f"<｜DSML｜{calls}>\n"
-        f"<｜DSML｜{invoke} name=\"$TOOL_NAME\">\n"
-        f"<｜DSML｜{parameter} name=\"$PARAMETER_NAME\" string=\"true|false\">"
+        f'<｜DSML｜{invoke} name="$TOOL_NAME">\n'
+        f'<｜DSML｜{parameter} name="$PARAMETER_NAME" string="true|false">'
         f"$PARAMETER_VALUE</｜DSML｜{parameter}>\n"
         f"</｜DSML｜{invoke}>\n"
         f"</｜DSML｜{calls}>\n\n"
         "Tool calls are not allowed inside <think></think>; finish thinking before emitting DSML.\n\n"
-        "String parameters use raw text and string=\"true\". Numbers and booleans use JSON text and "
-        "string=\"false\".\n\n"
+        'String parameters use raw text and string="true". Numbers and booleans use JSON text and '
+        'string="false".\n\n'
         "Inside string values only, escape a literal closing parameter tag as "
         f"{escaped}. To write that escaped spelling literally, use {doubly_escaped}. "
         "Other HTML entities are unchanged.\n\n"
@@ -98,8 +102,7 @@ def test_glm_prompt_is_exact() -> None:
 
 def test_qwen_prompt_is_exact_and_wraps_each_schema() -> None:
     wrapped = (
-        '{"type":"function","function":' + READ_SCHEMA + '}\n'
-        + '{"type":"function","function":' + EDIT_SCHEMA + '}'
+        '{"type":"function","function":' + READ_SCHEMA + "}\n" + '{"type":"function","function":' + EDIT_SCHEMA + "}"
     )
     prompt = ToolPromptGenerator("qwen").generate(DEFINITIONS)
     assert prompt == qwen_expected(wrapped)
@@ -140,28 +143,30 @@ def test_unknown_family_is_an_error() -> None:
         ToolPromptGenerator("other").generate(DEFINITIONS)
 
 
-@pytest.mark.parametrize('family', ['deepseek4', 'deepseek41', 'glm', 'qwen'])
+@pytest.mark.parametrize("family", ["deepseek4", "deepseek41", "glm", "qwen"])
 def test_every_generated_example_executes_the_intended_call(family: Any) -> None:
     from ds4py.engine.tool_syntax.dsml import Dsml
     from ds4py.engine.tool_syntax.glm import Glm
     from ds4py.engine.tool_syntax.qwen import Qwen
+
     prompt = ToolPromptGenerator(family).generate([])
-    if family.startswith('deepseek'):
-        examples = prompt.split('writing exactly this shape:\n\n', 1)[1].split('\n\n', 1)[0]
-        examples = (examples
-            .replace('$TOOL_NAME', 'read')
-            .replace('$PARAMETER_NAME', 'path')
+    if family.startswith("deepseek"):
+        examples = prompt.split("writing exactly this shape:\n\n", 1)[1].split("\n\n", 1)[0]
+        examples = (
+            examples.replace("$TOOL_NAME", "read")
+            .replace("$PARAMETER_NAME", "path")
             .replace('string="true|false"', 'string="true"')
-            .replace('$PARAMETER_VALUE', 'README.md'))
+            .replace("$PARAMETER_VALUE", "README.md")
+        )
     else:
-        examples = prompt.split('Call example:\n', 1)[1].split('\n\n', 1)[0]
-    factory = {'glm': Glm, 'qwen': Qwen}.get(family, lambda: Dsml(v41=family == 'deepseek41'))
+        examples = prompt.split("Call example:\n", 1)[1].split("\n\n", 1)[0]
+    factory = {"glm": Glm, "qwen": Qwen}.get(family, lambda: Dsml(v41=family == "deepseek41"))
     # No prose or unsupported teaching stanza may be silently skipped.
-    examples = examples.splitlines() if family == 'glm' else [examples]
+    examples = examples.splitlines() if family == "glm" else [examples]
     assert examples
     for example in examples:
         parser = factory()
         parser.feed(example.encode())
         result = parser.finish()
-        assert result.state == 'DONE'
-        assert [(call.name, dict(call.args)) for call in result.calls] == [('read', {'path': 'README.md'})]
+        assert result.state == "DONE"
+        assert [(call.name, dict(call.args)) for call in result.calls] == [("read", {"path": "README.md"})]

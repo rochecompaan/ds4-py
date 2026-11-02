@@ -1,8 +1,8 @@
 from typing import Any
+
 import pytest
 
 from ds4py.engine.tool_syntax.text import escape_tool_text, unescape_tool_text
-
 
 CLOSING_TAGS = [
     "</｜DSML｜parameter>",

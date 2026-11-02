@@ -1,7 +1,7 @@
 """Behavior of the stdlib save record and KV store primitives."""
-from typing import Any
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -68,13 +68,15 @@ def test_kv_payload_round_trips_through_the_declared_header(tmp_path: Path) -> N
 
     store.write_kv_atomic(path, payload)
 
-    magic, version, declared = KV_HEADER.unpack(path.read_bytes()[:KV_HEADER.size])
+    magic, version, declared = KV_HEADER.unpack(path.read_bytes()[: KV_HEADER.size])
     assert (magic, version, declared) == (KV_MAGIC, KV_VERSION, len(payload))
     assert path.stat().st_size == KV_HEADER.size + len(payload)
     assert store.read_kv(path) == payload
 
 
-def test_zero_length_payload_round_trips_without_looking_missing(tmp_path: Path) -> None:
+def test_zero_length_payload_round_trips_without_looking_missing(
+    tmp_path: Path,
+) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("empty") / "session.kv"
 
@@ -109,7 +111,13 @@ def test_save_record_from_dict_preserves_all_segment_provenance() -> None:
 
 def test_note_provenance_round_trips_text_and_accepts_legacy_kv_records() -> None:
     note = SegmentProvenance(
-        0, 1, "system_note:date", "", "", "rendered", text="original date note",
+        0,
+        1,
+        "system_note:date",
+        "",
+        "",
+        "rendered",
+        text="original date note",
     )
 
     encoded = note.to_dict()
@@ -186,7 +194,9 @@ def test_find_resolves_a_unique_session_id_prefix(tmp_path: Path) -> None:
     assert path == store.session_dir("bbbb3333") / "save.json"
 
 
-def test_find_rejects_a_prefix_matching_an_exact_id_and_a_longer_id(tmp_path: Path) -> None:
+def test_find_rejects_a_prefix_matching_an_exact_id_and_a_longer_id(
+    tmp_path: Path,
+) -> None:
     store = SessionStore(tmp_path)
     for session_id in ("abc", "abcdef"):
         store.write_record_atomic(
@@ -202,7 +212,9 @@ def test_find_rejects_a_prefix_matching_an_exact_id_and_a_longer_id(tmp_path: Pa
     assert "abcdef" in str(caught.value)
 
 
-def test_validate_for_engine_accepts_the_matching_model_and_quant(tmp_path: Path) -> None:
+def test_validate_for_engine_accepts_the_matching_model_and_quant(
+    tmp_path: Path,
+) -> None:
     store = SessionStore(tmp_path)
 
     store.validate_for_engine(record(), engine_info())

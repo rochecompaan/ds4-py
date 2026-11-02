@@ -7,8 +7,9 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
-from ds4py.engine.session import Session
 from pydantic_ai.capabilities import AbstractCapability
+
+from ds4py.engine.session import Session
 
 _TERM_GRACE = 2.0
 _KILL_WAIT = 2.0
@@ -54,7 +55,7 @@ class ShellJobState:
                     continue
                 _signal(pid, group, signal.SIGKILL)
                 _wait_for_exit(pid, group, _KILL_WAIT)
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 continue
 
 
@@ -68,11 +69,18 @@ class DS4ShellJobs(AbstractCapability):
     def _state(self) -> ShellJobState:
         workspace_dir = getattr(self.workspace, "working_dir", self.workspace)
         return self.session.state(
-            "shell_jobs", lambda: ShellJobState(cast(str | Path, workspace_dir)),
+            "shell_jobs",
+            lambda: ShellJobState(cast("str | Path", workspace_dir)),
         )
 
     async def after_tool_execute(
-        self, ctx: Any, *, call: Any, tool_def: Any, args: Any, result: Any,
+        self,
+        ctx: Any,
+        *,
+        call: Any,
+        tool_def: Any,
+        args: Any,
+        result: Any,
     ) -> Any:
         if call.tool_name == "start_command" and isinstance(result, str):
             for line in result.splitlines():
@@ -89,7 +97,7 @@ def _published_exit(status_path: Path) -> int | None:
         return None
     try:
         return json.loads(status_path.read_text()).get("exit_code")
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
 

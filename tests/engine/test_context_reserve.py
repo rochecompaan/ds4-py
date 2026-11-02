@@ -10,14 +10,22 @@ from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.engine.events import (
-    Prefill, ReserveReached, Stopped, Synced, Thinking, Token, ToolSyntax,
+    Prefill,
+    ReserveReached,
+    Stopped,
+    Synced,
+    Thinking,
+    Token,
+    ToolSyntax,
 )
 from ds4py.errors import EngineError
 
 
-DSML = ("<｜DSML｜tool_calls><｜DSML｜invoke name=\"read\">"
-        "<｜DSML｜parameter name=\"path\" string=\"true\">/tmp/x</｜DSML｜parameter>"
-        "</｜DSML｜invoke></｜DSML｜tool_calls>")
+DSML = (
+    '<｜DSML｜tool_calls><｜DSML｜invoke name="read">'
+    '<｜DSML｜parameter name="path" string="true">/tmp/x</｜DSML｜parameter>'
+    "</｜DSML｜invoke></｜DSML｜tool_calls>"
+)
 
 
 def scripted(*tokens: Any) -> Any:
@@ -33,7 +41,7 @@ def scripted(*tokens: Any) -> Any:
 
 
 @contextmanager
-def chat_session(*tokens: Any, ctx: Any=673, cancel: Any=None, think: Any=ThinkMode.NONE) -> Iterator[Any]:
+def chat_session(*tokens: Any, ctx: Any = 673, cancel: Any = None, think: Any = ThinkMode.NONE) -> Iterator[Any]:
     # The default fake chat prompt plus assistant prefix is 671 tokens.
     with ds4py.open(
         "f.gguf",
@@ -55,16 +63,12 @@ def next_pause(events: Any, seen: Any) -> Any:
     raise AssertionError("chat context reserve did not pause for a decision")
 
 
-def make_room(session: Any, ctx: Any=1024) -> None:
+def make_room(session: Any, ctx: Any = 1024) -> None:
     session._worker.call(lambda engine, native: setattr(native, "_ctx", ctx)).result()
 
 
 def content_events(events: Any) -> Any:
-    return [
-        event
-        for event in events
-        if not isinstance(event, (Prefill, Synced, ReserveReached))
-    ]
+    return [event for event in events if not isinstance(event, (Prefill, Synced, ReserveReached))]
 
 
 def test_raw_round_still_reports_context_reserve_directly() -> None:

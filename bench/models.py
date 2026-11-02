@@ -121,15 +121,16 @@ class EventSummary:
             invalid_non_extend_rounds=data.get("invalid_non_extend_rounds", 0),
             allowed_non_extend_rounds=data.get("allowed_non_extend_rounds", 0),
             non_extension_reasons=_strings(
-                data.get("non_extension_reasons", ()), "non_extension_reasons",
+                data.get("non_extension_reasons", ()),
+                "non_extension_reasons",
             ),
             parser_errors=data.get("parser_errors", 0),
-            tool_accounting=(
-                None if accounting is None else ToolAccounting.from_dict(accounting)
-            ),
+            tool_accounting=(None if accounting is None else ToolAccounting.from_dict(accounting)),
             reuse_ratios=tuple(
-                float(item) for item in _sequence(
-                    data.get("reuse_ratios", ()), "reuse_ratios",
+                float(item)
+                for item in _sequence(
+                    data.get("reuse_ratios", ()),
+                    "reuse_ratios",
                 )
             ),
         )
@@ -176,15 +177,15 @@ class TaskRunResult:
             summary=EventSummary.from_dict(_field(data, "summary")),
             grader_outputs=_strings(data.get("grader_outputs", ()), "grader_outputs"),
             attempt_save_dirs=_paths(
-                data.get("attempt_save_dirs", ()), "attempt_save_dirs",
+                data.get("attempt_save_dirs", ()),
+                "attempt_save_dirs",
             ),
             attempt_trace_paths=_paths(
-                data.get("attempt_trace_paths", ()), "attempt_trace_paths",
+                data.get("attempt_trace_paths", ()),
+                "attempt_trace_paths",
             ),
             errors=_strings(data.get("errors", ()), "errors"),
-            workspace=(
-                None if workspace is None else Path(_text(workspace, "workspace"))
-            ),
+            workspace=(None if workspace is None else Path(_text(workspace, "workspace"))),
         )
 
     def __getattr__(self, name: str) -> Any:

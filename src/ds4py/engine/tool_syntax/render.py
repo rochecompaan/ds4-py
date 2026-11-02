@@ -1,4 +1,5 @@
 """Canonical native syntax for assistant calls reconstructed from history."""
+
 import json
 from collections.abc import Mapping
 
@@ -37,7 +38,10 @@ def _validate_json(value: object) -> None:
 def _json(value: object) -> str:
     _validate_json(value)
     return json.dumps(
-        value, ensure_ascii=False, separators=(",", ":"), allow_nan=False,
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
     ).replace("<", "\\u003c")
 
 
@@ -47,13 +51,10 @@ def _validate_name(family: str, value: object, kind: str) -> None:
         invalid = invalid or (isinstance(value, str) and any(c in value for c in '">'))
     elif family == "glm":
         invalid = invalid or (
-            isinstance(value, str)
-            and (value != value.strip(" \t\r\n") or (kind == "tool name" and "<" in value))
+            isinstance(value, str) and (value != value.strip(" \t\r\n") or (kind == "tool name" and "<" in value))
         )
     elif family == "qwen":
-        invalid = invalid or (
-            isinstance(value, str) and (value != value.strip(" \t\r\n") or ">" in value)
-        )
+        invalid = invalid or (isinstance(value, str) and (value != value.strip(" \t\r\n") or ">" in value))
     if invalid:
         raise ValueError(f"{family} cannot preserve {kind} {value!r}")
 
@@ -67,13 +68,9 @@ def _dsml(name: str, args: Mapping[str, object], *, v41: bool) -> str:
     for key, value in args.items():
         if isinstance(value, str):
             rendered = escape_tool_text(value, closing)
-            lines.append(
-                f'<｜DSML｜{parameter} name="{key}" string="true">{rendered}{closing}'
-            )
+            lines.append(f'<｜DSML｜{parameter} name="{key}" string="true">{rendered}{closing}')
         else:
-            lines.append(
-                f'<｜DSML｜{parameter} name="{key}" string="false">{_json(value)}{closing}'
-            )
+            lines.append(f'<｜DSML｜{parameter} name="{key}" string="false">{_json(value)}{closing}')
     lines.extend([f"</｜DSML｜{invoke}>", f"</｜DSML｜{calls}>"])
     return "\n".join(lines)
 
@@ -84,10 +81,7 @@ def _glm(name: str, args: Mapping[str, object]) -> str:
         if not isinstance(value, str):
             raise ValueError(f"GLM cannot preserve non-string argument {key!r}")
         key_text = escape_tool_text(str(key), "</arg_key>")
-        spans.append(
-            f"<arg_key>{key_text}</arg_key><arg_value>"
-            f"{escape_tool_text(value, '</arg_value>')}</arg_value>"
-        )
+        spans.append(f"<arg_key>{key_text}</arg_key><arg_value>{escape_tool_text(value, '</arg_value>')}</arg_value>")
     spans.append("</tool_call>")
     return "".join(spans)
 
@@ -102,15 +96,21 @@ def _qwen(name: str, args: Mapping[str, object]) -> str:
             value_text = escape_tool_text(value_text, "</parameter>")
         elif not value_is_json(value_text.encode()):
             raise ValueError(f"Qwen cannot preserve non-JSON argument {key!r}")
-        lines.extend([
-            f"<parameter={key}>", value_text, "</parameter>",
-        ])
+        lines.extend(
+            [
+                f"<parameter={key}>",
+                value_text,
+                "</parameter>",
+            ]
+        )
     lines.extend(["</function>", "</tool_call>"])
     return "\n".join(lines)
 
 
 def render_tool_call(
-    family: str, name: str, args: Mapping[str, object] | str | None,
+    family: str,
+    name: str,
+    args: Mapping[str, object] | str | None,
 ) -> str:
     """Render one call in the model family's existing native syntax."""
     arguments = _arguments(args)
