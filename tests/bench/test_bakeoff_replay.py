@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
+
 import ds4py
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
@@ -103,9 +105,14 @@ def test_tool_round_replays_every_token_and_stops_without_tool_execution(
     assert result.terminal_reason == "tool_call_complete"
 
 
-def test_token_mismatch_fails_with_task_round_and_token_index(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("text", "tool_call"), [(TOOL_TEXT, True), ("hello", False)])
+def test_token_mismatch_fails_with_task_round_token_index_and_round_type(
+    tmp_path: Path,
+    text: str,
+    tool_call: bool,
+) -> None:
     path = tmp_path / "mismatch.trace"
-    sampled = write_c_trace(path, TOOL_TEXT)
+    sampled = write_c_trace(path, text)
 
     with engine_for(sampled, mismatch_at=1) as engine:
         results = replay_with_engine(
@@ -118,6 +125,7 @@ def test_token_mismatch_fails_with_task_round_and_token_index(tmp_path: Path) ->
     assert "mismatch-task" in results[0].detail
     assert "round 0" in results[0].detail
     assert "token 1" in results[0].detail
+    assert results[0].tool_call is tool_call
 
 
 def test_malformed_c_record_becomes_failing_gate_evidence(tmp_path: Path) -> None:

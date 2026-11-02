@@ -310,11 +310,14 @@ def replay_with_engine(
                     round_,
                 )
             except (Ds4pyError, ReplayMismatch) as error:
+                data = b"".join(engine.token_text(token) for token in round_.sampled)
+                c_snapshot = _parse_c(engine, round_, [data])
                 result = ReplayResult(
                     task_id,
                     ordinal,
                     False,
                     str(error),
+                    tool_call=c_snapshot.state == "DONE" and bool(c_snapshot.calls),
                     trace_path=path,
                 )
             results.append(replace(result, trace_path=path))
