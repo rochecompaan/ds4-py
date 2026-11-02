@@ -39,6 +39,7 @@ class GenerateJob:
     control: ControlSpan = field(default_factory=ControlSpan)
     resume: bool = False
     sampled_tokens: list[int] = field(default_factory=list)
+    decode_step: DecodeStep | None = None
 
     def __post_init__(self) -> None:
         if self.stream is not None and self.stream.control is not self.control:

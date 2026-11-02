@@ -278,7 +278,14 @@ class EngineWorker:
         elif isinstance(job, ResetJob):
             self._reset(session)
         elif isinstance(job, GenerateJob):
-            reason = generate(engine, session, job, cancelled=self.cancel_event.is_set, emit=emit)
+            reason = generate(
+                engine,
+                session,
+                job,
+                cancelled=self.cancel_event.is_set,
+                emit=emit,
+                step=job.decode_step,
+            )
             if reason == "interrupted":
                 self.cancel_event.clear()
             emit(Stopped(reason))
