@@ -40,7 +40,7 @@ class ChatLib:
 
     def push(self, pointer: Any, token: Any) -> None:
         tokens = self.tokens(pointer)
-        values = list(tokens.v[: tokens.len]) + [token]
+        values = [*list(tokens.v[: tokens.len]), token]
         array = (C.c_int * len(values))(*values)
         self.keepalive.append(array)
         tokens.v = C.cast(array, C.POINTER(C.c_int))

@@ -2,13 +2,15 @@
 
 import json
 import re
-from typing import Never
+from typing import Never, override
 
 from .delimiter import DelimiterParser
 from .model import ToolArgument
 from .text import unescape_tool_text
 
 _ASCII_SPACE = b" \t\r\n"
+_MAX_JSON_NUMBER_LENGTH = 64
+_LF = 10
 _CLOSE = b"</tool_call>"
 _FUNCTION = b"<function="
 _FUNCTION_CLOSE = b"</function>"
@@ -36,7 +38,7 @@ def value_is_json(value: bytes) -> bool:
         return True
     if trimmed in (b"true", b"false", b"null"):
         return True
-    return len(trimmed) < 64 and _NUMBER.fullmatch(trimmed) is not None
+    return len(trimmed) < _MAX_JSON_NUMBER_LENGTH and _NUMBER.fullmatch(trimmed) is not None
 
 
 class Qwen(DelimiterParser):
@@ -46,6 +48,7 @@ class Qwen(DelimiterParser):
     _parameter_close = _PARAMETER_CLOSE
     _family = "Qwen"
 
+    @override
     def _parse_call(self) -> bool:
         if not self.raw.startswith(_FUNCTION, self.parse_pos):
             if self._partial(_FUNCTION, self.parse_pos):
@@ -57,7 +60,7 @@ class Qwen(DelimiterParser):
         if end < 0:
             return False
         name = self._decode(self.raw[start:end].strip(_ASCII_SPACE), "Qwen function name")
-        if not name:
+        if name is None or name == "":
             if self.state != "ERROR":
                 self._fail("Qwen tool call without function name")
             return False
@@ -65,6 +68,7 @@ class Qwen(DelimiterParser):
         self.parse_pos = end + 1
         return True
 
+    @override
     def _parse_call_close(self) -> bool:
         after = self._skip_space(self.raw, self.parse_pos + len(_FUNCTION_CLOSE))
         if after >= len(self.raw) or self._partial(_CLOSE, after):
@@ -77,6 +81,7 @@ class Qwen(DelimiterParser):
         self._after_call = True
         return True
 
+    @override
     def _parse_parameter(self) -> None:
         if not self.raw.startswith(_PARAMETER, self.parse_pos):
             if self._partial(_PARAMETER, self.parse_pos):
@@ -88,7 +93,7 @@ class Qwen(DelimiterParser):
         if end < 0:
             return
         name = self._decode(self.raw[start:end].strip(_ASCII_SPACE), "Qwen parameter name")
-        if not name:
+        if name is None or name == "":
             if self.state != "ERROR":
                 self._fail("empty <parameter=> name in Qwen tool call")
             return
@@ -98,6 +103,7 @@ class Qwen(DelimiterParser):
         self._param_scan_pos = self.parse_pos
         self.state = "PARAM_VALUE"
 
+    @override
     def _parse_parameter_value(self) -> bool:
         end = self.raw.find(_PARAMETER_CLOSE, self._param_scan_pos)
         if end < 0:
@@ -105,9 +111,9 @@ class Qwen(DelimiterParser):
             return False
         close_start = end
         start = self._param_value_start
-        if start < end and self.raw[start] == 10:
+        if start < end and self.raw[start] == _LF:
             start += 1
-        if end > start and self.raw[end - 1] == 10:
+        if end > start and self.raw[end - 1] == _LF:
             end -= 1
         value_bytes = bytes(self.raw[start:end])
         text = self._decode(value_bytes, f"Qwen parameter {self._param_name!r}")
@@ -117,7 +123,7 @@ class Qwen(DelimiterParser):
         if is_json:
             try:
                 number = text.strip()
-                if len(number) < 64 and _NUMBER.fullmatch(number.encode()):
+                if len(number) < _MAX_JSON_NUMBER_LENGTH and _NUMBER.fullmatch(number.encode()):
                     value = _parse_number(number)
                 else:
                     value = json.loads(text, parse_constant=self._reject_json_constant)
@@ -127,7 +133,8 @@ class Qwen(DelimiterParser):
         else:
             value = unescape_tool_text(text, _PARAMETER_CLOSE.decode())
         param_name = self._param_name
-        assert param_name is not None
+        if param_name is None:
+            raise AssertionError("completed Qwen parameter requires a name")
         self._args[param_name] = ToolArgument(param_name, value, not is_json)
         self._param_name = None
         self.parse_pos = close_start + len(_PARAMETER_CLOSE)

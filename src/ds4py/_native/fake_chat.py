@@ -1,11 +1,12 @@
 """Deterministic fake-vocabulary mirror of ds4's native chat rendering."""
 
-from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from .protocol import ThinkMode
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from .fake import FakeEngine
 
 

@@ -1,11 +1,11 @@
-from typing import Any
-from collections.abc import Iterator
 import threading
+from collections.abc import Generator
 from contextlib import contextmanager
+from typing import Any
 
-import ds4py
 import pytest
 
+import ds4py
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
@@ -19,7 +19,6 @@ from ds4py.engine.events import (
     ToolSyntax,
 )
 from ds4py.errors import EngineError
-
 
 DSML = (
     '<｜DSML｜tool_calls><｜DSML｜invoke name="read">'
@@ -41,7 +40,7 @@ def scripted(*tokens: Any) -> Any:
 
 
 @contextmanager
-def chat_session(*tokens: Any, ctx: Any = 673, cancel: Any = None, think: Any = ThinkMode.NONE) -> Iterator[Any]:
+def chat_session(*tokens: Any, ctx: Any = 673, cancel: Any = None, think: Any = ThinkMode.NONE) -> Generator[Any]:
     # The default fake chat prompt plus assistant prefix is 671 tokens.
     with ds4py.open(
         "f.gguf",
@@ -171,7 +170,7 @@ def test_second_decision_cannot_change_an_inflight_continuation() -> None:
         make_room(session)
         pause.resume(0)
         next(round_)
-        with pytest.raises(EngineError, match="already|decision"):
+        with pytest.raises(EngineError, match=r"already|decision"):
             pause.fail()
         remainder = list(round_)
         assert remainder[-1] == Stopped("stop_token")

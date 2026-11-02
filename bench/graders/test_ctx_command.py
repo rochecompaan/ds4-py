@@ -2,9 +2,10 @@
 
 import asyncio
 import re
-from typing import Any, Never, cast
+from typing import TYPE_CHECKING, Any, Never, cast
 
-from ds4py.runtime import AgentRuntime
+if TYPE_CHECKING:
+    from ds4py.runtime import AgentRuntime
 from ds4py.tui_commands import SlashCommandRegistry, install_builtin_commands
 
 

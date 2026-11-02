@@ -2,13 +2,17 @@
 
 import hashlib
 import subprocess
-from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ds4py._native.bindings import Binding
 from ds4py._native.structs import STRUCTS, StructLayout, struct_layout
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
+
+    from ds4py._native.bindings import Binding
 from ds4py._native.typemap import parse_prototype, probe_declaration
 
 from .pins import HEADER_FILES, KNOWN_HEADERS
@@ -55,6 +59,7 @@ def probe_signatures(
             ],
             capture_output=True,
             text=True,
+            check=False,
         )
         return binding.name, ProbeResult(result.returncode == 0, result.stderr)
 

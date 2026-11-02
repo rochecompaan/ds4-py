@@ -2,10 +2,12 @@
 
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, override
 
-from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, PreparedToolset
+
+if TYPE_CHECKING:
+    from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness import FileSystem
 
 
@@ -28,15 +30,15 @@ def prepare_file_tool_definitions(tool_defs: list[ToolDefinition], *, default_re
 class DS4FileSystem(FileSystem):
     """A filesystem capability whose schema reflects its configured read default."""
 
-    _prepared_toolset: PreparedToolset[Any] | None = field(
+    _prepared_toolset: PreparedToolset[object] | None = field(
         default=None,
         init=False,
         repr=False,
         compare=False,
     )
 
-    # FileSystem's declared return union excludes its supported toolset wrappers.
-    def get_toolset(self) -> AbstractToolset[Any]:  # pyright: ignore[reportIncompatibleMethodOverride]
+    @override
+    def get_toolset(self) -> AbstractToolset[object]:  # ty: ignore[invalid-method-override] - PreparedToolset is supported by FileSystem but missing from its return annotation.
         if self._prepared_toolset is None:
             self._prepared_toolset = PreparedToolset(
                 super().get_toolset(),

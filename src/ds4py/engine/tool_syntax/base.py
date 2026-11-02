@@ -1,6 +1,9 @@
 """Shared byte-stream state for family-specific tool parsers."""
 
-from ds4py._native.protocol import EngineInfo
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ds4py._native.protocol import EngineInfo
 
 from .model import Snapshot, ToolCall
 
@@ -97,7 +100,7 @@ class ToolParser:
                 else:
                     self._start(form[1])
                 return
-            markers = (_THINK_OPEN, _THINK_CLOSE) + tuple(form[0] for form in self._forms)
+            markers = (_THINK_OPEN, _THINK_CLOSE, *(form[0] for form in self._forms))
             if any(marker.startswith(pending) for marker in markers):
                 return
             ordinary = self._pending[0]
@@ -150,14 +153,14 @@ class ToolParser:
 
 def make_parser(info: EngineInfo) -> ToolParser:
     """Select a fresh parser from engine family flags; performs no native calls."""
-    from .dsml import Dsml
+    from .dsml import Dsml  # noqa: PLC0415 - Lazy parser registration avoids family import cycles.
 
     if info.is_qwen4:
-        from .qwen import Qwen
+        from .qwen import Qwen  # noqa: PLC0415 - Lazy parser registration avoids family import cycles.
 
         return Qwen()
     if info.is_glm_dsa:
-        from .glm import Glm
+        from .glm import Glm  # noqa: PLC0415 - Lazy parser registration avoids family import cycles.
 
         return Glm()
     return Dsml(v41=info.is_deepseek41)

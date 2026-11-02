@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from _helpers import run_context
+from pydantic_ai.messages import PartStartEvent, TextPart
 
 import ds4py
 from ds4py import ThinkMode
@@ -44,7 +46,7 @@ def test_engine_events_are_one_flushed_json_line_each(tmp_path: Path) -> None:
     with fake_engine(script=scripted_text("ok")) as engine:
         session = engine.session()
         record = DS4RunRecord(session, path)
-        asyncio.run(record.for_run(SimpleNamespace(run_id="run-1")))
+        asyncio.run(record.for_run(run_context(run_id="run-1")))
         session.start_chat()
         session.emit("run_start")
         list(session.run_round())
@@ -90,9 +92,9 @@ def test_record_write_failure_is_reported_and_never_hidden(tmp_path: Path) -> No
         assert str(path) in str(record.failure)
 
         # The harness hook does surface it, so the run cannot report success.
-        ctx = SimpleNamespace(conversation_id=session.id, run_id="run-1")
-        with pytest.raises(OSError):
-            asyncio.run(record.on_event(ctx, event=SimpleNamespace(parts=[])))
+        ctx = run_context(conversation_id=session.id, run_id="run-1")
+        with pytest.raises(OSError, match=r"events.jsonl"):
+            asyncio.run(record.on_event(ctx, event=PartStartEvent(index=0, part=TextPart("event"))))
         assert record.failure is not None
 
 
@@ -121,7 +123,7 @@ def test_run_record_writes_one_bridged_agent_event_from_the_session_bus(
     with fake_engine() as engine:
         session = engine.session()
         record = DS4RunRecord(session, path)
-        ctx = SimpleNamespace(conversation_id="conversation", run_id="run")
+        ctx = run_context(conversation_id="conversation", run_id="run")
         asyncio.run(record.for_run(ctx))
         event = SimpleNamespace(parts=[])
 

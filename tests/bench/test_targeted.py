@@ -1,19 +1,19 @@
 """Independent targeted bakeoff repetitions with retained evidence."""
 
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-import sys
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
+import bench.run_targeted as targeted
 from bench.metrics import EventSummary
 from bench.run_bakeoff import TaskRunResult
 from bench.workspaces import Workspace
-import bench.run_targeted as targeted
 
 
 def workspace(root: Path, task_id: str) -> Workspace:

@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from pydantic_ai.messages import (
     InstructionBaselinePart,
@@ -21,9 +21,11 @@ from pydantic_ai.messages import (
 )
 
 from ds4py.engine.prompt import PromptBuilder, RenderedSegment
-from ds4py.engine.session import Engine
 from ds4py.engine.tool_syntax.render import render_tool_call
-from ds4py.engine.transcript import Segment, TranscriptView
+
+if TYPE_CHECKING:
+    from ds4py.engine.session import Engine
+    from ds4py.engine.transcript import Segment, TranscriptView
 
 
 class RenderTarget(Protocol):
@@ -117,7 +119,7 @@ class MessageRenderer:
             stanzas.append("\n".join(markup.split("\n")[1:-1]))
         return f"<｜DSML｜{calls}>\n{'\n'.join(stanzas)}\n</｜DSML｜{calls}>"
 
-    def response_segments(
+    def response_segments(  # noqa: PLR0915 - Response rendering handles every message-part family.
         self,
         builder: PromptBuilder,
         prefix: Sequence[int],
@@ -155,12 +157,15 @@ class MessageRenderer:
                 end = index
                 while end < len(parts) and isinstance(parts[end], ToolCallPart):
                     end += 1
-                tool_parts = cast("list[ToolCallPart]", parts[index:end])
+                tool_parts = [part for part in parts[index:end] if isinstance(part, ToolCallPart)]
+                if len(tool_parts) != end - index:
+                    raise AssertionError("DSML tool-call group contains a non-tool part")
                 spans.append((self._dsml_calls(tool_parts, sampled), True))
                 index = end
             else:
                 close_thinking()
-                part = cast("ToolCallPart", part)
+                if not isinstance(part, ToolCallPart):
+                    raise AssertionError("tool-only message part expected")
                 details = part.provider_details or {}
                 raw = details.get("ds4py.raw")
                 markup = (

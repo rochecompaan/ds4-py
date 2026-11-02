@@ -1,33 +1,16 @@
 """AgentRuntime runs, step snapshots, and run-record execution (Task 9)."""
 
-from typing import Any, cast
-from collections.abc import Iterator
-from collections.abc import AsyncIterator
-
 import asyncio
+import json
+from collections.abc import AsyncGenerator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from io import StringIO
-import json
 from pathlib import Path
+from typing import Any, cast, override
 
 import pytest
-
-import ds4py
-from ds4py import ThinkMode
-from ds4py._native.fake import FAKE_EOS, FakeNative
-from ds4py._native.fake_chat import tokenize_rendered
-from ds4py.engine.prefix import PrefixTurn
-from ds4py.engine.sampling import SamplingPolicy
-from ds4py.engine.session import Engine
-from ds4py.errors import EngineError
-from ds4py.model import DS4Model
-from ds4py.noninteractive import run_noninteractive
-from ds4py.prefill_trace import PrefillTraceWriter
-from ds4py.engine.replay import read_replay
-from ds4py.runtime import AgentRuntime
-from ds4py.store import SessionStore
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
@@ -38,11 +21,26 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
+import ds4py
+from ds4py import ThinkMode
+from ds4py._native.fake import FAKE_EOS, FakeNative
+from ds4py._native.fake_chat import tokenize_rendered
+from ds4py.engine.prefix import PrefixTurn
+from ds4py.engine.replay import read_replay
+from ds4py.engine.sampling import SamplingPolicy
+from ds4py.engine.session import Engine
+from ds4py.errors import EngineError
+from ds4py.model import DS4Model
+from ds4py.noninteractive import run_noninteractive
+from ds4py.prefill_trace import PrefillTraceWriter
+from ds4py.runtime import AgentRuntime
+from ds4py.store import SessionStore
+
 READ_CALL = "<tool_call><function=read_file><parameter=path>hello.txt</parameter></function></tool_call>"
 
 
 def fixed_clock() -> datetime:
-    return datetime(2026, 10, 21, 9, 30, 0, tzinfo=timezone.utc)
+    return datetime(2026, 10, 21, 9, 30, 0, tzinfo=UTC)
 
 
 def fake_engine(*, script: Any = None, family: str = "qwen", model_id: int = 7) -> Engine:
@@ -99,9 +97,9 @@ def test_runtime_exposes_context_and_updates_hint_notes(tmp_path: Path) -> None:
         try:
             assert runtime.context_size == 65536
             runtime.set_hints(True)
-            assert cast(Any, runtime._notes).hints_enabled is True
+            assert cast("Any", runtime._notes).hints_enabled is True
             runtime.set_hints(False)
-            assert cast(Any, runtime._notes).hints_enabled is False
+            assert cast("Any", runtime._notes).hints_enabled is False
         finally:
             asyncio.run(runtime.close())
 
@@ -159,7 +157,9 @@ def test_two_prompts_and_a_tool_round_persist_exact_snapshots(tmp_path: Path) ->
     # Responses are persistent harness objects, so their binding key is stored.
     responses = [m for m in second_snapshot.messages if isinstance(m, ModelResponse)]
     assert responses
-    assert all(cast(Any, m.metadata)["ds4.key"] and cast(Any, m.metadata)["ds4.source"] == "sampled" for m in responses)
+    assert all(
+        cast("Any", m.metadata)["ds4.key"] and cast("Any", m.metadata)["ds4.source"] == "sampled" for m in responses
+    )
 
     # Usage comes from the real engine round; the tool effect ledger is settled.
     assert first.usage.input_tokens > 0
@@ -202,10 +202,9 @@ def test_prefill_trace_uses_persistence_step_indices(tmp_path: Path) -> None:
         async def scenario() -> Any:
             with PrefillTraceWriter(model.session, trace_path, think=engine.think):
                 result = await runtime.run("read hello")
-            snapshots = await runtime_steps(
+            return await runtime_steps(
                 store.session_dir(runtime.session_id) / "steps",
             ).list_snapshots(run_id=result.run_id)
-            return snapshots
 
         try:
             snapshots = asyncio.run(scenario())
@@ -282,13 +281,14 @@ class FailingModel(DS4Model):
         self.requests_seen = 0
 
     @asynccontextmanager
+    @override
     async def request_stream(
         self,
         messages: Any,
         model_settings: Any,
         model_request_parameters: Any,
         run_context: Any = None,
-    ) -> AsyncIterator[Any]:
+    ) -> AsyncGenerator[Any]:
         self.requests_seen += 1
         async with super().request_stream(
             messages,
@@ -511,15 +511,16 @@ class BlockingModel(DS4Model):
         self.release: asyncio.Event | None = None
 
     @asynccontextmanager
+    @override
     async def request_stream(
         self,
         messages: Any,
         model_settings: Any,
         model_request_parameters: Any,
         run_context: Any = None,
-    ) -> AsyncIterator[Any]:
-        cast(Any, self.entered).set()
-        await cast(Any, self.release).wait()
+    ) -> AsyncGenerator[Any]:
+        cast("Any", self.entered).set()
+        await cast("Any", self.release).wait()
         async with super().request_stream(
             messages,
             model_settings,
@@ -576,7 +577,7 @@ def test_load_prefix_seeds_history_the_next_run_renders(tmp_path: Path) -> None:
                 ModelRequest,
                 ModelResponse,
             ]
-            assert [cast(Any, part).content for m in messages for part in m.parts] == [
+            assert [cast("Any", part).content for m in messages for part in m.parts] == [
                 "start the story",
                 "The door opened",
             ]
@@ -590,7 +591,7 @@ def test_load_prefix_seeds_history_the_next_run_renders(tmp_path: Path) -> None:
             rendered = [segment.kind for segment in model.session.transcript.segments]
             assert rendered.index("user") < rendered.index("assistant")
             assert model.session.transcript.chat
-            assert [cast(Any, m.parts[0]).content for m in runtime.messages[:2]] == [
+            assert [cast("Any", m.parts[0]).content for m in runtime.messages[:2]] == [
                 "start the story",
                 "The door opened",
             ]
@@ -606,21 +607,21 @@ def test_terminal_success_record_failure_is_an_error(tmp_path: Path, monkeypatch
         runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
         terminal_events = []
         runtime.on_event(terminal_events.append, kinds={"run_end"})
-        original_write = cast(Any, runtime._record)._write
+        original_write = cast("Any", runtime._record)._write
         blocked = tmp_path / "terminal-events"
         blocked.mkdir()
 
         def fail_terminal_success(record: Any) -> Any:
             if record["kind"] == "run_end" and record["payload"].get("status") == "success":
-                path = cast(Any, runtime._record).path
-                cast(Any, runtime._record).path = blocked
+                path = cast("Any", runtime._record).path
+                cast("Any", runtime._record).path = blocked
                 try:
                     return original_write(record)
                 finally:
-                    cast(Any, runtime._record).path = path
+                    cast("Any", runtime._record).path = path
             return original_write(record)
 
-        monkeypatch.setattr(cast(Any, runtime._record), "_write", fail_terminal_success)
+        monkeypatch.setattr(cast("Any", runtime._record), "_write", fail_terminal_success)
         try:
             with pytest.raises(EngineError, match="run record failed"):
                 asyncio.run(runtime.run("hello"))
@@ -630,7 +631,7 @@ def test_terminal_success_record_failure_is_an_error(tmp_path: Path, monkeypatch
             assert terminal[-1]["payload"]["status"] == "error"
             assert [event.payload["status"] for event in terminal_events] == ["error"]
 
-            monkeypatch.setattr(cast(Any, runtime._record), "_write", original_write)
+            monkeypatch.setattr(cast("Any", runtime._record), "_write", original_write)
             asyncio.run(runtime.run("again"))
             assert runtime.status == "success"
             events = read_events(store.session_dir(runtime.session_id) / "events.jsonl")
@@ -657,17 +658,17 @@ def test_terminal_success_close_failure_rolls_back_before_error(
         runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
         terminal_events = []
         runtime.on_event(terminal_events.append, kinds={"run_end"})
-        original_write = cast(Any, runtime._record)._write
+        original_write = cast("Any", runtime._record)._write
 
         def fail_terminal_close(record: Any) -> Any:
             if record["kind"] == "run_end" and record["payload"].get("status") == "success":
                 original_write(record)
                 error = OSError("terminal close failed")
-                cast(Any, runtime._record).failure = error
+                cast("Any", runtime._record).failure = error
                 raise error
             return original_write(record)
 
-        monkeypatch.setattr(cast(Any, runtime._record), "_write", fail_terminal_close)
+        monkeypatch.setattr(cast("Any", runtime._record), "_write", fail_terminal_close)
         try:
             with pytest.raises(EngineError, match="run record failed"):
                 asyncio.run(runtime.run("hello"))
@@ -692,7 +693,7 @@ def test_run_record_failure_fails_the_run_instead_of_reporting_success(
         blocked = store.session_dir(runtime.session_id) / "events.jsonl"
         blocked.mkdir(parents=True)
         try:
-            with pytest.raises(Exception) as failed:
+            with pytest.raises(OSError, match=r"events\.jsonl") as failed:
                 asyncio.run(runtime.run("hello"))
             assert runtime.status == "error"
             assert "events.jsonl" in str(failed.value)
@@ -717,9 +718,11 @@ def test_prefill_trace_failure_fails_the_run(
 
         monkeypatch.setattr(Path, "open", fail_trace_open)
         try:
-            with PrefillTraceWriter(runtime.model.session, trace, think=engine.think):
-                with pytest.raises(EngineError, match="prefill trace failed"):
-                    asyncio.run(runtime.run("hello"))
+            with (
+                PrefillTraceWriter(runtime.model.session, trace, think=engine.think),
+                pytest.raises(EngineError, match="prefill trace failed"),
+            ):
+                asyncio.run(runtime.run("hello"))
             assert runtime.status == "error"
             events = read_events(store.session_dir(runtime.session_id) / "events.jsonl")
             terminal = [line for line in events if line["kind"] == "run_end"]

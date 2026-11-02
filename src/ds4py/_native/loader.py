@@ -4,9 +4,11 @@ import ctypes
 import os
 import sys
 import threading
-from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
 
 from ds4py.abi.manifest import (
     Manifest,
@@ -35,7 +37,7 @@ _load_lock = threading.Lock()
 
 def default_lib_dir() -> Path:
     root = os.environ.get("DS4PY_HOME")
-    return (Path(root).expanduser() if root else Path.home() / ".ds4py") / "lib"
+    return (Path(root).expanduser() if root is not None and root != "" else Path.home() / ".ds4py") / "lib"
 
 
 def resolve_lib_path(lib: str | Path | None) -> Path:
@@ -95,7 +97,7 @@ class Library:
 
 
 def load_library(lib: str | Path | None = None) -> Library:
-    global _loaded
+    global _loaded  # noqa: PLW0603 - Native loading is intentionally one process-wide generation.
     path = resolve_lib_path(lib)
     try:
         real = path.resolve(strict=True)

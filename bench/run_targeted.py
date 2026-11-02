@@ -1,11 +1,14 @@
 """Run selected ds4-py bakeoff tasks in independent repetitions."""
 
 import argparse
-from dataclasses import asdict, replace
 import json
-from pathlib import Path
 import sys
-from collections.abc import Sequence
+from dataclasses import asdict, replace
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+from pathlib import Path
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

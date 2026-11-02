@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import inspect
 import shlex
-from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Never
+from typing import TYPE_CHECKING, Never
 
 from prompt_toolkit.completion import Completion
 
-from ds4py.runtime import AgentRuntime
-from ds4py.store import SaveRecord
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+    from ds4py.runtime import AgentRuntime
+    from ds4py.store import SaveRecord
 
 
 class CommandError(ValueError):

@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import sys
-from collections.abc import Iterable, Sequence
-from typing import Protocol
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import TYPE_CHECKING, Protocol
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -16,17 +15,21 @@ if __package__ in {None, ""}:
 import ds4py
 from bench.models import TaskRunResult
 from ds4py.engine.decode import GenerateJob
-from ds4py.errors import Ds4pyError
 from ds4py.engine.events import Event, Stopped, Token
 from ds4py.engine.replay import read_replay
-from ds4py.engine.replay_types import ReplayRound, ReplayTrace
 from ds4py.engine.sampling import Rng, SamplingPolicy
-from ds4py.engine.session import Engine
 from ds4py.engine.stream import RoundStream
 from ds4py.engine.tool_syntax import make_parser
-from ds4py.engine.tool_syntax.model import Snapshot
 from ds4py.engine.transcript import Transcript
 from ds4py.engine.worker import SyncJob
+from ds4py.errors import Ds4pyError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+
+    from ds4py.engine.replay_types import ReplayRound, ReplayTrace
+    from ds4py.engine.session import Engine
+    from ds4py.engine.tool_syntax.model import Snapshot
 
 
 class ReplayMismatch(AssertionError):
@@ -72,7 +75,7 @@ def select_c_traces(
         paths = item.attempt_trace_paths
         if len(paths) != item.attempts or any(path is None for path in paths):
             raise ReplaySelectionError(f"{item.task_id}: {len(paths)}/{item.attempts} C attempt traces are present")
-        selected.extend((item.task_id, Path(path)) for path in paths if path is not None)
+        selected.extend((item.task_id, Path(path)) for path in paths)
     return selected
 
 
@@ -103,7 +106,7 @@ def _token_description(
     return f"id={tokens[index]} bytes={engine.token_text(tokens[index])!r}"
 
 
-def _assert_tokens(
+def _assert_tokens(  # noqa: PLR0913, PLR0917 - Replay comparison needs the complete round context.
     engine: Engine,
     task_id: str,
     ordinal: int,
@@ -127,7 +130,7 @@ def _assert_tokens(
     )
 
 
-def _check_round(
+def _check_round(  # noqa: PLR0913, PLR0917 - Replay comparison needs the complete round context.
     engine: Engine,
     task_id: str,
     ordinal: int,
@@ -156,11 +159,10 @@ def _check_round(
                     f"{task_id} trace round {ordinal}: tool_call_complete but "
                     f"C text parsed as {c_snapshot.state}: {c_snapshot.error}"
                 )
-        elif stopped.reason == "parser_error":
-            if c_snapshot.state != "ERROR" and not c_snapshot.dsml_in_think:
-                raise ReplayMismatch(
-                    f"{task_id} trace round {ordinal}: parser_error but C text parsed as {c_snapshot.state}"
-                )
+        elif stopped.reason == "parser_error" and c_snapshot.state != "ERROR" and not c_snapshot.dsml_in_think:
+            raise ReplayMismatch(
+                f"{task_id} trace round {ordinal}: parser_error but C text parsed as {c_snapshot.state}"
+            )
     tool_call = c_snapshot.state == "DONE" and bool(c_snapshot.calls)
     if tool_call:
         bytewise = _parse_c(engine, round_, (data[index : index + 1] for index in range(len(data))))
@@ -188,7 +190,7 @@ def generation_limit(engine: Engine, round_: ReplayRound) -> int:
     return len(round_.sampled) if round_.prefix_only or round_.context_limited else len(round_.sampled) + 1
 
 
-def replay_round(
+def replay_round(  # noqa: PLR0913, PLR0917 - Replay requires model, sampling, and trace context.
     engine: Engine,
     policy: SamplingPolicy,
     rng: Rng,
@@ -274,8 +276,8 @@ def replay_with_engine(
         _validate_selection(selected)
     model = Path(engine.config.model).expanduser().resolve()
     results: list[ReplayResult] = []
-    for task_id, path in selected:
-        path = Path(path)
+    for task_id, selected_path in selected:
+        path = Path(selected_path)
         try:
             trace = read_replay(path)
             if trace.model is None or trace.ctx is None:
@@ -315,7 +317,7 @@ def replay_with_engine(
                     str(error),
                     trace_path=path,
                 )
-            results.append(ReplayResult(**{**result.__dict__, "trace_path": path}))
+            results.append(replace(result, trace_path=path))
     if require_full_set and not any(result.tool_call for result in results):
         results.append(
             ReplayResult(

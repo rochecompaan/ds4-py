@@ -4,24 +4,28 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from contextlib import contextmanager, nullcontext
-from dataclasses import asdict, dataclass
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
-from collections.abc import Awaitable, Callable, Iterator, Sequence
-from typing import Any, Protocol
+from collections.abc import Awaitable, Callable, Sequence
+from contextlib import contextmanager, nullcontext
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Protocol, TypedDict
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from ds4py.engine.lifecycle import SessionEvent
+    from ds4py.runtime import AgentRuntime
 
 from bench.models import AgentConfig, TaskRunResult
-from ds4py.engine.lifecycle import SessionEvent
+from ds4py.engine.events import Stopped, Synced
 from ds4py.engine.replay import read_replay
 from ds4py.errors import Ds4pyError
-from ds4py.runtime import AgentRuntime
 from ds4py.store import SaveRecord, SessionStore
-
 
 FOLLOWUP = "Continue the previous task: state the next concrete action, then stop."
 
@@ -117,6 +121,11 @@ def _events(path: Path) -> Path:
     return path
 
 
+def _require(*, condition: bool, message: str) -> None:
+    if not condition:
+        raise RestoreError(message)
+
+
 def validate_save(save_dir: str | Path) -> SaveEvidence:
     """Validate one record, exact KV payload, events, and named complete snapshot."""
     save_dir = Path(save_dir)
@@ -124,12 +133,13 @@ def validate_save(save_dir: str | Path) -> SaveEvidence:
         store = SessionStore()
         record = store.read_record(save_dir / "save.json")
         payload = store.read_kv_header(save_dir / "session.kv")
-        if payload != record.payload_bytes:
-            raise RestoreError(f"{save_dir}: KV payload {payload} does not match record {record.payload_bytes}")
+        _require(
+            condition=payload == record.payload_bytes,
+            message=f"{save_dir}: KV payload {payload} does not match record {record.payload_bytes}",
+        )
         events_path = _events(save_dir / "events.jsonl")
         steps_root = save_dir / "steps"
-        if not steps_root.is_dir():
-            raise RestoreError(f"missing step store: {steps_root}")
+        _require(condition=steps_root.is_dir(), message=f"missing step store: {steps_root}")
         from pydantic_ai_harness.step_persistence import FileStepStore
 
         snapshots = FileStepStore(steps_root)
@@ -139,8 +149,12 @@ def validate_save(save_dir: str | Path) -> SaveEvidence:
                 include_interrupted=True,
             )
         )
-        if snapshot is None or snapshot.state != "complete" or snapshot.step_index != record.step_index:
-            raise RestoreError(f"{save_dir}: named complete snapshot is missing")
+        _require(
+            condition=snapshot is not None
+            and snapshot.state == "complete"
+            and snapshot.step_index == record.step_index,
+            message=f"{save_dir}: named complete snapshot is missing",
+        )
         snapshot_path = None
         for path in sorted((steps_root / record.run_id / "snapshots").glob("*.json")):
             value = json.loads(path.read_text())
@@ -148,7 +162,7 @@ def validate_save(save_dir: str | Path) -> SaveEvidence:
                 snapshot_path = path
                 break
         if snapshot_path is None:
-            raise RestoreError(f"{save_dir}: snapshot JSON for step {record.step_index} is missing")
+            raise RestoreError(f"{save_dir}: snapshot JSON for step {record.step_index} is missing")  # noqa: TRY301
         return SaveEvidence(record, events_path, snapshot_path)
     except RestoreError:
         raise
@@ -300,7 +314,7 @@ def _runtime(
     args: argparse.Namespace,
     *,
     read_only: bool = False,
-) -> Iterator[AgentRuntime]:
+) -> Generator[AgentRuntime]:
     from ds4py.agent_cli import open_runtime
 
     with open_runtime(args, Path.cwd(), read_only=read_only) as runtime:
@@ -311,7 +325,7 @@ def _runtime(
 def _trace(
     runtime: AgentRuntime,
     args: argparse.Namespace,
-) -> Iterator[None]:
+) -> Generator[None]:
     from ds4py.prefill_trace import PrefillTraceWriter
 
     trace = (
@@ -324,9 +338,12 @@ def _trace(
 
 
 def _prompt(args: argparse.Namespace) -> str | None:
-    if args.prompt_file is not None:
-        return args.prompt_file.read_bytes().decode("utf-8")
-    return args.prompt
+    prompt: object = args.prompt_file.read_bytes().decode("utf-8") if args.prompt_file is not None else args.prompt
+    if prompt is None:
+        return None
+    if not isinstance(prompt, str):
+        raise RestoreError("prompt must be text")
+    return prompt
 
 
 def attempt_command(argv: Sequence[str]) -> int:
@@ -378,11 +395,19 @@ def attempt_command(argv: Sequence[str]) -> int:
     return status
 
 
+class _RestoreState(TypedDict):
+    followup: bool
+    switch_prefill: int
+    followup_prefill: int
+    plan: str | None
+    reason: str | None
+
+
 async def _restore_operation(
     runtime: AgentRuntime,
     session_id: str,
-) -> dict[str, Any]:
-    state = {
+) -> _RestoreState:
+    state: _RestoreState = {
         "followup": False,
         "switch_prefill": 0,
         "followup_prefill": 0,
@@ -391,16 +416,17 @@ async def _restore_operation(
     }
 
     def listener(event: SessionEvent) -> None:
-        if event.kind == "Synced":
-            plan = event.payload["event"].plan
+        inner = event.payload["event"]
+        if event.kind == "Synced" and isinstance(inner, Synced):
+            plan = inner.plan
             if state["followup"]:
                 if state["plan"] is None:
                     state["plan"] = plan.kind
                     state["followup_prefill"] = plan.to_prefill
             else:
                 state["switch_prefill"] += plan.to_prefill
-        elif event.kind == "Stopped" and state["followup"]:
-            state["reason"] = event.payload["event"].reason
+        elif event.kind == "Stopped" and state["followup"] and isinstance(inner, Stopped):
+            state["reason"] = inner.reason
 
     runtime.model.session.on_event(listener)
     await switch_via_command(runtime, session_id)
@@ -420,9 +446,8 @@ def restore_command(argv: Sequence[str]) -> int:
     # Attempts run non-interactively. Restore must render the same prompt-visible
     # capabilities; read_only below independently enforces restore safety.
     args.non_interactive = True
-    with _runtime(args, read_only=True) as runtime:
-        with _trace(runtime, args):
-            state = asyncio.run(_restore_operation(runtime, own.session_id))
+    with _runtime(args, read_only=True) as runtime, _trace(runtime, args):
+        state = asyncio.run(_restore_operation(runtime, own.session_id))
     own.metadata.write_text(
         json.dumps(
             {
@@ -485,6 +510,7 @@ def process_restore_runner(
             capture_output=True,
             text=True,
             cwd=workspace,
+            check=False,
         )
         trace_path.with_suffix(".log").write_text((completed.stdout or "") + (completed.stderr or ""))
         if completed.returncode:

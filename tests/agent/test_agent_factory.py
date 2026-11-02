@@ -1,10 +1,8 @@
-from typing import Any, cast
-from pathlib import Path
-from collections.abc import AsyncIterator
 import asyncio
+from collections.abc import AsyncIterator
+from pathlib import Path
+from typing import Any, cast
 
-from ds4py.agent import build_agent_components
-from ds4py.engine.lifecycle import SessionEvent
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -21,6 +19,9 @@ from pydantic_ai_harness.ask_user import (
     Question,
     QuestionOption,
 )
+
+from ds4py.agent import build_agent_components
+from ds4py.engine.lifecycle import SessionEvent
 
 
 class MockSession:
@@ -305,7 +306,7 @@ def test_question_callback_has_a_typed_contract(tmp_path: Path) -> None:
         )
     )
 
-    response = asyncio.run(cast(Any, questions.answerer)(request))
+    response = asyncio.run(cast("Any", questions.answerer)(request))
 
     assert questions.answerer is question_answerer
     assert isinstance(response, AskUserResponse)
