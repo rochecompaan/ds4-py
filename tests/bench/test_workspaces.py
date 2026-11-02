@@ -1,6 +1,7 @@
 """Workspace isolation, hidden grading, and retry behavior for the agent bake-off."""
 from typing import Any
 
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -29,14 +30,33 @@ HIDDEN_TEST = EXERCISE.name + "_test.py"
 def make_exercise(root: Any, initial: Any="good") -> Any:
     source = root / "benchmark" / EXERCISE
     (source / ".docs").mkdir(parents=True)
+    (source / ".meta").mkdir()
+    (source / "__pycache__").mkdir()
     (source / ".docs" / "instructions.md").write_text(
         "Implement value() so it returns 'good'.\n"
     )
+    (source / ".docs" / "instructions.append.md").write_text(
+        "Return the value without changing its type.\n"
+    )
+    (source / ".meta" / "config.json").write_text(json.dumps({
+        "files": {
+            "solution": ["solution.py", "support.py"],
+            "test": [HIDDEN_TEST],
+            "example": [".meta/example.py"],
+        }
+    }))
+    (source / ".meta" / "example.py").write_text(
+        "def value():\n    return 'good'\n"
+    )
     (source / "solution.py").write_text(f"def value():\n    return {initial!r}\n")
+    (source / "support.py").write_text("SUPPORT = True\n")
     (source / HIDDEN_TEST).write_text(
         "from solution import value\n\n"
         "def test_value():\n"
         "    assert value() == 'good'\n"
+    )
+    (source / "__pycache__" / "tiny_test.cpython-314-pytest-9.1.1.pyc").write_bytes(
+        b"compiled hidden test"
     )
     return source
 
@@ -57,16 +77,89 @@ def commit_repo(root: Any) -> Any:
     return git(root, "rev-parse", "HEAD")
 
 
-def test_exercise_has_visible_starter_and_grader_owned_hidden_tests(tmp_path: Path) -> None:
+def test_exercise_stages_only_student_inputs_with_visible_docs(tmp_path: Path) -> None:
     source = make_exercise(tmp_path)
     workspace = prepare_exercise(source, tmp_path / "staged")
 
     assert (workspace.agent_dir / "TASK.md").read_text() == (
         source / ".docs" / "instructions.md"
     ).read_text()
-    assert (workspace.agent_dir / "solution.py").is_file()
+    assert {
+        str(path.relative_to(workspace.agent_dir))
+        for path in workspace.agent_dir.rglob("*") if path.is_file()
+    } == {
+        "TASK.md",
+        "docs/instructions.md",
+        "docs/instructions.append.md",
+        "solution.py",
+        "support.py",
+    }
     assert not (workspace.agent_dir / HIDDEN_TEST).exists()
     assert (workspace.grader_dir / HIDDEN_TEST).is_file()
+
+
+@pytest.mark.parametrize("config", [
+    pytest.param(None, id="missing-config"),
+    pytest.param("{not json", id="invalid-json"),
+    pytest.param({"files": {}}, id="missing-solution"),
+    pytest.param({"files": {"solution": "solution.py"}}, id="not-a-list"),
+    pytest.param({"files": {"solution": []}}, id="empty-list"),
+    pytest.param({"files": {"solution": [42]}}, id="non-string-entry"),
+])
+def test_exercise_rejects_missing_or_malformed_student_configuration(
+    tmp_path: Path, config: Any,
+) -> None:
+    source = make_exercise(tmp_path)
+    config_path = source / ".meta" / "config.json"
+    if config is None:
+        config_path.unlink()
+    elif isinstance(config, str):
+        config_path.write_text(config)
+    else:
+        config_path.write_text(json.dumps(config))
+
+    with pytest.raises(PreparationError, match=r"\.meta/config\.json"):
+        prepare_exercise(source, tmp_path / "staged")
+
+
+@pytest.mark.parametrize("relative", [
+    pytest.param("../outside.py", id="parent-traversal"),
+    pytest.param("/absolute.py", id="absolute"),
+    pytest.param(HIDDEN_TEST, id="hidden-test"),
+    pytest.param(".meta/example.py", id="grading-metadata"),
+    pytest.param("__pycache__/solution.pyc", id="bytecode-cache"),
+    pytest.param("missing.py", id="missing-file"),
+    pytest.param(".", id="directory"),
+])
+def test_exercise_rejects_unsafe_or_grading_student_paths(
+    tmp_path: Path, relative: str,
+) -> None:
+    source = make_exercise(tmp_path)
+    (source.parent / "outside.py").write_text("OUTSIDE = True\n")
+    (source / "__pycache__" / "solution.pyc").write_bytes(b"bytecode")
+    (source / ".meta" / "config.json").write_text(json.dumps({
+        "files": {"solution": [relative]}
+    }))
+    destination = tmp_path / "staged"
+
+    with pytest.raises(PreparationError):
+        prepare_exercise(source, destination)
+    assert not destination.exists()
+
+
+def test_exercise_rejects_solution_symlink_escaping_source(tmp_path: Path) -> None:
+    source = make_exercise(tmp_path)
+    outside = tmp_path / "outside.py"
+    outside.write_text("OUTSIDE = True\n")
+    (source / "linked.py").symlink_to(outside)
+    (source / ".meta" / "config.json").write_text(json.dumps({
+        "files": {"solution": ["linked.py"]}
+    }))
+    destination = tmp_path / "staged"
+
+    with pytest.raises(PreparationError):
+        prepare_exercise(source, destination)
+    assert not destination.exists()
 
 
 def test_real_grading_leaves_no_hidden_source_or_bytecode_in_agent_workspace(
@@ -76,21 +169,29 @@ def test_real_grading_leaves_no_hidden_source_or_bytecode_in_agent_workspace(
     source = make_exercise(tmp_path)
     workspace = prepare_exercise(source, tmp_path / "staged")
 
+    def assert_no_grading_artifacts() -> None:
+        artifacts = [
+            path for path in workspace.agent_dir.rglob("*")
+            if (
+                Path(HIDDEN_TEST).stem in path.name
+                or "__pycache__" in path.parts
+                or ".pytest_cache" in path.parts
+                or path.suffix == ".pyc"
+            )
+        ]
+        assert artifacts == []
+
     result = grade_workspace(workspace)
 
     assert result.passed, result.output
-    hidden_artifacts = [
-        path for path in workspace.agent_dir.rglob("*")
-        if Path(HIDDEN_TEST).stem in path.name
-    ]
-    assert hidden_artifacts == []
+    assert_no_grading_artifacts()
     assert (workspace.grader_dir / HIDDEN_TEST).is_file()
 
     result = grade_workspace(workspace)
 
     assert result.passed, result.output
     assert "1 passed" in result.output
-    assert not (workspace.agent_dir / HIDDEN_TEST).exists()
+    assert_no_grading_artifacts()
 
 
 def test_first_failure_output_is_feedback_for_attempt_two(tmp_path: Path) -> None:

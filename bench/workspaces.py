@@ -7,6 +7,7 @@ separate ``grader_dir`` during grading.
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from io import BytesIO
+import json
 import os
 from pathlib import Path
 import shutil
@@ -87,6 +88,41 @@ def _copy_file(source: str | Path, destination: Path) -> None:
     shutil.copy2(source, destination)
 
 
+def _student_files(source: Path) -> tuple[Path, ...]:
+    config_path = source / ".meta" / "config.json"
+    try:
+        config = json.loads(config_path.read_text())
+        declared = config["files"]["solution"]
+        if (
+            not isinstance(declared, list) or not declared
+            or not all(isinstance(name, str) and name for name in declared)
+        ):
+            raise ValueError("files.solution must be a non-empty list of strings")
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        raise PreparationError(f"{config_path}: invalid configuration: {error}") from error
+
+    source_root = source.resolve()
+    student_files = []
+    for name in declared:
+        relative = Path(name)
+        candidate = (source / relative).resolve()
+        invalid = (
+            relative.is_absolute()
+            or ".." in relative.parts
+            or ".meta" in relative.parts
+            or "__pycache__" in relative.parts
+            or ".pytest_cache" in relative.parts
+            or relative.suffix in {".pyc", ".pyo"}
+            or _is_test_file(relative)
+            or not candidate.is_relative_to(source_root)
+            or not candidate.is_file()
+        )
+        if invalid:
+            raise PreparationError(f"{config_path}: unsafe student file: {name}")
+        student_files.append(relative)
+    return tuple(student_files)
+
+
 def prepare_exercise(
     source: str | Path, destination: str | Path, *, max_attempts: int = 2,
 ) -> Workspace:
@@ -96,6 +132,7 @@ def prepare_exercise(
     instructions = source / ".docs" / "instructions.md"
     if not instructions.is_file():
         raise PreparationError(f"{source}: missing .docs/instructions.md")
+    student_files = _student_files(source)
     _reset_directory(destination)
     agent_dir = destination / "workspace"
     grader_dir = destination / "grader"
@@ -103,14 +140,16 @@ def prepare_exercise(
     grader_dir.mkdir()
     hidden: list[str] = []
     for path in sorted(source.rglob("*")):
-        if not path.is_file() or ".git" in path.parts:
+        if not path.is_file() or ".git" in path.parts or not _is_test_file(path):
             continue
         relative = path.relative_to(source)
-        if _is_test_file(path):
-            _copy_file(path, grader_dir / relative)
-            hidden.append(str(relative))
-        else:
-            _copy_file(path, agent_dir / relative)
+        _copy_file(path, grader_dir / relative)
+        hidden.append(str(relative))
+    for relative in student_files:
+        _copy_file(source / relative, agent_dir / relative)
+    for path in sorted((source / ".docs").rglob("*")):
+        if path.is_file() and not _is_test_file(path):
+            _copy_file(path, agent_dir / "docs" / path.relative_to(source / ".docs"))
     if not hidden:
         raise PreparationError(f"{source}: no Python exercise tests found")
     (agent_dir / "TASK.md").write_text(instructions.read_text())
@@ -229,6 +268,7 @@ def grade_workspace(
         ) for name in workspace.test_paths),
     ]
     environment = os.environ.copy()
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
     agent_root = workspace.agent_dir.resolve()
     agent_src = (workspace.agent_dir / "src").resolve()
     pythonpath = [
