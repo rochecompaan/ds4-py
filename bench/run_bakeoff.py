@@ -22,7 +22,7 @@ from bench.metrics import (
     summarize_events,
 )
 from bench.models import AgentConfig, TaskRunResult
-from bench.pty import drive_pty
+from bench.pty import drive_interruption_pty, drive_pty  # noqa: F401 - Compatibility re-export.
 from bench.replay_c_traces import replay_task_results
 from bench.report import BakeoffReport, build_report
 from bench.restore_check import CheckResult, RestoreSummary, check_result_saves
@@ -291,18 +291,12 @@ def interruption_acceptance(
     prompt = (workspace.agent_dir / "TASK.md").read_text()
     command = build_agent_command(config, prompt, root / "trace.jsonl")
     command.remove("--non-interactive")
-    result = drive_pty(
+    result = drive_interruption_pty(
         command,
+        home=root / "home",
+        follow_up="State the next concrete action in one sentence, then stop.",
         cwd=workspace.agent_dir,
         env=_acceptance_environment(root / "home"),
-        steps=[
-            (r"\bstreaming\b", "\x03"),
-            (
-                r"\bidle\b",
-                "State the next concrete action in one sentence, then stop.\n",
-            ),
-            (r"\bidle\b", "/exit\n"),
-        ],
         timeout=180,
     )
     (root / "interactive.log").write_text(result.detail)

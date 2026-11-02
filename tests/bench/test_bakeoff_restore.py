@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -410,7 +409,7 @@ def test_pty_interrupt_resumes(tmp_path: Path) -> None:
     assert "RESUMED" in interrupted.detail
 
 
-def test_interruption_acceptance_uses_tui_idle_lifecycle(
+def test_interruption_acceptance_uses_structured_event_driver(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -419,19 +418,14 @@ def test_interruption_acceptance_uses_tui_idle_lifecycle(
     task = tmp_path / "task"
     task.mkdir()
     (task / "TASK.md").write_text("Solve the task.")
-    output = "prefill_cap 2/2\nstreaming | ctx 2/100\nidle | ctx 2/100\nordinary follow-up answer\nidle | ctx 4/100\n"
-    observed_steps: list[tuple[str, str | None]] = []
+    observed: dict[str, Any] = {}
 
-    def drive(command: list[str], *, steps: Any, **kwargs: Any) -> CheckResult:
-        cursor = 0
-        for pattern, response in steps:
-            match = re.search(pattern, output[cursor:], re.IGNORECASE)
-            assert match is not None, f"missing TUI lifecycle signal: {pattern}"
-            cursor += match.end()
-            observed_steps.append((pattern, response))
-        return CheckResult(True, output)
+    def drive(command: list[str], **kwargs: Any) -> CheckResult:
+        observed["command"] = command
+        observed.update(kwargs)
+        return CheckResult(True, "interrupted and resumed")
 
-    monkeypatch.setattr(runner, "drive_pty", drive)
+    monkeypatch.setattr(runner, "drive_interruption_pty", drive)
     config = SimpleNamespace(
         agent="ds4py",
         executable=(sys.executable, "driver.py"),
@@ -451,11 +445,13 @@ def test_interruption_acceptance_uses_tui_idle_lifecycle(
     )
 
     assert result.passed, result.detail
-    assert observed_steps == [
-        (r"\bstreaming\b", "\x03"),
-        (r"\bidle\b", "State the next concrete action in one sentence, then stop.\n"),
-        (r"\bidle\b", "/exit\n"),
-    ]
+    home = tmp_path / "results" / "gate-4" / "interruption" / "home"
+    assert observed["home"] == home
+    assert observed["follow_up"] == "State the next concrete action in one sentence, then stop."
+    assert observed["cwd"] == task
+    assert observed["env"]["DS4PY_HOME"] == str(home)
+    assert observed["timeout"] == 180
+    assert "--non-interactive" not in observed["command"]
 
 
 def test_restore_processes_run_from_the_original_task_workspace(
