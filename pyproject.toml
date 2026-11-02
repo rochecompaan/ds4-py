@@ -20,7 +20,6 @@ scripts.ds4py = "ds4py.cli:main"
 [dependency-groups]
 dev = [
   "prek==0.5.7",
-  "pyright>=1.1.414",
   "pytest>=9.1.1",
   "ruff>=0.17.3",
   "ty==0.0.95",
@@ -199,11 +198,6 @@ lint.per-file-ignores."tests/**/*.py" = [
 lint.flake8-tidy-imports.banned-api."typing.Any".msg = "Use a precise type; Any requires an approved dynamic boundary."
 lint.mccabe.max-complexity = 15
 lint.preview = true
-
-[tool.pyright]
-typeCheckingMode = "standard"
-include = [ "bench", "src", "tests" ]
-reportMissingParameterType = "error"
 
 [tool.ty]
 src.include = [ "bench", "src", "tests" ]
