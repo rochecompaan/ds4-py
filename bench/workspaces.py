@@ -88,6 +88,29 @@ def _copy_file(source: str | Path, destination: Path) -> None:
     shutil.copy2(source, destination)
 
 
+def _is_grading_artifact(path: Path) -> bool:
+    return (
+        any(part in {".meta", "__pycache__", ".pytest_cache"} for part in path.parts)
+        or path.suffix in {".pyc", ".pyo"}
+        or _is_test_file(path)
+    )
+
+
+def _validate_source_file(source: Path, relative: Path) -> None:
+    if (
+        relative.is_absolute() or ".." in relative.parts
+        or _is_grading_artifact(relative)
+    ):
+        raise ValueError(f"unsafe source path: {relative}")
+    source_root = source.resolve()
+    candidate = (source / relative).resolve()
+    if not candidate.is_relative_to(source_root) or not candidate.is_file():
+        raise ValueError(f"not a source-contained file: {relative}")
+    resolved_relative = candidate.relative_to(source_root)
+    if _is_grading_artifact(resolved_relative):
+        raise ValueError(f"grading artifact target: {resolved_relative}")
+
+
 def _student_files(source: Path) -> tuple[Path, ...]:
     config_path = source / ".meta" / "config.json"
     try:
@@ -101,26 +124,35 @@ def _student_files(source: Path) -> tuple[Path, ...]:
     except (OSError, ValueError, TypeError, KeyError) as error:
         raise PreparationError(f"{config_path}: invalid configuration: {error}") from error
 
-    source_root = source.resolve()
     student_files = []
     for name in declared:
-        relative = Path(name)
-        candidate = (source / relative).resolve()
-        invalid = (
-            relative.is_absolute()
-            or ".." in relative.parts
-            or ".meta" in relative.parts
-            or "__pycache__" in relative.parts
-            or ".pytest_cache" in relative.parts
-            or relative.suffix in {".pyc", ".pyo"}
-            or _is_test_file(relative)
-            or not candidate.is_relative_to(source_root)
-            or not candidate.is_file()
-        )
-        if invalid:
-            raise PreparationError(f"{config_path}: unsafe student file: {name}")
+        try:
+            relative = Path(name)
+            _validate_source_file(source, relative)
+        except (OSError, ValueError) as error:
+            raise PreparationError(
+                f"{config_path}: unsafe student file {name!r}: {error}"
+            ) from error
         student_files.append(relative)
     return tuple(student_files)
+
+
+def _documentation_files(source: Path) -> tuple[Path, ...]:
+    instructions = Path(".docs/instructions.md")
+    if not (source / instructions).is_file():
+        raise PreparationError(f"{source}: missing .docs/instructions.md")
+    try:
+        _validate_source_file(source, instructions)
+        documents = []
+        for path in sorted((source / ".docs").rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(source)
+            _validate_source_file(source, relative)
+            documents.append(relative)
+    except (OSError, ValueError) as error:
+        raise PreparationError(f"{source}: unsafe documentation: {error}") from error
+    return tuple(documents)
 
 
 def prepare_exercise(
@@ -130,8 +162,7 @@ def prepare_exercise(
     source = Path(source)
     destination = Path(destination)
     instructions = source / ".docs" / "instructions.md"
-    if not instructions.is_file():
-        raise PreparationError(f"{source}: missing .docs/instructions.md")
+    documentation = _documentation_files(source)
     student_files = _student_files(source)
     _reset_directory(destination)
     agent_dir = destination / "workspace"
@@ -147,9 +178,10 @@ def prepare_exercise(
         hidden.append(str(relative))
     for relative in student_files:
         _copy_file(source / relative, agent_dir / relative)
-    for path in sorted((source / ".docs").rglob("*")):
-        if path.is_file() and not _is_test_file(path):
-            _copy_file(path, agent_dir / "docs" / path.relative_to(source / ".docs"))
+    for relative in documentation:
+        _copy_file(
+            source / relative, agent_dir / "docs" / relative.relative_to(".docs")
+        )
     if not hidden:
         raise PreparationError(f"{source}: no Python exercise tests found")
     (agent_dir / "TASK.md").write_text(instructions.read_text())
@@ -364,6 +396,8 @@ def validate_manifest_sources(manifest: Manifest, benchmark: str | Path) -> None
             raise PreparationError(f"{source}: missing .docs/instructions.md")
         if not any(path.is_file() and _is_test_file(path) for path in source.rglob("*")):
             raise PreparationError(f"{source}: no Python exercise tests found")
+        _student_files(source)
+        _documentation_files(source)
 
 
 def prepare_manifest(

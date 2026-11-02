@@ -23,7 +23,8 @@ During exercise staging, `prepare_exercise()` uses an allowlist rather than copy
 - `.meta/config.json` declares the student solution and support files but is not copied into the workspace.
 - Source `.docs/` becomes visible `docs/`; `TASK.md` still contains the main instructions.
 - Only `TASK.md`, `docs/`, and declared student files go into `workspace/`. Everything else is denied by default.
-- `.meta/`, example solutions, test sources, bytecode, `__pycache__/`, and pytest caches never go into the agent workspace. Declared paths are validated before staging.
+- `.meta/`, example solutions, test sources, bytecode, `__pycache__/`, and pytest caches never go into the agent workspace. Declared and documentation paths, including resolved symlink targets, are validated before staging.
+- `--check-only` applies the same student-input and documentation validation without writing workspaces.
 - Exercise tests go into a separate `grader/` directory.
 - Repository-task preparation is separate; its archived `bench/` directory is removed so the agent cannot see the bundled grader.
 

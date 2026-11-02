@@ -1,6 +1,7 @@
 """Workspace isolation, hidden grading, and retry behavior for the agent bake-off."""
 from typing import Any
 
+from dataclasses import replace
 import json
 from pathlib import Path
 import subprocess
@@ -19,6 +20,7 @@ from bench.workspaces import (
     prepare_exercise,
     prepare_repository_task,
     run_attempts,
+    validate_manifest_sources,
     verify_benchmark,
 )
 
@@ -105,6 +107,7 @@ def test_exercise_stages_only_student_inputs_with_visible_docs(tmp_path: Path) -
     pytest.param({"files": {"solution": "solution.py"}}, id="not-a-list"),
     pytest.param({"files": {"solution": []}}, id="empty-list"),
     pytest.param({"files": {"solution": [42]}}, id="non-string-entry"),
+    pytest.param({"files": {"solution": ["bad\0name.py"]}}, id="nul-path"),
 ])
 def test_exercise_rejects_missing_or_malformed_student_configuration(
     tmp_path: Path, config: Any,
@@ -155,6 +158,76 @@ def test_exercise_rejects_solution_symlink_escaping_source(tmp_path: Path) -> No
     (source / ".meta" / "config.json").write_text(json.dumps({
         "files": {"solution": ["linked.py"]}
     }))
+    destination = tmp_path / "staged"
+
+    with pytest.raises(PreparationError):
+        prepare_exercise(source, destination)
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize(("declared", "target", "is_directory"), [
+    pytest.param("innocent.py", ".meta/example.py", False, id="example-file-alias"),
+    pytest.param("innocent.py", HIDDEN_TEST, False, id="test-file-alias"),
+    pytest.param("alias/example.py", ".meta", True, id="example-directory-alias"),
+    pytest.param(f"alias/{HIDDEN_TEST}", ".", True, id="test-directory-alias"),
+])
+def test_exercise_rejects_symlink_aliases_to_grading_inputs(
+    tmp_path: Path, declared: str, target: str, is_directory: bool,
+) -> None:
+    source = make_exercise(tmp_path)
+    link = source / (Path(declared).parts[0] if is_directory else declared)
+    link.symlink_to(source / target, target_is_directory=is_directory)
+    (source / ".meta" / "config.json").write_text(json.dumps({
+        "files": {"solution": [declared]}
+    }))
+    destination = tmp_path / "staged"
+
+    with pytest.raises(PreparationError):
+        prepare_exercise(source, destination)
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("name", ["leak.txt", "instructions.md"])
+def test_exercise_rejects_documentation_symlinks_outside_source(
+    tmp_path: Path, name: str,
+) -> None:
+    source = make_exercise(tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("EXTERNAL_SECRET\n")
+    document = source / ".docs" / name
+    document.unlink(missing_ok=True)
+    document.symlink_to(outside)
+    destination = tmp_path / "staged"
+
+    with pytest.raises(PreparationError):
+        prepare_exercise(source, destination)
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("target", [".meta/example.py", HIDDEN_TEST])
+def test_exercise_rejects_documentation_aliases_to_grading_inputs(
+    tmp_path: Path, target: str,
+) -> None:
+    source = make_exercise(tmp_path)
+    (source / ".docs" / "alias.txt").symlink_to(source / target)
+    destination = tmp_path / "staged"
+
+    with pytest.raises(PreparationError):
+        prepare_exercise(source, destination)
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("relative", [
+    "__pycache__/hidden.pyc",
+    ".pytest_cache/secret",
+])
+def test_exercise_rejects_documentation_artifacts(
+    tmp_path: Path, relative: str,
+) -> None:
+    source = make_exercise(tmp_path)
+    artifact = source / ".docs" / relative
+    artifact.parent.mkdir()
+    artifact.write_bytes(b"GRADING_ARTIFACT")
     destination = tmp_path / "staged"
 
     with pytest.raises(PreparationError):
@@ -253,6 +326,21 @@ def test_agents_receive_separate_but_equivalent_workspace_copies(tmp_path: Path)
     assert c_workspace.agent_dir != python_workspace.agent_dir
     (c_workspace.agent_dir / "solution.py").write_text("def value():\n    return 'C'\n")
     assert "return 'good'" in (python_workspace.agent_dir / "solution.py").read_text()
+
+
+def test_check_only_source_validation_rejects_missing_student_config(tmp_path: Path) -> None:
+    source = make_exercise(tmp_path)
+    (source / ".meta" / "config.json").unlink()
+    benchmark = source.parents[3]
+    revision = commit_repo(benchmark)
+    manifest = replace(
+        load_manifest(Path(__file__).parents[2] / "bench" / "bakeoff.yaml"),
+        commit=revision,
+        exercises=(str(EXERCISE),) * 10,
+    )
+
+    with pytest.raises(PreparationError, match=r"\.meta/config\.json"):
+        validate_manifest_sources(manifest, benchmark)
 
 
 def test_wrong_benchmark_commit_fails_clearly(tmp_path: Path) -> None:
