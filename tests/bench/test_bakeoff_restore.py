@@ -295,7 +295,7 @@ def test_restore_driver_preserves_noninteractive_prompt_composition(
             project,
             store=store,
             interactive=False,
-            read_only=True,
+            read_only=False,
         )
 
         async def save_attempt() -> Any:
@@ -454,14 +454,16 @@ def test_interruption_acceptance_uses_structured_event_driver(
     assert "--non-interactive" not in observed["command"]
 
 
-def test_restore_processes_run_from_the_original_task_workspace(
+def test_restore_processes_use_disposable_workspace_copies(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     save = make_save(tmp_path)
     workspace = tmp_path / "task-workspace"
     workspace.mkdir()
-    working_directories: list[Path | None] = []
+    (workspace / "input.txt").write_text("original")
+    working_directories: list[Path] = []
+    copied_inputs: list[str] = []
     commands: list[list[str]] = []
     config = SimpleNamespace(
         executable=(sys.executable, "restore-driver.py", "attempt"),
@@ -475,7 +477,10 @@ def test_restore_processes_run_from_the_original_task_workspace(
     )
 
     def complete(command: list[str], **kwargs: Any) -> Any:
-        working_directories.append(kwargs.get("cwd"))
+        working_directory = cast("Path", kwargs["cwd"])
+        working_directories.append(working_directory)
+        copied_inputs.append((working_directory / "input.txt").read_text())
+        (working_directory / "restore-write.txt").write_text("isolated")
         commands.append(command)
         metadata = Path(command[command.index("--metadata") + 1])
         trace = Path(command[command.index("--trace") + 1])
@@ -505,7 +510,12 @@ def test_restore_processes_run_from_the_original_task_workspace(
     results = check_result_saves(cast("Any", (item,)), cast("Any", config), tmp_path / "restores")
 
     assert results[0].passed, results[0].detail
-    assert working_directories == [workspace, workspace]
+    assert len(working_directories) == 2
+    assert all(path != workspace for path in working_directories)
+    assert len(set(working_directories)) == 2
+    assert copied_inputs == ["original", "original"]
+    assert not (workspace / "restore-write.txt").exists()
+    assert all(not path.exists() for path in working_directories)
     assert len(commands) == 2
     for command in commands:
         assert command[command.index("--tokens") + 1] == "8192"

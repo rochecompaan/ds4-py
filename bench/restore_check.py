@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass
@@ -444,9 +445,9 @@ def restore_command(argv: Sequence[str]) -> int:
     own, remaining = custom.parse_known_args(argv)
     args = parser().parse_args(remaining)
     # Attempts run non-interactively. Restore must render the same prompt-visible
-    # capabilities; read_only below independently enforces restore safety.
+    # capabilities so a saved KV prefix remains valid.
     args.non_interactive = True
-    with _runtime(args, read_only=True) as runtime, _trace(runtime, args):
+    with _runtime(args) as runtime, _trace(runtime, args):
         state = asyncio.run(_restore_operation(runtime, own.session_id))
     own.metadata.write_text(
         json.dumps(
@@ -468,7 +469,7 @@ def process_restore_runner(
     *,
     workspace: Path | None = None,
 ) -> RestoreRunner:
-    """Return a runner that starts each restore from its task workspace."""
+    """Return a runner that starts each restore from a disposable task-workspace copy."""
 
     def run(
         home: Path,
@@ -476,7 +477,10 @@ def process_restore_runner(
         case: int,
         trace_path: Path,
     ) -> RestoreRun:
+        home = home.resolve()
+        trace_path = trace_path.resolve()
         metadata = trace_path.with_suffix(".json")
+        source_workspace = (workspace if workspace is not None else Path.cwd()).resolve()
         executable = config.executable[:-1] if config.executable[-1] == "attempt" else config.executable
         command = [
             *executable,
@@ -504,14 +508,17 @@ def process_restore_runner(
         ]
         environment = os.environ.copy()
         environment["DS4PY_HOME"] = str(home)
-        completed = subprocess.run(
-            command,
-            env=environment,
-            capture_output=True,
-            text=True,
-            cwd=workspace,
-            check=False,
-        )
+        with tempfile.TemporaryDirectory(prefix=f"ds4py-restore-case-{case}-") as temporary:
+            restore_workspace = Path(temporary) / "workspace"
+            shutil.copytree(source_workspace, restore_workspace)
+            completed = subprocess.run(
+                command,
+                env=environment,
+                capture_output=True,
+                text=True,
+                cwd=restore_workspace,
+                check=False,
+            )
         trace_path.with_suffix(".log").write_text((completed.stdout or "") + (completed.stderr or ""))
         if completed.returncode:
             raise RestoreError(f"restore case {case} exited {completed.returncode}")
