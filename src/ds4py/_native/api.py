@@ -104,7 +104,8 @@ def engine_options(config: EngineConfig, *, inspect_only: bool = False) -> struc
         n_threads=config.threads,
         context_size=config.ctx,
         placement_ctx_hint=config.ctx,
-        mtp_draft_tokens=1,
+        mtp_path=os.fsencode(config.mtp_path) if config.mtp_path is not None else None,
+        mtp_draft_tokens=config.mtp_draft_tokens,
         mtp_margin=3.0,
         inspect_only=inspect_only,
     )

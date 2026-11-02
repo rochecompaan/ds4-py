@@ -95,6 +95,36 @@ def test_engine_options(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
         engine_options(EngineConfig(Path("/m"), backend="vulkan"))
 
 
+def test_engine_options_mtp_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = EngineConfig(Path("model.gguf"), mtp_path=Path("drafter.gguf"))
+    assert config.mtp_path == tmp_path / "drafter.gguf"  # absolute on the caller's thread
+    assert engine_options(config).mtp_path == os.fsencode(tmp_path / "drafter.gguf")
+    assert engine_options(EngineConfig(Path("model.gguf"))).mtp_path is None
+
+
+@pytest.mark.parametrize("draft_tokens", [0, 1, 7])
+def test_engine_options_mtp_draft_tokens(draft_tokens: int) -> None:
+    config = EngineConfig(Path("/model.gguf"), mtp_draft_tokens=draft_tokens)
+    assert engine_options(config).mtp_draft_tokens == draft_tokens
+
+
+def test_mtp_path_lifetime(stub_engine: Any, tmp_path: Path) -> None:
+    import gc
+
+    from ds4py._native.api import NativeEngine
+
+    engine, _ = stub_engine
+    options = engine_options(EngineConfig(tmp_path / "model.gguf", mtp_path=tmp_path / "drafter.gguf"))
+    opened = NativeEngine(engine._lib, 0x1234, options, InstanceLock.acquire(tmp_path / "mtp.lock"))
+    try:
+        del options
+        gc.collect()
+        assert opened._options.mtp_path == os.fsencode(tmp_path / "drafter.gguf")
+    finally:
+        opened.close()
+
+
 @pytest.mark.build
 def test_open_failures_become_exceptions(
     built_upstream: Any,
