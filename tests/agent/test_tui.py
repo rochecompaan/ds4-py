@@ -1,6 +1,6 @@
-from typing import Any, cast
 import asyncio
 from types import SimpleNamespace
+from typing import Any, cast
 
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.keys import Keys
@@ -14,8 +14,9 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
-
 from test_tui_commands import FakeRuntime, make_tui
+
+from ds4py.engine.events import Prefill
 from ds4py.engine.lifecycle import SessionEvent
 from ds4py.tui import TUI
 from ds4py.tui_render import FooterModel, StreamRenderer, markdown_fragments
@@ -34,7 +35,7 @@ def test_command_error_is_reported_and_loop_remains_usable() -> None:
     runtime: Any = FakeRuntime()
     tui = make_tui(runtime)
     messages = []
-    cast(Any, tui).show_message = messages.append
+    cast("Any", tui).show_message = messages.append
 
     async def scenario() -> None:
         await tui.dispatch("/switch bad")
@@ -59,14 +60,22 @@ def test_prompt_loop_accepts_pipe_input_and_exit() -> None:
 
 def test_model_question_uses_active_prompt_and_returns_typed_answer() -> None:
     from pydantic_ai_harness.ask_user import (
-        AskUserRequest, AskUserResponse, Question, QuestionOption,
+        AskUserRequest,
+        AskUserResponse,
+        Question,
+        QuestionOption,
     )
 
     runtime: Any = FakeRuntime()
-    request = AskUserRequest(questions=(Question(
-        header="next", question="What next?",
-        options=(QuestionOption(label="one"), QuestionOption(label="two")),
-    ),))
+    request = AskUserRequest(
+        questions=(
+            Question(
+                header="next",
+                question="What next?",
+                options=(QuestionOption(label="one"), QuestionOption(label="two")),
+            ),
+        )
+    )
     with create_pipe_input() as input_:
         input_.send_text("ask\n2\n/exit\n")
         tui = TUI(runtime, input=input_, output=DummyOutput())
@@ -100,12 +109,20 @@ def test_enter_submits_and_alt_enter_inserts_newline() -> None:
     alt_enter = tui.key_bindings.get_bindings_for_keys((Keys.Escape, Keys.Enter))[0]
     submitted = []
     inserted = []
-    cast(Any, enter.handler)(SimpleNamespace(current_buffer=SimpleNamespace(
-        validate_and_handle=lambda: submitted.append(True),
-    )))
-    cast(Any, alt_enter.handler)(SimpleNamespace(current_buffer=SimpleNamespace(
-        insert_text=inserted.append,
-    )))
+    cast("Any", enter.handler)(
+        SimpleNamespace(
+            current_buffer=SimpleNamespace(
+                validate_and_handle=lambda: submitted.append(True),
+            )
+        )
+    )
+    cast("Any", alt_enter.handler)(
+        SimpleNamespace(
+            current_buffer=SimpleNamespace(
+                insert_text=inserted.append,
+            )
+        )
+    )
 
     assert submitted == [True]
     assert inserted == ["\n"]
@@ -115,26 +132,40 @@ def test_ctrl_c_cancels_without_touching_partial_text_and_ctrl_d_exits() -> None
     runtime: Any = FakeRuntime()
     tui = make_tui(runtime)
     cancel = tui.key_bindings.get_bindings_for_keys((Keys.ControlC,))[0]
-    assert cast(Any, cancel.handler)(SimpleNamespace()) is None
+    assert cast("Any", cancel.handler)(SimpleNamespace()) is None
     assert runtime.calls == [("cancel",)]
 
     exits = []
+
+    def record_exit(exception: BaseException) -> None:
+        exits.append(exception)
+
     ctrl_d = tui.key_bindings.get_bindings_for_keys((Keys.ControlD,))[0]
-    cast(Any, ctrl_d.handler)(SimpleNamespace(app=SimpleNamespace(
-        exit=lambda exception: exits.append(exception),
-    )))
+    cast("Any", ctrl_d.handler)(
+        SimpleNamespace(
+            app=SimpleNamespace(
+                exit=record_exit,
+            )
+        )
+    )
     assert len(exits) == 1
     assert isinstance(exits[0], EOFError)
 
 
 def test_footer_distinguishes_prefill_from_token_generation() -> None:
-    footer = FooterModel(cast(Any, FakeRuntime()))
+    footer = FooterModel(cast("Any", FakeRuntime()))
     try:
         footer.handle_event(SessionEvent("run_start", "session", {}))
         assert footer.status == "running"
-        footer.handle_event(SessionEvent("Prefill", "session", {
-            "event": SimpleNamespace(done=2, total=2, tps=10.0),
-        }))
+        footer.handle_event(
+            SessionEvent(
+                "Prefill",
+                "session",
+                {
+                    "event": Prefill(done=2, total=2, cached_prefix=0, tps=10.0),
+                },
+            )
+        )
         assert footer.status == "running"
         footer.handle_event(SessionEvent("Token", "session", {}))
         assert footer.status == "streaming"
@@ -147,17 +178,23 @@ def test_footer_distinguishes_prefill_from_token_generation() -> None:
 
 
 def fragment_text(fragments: Any) -> str:
-    return "".join(text for _style, text in fragments)
+    return "".join(str(text) for _style, text in fragments)
 
 
 def test_text_and_thinking_deltas_have_distinct_styles() -> None:
     renderer = StreamRenderer(DummyOutput())
-    text = renderer.handle_event(PartDeltaEvent(
-        index=0, delta=TextPartDelta("visible"),
-    ))
-    thinking = renderer.handle_event(PartDeltaEvent(
-        index=0, delta=ThinkingPartDelta(content_delta="private"),
-    ))
+    text = renderer.handle_event(
+        PartDeltaEvent(
+            index=0,
+            delta=TextPartDelta("visible"),
+        )
+    )
+    thinking = renderer.handle_event(
+        PartDeltaEvent(
+            index=0,
+            delta=ThinkingPartDelta(content_delta="private"),
+        )
+    )
 
     assert fragment_text(text) == "visible"
     assert fragment_text(thinking) == "private"
@@ -169,12 +206,19 @@ def test_tool_previews_are_one_line_and_ellipsized() -> None:
     renderer = StreamRenderer(DummyOutput())
     long_value = "alpha\nbeta " * 40
     events = [
-        FunctionToolCallEvent(part=ToolCallPart(
-            tool_name="write_file", args={"path": "a.txt", "content": long_value},
-        )),
-        FunctionToolResultEvent(part=ToolReturnPart(
-            tool_name="write_file", content=long_value, tool_call_id="call-1",
-        )),
+        FunctionToolCallEvent(
+            part=ToolCallPart(
+                tool_name="write_file",
+                args={"path": "a.txt", "content": long_value},
+            )
+        ),
+        FunctionToolResultEvent(
+            part=ToolReturnPart(
+                tool_name="write_file",
+                content=long_value,
+                tool_call_id="call-1",
+            )
+        ),
     ]
 
     for event in events:
@@ -187,9 +231,12 @@ def test_tool_previews_are_one_line_and_ellipsized() -> None:
 
 def test_stream_renderer_applies_markdown_to_text_deltas() -> None:
     renderer = StreamRenderer(DummyOutput())
-    fragments: Any = renderer.handle_event(PartDeltaEvent(
-        index=0, delta=TextPartDelta("**bold** and `code`"),
-    ))
+    fragments: Any = renderer.handle_event(
+        PartDeltaEvent(
+            index=0,
+            delta=TextPartDelta("**bold** and `code`"),
+        )
+    )
 
     assert fragment_text(fragments) == "bold and code"
     assert any("bold" in style for style, _text in fragments)

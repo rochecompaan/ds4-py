@@ -1,16 +1,21 @@
 """Events emitted by engine rounds."""
+
 from dataclasses import dataclass
-from typing import Callable
+from typing import TYPE_CHECKING
 
 from ds4py.errors import EngineError
 
-from .plan import Plan
-from .tool_syntax.model import ToolCall
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from .plan import Plan
+    from .tool_syntax.model import ToolCall
 
 
 @dataclass(frozen=True)
 class TextDelta:
     """Display text only; thinking labels are not decode-control inputs."""
+
     text: str
     thinking: bool
 
@@ -73,8 +78,13 @@ class Stopped:
 class ReserveReached:
     """A one-shot decision that keeps a chat assistant round open."""
 
-    def __init__(self, needed: int, *, on_resume: Callable[[int], None],
-                 on_fail: Callable[[], None]) -> None:
+    def __init__(
+        self,
+        needed: int,
+        *,
+        on_resume: Callable[[int], None],
+        on_fail: Callable[[], None],
+    ) -> None:
         self.needed = needed
         self._on_resume = on_resume
         self._on_fail = on_fail
@@ -103,23 +113,47 @@ class ReserveReached:
 @dataclass(frozen=True)
 class Thinking:
     """Parser-controlled transition into or out of thinking."""
+
     on: bool
 
 
 @dataclass(frozen=True)
 class ToolSyntax:
     """Committed parser state transition."""
+
     state: str
 
 
 @dataclass(frozen=True)
 class ToolCalls:
     """Ordered completed calls, each carrying its own canonical raw stanza."""
+
     calls: tuple[ToolCall, ...]
 
 
 STOP_REASONS = (
-    "stop_token", "tool_call_complete", "max_tokens", "context_reserve",
-    "interrupted", "parser_error", "context_exhausted",
+    "stop_token",
+    "stop_sequence",
+    "tool_call_complete",
+    "max_tokens",
+    "context_reserve",
+    "interrupted",
+    "parser_error",
+    "context_exhausted",
 )
-Event = Prefill | Synced | Interrupted | Checkpointed | Dropped | Saved | Loaded | Token | Stopped | ReserveReached | TextDelta | Thinking | ToolSyntax | ToolCalls
+Event = (
+    Prefill
+    | Synced
+    | Interrupted
+    | Checkpointed
+    | Dropped
+    | Saved
+    | Loaded
+    | Token
+    | Stopped
+    | ReserveReached
+    | TextDelta
+    | Thinking
+    | ToolSyntax
+    | ToolCalls
+)

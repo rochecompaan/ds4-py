@@ -1,9 +1,12 @@
 """Family-aware sampling parameters and native-compatible random state."""
-from dataclasses import dataclass
+
 import os
 import time
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from ds4py._native.protocol import EngineInfo
+if TYPE_CHECKING:
+    from ds4py._native.protocol import EngineInfo
 from ds4py._native.rng import rng_state
 
 
@@ -16,11 +19,16 @@ class SamplingPolicy:
     seed: int | None = None
 
     @classmethod
-    def for_engine(
-        cls, info: EngineInfo, *, temperature: float | None = None,
-        top_p: float | None = None, min_p: float | None = None,
-        top_k: int | None = None, seed: int | None = None,
-    ) -> "SamplingPolicy":
+    def for_engine(  # noqa: PLR0913 - Sampling mirrors all native policy knobs.
+        cls,
+        info: EngineInfo,
+        *,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        min_p: float | None = None,
+        top_k: int | None = None,
+        seed: int | None = None,
+    ) -> SamplingPolicy:
         return cls(
             temperature=1.0 if temperature is None else temperature,
             top_p=(0.95 if info.is_glm_dsa else 1.0) if top_p is None else top_p,
@@ -32,7 +40,7 @@ class SamplingPolicy:
 
 class Rng:
     def __init__(self, seed: int | None) -> None:
-        if not seed:
+        if seed is None or seed == 0:
             seed = int(time.time()) ^ (os.getpid() << 32) ^ time.process_time_ns()
             seed = (seed & ((1 << 64) - 1)) or 1
         self.state = rng_state(seed)

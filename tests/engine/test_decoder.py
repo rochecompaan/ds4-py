@@ -1,4 +1,5 @@
 from typing import Any
+
 from ds4py.engine.decoder import Decoder
 from ds4py.engine.events import TextDelta
 from ds4py.engine.tool_syntax.glm import Glm
@@ -75,7 +76,8 @@ def test_finish_flushes_safe_pending_text_and_incomplete_utf8() -> None:
 def test_initial_thinking_labels_pre_marker_output() -> None:
     decoder = Decoder(thinking=True)
     assert collapse(decoder.feed(b"reason</think>answer")) == [
-        ("reason", True), ("answer", False),
+        ("reason", True),
+        ("answer", False),
     ]
 
 

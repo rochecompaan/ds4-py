@@ -1,21 +1,34 @@
 """Thread-confined ctypes lifecycle and ownership adapters for ds4."""
+
 import ctypes as C
-from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager
 import fcntl
 import os
-from pathlib import Path
 import threading
 import weakref
-from typing import Any, BinaryIO, cast
+from contextlib import contextmanager
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, BinaryIO, Self, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Generator, Sequence
+
+    from .loader import Library
 
 from ds4py.abi.shaders import metal_source_env
 from ds4py.errors import EmptyPromptError, EngineError, EngineLockedError
+
 from . import chat, payload, structs
-from .loader import Library
+from ._results import bool_result, int_result
 from .modelcheck import inspect_model
 from .protocol import (
-    BACKENDS, CancelFn, EngineConfig, EngineInfo, ProgressFn, Snapshot, SyncStatus, family_of,
+    BACKENDS,
+    CancelFn,
+    EngineConfig,
+    EngineInfo,
+    ProgressFn,
+    Snapshot,
+    SyncStatus,
+    family_of,
 )
 
 _open_lock = threading.Lock()
@@ -23,7 +36,7 @@ _open_lock = threading.Lock()
 
 # Instance locking and open-time configuration.
 def lock_path() -> Path:
-    return Path(os.environ.get("DS4_LOCK_FILE") or "/tmp/ds4.lock")
+    return Path(os.environ.get("DS4_LOCK_FILE") or "/tmp/ds4.lock")  # noqa: S108 - Preserve the documented default lock location.
 
 
 def engine_lock_path() -> Path:
@@ -36,7 +49,7 @@ class InstanceLock:
         self._fd = fd
 
     @classmethod
-    def acquire(cls, path: Path) -> "InstanceLock":
+    def acquire(cls, path: Path) -> InstanceLock:
         fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             try:
@@ -44,7 +57,9 @@ class InstanceLock:
             except BlockingIOError:
                 pid = os.read(fd, 64).decode(errors="replace").strip()
                 owner = f" (pid {pid})" if pid else ""
-                raise EngineLockedError(f"another ds4 process holds {path}{owner}; stop it or set DS4_LOCK_FILE") from None
+                raise EngineLockedError(
+                    f"another ds4 process holds {path}{owner}; stop it or set DS4_LOCK_FILE"
+                ) from None
             os.ftruncate(fd, 0)
             os.write(fd, f"{os.getpid()}\n".encode())
         except BaseException:
@@ -57,15 +72,15 @@ class InstanceLock:
             os.close(self._fd)
             self._fd = None
 
-    def __enter__(self) -> InstanceLock:
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, *exc: Any) -> None:
+    def __exit__(self, *exc: object) -> None:
         self.close()
 
 
 @contextmanager
-def _open_environment(second: Path, sources: dict[str, str]) -> Iterator[None]:
+def _open_environment(second: Path, sources: dict[str, str]) -> Generator[None]:
     changes = {key: value for key, value in sources.items() if key not in os.environ}
     changes["DS4_LOCK_FILE"] = str(second)
     previous = {key: os.environ.get(key) for key in changes}
@@ -84,9 +99,15 @@ def engine_options(config: EngineConfig, *, inspect_only: bool = False) -> struc
     if config.backend not in BACKENDS:
         raise ValueError(f"unknown backend: {config.backend}")
     return structs.EngineOptions(
-        model_path=os.fsencode(config.model), backend=BACKENDS[config.backend],
-        n_threads=config.threads, context_size=config.ctx, placement_ctx_hint=config.ctx,
-        mtp_draft_tokens=1, mtp_margin=3.0, inspect_only=inspect_only,
+        model_path=os.fsencode(config.model),
+        backend=BACKENDS[config.backend],
+        n_threads=config.threads,
+        context_size=config.ctx,
+        placement_ctx_hint=config.ctx,
+        mtp_path=os.fsencode(config.mtp_path) if config.mtp_path is not None else None,
+        mtp_draft_tokens=config.mtp_draft_tokens,
+        mtp_margin=3.0,
+        inspect_only=inspect_only,
     )
 
 
@@ -104,7 +125,7 @@ class LibNative:
         return mode.value if self.bind("ds4_think_mode_parse_level")(text.encode(), C.byref(mode)) else None
 
     def think_mode_for_context(self, mode: int, ctx: int) -> int:
-        return self.bind("ds4_think_mode_for_context")(mode, ctx)
+        return int_result(self.bind("ds4_think_mode_for_context")(mode, ctx))
 
     def open_engine(self, config: EngineConfig) -> NativeEngine:
         """Inspect then open, holding the original lock until engine close.
@@ -124,18 +145,26 @@ class LibNative:
             lock = InstanceLock.acquire(lock_path())
             try:
                 second = engine_lock_path()
-                sources = metal_source_env(
-                    self.lib.path.resolve().parent, self.lib.manifest.metal_sources, os.environ,
-                ) if self.backend == "metal" else {}
+                sources = (
+                    metal_source_env(
+                        self.lib.path.resolve().parent,
+                        self.lib.manifest.metal_sources,
+                        os.environ,
+                    )
+                    if self.backend == "metal"
+                    else {}
+                )
                 inspect_model(self.lib.path, config, second)
                 options = engine_options(config)
                 raw = C.c_void_p()
                 with _open_environment(second, sources):
                     status = self.bind("ds4_engine_open")(C.byref(raw), C.byref(options))
                 if status:
-                    raise EngineError(f"ds4_engine_open failed ({status})")
+                    raise EngineError(  # noqa: TRY301 - Keep native open cleanup in the same guarded scope.
+                        f"ds4_engine_open failed ({status})"
+                    )
                 try:
-                    return NativeEngine(self.lib, cast(int, raw.value), options, lock)
+                    return NativeEngine(self.lib, cast("int", raw.value), options, lock)
                 except BaseException:
                     self.bind("ds4_engine_close")(raw)
                     raise
@@ -151,7 +180,8 @@ class _Handle:
         self._thread = threading.get_ident()
 
     def _assert_thread(self) -> None:
-        assert threading.get_ident() == self._thread, "native handle used on another thread"
+        if threading.get_ident() != self._thread:
+            raise AssertionError("native handle used on another thread")
 
     def _call(self, name: str, *args: Any) -> Any:
         self._assert_thread()
@@ -162,7 +192,11 @@ class _Handle:
 
 class NativeEngine(_Handle):
     def __init__(
-        self, lib: Library, raw: int, options: structs.EngineOptions, lock: InstanceLock,
+        self,
+        lib: Library,
+        raw: int,
+        options: structs.EngineOptions,
+        lock: InstanceLock,
     ) -> None:
         super().__init__(lib, raw)
         self._options, self._lock = options, lock
@@ -181,18 +215,31 @@ class NativeEngine(_Handle):
     def _read_info(self) -> EngineInfo:
         def get(name: str) -> Any:
             return self._call("ds4_engine_" + name)
+
         deep, glm, qwen = get("is_deepseek41"), get("is_glm_dsa"), get("is_qwen4")
-        return EngineInfo(get("model_name").decode(), get("model_id"),
-                          family_of(deepseek41=deep, glm=glm, qwen=qwen),
-                          deep, glm, qwen, get("has_vision"), get("routed_quant_bits"),
-                          get("mtp_draft_tokens"), get("vocab_size"))
+        return EngineInfo(
+            get("model_name").decode(),
+            get("model_id"),
+            family_of(deepseek41=deep, glm=glm, qwen=qwen),
+            deep,
+            glm,
+            qwen,
+            get("has_vision"),
+            get("routed_quant_bits"),
+            get("mtp_draft_tokens"),
+            get("vocab_size"),
+        )
 
     def tokenize(self, text: str, *, rendered: bool = False) -> list[int]:
         self._assert_thread()
         tokens = structs.Tokens()
         try:
-            self._call("ds4_tokenize_rendered_chat" if rendered else "ds4_tokenize_text", text.encode(), C.byref(tokens))
-            return list(tokens.v[:tokens.len])
+            self._call(
+                "ds4_tokenize_rendered_chat" if rendered else "ds4_tokenize_text",
+                text.encode(),
+                C.byref(tokens),
+            )
+            return list(tokens.v[: tokens.len])
         finally:
             self._lib.fn("ds4_tokens_free")(C.byref(tokens))
 
@@ -207,7 +254,11 @@ class NativeEngine(_Handle):
     def render_message(self, prefix: Sequence[int], role: str, content: str) -> list[int]:
         """Return the native role/message delta without changing prefix; worker only."""
         return chat.append_delta(
-            self, prefix, "ds4_chat_append_message", role.encode(), content.encode(),
+            self,
+            prefix,
+            "ds4_chat_append_message",
+            role.encode(),
+            content.encode(),
         )
 
     def assistant_prefix(self, prefix: Sequence[int], mode: int) -> list[int]:
@@ -227,14 +278,14 @@ class NativeEngine(_Handle):
             self._lib.free(ptr)
 
     def eos(self) -> int:
-        return self._call("ds4_token_eos")
+        return int_result(self._call("ds4_token_eos"))
 
     def is_stop(self, token: int) -> bool:
-        return self._call("ds4_token_is_stop", token)
+        return bool_result(self._call("ds4_token_is_stop", token))
 
     def is_stop_for_think_mode(self, token: int, mode: int) -> bool:
         """Apply the native mode-aware stop policy on the owning worker."""
-        return self._call("ds4_token_is_stop_for_think_mode", token, mode)
+        return bool_result(self._call("ds4_token_is_stop_for_think_mode", token, mode))
 
     def create_session(self, ctx: int) -> NativeSession:
         self._assert_thread()
@@ -243,8 +294,8 @@ class NativeEngine(_Handle):
         raw = C.c_void_p()
         if self._lib.fn("ds4_session_create")(C.byref(raw), self.raw, ctx):
             raise EngineError("ds4_session_create failed")
-        self._session_allocations.add(cast(int, raw.value))
-        session = NativeSession(self, cast(int, raw.value))
+        self._session_allocations.add(cast("int", raw.value))
+        session = NativeSession(self, cast("int", raw.value))
         self._sessions.add(session)
         return session
 
@@ -284,8 +335,7 @@ class NativeStagedPayload:
             raise EngineError("staged payload is closed")
         error = C.create_string_buffer(512)
         with payload.native_stream(file, "wb") as stream:
-            status = self._lib.fn("ds4_session_write_staged_payload")(
-                C.byref(self._data), stream, error, len(error))
+            status = self._lib.fn("ds4_session_write_staged_payload")(C.byref(self._data), stream, error, len(error))
         if status:
             raise EngineError(error.value.decode(errors="replace"))
 
@@ -312,7 +362,7 @@ class NativeSession(_Handle):
         try:
             if self._progress is not None and self._callback_error is None:
                 self._progress(event.decode(), current, total)
-        except BaseException as exc:
+        except BaseException as exc:  # noqa: BLE001 - Propagate every callback failure to the worker.
             self._callback_error = exc
 
     def _on_cancel(self, ud: Any) -> bool:
@@ -320,7 +370,7 @@ class NativeSession(_Handle):
             return True
         try:
             return bool(self._cancel and self._cancel())
-        except BaseException as exc:
+        except BaseException as exc:  # noqa: BLE001 - Cancellation must stop native work on every failure.
             self._callback_error = exc
             return True
 
@@ -351,7 +401,7 @@ class NativeSession(_Handle):
                 raise self._callback_error
             if status == 0:
                 return SyncStatus.DONE
-            if status == 2:
+            if status == SyncStatus.INTERRUPTED.value:
                 return SyncStatus.INTERRUPTED
             raise EngineError(error.value.decode(errors="replace"))
         finally:
@@ -361,23 +411,28 @@ class NativeSession(_Handle):
             self._progress = self._cancel = self._callback_error = None
 
     def sample(
-        self, temperature: float, top_k: int, top_p: float, min_p: float, rng: C.c_uint64,
+        self,
+        temperature: float,
+        top_k: int,
+        top_p: float,
+        min_p: float,
+        rng: C.c_uint64,
     ) -> int:
-        token = self._call("ds4_session_sample", temperature, top_k, top_p, min_p, C.byref(rng))
-        return token
+        return int_result(self._call("ds4_session_sample", temperature, top_k, top_p, min_p, C.byref(rng)))
 
     def argmax(self) -> int:
-        token = self._call("ds4_session_argmax")
-        return token
+        return int_result(self._call("ds4_session_argmax"))
 
     def copy_logits(self, out: Any) -> None:
         """Copy into a vocabulary-sized writable float32 buffer; worker only."""
-        from .logits import copy_logits
+        from .logits import copy_logits  # noqa: PLC0415 - Keep native module initialization acyclic.
+
         copy_logits(self, out)
 
     def set_logits(self, values: Sequence[float]) -> None:
         """Replace logits from a vocabulary-sized sequence; worker only."""
-        from .logits import set_logits
+        from .logits import set_logits  # noqa: PLC0415 - Keep native module initialization acyclic.
+
         set_logits(self, values)
 
     def eval(self, token: int) -> None:
@@ -387,26 +442,26 @@ class NativeSession(_Handle):
         self._call("ds4_session_rewind", pos)
 
     def pos(self) -> int:
-        return self._call("ds4_session_pos")
+        return int_result(self._call("ds4_session_pos"))
 
     def ctx(self) -> int:
-        return self._call("ds4_session_ctx")
+        return int_result(self._call("ds4_session_ctx"))
 
     def tokens(self) -> list[int]:
         data = self._call("ds4_session_tokens").contents
-        return list(data.v[:data.len])
+        return list(data.v[: data.len])
 
     def common_prefix(self, tokens: Sequence[int]) -> int:
-        return self._call("ds4_session_common_prefix", C.byref(_tokens(tokens)))
+        return int_result(self._call("ds4_session_common_prefix", C.byref(_tokens(tokens))))
 
     def checkpoint_valid(self) -> bool:
-        return self._call("ds4_session_checkpoint_valid")
+        return bool_result(self._call("ds4_session_checkpoint_valid"))
 
     def invalidate(self) -> None:
         self._call("ds4_session_invalidate")
 
     def payload_bytes(self) -> int:
-        return self._call("ds4_session_payload_bytes")
+        return int_result(self._call("ds4_session_payload_bytes"))
 
     def stage_payload(self) -> NativeStagedPayload:
         self._assert_thread()
@@ -435,7 +490,7 @@ class NativeSession(_Handle):
 
     def load_snapshot(self, snap: Snapshot) -> None:
         self._assert_thread()
-        native_snap = cast(NativeSnapshot, snap)
+        native_snap = cast("NativeSnapshot", snap)
         if native_snap._closed:
             raise EngineError("snapshot is closed")
         self._error_call("ds4_session_load_snapshot", C.byref(native_snap._data))

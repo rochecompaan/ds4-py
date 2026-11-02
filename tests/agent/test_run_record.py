@@ -1,34 +1,40 @@
 """DS4RunRecord telemetry encoding and failure semantics (Task 9)."""
-from typing import Any
-from pathlib import Path
 
 import asyncio
-from dataclasses import replace
-from types import SimpleNamespace
 import json
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
+from _helpers import run_context
+from pydantic_ai.messages import PartStartEvent, TextPart
 
 import ds4py
-from ds4py.engine.session import Engine
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.capabilities.run_record import DS4RunRecord
+from ds4py.engine.session import Engine
 
 
-def fake_engine(*, script: Any=None) -> Engine:
-    info = replace(FakeNative()._info, name="fake-ds4", is_deepseek41=False,
-                   is_glm_dsa=False, is_qwen4=True, family="qwen")
+def fake_engine(*, script: Any = None) -> Engine:
+    info = replace(
+        FakeNative()._info,
+        name="fake-ds4",
+        is_deepseek41=False,
+        is_glm_dsa=False,
+        is_qwen4=True,
+        family="qwen",
+    )
     native = FakeNative(info=info) if script is None else FakeNative(info=info, script=script)
     return ds4py.open("f.gguf", ctx=65536, think=ThinkMode.NONE, native=native)
 
 
 def scripted_text(text: Any) -> Any:
     tokens = tuple(tokenize_rendered(text))
-    return lambda prompt, generated: (
-        tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
-    )
+    return lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
 
 def read_lines(path: Any) -> Any:
@@ -40,7 +46,7 @@ def test_engine_events_are_one_flushed_json_line_each(tmp_path: Path) -> None:
     with fake_engine(script=scripted_text("ok")) as engine:
         session = engine.session()
         record = DS4RunRecord(session, path)
-        asyncio.run(record.for_run(SimpleNamespace(run_id="run-1")))
+        asyncio.run(record.for_run(run_context(run_id="run-1")))
         session.start_chat()
         session.emit("run_start")
         list(session.run_round())
@@ -49,7 +55,7 @@ def test_engine_events_are_one_flushed_json_line_each(tmp_path: Path) -> None:
 
     lines = read_lines(path)
     # The engine's close publishes a trailing session_end; stop at this round's end.
-    lines = lines[:[line["kind"] for line in lines].index("run_end") + 1]
+    lines = lines[: [line["kind"] for line in lines].index("run_end") + 1]
     assert lines[0]["kind"] == "run_start" and lines[0]["run_id"] == "run-1"
     assert lines[-1]["kind"] == "run_end" and lines[-1]["payload"]["status"] == "success"
     for line in lines:
@@ -86,13 +92,15 @@ def test_record_write_failure_is_reported_and_never_hidden(tmp_path: Path) -> No
         assert str(path) in str(record.failure)
 
         # The harness hook does surface it, so the run cannot report success.
-        ctx = SimpleNamespace(conversation_id=session.id, run_id="run-1")
-        with pytest.raises(OSError):
-            asyncio.run(record.on_event(ctx, event=SimpleNamespace(parts=[])))
+        ctx = run_context(conversation_id=session.id, run_id="run-1")
+        with pytest.raises(OSError, match=r"events.jsonl"):
+            asyncio.run(record.on_event(ctx, event=PartStartEvent(index=0, part=TextPart("event"))))
         assert record.failure is not None
 
 
-def test_relocate_sends_later_lines_to_the_current_session_directory(tmp_path: Path) -> None:
+def test_relocate_sends_later_lines_to_the_current_session_directory(
+    tmp_path: Path,
+) -> None:
     first = tmp_path / "first" / "events.jsonl"
     second = tmp_path / "second" / "events.jsonl"
     with fake_engine(script=scripted_text("ok")) as engine:
@@ -115,13 +123,15 @@ def test_run_record_writes_one_bridged_agent_event_from_the_session_bus(
     with fake_engine() as engine:
         session = engine.session()
         record = DS4RunRecord(session, path)
-        ctx = SimpleNamespace(conversation_id="conversation", run_id="run")
+        ctx = run_context(conversation_id="conversation", run_id="run")
         asyncio.run(record.for_run(ctx))
         event = SimpleNamespace(parts=[])
 
         session.emit(
-            "agent_event", event=event,
-            conversation_id="conversation", run_id="run",
+            "agent_event",
+            event=event,
+            conversation_id="conversation",
+            run_id="run",
         )
 
         lines = [line for line in read_lines(path) if line["kind"] == "SimpleNamespace"]

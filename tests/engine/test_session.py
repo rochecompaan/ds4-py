@@ -1,28 +1,32 @@
-from typing import Any
 import threading
 from dataclasses import replace
 from pathlib import Path
+from typing import Any, Never, override
 
 import pytest
 
 import ds4py
-from ds4py.engine.session import Engine
 from ds4py import ThinkMode, open
 from ds4py._native.fake import FakeNative, FakeSession, reply
 from ds4py._native.protocol import EngineConfig
 from ds4py.engine.events import (
-    Checkpointed, Interrupted, Prefill, Stopped, Synced, Token, ToolCalls,
+    Checkpointed,
+    Interrupted,
+    Prefill,
+    Stopped,
+    Synced,
+    Token,
+    ToolCalls,
 )
 from ds4py.engine.plan import Plan
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.session import Engine, Session
 from ds4py.engine.transcript import Transcript
-from ds4py.engine.worker import EngineWorker, SYSTEM
+from ds4py.engine.worker import SYSTEM, EngineWorker, SyncJob
 from ds4py.errors import CheckpointError, EngineError
-from typing import Never
 
 
-def fake_engine(*, ctx: Any=64, cancel: Any=None, **fake: Any) -> Engine:
+def fake_engine(*, ctx: Any = 64, cancel: Any = None, **fake: Any) -> Engine:
     return ds4py.open("f.gguf", ctx=ctx, cancel=cancel, native=FakeNative(**fake))
 
 
@@ -35,11 +39,37 @@ def test_open_checks_backend_and_think_mode() -> None:
         assert e.think == ThinkMode.HIGH
 
 
+def test_open_forwards_mtp_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    caller_thread = threading.get_ident()
+    config_threads = []
+    original_post_init = EngineConfig.__post_init__
+
+    def record_config_thread(config: EngineConfig) -> None:
+        config_threads.append(threading.get_ident())
+        original_post_init(config)
+
+    monkeypatch.setattr(EngineConfig, "__post_init__", record_config_thread)
+    with ds4py.open(
+        "model.gguf",
+        mtp_path="drafter.gguf",
+        mtp_draft_tokens=7,
+        native=FakeNative(),
+    ) as engine:
+        assert engine.config.mtp_path == tmp_path / "drafter.gguf"
+        assert engine.config.mtp_draft_tokens == 7
+        assert config_threads == [caller_thread]
+    with ds4py.open("model.gguf", native=FakeNative()) as engine:
+        assert engine.config.mtp_path is None
+        assert engine.config.mtp_draft_tokens == 1
+
+
 @pytest.mark.parametrize("fail", [False, True])
 def test_think_helper_runs_on_owner_and_failure_closes_worker(fail: Any) -> None:
     handles, calls = [], []
 
     class TrackingNative(FakeNative):
+        @override
         def open_engine(self, config: Any) -> Any:
             engine = super().open_engine(config)
             handles.append(engine)
@@ -50,9 +80,10 @@ def test_think_helper_runs_on_owner_and_failure_closes_worker(fail: Any) -> None
                 handles.append(session)
                 return session
 
-            engine.create_session = create_session
+            engine.create_session = create_session  # ty: ignore[invalid-assignment]  # Instance-level test double replaces a bound method.
             return engine
 
+        @override
         def think_mode_for_context(self, mode: Any, ctx: Any) -> Any:
             calls.append(threading.current_thread())
             if fail:
@@ -87,7 +118,12 @@ def test_a_round_syncs_generates_and_extends_the_transcript() -> None:
         assert isinstance(e, Engine) and isinstance(s, Session)
         s.append_tokens(e.tokenize("hi"), "user")
         events = list(s.run_round(max_tokens=10))
-        assert [type(ev).__name__ for ev in events if not isinstance(ev, Prefill)] == ["Synced", "Token", "Token", "Stopped"]
+        assert [type(ev).__name__ for ev in events if not isinstance(ev, Prefill)] == [
+            "Synced",
+            "Token",
+            "Token",
+            "Stopped",
+        ]
         assert s.transcript.tokens == tuple(e.tokenize("hiok"))
         assert [seg.kind for seg in s.transcript.segments] == ["user", "assistant"]
         assert s.ctx_used == 4 and s.plan() == Plan("extend", 4, 0, True, None)
@@ -99,11 +135,13 @@ def test_malformed_dsml_raw_utf8_finishes_as_parser_error() -> None:
     payload = (
         '<｜DSML｜tool_calls><｜DSML｜invoke name="read" extra="'.encode()
         + b"\xff"
-        + ('"><｜DSML｜parameter name="path" string="true">x'
-           '</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>').encode()
+        + (
+            '"><｜DSML｜parameter name="path" string="true">x</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>'
+        ).encode()
     )
     with ds4py.open(
-        "f.gguf", think=ThinkMode.NONE,
+        "f.gguf",
+        think=ThinkMode.NONE,
         native=FakeNative(script=reply(payload)),
     ) as engine:
         session = engine.session()
@@ -116,6 +154,7 @@ def test_malformed_dsml_raw_utf8_finishes_as_parser_error() -> None:
 
 def test_public_round_forwards_stop_sequences(monkeypatch: pytest.MonkeyPatch) -> None:
     from ds4py.engine import session as session_module
+
     original = session_module.GenerateJob
     captured = []
 
@@ -127,14 +166,22 @@ def test_public_round_forwards_stop_sequences(monkeypatch: pytest.MonkeyPatch) -
     with fake_engine(script=reply(b"ok")) as e:
         session = e.session()
         session.append_tokens([5, 6], "user")
-        assert isinstance(list(session.run_round(
-            max_tokens=10, stop_sequences=[b"stop"],
-        ))[-1], Stopped)
+        assert isinstance(
+            list(
+                session.run_round(
+                    max_tokens=10,
+                    stop_sequences=[b"stop"],
+                )
+            )[-1],
+            Stopped,
+        )
     assert captured[0]["control"].sequences == (b"stop",)
 
 
 @pytest.mark.parametrize("pause_at", [Synced, Token])
-def test_overlapping_round_is_refused_without_releasing_the_first(pause_at: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_overlapping_round_is_refused_without_releasing_the_first(
+    pause_at: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with fake_engine(script=reply(b"ok")) as e:
         s = e.session()
         s.append_tokens([5, 6], "user")
@@ -145,7 +192,11 @@ def test_overlapping_round_is_refused_without_releasing_the_first(pause_at: Any,
             unused.close()
             second = s.run_round()
             with monkeypatch.context() as mp:
-                mp.setattr(EngineWorker, "submit", lambda *a, **k: pytest.fail("overlapping round submitted a job"))
+                mp.setattr(
+                    EngineWorker,
+                    "submit",
+                    lambda *a, **k: pytest.fail("overlapping round submitted a job"),
+                )
                 with pytest.raises(EngineError, match="a round is open"):
                     next(second)
                 with pytest.raises(EngineError, match="a round is open"):
@@ -159,7 +210,7 @@ def test_overlapping_round_is_refused_without_releasing_the_first(pause_at: Any,
         finally:
             first.close()
             unused.close()
-            if second is not None:
+            if second is not None:  # ty: ignore[redundant-condition-strict]  # second is assigned only on the alternate path.
                 second.close()
 
 
@@ -228,8 +279,9 @@ def test_extension_binding_runs_on_the_worker(ext_site: Any) -> None:
     native = FakeNative(bindings={"ds4_engine_layer_count": lambda engine_ptr: 43})
     with ds4py.open("f.gguf", ctx=64, native=native) as e:
         layer_count = e.native.bind("ds4_engine_layer_count")
-        count, session_ptr, thread = e.session().on_worker(
-            lambda h: (layer_count(h.engine), h.session, threading.get_ident())).result()
+        count, session_ptr, thread = (
+            e.session().on_worker(lambda h: (layer_count(h.engine), h.session, threading.get_ident())).result()
+        )
         assert count == 43 and isinstance(session_ptr, int) and thread != threading.get_ident()
 
 
@@ -242,8 +294,10 @@ def test_failure_before_submission_releases_ownership(failure: Any, monkeypatch:
         s = e.session()
         s.append_tokens([5, 6], "user")
         with monkeypatch.context() as mp:
+
             def fail(*args: Any) -> Never:
                 raise EngineError("admission failed")
+
             if failure == "capture":
                 mp.setattr(Transcript, "tokens", property(fail))
             else:
@@ -255,8 +309,14 @@ def test_failure_before_submission_releases_ownership(failure: Any, monkeypatch:
 
 
 @pytest.mark.parametrize("fail_eval", [False, True])
-def test_close_drains_inflight_commits_before_releasing_ownership(fail_eval: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    cancel, evaluating, release = threading.Event(), threading.Event(), threading.Event()
+def test_close_drains_inflight_commits_before_releasing_ownership(
+    fail_eval: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cancel, evaluating, release = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
     original = FakeSession.eval
 
     def blocked_eval(self: Any, token: Any) -> Any:
@@ -301,7 +361,9 @@ def test_close_drains_inflight_commits_before_releasing_ownership(fail_eval: Any
         assert list(s.run_round(max_tokens=0))[-1] == Stopped("max_tokens")
 
 
-def test_round_uses_current_sampling_defaults_but_keeps_one_rng(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_round_uses_current_sampling_defaults_but_keeps_one_rng(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = []
     original = FakeSession.sample
 
@@ -333,6 +395,47 @@ def test_cancel_after_sync_interrupts_generation_and_clears_flag() -> None:
         assert list(rnd) == [Stopped("interrupted")]
         assert s.transcript.tokens == (5, 6)
         assert list(s.run_round(max_tokens=1))[-1] == Stopped("max_tokens")
+
+
+def test_close_publishes_terminal_event_emitted_only_after_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancel = threading.Event()
+    first = Prefill(0, 1, 0, 0.0)
+    terminal = Stopped("interrupted")
+
+    class DrainAfterCancel:
+        def __init__(self) -> None:
+            self.returned = 0
+
+        def __iter__(self) -> Any:
+            return self
+
+        def __next__(self) -> Any:
+            if self.returned == 2:
+                raise StopIteration
+            if self.returned == 1:
+                assert cancel.is_set(), "terminal event was emitted before cancellation"
+            self.returned += 1
+            return first if self.returned == 1 else terminal
+
+        def wait(self) -> None:
+            assert cancel.is_set(), "cleanup waited without requesting cancellation"
+
+    drained = DrainAfterCancel()
+    monkeypatch.setattr(EngineWorker, "submit", lambda _worker, _job: drained)
+    observed = []
+    with fake_engine(cancel=cancel) as engine:
+        session = engine.session()
+        session.on_event(
+            lambda event: observed.append(event.payload["event"]),
+            kinds={"Prefill", "Stopped"},
+        )
+        round_events = session._job_events(SyncJob((1,)))
+        assert next(round_events) is first
+        round_events.close()
+
+    assert observed == [first, terminal]
 
 
 def test_negative_round_budget_does_not_generate() -> None:

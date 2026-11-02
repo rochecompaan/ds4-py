@@ -4,22 +4,27 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, override
 
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
-from prompt_toolkit.document import Document
-from prompt_toolkit.formatted_text import StyleAndTextTuples
-from prompt_toolkit.input import Input
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.key_binding.key_processor import KeyPressEvent
-from prompt_toolkit.output import Output
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import PromptSession, print_formatted_text
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse
 
-from ds4py.engine.lifecycle import SessionEvent
 from ds4py.question_answers import selected_labels
-from ds4py.runtime import AgentRuntime
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
+    from prompt_toolkit.document import Document
+    from prompt_toolkit.formatted_text import StyleAndTextTuples
+    from prompt_toolkit.input import Input
+    from prompt_toolkit.key_binding.key_processor import KeyPressEvent
+    from prompt_toolkit.output import Output
+
+    from ds4py.engine.lifecycle import SessionEvent
+    from ds4py.runtime import AgentRuntime
 from ds4py.tui_commands import SlashCommandRegistry, install_builtin_commands
 from ds4py.tui_render import FooterModel, StreamRenderer
 
@@ -28,8 +33,11 @@ class _SlashCompleter(Completer):
     def __init__(self, registry: SlashCommandRegistry) -> None:
         self.registry = registry
 
+    @override
     def get_completions(
-        self, document: Document, complete_event: CompleteEvent,
+        self,
+        document: Document,
+        complete_event: CompleteEvent,
     ) -> Iterable[Completion]:
         yield from self.registry.completions(document.text_before_cursor)
 
@@ -38,7 +46,10 @@ class TUI:
     """Own prompt input, event rendering, commands, and the live footer."""
 
     def __init__(
-        self, runtime: AgentRuntime, input: Input | None = None, output: Output | None = None,
+        self,
+        runtime: AgentRuntime,
+        input: Input | None = None,
+        output: Output | None = None,
     ) -> None:
         self.runtime = runtime
         self.output = output
@@ -57,7 +68,9 @@ class TUI:
             bottom_toolbar=self._bottom_toolbar,
         )
         install_builtin_commands(
-            self.commands, runtime, request_exit=self._request_exit,
+            self.commands,
+            runtime,
+            request_exit=self._request_exit,
         )
         self._loop: asyncio.AbstractEventLoop | None = None
         self._events: asyncio.Queue[SessionEvent] = asyncio.Queue()
@@ -114,9 +127,19 @@ class TUI:
 
     def _ensure_prompt(self) -> asyncio.Task[str]:
         if self._prompt_task is None:
-            self._prompt_task = asyncio.create_task(
-                self.session.prompt_async("ds4py> "),
-            )
+
+            async def prompt() -> str:
+                while True:
+                    try:
+                        line = await self.session.prompt_async("ds4py> ")
+                    except KeyboardInterrupt:
+                        self.runtime.cancel()
+                        continue
+                    if not isinstance(line, str):
+                        raise TypeError("prompt did not return text")
+                    return line
+
+            self._prompt_task = asyncio.create_task(prompt())
         return self._prompt_task
 
     def _take_prompt(self, task: asyncio.Task[str]) -> str:
@@ -136,11 +159,15 @@ class TUI:
         while True:
             prompt_task = self._ensure_prompt()
             done, _ = await asyncio.wait(
-                {run_task, prompt_task}, return_when=asyncio.FIRST_COMPLETED,
+                {run_task, prompt_task},
+                return_when=asyncio.FIRST_COMPLETED,
             )
             if run_task in done:
                 try:
                     run_task.result()
+                except asyncio.CancelledError:
+                    if self.runtime.status != "interrupted":
+                        raise
                 except Exception as error:
                     self.show_message(f"error: {error}")
                 return
@@ -156,6 +183,9 @@ class TUI:
                     self.runtime.cancel()
                     try:
                         await run_task
+                    except asyncio.CancelledError:
+                        if self.runtime.status != "interrupted":
+                            raise
                     except Exception as error:
                         self.show_message(f"error: {error}")
                     return
@@ -170,7 +200,7 @@ class TUI:
             for question in request.questions:
                 self.show_message(question.question)
                 for index, option in enumerate(question.options, 1):
-                    description = f" — {option.description}" if option.description else ""
+                    description = f" — {option.description}" if option.description is not None else ""
                     self.show_message(f"  {index}. {option.label}{description}")
                 prompt = "Choices (comma-separated)" if question.multi_select else "Choice"
                 self.show_message(f"{prompt}; enter /cancel to cancel.")
@@ -189,9 +219,12 @@ class TUI:
                     if selected is None:
                         self.show_message("Invalid choice; try again or enter /cancel.")
                         continue
-                    answers.append(AskUserAnswer(
-                        header=question.header, selected=selected,
-                    ))
+                    answers.append(
+                        AskUserAnswer(
+                            header=question.header,
+                            selected=selected,
+                        )
+                    )
                     break
             return AskUserResponse(answers=tuple(answers))
         finally:

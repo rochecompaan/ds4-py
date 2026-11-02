@@ -1,40 +1,55 @@
 """Adapt the ds4 engine facade to Pydantic AI requests and streamed responses."""
+
 import asyncio
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
-from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 import math
 import operator
 import sys
-from typing import Any, TypeVar, cast
+from collections.abc import Buffer
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, ClassVar, SupportsFloat, SupportsIndex, cast, override
 from uuid import uuid4
 
 import anyio
-
-from pydantic_ai.messages import (
-    FinishReason, InstructionPart, ModelMessage, ModelResponse, ModelResponseStreamEvent,
-)
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.native_tools import AbstractNativeTool
-from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles import ModelProfile, ToolAdditionMode, ToolDeferralMode
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
-from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
+from typing_extensions import sentinel
 
 from ds4py.binding import MessageBinder
-from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.engine.events import (
-    Event, Interrupted, ReserveReached, Stopped, Synced, TextDelta, Token, ToolCalls,
+    Event,
+    Interrupted,
+    ReserveReached,
+    Stopped,
+    Synced,
+    TextDelta,
+    Token,
+    ToolCalls,
     ToolSyntax,
 )
 from ds4py.engine.sampling import SamplingPolicy
-from ds4py.engine.session import Session
 from ds4py.errors import EngineError
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
 
-_END = object()
-T = TypeVar("T")
+    from pydantic_ai.messages import (
+        FinishReason,
+        InstructionPart,
+        ModelMessage,
+        ModelResponse,
+        ModelResponseStreamEvent,
+    )
+    from pydantic_ai.settings import ModelSettings
+    from pydantic_ai.tools import RunContext
+
+    from ds4py.capabilities.system_notes import DS4SystemNotes
+    from ds4py.engine.session import Session
+
+_END = sentinel("_END")
 
 
 class ContextReserveError(EngineError):
@@ -50,13 +65,10 @@ class ResponseTerminalError(EngineError):
 
 
 def _context_reserve_message(needed: int | None) -> str:
-    return (
-        f"context reserve reached with {needed} token(s) needed; "
-        "M4 compaction is not available in this build"
-    )
+    return f"context reserve reached with {needed} token(s) needed; M4 compaction is not available in this build"
 
 
-def _next(iterator: Iterator[T]) -> T | object:
+def _next[T](iterator: Iterator[T]) -> T | _END:
     """Keep StopIteration out of the Future used by asyncio.to_thread."""
     try:
         return next(iterator)
@@ -64,18 +76,22 @@ def _next(iterator: Iterator[T]) -> T | object:
         return _END
 
 
-def _integer(value: Any, name: str) -> int:
+def _integer(value: object, name: str) -> int:
     if value is None or isinstance(value, bool):
         raise ValueError(f"{name} must be a concrete integer")
+    if not isinstance(value, SupportsIndex):
+        raise ValueError(f"{name} must be a concrete integer")  # noqa: TRY004 - Preserve settings validation errors.
     try:
         return operator.index(value)
     except TypeError as error:
         raise ValueError(f"{name} must be a concrete integer") from error
 
 
-def _finite(value: Any, name: str) -> float:
+def _finite(value: object, name: str) -> float:
     if value is None or isinstance(value, bool):
         raise ValueError(f"{name} must be a concrete finite number")
+    if not isinstance(value, (str, Buffer, SupportsFloat, SupportsIndex)):
+        raise ValueError(f"{name} must be a concrete finite number")  # noqa: TRY004 - Preserve settings validation errors.
     try:
         value = float(value)
     except (TypeError, ValueError) as error:
@@ -86,7 +102,7 @@ def _finite(value: Any, name: str) -> float:
 
 
 def _instructions(parts: Sequence[InstructionPart] | None) -> str | None:
-    if not parts:
+    if not bool(parts):
         return None
     return "\n\n".join(part.content for part in parts) or None
 
@@ -99,12 +115,16 @@ class DS4Model(Model):
     callback. A response must be drained or closed before the next round.
     """
 
-    supported_tool_addition_modes = frozenset()
-    supported_tool_deferral_modes = frozenset()
+    supported_tool_addition_modes: ClassVar[frozenset[ToolAdditionMode]] = frozenset[ToolAdditionMode]()
+    supported_tool_deferral_modes: ClassVar[frozenset[ToolDeferralMode]] = frozenset[ToolDeferralMode]()
 
-    def __init__(
-        self, session: Session, *, binder: MessageBinder | None = None,
-        sampling: SamplingPolicy, max_tokens: int = 50_000,
+    def __init__(  # noqa: PLR0913 - Model configuration mirrors the native request surface.
+        self,
+        session: Session,
+        *,
+        binder: MessageBinder | None = None,
+        sampling: SamplingPolicy,
+        max_tokens: int = 50_000,
         stop_sequences: Sequence[bytes] = (),
         note_provider: DS4SystemNotes | None = None,
         reserve_handler: Callable[[int], int | None] | None = None,
@@ -121,33 +141,40 @@ class DS4Model(Model):
         self.reserve_handler = reserve_handler
 
     @property
+    @override
     def model_name(self) -> str:
         return self.session.engine.info.name
 
     @property
+    @override
     def system(self) -> str:
         return "ds4"
 
     @classmethod
+    @override
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
-        return frozenset()
+        return frozenset[type[AbstractNativeTool]]()
 
+    @override
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        return ModelProfile(**{
-            **profile,
-            "context_window": self.session.engine.config.ctx,
-            "supports_thinking": True,
-            "supports_tools": True,
-            "supports_inline_system_prompts": True,
-            "supports_json_schema_output": False,
-            "supports_json_object_output": False,
-            "default_structured_output_mode": "prompted",
-            "json_schema_transformer": OpenAIJsonSchemaTransformer,
-            "thinking_tags": ("<think>", "</think>"),
-        })
+        return ModelProfile(
+            **{
+                **profile,
+                "context_window": self.session.engine.config.ctx,
+                "supports_thinking": True,
+                "supports_tools": True,
+                "supports_inline_system_prompts": True,
+                "supports_json_schema_output": False,
+                "supports_json_object_output": False,
+                "default_structured_output_mode": "prompted",
+                "json_schema_transformer": OpenAIJsonSchemaTransformer,
+                "thinking_tags": ("<think>", "</think>"),
+            }
+        )
 
     def _request_config(
-        self, settings: ModelSettings | None,
+        self,
+        settings: ModelSettings | None,
     ) -> tuple[SamplingPolicy, int, tuple[bytes, ...]]:
         settings = settings or {}
         policy = SamplingPolicy(
@@ -161,16 +188,16 @@ class DS4Model(Model):
         stops = settings.get("stop_sequences", self.stop_sequences)
         if stops is None:
             raise ValueError("stop_sequences must be concrete strings or bytes")
-        stop_sequences = tuple(
-            stop.encode() if isinstance(stop, str) else bytes(stop) for stop in stops
-        )
+        stop_sequences = tuple(stop.encode() if isinstance(stop, str) else bytes(stop) for stop in stops)
         return policy, max_tokens, stop_sequences
 
     @asynccontextmanager
     async def _open_stream(
-        self, messages: list[ModelMessage], settings: ModelSettings | None,
+        self,
+        messages: list[ModelMessage],
+        settings: ModelSettings | None,
         params: ModelRequestParameters,
-    ) -> AsyncIterator["DS4StreamedResponse"]:
+    ) -> AsyncGenerator[DS4StreamedResponse]:
         policy, max_tokens, stop_sequences = self._request_config(settings)
         instruction_parts = self._get_instruction_parts(messages, params)
         self.binder.prepare(
@@ -180,7 +207,11 @@ class DS4Model(Model):
             note_provider=self.note_provider,
         )
         response = DS4StreamedResponse(
-            self, params, policy, max_tokens, stop_sequences,
+            self,
+            params,
+            policy,
+            max_tokens,
+            stop_sequences,
         )
         with self.session.events_on_loop(asyncio.get_running_loop()):
             try:
@@ -188,8 +219,11 @@ class DS4Model(Model):
             finally:
                 await response._finish()
 
+    @override
     async def request(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None,
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         settings, params = self.prepare_request(model_settings, model_request_parameters)
@@ -199,11 +233,14 @@ class DS4Model(Model):
             return stream.get()
 
     @asynccontextmanager
+    @override
     async def request_stream(
-        self, messages: list[ModelMessage], model_settings: ModelSettings | None,
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-        run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator["DS4StreamedResponse"]:
+        run_context: RunContext[object] | None = None,
+    ) -> AsyncGenerator[DS4StreamedResponse]:
         settings, params = self.prepare_request(model_settings, model_request_parameters)
         async with self._open_stream(messages, settings, params) as stream:
             yield stream
@@ -212,14 +249,19 @@ class DS4Model(Model):
 class DS4StreamedResponse(StreamedResponse):
     """Translate facade events while finalizing sampled provenance exactly once."""
 
-    def __init__(self, model: DS4Model, params: ModelRequestParameters,
-                 sampling: SamplingPolicy, max_tokens: int, stop_sequences: Sequence[bytes],
+    def __init__(
+        self,
+        model: DS4Model,
+        params: ModelRequestParameters,
+        sampling: SamplingPolicy,
+        max_tokens: int,
+        stop_sequences: Sequence[bytes],
     ) -> None:
         super().__init__(model_request_parameters=params)
         self._model = model
         self._session = model.session
         self._binder = model.binder
-        self._timestamp = datetime.now(timezone.utc)
+        self._timestamp = datetime.now(UTC)
         self._response_key = uuid4().hex
         self.metadata = {"ds4.key": self._response_key, "ds4.source": "sampled"}
         self._round = self._session.run_round(
@@ -238,24 +280,28 @@ class DS4StreamedResponse(StreamedResponse):
         self._tool_index = 0
         self._in_tool_syntax = False
         self._pull_lock = asyncio.Lock()
-        self._pending_pull: asyncio.Future[Any] | None = None
+        self._pending_pull: asyncio.Future[Event | _END] | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
         self._reserve_needed: int | None = None
         self._context_exhausted = False
 
     @property
+    @override
     def model_name(self) -> str:
         return self._model.model_name
 
     @property
+    @override
     def provider_name(self) -> str:
         return "ds4"
 
     @property
+    @override
     def provider_url(self) -> None:
         return None
 
     @property
+    @override
     def timestamp(self) -> datetime:
         return self._timestamp
 
@@ -267,13 +313,17 @@ class DS4StreamedResponse(StreamedResponse):
         self._cancelled = True
 
     def _stopped(self, reason: str) -> None:
-        self.finish_reason = cast(FinishReason | None, {
-            "stop_token": "stop",
-            "max_tokens": "length",
-            "tool_call_complete": "tool_call",
-            "parser_error": "error",
-            "context_exhausted": "error",
-        }.get(reason))
+        self.finish_reason = cast(
+            "FinishReason | None",
+            {
+                "stop_token": "stop",
+                "stop_sequence": "stop",
+                "max_tokens": "length",
+                "tool_call_complete": "tool_call",
+                "parser_error": "error",
+                "context_exhausted": "error",
+            }.get(reason),
+        )
         if reason == "interrupted":
             self._interrupted()
 
@@ -293,6 +343,7 @@ class DS4StreamedResponse(StreamedResponse):
             self._binder.bind_response(self.get())
         self._bound = True
 
+    @override
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         # The harness wrappers do not propagate aclose() through every nested
         # async generator. This outer boundary owns early-close finalization.
@@ -312,15 +363,14 @@ class DS4StreamedResponse(StreamedResponse):
 
         return iterate()
 
-    def _dispatch(self, event: Event) -> list[ModelResponseStreamEvent]:
+    def _dispatch(  # noqa: PLR0912 - Each facade event has a distinct harness translation.
+        self, event: Event
+    ) -> list[ModelResponseStreamEvent]:
         """Apply one facade event; return harness stream events to publish."""
         outputs: list[ModelResponseStreamEvent] = []
         if isinstance(event, ReserveReached):
             self._reserve_needed = event.needed
-            budget = (
-                self._model.reserve_handler(event.needed)
-                if self._model.reserve_handler is not None else None
-            )
+            budget = self._model.reserve_handler(event.needed) if self._model.reserve_handler is not None else None
             if budget is None:
                 event.fail()
             else:
@@ -330,24 +380,32 @@ class DS4StreamedResponse(StreamedResponse):
         elif isinstance(event, TextDelta):
             if not self._in_tool_syntax:
                 if event.thinking:
-                    outputs.extend(self._parts_manager.handle_thinking_delta(
-                        vendor_part_id="thinking", content=event.text,
-                    ))
+                    outputs.extend(
+                        self._parts_manager.handle_thinking_delta(
+                            vendor_part_id="thinking",
+                            content=event.text,
+                        )
+                    )
                 else:
-                    outputs.extend(self._parts_manager.handle_text_delta(
-                        vendor_part_id="content", content=event.text,
-                    ))
+                    outputs.extend(
+                        self._parts_manager.handle_text_delta(
+                            vendor_part_id="content",
+                            content=event.text,
+                        )
+                    )
         elif isinstance(event, ToolCalls):
             for call in event.calls:
                 index = self._tool_index
                 self._tool_index += 1
-                outputs.append(self._parts_manager.handle_tool_call_part(
-                    vendor_part_id=f"tool:{index}",
-                    tool_name=call.name,
-                    args=dict(call.args),
-                    tool_call_id=f"{self._response_key}:tool:{index}",
-                    provider_details={"ds4py.raw": call.raw},
-                ))
+                outputs.append(
+                    self._parts_manager.handle_tool_call_part(
+                        vendor_part_id=f"tool:{index}",
+                        tool_name=call.name,
+                        args=dict(call.args),
+                        tool_call_id=f"{self._response_key}:tool:{index}",
+                        provider_details={"ds4py.raw": call.raw},
+                    )
+                )
         elif isinstance(event, Token):
             self._output_tokens += 1
         elif isinstance(event, Synced):
@@ -364,13 +422,15 @@ class DS4StreamedResponse(StreamedResponse):
             self._interrupted()
         return outputs
 
-    async def _pull(self) -> Any:
+    async def _pull(self) -> Event | _END:
         async with self._pull_lock:
             if self._round_exhausted:
                 return _END
             self._round_started = True
-            pull = asyncio.get_running_loop().run_in_executor(
-                None, _next, self._round,
+            pull: asyncio.Future[Event | _END] = asyncio.get_running_loop().run_in_executor(
+                None,
+                _next,
+                self._round,
             )
             try:
                 return await asyncio.shield(pull)
@@ -380,14 +440,17 @@ class DS4StreamedResponse(StreamedResponse):
                 self._pending_pull = pull
                 raise
 
-    async def _drain_locked(self, pull: asyncio.Future[Any] | None) -> None:
+    async def _drain_locked(self, pull: asyncio.Future[Event | _END] | None) -> None:
         """Consume facade events until interruption or facade completion."""
         self._round_started = True
         while not self._round_exhausted:
             if pull is None:
-                pull = asyncio.get_running_loop().run_in_executor(
-                    None, _next, self._round,
+                next_pull: asyncio.Future[Event | _END] = asyncio.get_running_loop().run_in_executor(
+                    None,
+                    _next,
+                    self._round,
                 )
+                pull = next_pull
             try:
                 event = await asyncio.shield(pull)
             except asyncio.CancelledError:
@@ -414,9 +477,7 @@ class DS4StreamedResponse(StreamedResponse):
             if event is not _END:
                 self._dispatch(event)
         await asyncio.to_thread(self._round.close)
-        sampled_start = (
-            self._sampled_start if self._sampled_start is not None else self._round_start
-        )
+        sampled_start = self._sampled_start if self._sampled_start is not None else self._round_start
         cutoff = sampled_start + self._output_tokens
 
         await asyncio.to_thread(self._session.reconcile_round, cutoff)
@@ -456,6 +517,7 @@ class DS4StreamedResponse(StreamedResponse):
             if not primary:
                 raise
 
+    @override
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         try:
             while True:
@@ -475,14 +537,16 @@ class DS4StreamedResponse(StreamedResponse):
                 for part_event in self._dispatch(event):
                     yield part_event
                 if self._context_exhausted:
-                    raise ContextReserveError(
-                        _context_reserve_message(self._reserve_needed)
-                    )
-                if isinstance(event, Stopped) and event.reason in {"max_tokens", "parser_error"}:
+                    raise ContextReserveError(_context_reserve_message(self._reserve_needed))
+                if isinstance(event, Stopped) and event.reason in {
+                    "max_tokens",
+                    "parser_error",
+                }:
                     raise ResponseTerminalError(event.reason)
         finally:
             await self._finish()
 
+    @override
     async def close_stream(self) -> None:
         self._cancelled = True
         self._interrupted()

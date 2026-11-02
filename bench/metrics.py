@@ -1,11 +1,15 @@
 """Strict comparison metrics extracted from bakeoff event and trace evidence."""
 
-from collections.abc import Iterable
 import math
-from typing import Any
+from typing import TYPE_CHECKING
 
-from ds4py.engine.replay_types import ReplayTrace
 from bench.models import EventSummary, ToolAccounting
+from ds4py._json import JsonValue, is_json_object
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from ds4py.engine.replay_types import ReplayTrace
 
 
 class MetricError(ValueError):
@@ -28,19 +32,19 @@ def _wall(value: object) -> float:
 
 
 def _payload(
-    record: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any]]:
+    record: dict[str, JsonValue],
+) -> tuple[dict[str, JsonValue], dict[str, JsonValue]]:
     payload = record.get("payload")
-    if not isinstance(payload, dict):
+    if not is_json_object(payload):
         raise MetricError("event payload must be an object")
     nested = payload.get("event", payload)
-    if not isinstance(nested, dict):
+    if not is_json_object(nested):
         raise MetricError("engine event payload must be an object")
     return payload, nested
 
 
-def _canonical_tool_part(part: object) -> tuple[dict[str, Any], str]:
-    if not isinstance(part, dict):
+def _canonical_tool_part(part: object) -> tuple[dict[str, JsonValue], str]:
+    if not is_json_object(part):
         raise MetricError("canonical tool event needs a part object")
     call_id = part.get("tool_call_id")
     if not isinstance(call_id, str) or not call_id:
@@ -49,10 +53,10 @@ def _canonical_tool_part(part: object) -> tuple[dict[str, Any], str]:
 
 
 def _reuse(plan: object) -> tuple[str, int, int]:
-    if not isinstance(plan, dict):
+    if not is_json_object(plan):
         raise MetricError("Synced event is missing its plan")
     kind = plan.get("kind")
-    if kind not in {"extend", "restore", "rebuild"}:
+    if not isinstance(kind, str) or kind not in {"extend", "restore", "rebuild"}:
         raise MetricError(f"unknown sync plan kind: {kind!r}")
     reused = _count(plan.get("reused"), "plan.reused")
     to_prefill = _count(plan.get("to_prefill"), "plan.to_prefill")
@@ -62,12 +66,14 @@ def _reuse(plan: object) -> tuple[str, int, int]:
     return kind, reused, denominator
 
 
-def summarize_events(
-    events: Iterable[dict[str, Any]], *, wall_seconds: float,
+def summarize_events(  # noqa: C901, PLR0912, PLR0915 - One pass validates and aggregates the event stream.
+    events: Iterable[dict[str, JsonValue]],
+    *,
+    wall_seconds: float,
 ) -> EventSummary:
     """Summarize one attempt's JSONL records without inventing missing values."""
     records = list(events)
-    if not records or any(not isinstance(record, dict) for record in records):
+    if not records:
         raise MetricError("an attempt needs a nonempty list of event objects")
     starts = sum(record.get("kind") == "run_start" for record in records)
     ends = sum(record.get("kind") == "run_end" for record in records)
@@ -102,7 +108,7 @@ def summarize_events(
             if run_id in seen_runs and plan_kind != "extend":
                 non_extend += 1
                 reason = payload.get("exception_reason", nested.get("exception_reason"))
-                if reason in {"compaction", "strategy"}:
+                if isinstance(reason, str) and reason in {"compaction", "strategy"}:
                     allowed_non_extend += 1
                     if reason not in reasons:
                         reasons.append(reason)
@@ -135,7 +141,7 @@ def summarize_events(
                 if call_id in resolved_calls:
                     raise MetricError(f"duplicate canonical tool result: {call_id}")
                 resolved_calls.add(call_id)
-            if not isinstance(part, dict):
+            if not is_json_object(part):
                 raise MetricError("ToolResultEvent needs a part")
             part_kind = part.get("part_kind")
             if part_kind == "retry-prompt":
@@ -171,7 +177,11 @@ def summarize_events(
 
 
 def metrics_from_trace(
-    trace: ReplayTrace, *, wall_seconds: float, progress_events: int, tool_calls: int,
+    trace: ReplayTrace,
+    *,
+    wall_seconds: float,
+    progress_events: int,
+    tool_calls: int,
 ) -> EventSummary:
     """Extract C metrics when no JSONL harness event stream is available."""
     rounds = list(trace.rounds)
@@ -215,13 +225,13 @@ def combine_summaries(summaries: Iterable[EventSummary]) -> EventSummary:
     ratios = tuple(ratio for value in values for ratio in value.reuse_ratios)
     accounting = None
     if all(value.tool_accounting is not None for value in values):
-        accounting = ToolAccounting(*(
-            sum(value.tool_accounting.__dict__[field] for value in values)
-            for field in ("parsed", "executed", "refused", "retried")
-        ))
-    reasons = tuple(dict.fromkeys(
-        reason for value in values for reason in value.non_extension_reasons
-    ))
+        accounting = ToolAccounting(
+            *(
+                sum(value.tool_accounting.__dict__[field] for value in values)
+                for field in ("parsed", "executed", "refused", "retried")
+            )
+        )
+    reasons = tuple(dict.fromkeys(reason for value in values for reason in value.non_extension_reasons))
     return EventSummary(
         wall_seconds=sum(value.wall_seconds for value in values),
         progress_events=sum(value.progress_events for value in values),

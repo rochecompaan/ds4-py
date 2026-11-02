@@ -6,14 +6,18 @@ async model round, the bridge marshals every event to its owning event loop.
 State factories and ``close()`` are orchestration concerns, not worker callbacks:
 they may acquire ordinary Python resources, but the facade decides when they run.
 """
-from asyncio import AbstractEventLoop
-from collections.abc import Iterator
-from concurrent.futures import Future
-from contextlib import contextmanager
-from dataclasses import dataclass
+
 import sys
+from collections.abc import Callable, Iterable, Mapping
+from concurrent.futures import Future
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from threading import RLock, get_ident
-from typing import Any, Callable, Iterable, Mapping
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from asyncio import AbstractEventLoop
+    from collections.abc import Generator
 from uuid import uuid4
 
 Listener = Callable[["SessionEvent"], None]
@@ -25,7 +29,7 @@ class SessionEvent:
 
     kind: str
     session_id: str
-    payload: Mapping[str, Any]
+    payload: Mapping[str, object]
 
 
 class SessionLifecycle:
@@ -48,24 +52,20 @@ class SessionLifecycle:
         self._id = uuid4().hex if new_id is None else new_id
         return self._id
 
-    def on_event(self, listener: Listener, *, kinds: Iterable[str] | None = None
-                 ) -> Callable[[], None]:
+    def on_event(self, listener: Listener, *, kinds: Iterable[str] | None = None) -> Callable[[], None]:
         allowed = None if kinds is None else frozenset((kinds,) if isinstance(kinds, str) else kinds)
         entry = (listener, allowed)
         with self._lock:
             self._listeners.append(entry)
 
         def unsubscribe() -> None:
-            with self._lock:
-                try:
-                    self._listeners.remove(entry)
-                except ValueError:
-                    pass
+            with self._lock, suppress(ValueError):
+                self._listeners.remove(entry)
 
         return unsubscribe
 
     @contextmanager
-    def deliver_on(self, loop: AbstractEventLoop) -> Iterator[None]:
+    def deliver_on(self, loop: AbstractEventLoop) -> Generator[None]:
         """Deliver emissions from other threads on ``loop``'s owning thread."""
         owner = get_ident()
         with self._lock:
@@ -81,7 +81,7 @@ class SessionLifecycle:
                     self._loop = None
                     self._loop_thread = None
 
-    def emit(self, kind: str, **payload: Any) -> None:
+    def emit(self, kind: str, **payload: object) -> None:
         event = SessionEvent(kind, self._id, dict(payload))
         with self._lock:
             listeners = tuple(self._listeners)
@@ -93,7 +93,7 @@ class SessionLifecycle:
             def deliver() -> None:
                 try:
                     self._emit_listeners(event, listeners)
-                except BaseException as error:
+                except BaseException as error:  # noqa: BLE001 - Transfer every listener failure to the producer.
                     delivered.set_exception(error)
                 else:
                     delivered.set_result(None)
@@ -105,7 +105,8 @@ class SessionLifecycle:
         self._emit_listeners(event, listeners)
 
     def _emit_listeners(
-        self, event: SessionEvent,
+        self,
+        event: SessionEvent,
         listeners: Iterable[tuple[Listener, frozenset[str] | None]],
     ) -> None:
         for listener, allowed in listeners:
@@ -113,23 +114,24 @@ class SessionLifecycle:
                 continue
             try:
                 listener(event)
-            except Exception as error:  # A listener must not hide the engine event.
+            except Exception as error:  # noqa: BLE001 - A listener must not hide the engine event.
                 self._report(error)
 
     def _report(self, error: Exception) -> None:
         if self._error_handler is not None:
             try:
                 self._error_handler(error)
-                return
-            except Exception as nested:  # pragma: no cover - defensive routing
+            except Exception as nested:  # noqa: BLE001 - Report error-handler failures to stderr.  # pragma: no cover
                 error = nested
+            else:
+                return
         print(f"session event listener failed: {error}", file=sys.stderr)
 
-    def state(self, key: str, factory: Callable[[], Any]) -> Any:
+    def state[T](self, key: str, factory: Callable[[], T]) -> T:
         with self._lock:
             if key not in self._states:
                 self._states[key] = factory()
-            return self._states[key]
+            return cast("T", self._states[key])
 
     def close_states(self) -> None:
         with self._lock:
@@ -142,7 +144,7 @@ class SessionLifecycle:
                 continue
             try:
                 close()
-            except Exception as current:
+            except Exception as current:  # noqa: BLE001 - Close every state before reporting the first failure.
                 if error is None:
                     error = current
         if error is not None:

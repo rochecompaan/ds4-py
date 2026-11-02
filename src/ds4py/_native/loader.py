@@ -2,15 +2,29 @@
 
 import ctypes
 import os
-from pathlib import Path
 import sys
 import threading
-from collections.abc import Callable, Iterable
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-from ds4py.abi.manifest import Manifest, Validation, file_sha256, manifest_path, validate
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
+from ds4py.abi.manifest import (
+    Manifest,
+    Validation,
+    file_sha256,
+    manifest_path,
+    validate,
+)
 from ds4py.abi.shaders import metal_source_env
-from ds4py.errors import AbiMismatch, LibraryAlreadyLoaded, LibraryNotFound, MissingBinding
+from ds4py.errors import (
+    AbiMismatch,
+    LibraryAlreadyLoaded,
+    LibraryNotFound,
+    MissingBinding,
+)
+
 from .bindings import Binding, all_bindings
 from .structs import STRUCTS, struct_layout
 from .typemap import ctypes_signature, parse_prototype
@@ -23,7 +37,7 @@ _load_lock = threading.Lock()
 
 def default_lib_dir() -> Path:
     root = os.environ.get("DS4PY_HOME")
-    return (Path(root).expanduser() if root else Path.home() / ".ds4py") / "lib"
+    return (Path(root).expanduser() if root is not None and root != "" else Path.home() / ".ds4py") / "lib"
 
 
 def resolve_lib_path(lib: str | Path | None) -> Path:
@@ -83,14 +97,12 @@ class Library:
 
 
 def load_library(lib: str | Path | None = None) -> Library:
-    global _loaded
+    global _loaded  # noqa: PLW0603 - Native loading is intentionally one process-wide generation.
     path = resolve_lib_path(lib)
     try:
         real = path.resolve(strict=True)
     except FileNotFoundError as exc:
-        raise LibraryNotFound(
-            f"library not found: {path}. Run `ds4py build --src <ds4 tree>` to build it."
-        ) from exc
+        raise LibraryNotFound(f"library not found: {path}. Run `ds4py build --src <ds4 tree>` to build it.") from exc
     with _load_lock:
         if _loaded is not None:
             if _loaded.path != real:
@@ -106,7 +118,9 @@ def load_library(lib: str | Path | None = None) -> Library:
         bindings = all_bindings()
         layouts = STRUCTS
         validation = validate(
-            manifest, lib_sha256=file_sha256(real), bindings=bindings,
+            manifest,
+            lib_sha256=file_sha256(real),
+            bindings=bindings,
             layouts={name: struct_layout(cls) for name, cls in layouts.items()},
         )
         if manifest.backend == "metal":

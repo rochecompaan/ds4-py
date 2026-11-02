@@ -1,8 +1,8 @@
 """Command-line entry point for ds4py."""
 
 import argparse
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from ds4py._native.loader import default_lib_dir
 from ds4py.abi.build import build_library, default_backend
@@ -45,6 +45,7 @@ def _core_main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     if args.command == "raw":
         from ds4py.raw import command
+
         try:
             return command(args)
         except (Ds4pyError, OSError, UnicodeError) as exc:
@@ -54,14 +55,14 @@ def _core_main(argv: list[str]) -> int:
         if args.live and args.model is None:
             parser.error("--live needs --model")
         try:
-            report = (check_live(args.lib, args.model, ctx=args.ctx) if args.live
-                      else check_library(args.lib))
+            report = check_live(args.lib, args.model, ctx=args.ctx) if args.live else check_library(args.lib)
         except (Ds4pyError, OSError) as exc:
             print(f"ds4py: {exc}", file=sys.stderr)
             return 1
         print(format_report(report))
-        sync_failed = (report.manifest is not None and
-                       report.manifest.live_checks.get("sync_plans", {}).get("ok") is False)
+        sync_failed = (
+            report.manifest is not None and report.manifest.live_checks.get("sync_plans", {}).get("ok") is False
+        )
         return 1 if report.error is not None or sync_failed else 0
     try:
         installed = build_library(args.src, backend=args.backend, out_dir=args.out, jobs=args.j)
@@ -80,4 +81,5 @@ def main(argv: list[str] | None = None) -> int:
         args.remove("--raw")
         return _core_main(["raw", *args])
     from ds4py.agent_cli import main as agent_main
+
     return agent_main(args)

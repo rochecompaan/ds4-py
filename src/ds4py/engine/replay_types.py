@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from ds4py import ThinkMode
 
-
 _THINK_NAMES = {
     "none": ThinkMode.NONE,
     "high": ThinkMode.HIGH,
@@ -21,6 +20,7 @@ class ReplayError(ValueError):
 @dataclass(frozen=True)
 class ReplayRound:
     """One rebuilt prompt and sampled-ID sequence with traced boundary policy."""
+
     number: int
     prompt: tuple[int, ...]
     sampled: tuple[int, ...]
@@ -37,6 +37,7 @@ class ReplayTrace:
     C traces carry model and context metadata. ds4-py JSONL traces intentionally
     leave those values unset rather than pretending their session IDs are models.
     """
+
     ctx: int | None
     model: str | None
     rounds: tuple[ReplayRound, ...]

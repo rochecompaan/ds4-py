@@ -1,18 +1,20 @@
 """Scripted speculative decode blocks for engine tests."""
+
 from typing import Any
+
 from ds4py.engine.decode import Verdict
 from ds4py.errors import EngineError
 
 
 def block_chunks(tokens: Any) -> Any:
     tokens = list(tokens)
-    return [tokens[start + 1:start + 17] for start in range(0, len(tokens), 17)]
+    return [tokens[start + 1 : start + 17] for start in range(0, len(tokens), 17)]
 
 
 class FakeMultiTokenStep:
     hooks_every_sample = True
 
-    def __init__(self, blocks: Any=()) -> None:
+    def __init__(self, blocks: Any = ()) -> None:
         self.blocks = iter(blocks)
         self.block_sizes = []
 
@@ -29,7 +31,11 @@ class FakeMultiTokenStep:
             ctx.before_sample()
             policy = ctx.sampling()
             sampled = session.sample(
-                policy.temperature, policy.top_k, policy.top_p, policy.min_p, ctx.rng,
+                policy.temperature,
+                policy.top_k,
+                policy.top_p,
+                policy.min_p,
+                ctx.rng,
             )
             if sampled < 0:
                 raise EngineError("cannot sample: the session state is not valid; sync first")
@@ -43,60 +49,109 @@ class FakeMultiTokenStep:
                 if self._verify_hooked(session, ctx, sampled, drafts):
                     return
                 continue
-            first_verdict = ctx.accept(sampled)
-            tokens = (sampled, *drafts)
-            block_start = session.pos()
-            for token in tokens:
-                session.eval(token)
-            self.block_sizes.append(len(tokens))
-            ctx.buffer_events()
-            committed = 0
+            if self._run_block(session, ctx, sampled, drafts):
+                return
+
+    def _run_block(self, session: Any, ctx: Any, sampled: Any, drafts: Any) -> bool:
+        tokens = (sampled, *drafts)
+        block_start = session.pos()
+        ctx.begin_staging()
+        first_verdict = ctx.accept(sampled)
+        kept = 0
+        try:
             for index, token in enumerate(tokens):
                 if ctx.cancelled():
-                    session.rewind(block_start + committed)
-                    ctx.flush_events()
-                    return
+                    session.rewind(block_start + kept)
+                    ctx.publish()
+                    self.block_sizes.append(kept)
+                    return True
                 verdict = first_verdict if index == 0 else ctx.accept(token)
                 if verdict is Verdict.STOP_BEFORE:
-                    session.rewind(block_start + committed)
-                    ctx.flush_events()
-                    return
-                verdict = ctx.commit(token, verdict)
-                committed += 1
+                    session.rewind(block_start + kept)
+                    ctx.publish()
+                    self.block_sizes.append(kept)
+                    return True
+                session.eval(token)
+                verdict = ctx.stage(token, verdict)
+                kept += 1
                 if verdict is Verdict.STOP_AFTER:
-                    if session.pos() > block_start + committed:
-                        session.rewind(block_start + committed)
-                    ctx.flush_events()
-                    return
-            ctx.flush_events()
+                    if session.pos() > block_start + kept:
+                        session.rewind(block_start + kept)
+                    ctx.publish()
+                    self.block_sizes.append(kept)
+                    return True
+        except BaseException:
+            if ctx.staging:
+                ctx.discard()
+            raise
+        else:
+            ctx.publish()
+            self.block_sizes.append(kept)
+            return False
+
+    def _verification_token(
+        self,
+        session: Any,
+        ctx: Any,
+        sampled: Any,
+        index: int,
+        kept: int,
+        block_start: int,
+    ) -> Any:
+        if not index:
+            return sampled
+        try:
+            ctx.before_sample()
+            p = ctx.sampling()
+            token = session.sample(p.temperature, p.top_k, p.top_p, p.min_p, ctx.rng)
+        except BaseException:
+            if kept:
+                session.rewind(block_start + kept)
+                ctx.publish()
+            else:
+                ctx.discard()
+            raise
+        if token < 0:
+            raise EngineError("cannot sample: sync first")
+        return token
 
     def _verify_hooked(self, session: Any, ctx: Any, sampled: Any, drafts: Any) -> bool:
-        # Verify each draft against a fresh sample with the current committed
+        # Verify each draft against a fresh sample with canonical plus staged
         # parser/history and logits. A mismatch keeps the replacement token,
         # cuts this run, and returns to the next block without stale drafts.
         kept = 0
-        for index, expected in enumerate((sampled, *drafts)):
-            if ctx.cancelled():
-                self.block_sizes.append(kept)
-                return True
-            token = sampled
-            if index:
-                ctx.before_sample()
-                p = ctx.sampling()
-                token = session.sample(p.temperature, p.top_k, p.top_p, p.min_p, ctx.rng)
-                if token < 0:
-                    raise EngineError("cannot sample: sync first")
-            verdict = ctx.accept(token)
-            if verdict is Verdict.STOP_BEFORE:
-                self.block_sizes.append(kept)
-                return True
-            session.eval(token)
-            verdict = ctx.commit(token, verdict)
-            kept += 1
-            if verdict is Verdict.STOP_AFTER:
-                self.block_sizes.append(kept)
-                return True
-            if token != expected:
-                break
-        self.block_sizes.append(kept)
-        return False
+        block_start = session.pos()
+        ctx.begin_staging()
+        try:
+            for index, expected in enumerate((sampled, *drafts)):
+                if ctx.cancelled():
+                    session.rewind(block_start + kept)
+                    ctx.publish()
+                    self.block_sizes.append(kept)
+                    return True
+                token = self._verification_token(session, ctx, sampled, index, kept, block_start)
+                verdict = ctx.accept(token)
+                if verdict is Verdict.STOP_BEFORE:
+                    session.rewind(block_start + kept)
+                    ctx.publish()
+                    self.block_sizes.append(kept)
+                    return True
+                session.eval(token)
+                verdict = ctx.stage(token, verdict)
+                kept += 1
+                if verdict is Verdict.STOP_AFTER:
+                    ctx.publish()
+                    self.block_sizes.append(kept)
+                    return True
+                if token != expected:
+                    ctx.publish()
+                    self.block_sizes.append(kept)
+                    return False
+        except BaseException:
+            if ctx.staging:
+                ctx.discard()
+            raise
+        else:
+            ctx.publish()
+            self.block_sizes.append(kept)
+            return False

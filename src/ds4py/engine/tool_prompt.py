@@ -1,13 +1,17 @@
 """Generate model-family-native prompts from caller-owned tool definitions."""
-from collections.abc import Iterable
-from dataclasses import dataclass
+
 import json
-from typing import Mapping
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
 
 
 @dataclass(frozen=True)
 class ToolDefinition:
     """Caller-owned tool schema; names, descriptions, and parameters are untrusted."""
+
     name: str
     description: str
     parameters: Mapping[str, object]
@@ -16,12 +20,14 @@ class ToolDefinition:
 @dataclass(frozen=True)
 class ToolPromptSpan:
     """A template span with an explicit trusted-rendering boundary."""
+
     text: str
     rendered: bool
 
 
 class ToolPromptGenerator:
     """Generate executable family examples and schemas without native calls."""
+
     def __init__(self, family: str) -> None:
         self.family = family
 
@@ -33,7 +39,11 @@ class ToolPromptGenerator:
         """Separate trusted template markup from plain serialized definitions."""
         schemas = [
             json.dumps(
-                {"name": item.name, "description": item.description, "parameters": item.parameters},
+                {
+                    "name": item.name,
+                    "description": item.description,
+                    "parameters": item.parameters,
+                },
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
@@ -49,7 +59,11 @@ class ToolPromptGenerator:
 
     @staticmethod
     def _schema_spans(
-        schemas: Iterable[str], prefix: str, suffix: str, *, qwen: bool = False,
+        schemas: Iterable[str],
+        prefix: str,
+        suffix: str,
+        *,
+        qwen: bool = False,
     ) -> list[ToolPromptSpan]:
         spans = [ToolPromptSpan(prefix, True)]
         for index, schema in enumerate(schemas):
@@ -75,14 +89,14 @@ class ToolPromptGenerator:
             "## Tools\n\n"
             "You have access to native DSML tools. Invoke tools by writing exactly this shape:\n\n"
             f"<｜DSML｜{calls}>\n"
-            f"<｜DSML｜{invoke} name=\"$TOOL_NAME\">\n"
-            f"<｜DSML｜{parameter} name=\"$PARAMETER_NAME\" string=\"true|false\">"
+            f'<｜DSML｜{invoke} name="$TOOL_NAME">\n'
+            f'<｜DSML｜{parameter} name="$PARAMETER_NAME" string="true|false">'
             f"$PARAMETER_VALUE</｜DSML｜{parameter}>\n"
             f"</｜DSML｜{invoke}>\n"
             f"</｜DSML｜{calls}>\n\n"
             "Tool calls are not allowed inside <think></think>; finish thinking before emitting DSML.\n\n"
-            "String parameters use raw text and string=\"true\". Numbers and booleans use JSON text and "
-            "string=\"false\".\n\n"
+            'String parameters use raw text and string="true". Numbers and booleans use JSON text and '
+            'string="false".\n\n'
             "Inside string values only, escape a literal closing parameter tag as "
             f"{escaped}. To write that escaped spelling literally, use {doubly_escaped}. "
             "Other HTML entities are unchanged.\n\n"

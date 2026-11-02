@@ -1,19 +1,33 @@
 """Strict reader for append-only ds4-py prefill trace records."""
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING, Never
+
+from ds4py._native.protocol import THINK_LEVEL_BASE
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from .replay_types import _THINK_NAMES, ReplayError, ReplayRound, ReplayTrace
-from typing import Never
 
+_MAX_THINK_LEVEL = 100
 
 _FIELDS = (
-    "session_id", "run_id", "step_index", "round_index", "prompt", "think",
-    "cached", "prefill_suffix", "sampled",
+    "session_id",
+    "run_id",
+    "step_index",
+    "round_index",
+    "prompt",
+    "think",
+    "cached",
+    "prefill_suffix",
+    "sampled",
 )
 
 
-def read_ds4py(path: Path, text: str) -> ReplayTrace:
+def read_ds4py(  # noqa: C901, PLR0912, PLR0915 - Trace validation keeps format rules in one pass.
+    path: Path, text: str
+) -> ReplayTrace:
     def error(line: int, message: str) -> Never:
         raise ReplayError(f"{path}:{line}: {message}")
 
@@ -40,8 +54,7 @@ def read_ds4py(path: Path, text: str) -> ReplayTrace:
         for name in ("prompt", "prefill_suffix", "sampled"):
             tokens = value[name]
             if not isinstance(tokens, list) or any(
-                isinstance(token, bool) or not isinstance(token, int) or token < 0
-                for token in tokens
+                isinstance(token, bool) or not isinstance(token, int) or token < 0 for token in tokens
             ):
                 error(line_number, f"{name} must be a list of nonnegative token IDs")
         think = value["think"]
@@ -50,8 +63,8 @@ def read_ds4py(path: Path, text: str) -> ReplayTrace:
         if isinstance(think, str):
             if think in _THINK_NAMES:
                 think = _THINK_NAMES[think]
-            elif think.isdecimal() and 1 <= int(think) <= 100:
-                think = 1000 + int(think)
+            elif think.isdecimal() and 1 <= int(think) <= _MAX_THINK_LEVEL:
+                think = THINK_LEVEL_BASE + int(think)
             else:
                 error(line_number, "unsupported think name")
         if not isinstance(think, int) or think < 0:
@@ -70,10 +83,17 @@ def read_ds4py(path: Path, text: str) -> ReplayTrace:
         if run_id in last_steps and step <= last_steps[run_id]:
             error(line_number, "step_index must increase within a run")
         last_steps[run_id] = step
-        rounds.append(ReplayRound(
-            number=value["round_index"], prompt=prompt, sampled=tuple(value["sampled"]),
-            think=think, cached=cached, context_limited=False, prefix_only=False,
-        ))
+        rounds.append(
+            ReplayRound(
+                number=value["round_index"],
+                prompt=prompt,
+                sampled=tuple(value["sampled"]),
+                think=think,
+                cached=cached,
+                context_limited=False,
+                prefix_only=False,
+            )
+        )
     if not rounds:
         error(1, "no replay rounds")
     return ReplayTrace(None, None, tuple(rounds))

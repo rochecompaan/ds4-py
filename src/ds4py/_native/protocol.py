@@ -1,9 +1,13 @@
 """Python-owned values and opaque native handle contracts."""
-import ctypes
+
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, BinaryIO, Protocol
+
+if TYPE_CHECKING:
+    import ctypes
 
 
 class ThinkMode(IntEnum):
@@ -24,9 +28,13 @@ class EngineConfig:
     ctx: int = 100_000
     backend: str = "cpu"
     threads: int = 0
+    mtp_path: Path | None = None
+    mtp_draft_tokens: int = 1
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "model", Path(self.model).absolute())
+        if self.mtp_path is not None:
+            object.__setattr__(self, "mtp_path", Path(self.mtp_path).absolute())
 
 
 @dataclass(frozen=True)
@@ -58,19 +66,35 @@ CancelFn = Callable[[], bool]
 
 class Snapshot(Protocol):
     nbytes: int
+
     def close(self) -> None: ...
 
+
 class StagedPayload(Protocol):
-    bytes: int                                # declared size of the staged payload
+    bytes: int  # declared size of the staged payload
+
     def write(self, file: BinaryIO) -> None: ...
     def close(self) -> None: ...
 
+
 class SessionHandle(Protocol):
-    raw: int                                  # session pointer, for extensions
-    def sync(self, tokens: Sequence[int], *, progress: ProgressFn | None = None,
-             cancel: CancelFn | None = None) -> SyncStatus: ...
-    def sample(self, temperature: float, top_k: int, top_p: float, min_p: float,
-               rng: ctypes.c_uint64) -> int: ...
+    raw: int  # session pointer, for extensions
+
+    def sync(
+        self,
+        tokens: Sequence[int],
+        *,
+        progress: ProgressFn | None = None,
+        cancel: CancelFn | None = None,
+    ) -> SyncStatus: ...
+    def sample(
+        self,
+        temperature: float,
+        top_k: int,
+        top_p: float,
+        min_p: float,
+        rng: ctypes.c_uint64,
+    ) -> int: ...
     def argmax(self) -> int: ...
     def copy_logits(self, out: Any) -> None: ...
     def set_logits(self, values: Sequence[float]) -> None: ...
@@ -89,8 +113,10 @@ class SessionHandle(Protocol):
     def load_snapshot(self, snap: Snapshot) -> None: ...
     def close(self) -> None: ...
 
+
 class EngineHandle(Protocol):
-    raw: int                                  # engine pointer, for extensions
+    raw: int  # engine pointer, for extensions
+
     def info(self) -> EngineInfo: ...
     def tokenize(self, text: str, *, rendered: bool = False) -> list[int]: ...
     def chat_begin(self) -> list[int]: ...
@@ -105,9 +131,11 @@ class EngineHandle(Protocol):
     def create_session(self, ctx: int) -> SessionHandle: ...
     def close(self) -> None: ...
 
+
 class Native(Protocol):
-    backend: str                              # the backend the library was built for
+    backend: str  # the backend the library was built for
     restore_enabled: bool
+
     def open_engine(self, config: EngineConfig) -> EngineHandle: ...
     def bind(self, name: str) -> Callable[..., Any]: ...
     def parse_think_level(self, text: str) -> int | None: ...

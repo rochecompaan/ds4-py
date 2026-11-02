@@ -1,15 +1,20 @@
 """Adapter cancellation, reserve failure, and speculative alignment regressions."""
-from typing import Any, cast
+
 import asyncio
-from dataclasses import replace
-from pathlib import Path
 import sys
 import threading
+from dataclasses import replace
+from itertools import pairwise
+from pathlib import Path
+from typing import Any, cast
 
 import pytest
+from pydantic_ai.direct import model_request_stream
+from pydantic_ai.exceptions import ModelRequestTimeout
+from pydantic_ai.messages import ModelRequest, ModelResponse, PartStartEvent, TextPart, UserPromptPart
+from pydantic_ai.models import ModelRequestParameters
 
 import ds4py
-from ds4py.engine.session import Engine
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative, FakeSession
 from ds4py._native.fake_chat import tokenize_rendered
@@ -17,23 +22,20 @@ from ds4py.binding import MessageBinder
 from ds4py.engine import decode as decode_module
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.sampling import SamplingPolicy
-from ds4py.model import ContextReserveError, DS4Model
-from pydantic_ai.direct import model_request_stream
-from pydantic_ai.exceptions import ModelRequestTimeout
-from pydantic_ai.messages import ModelRequest, PartStartEvent, TextPart, UserPromptPart
-from pydantic_ai.models import ModelRequestParameters
+from ds4py.engine.session import Engine
+from ds4py.model import ContextReserveError, DS4Model, DS4StreamedResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "engine"))
-from fake_steps import FakeMultiTokenStep  # type: ignore[import-not-found]  # noqa: E402
+from fake_steps import FakeMultiTokenStep
 
 
-def fake_engine(*, script: Any=None, think: Any=ThinkMode.NONE, cancel: Any=None) -> Engine:
+def fake_engine(*, script: Any = None, think: Any = ThinkMode.NONE, cancel: Any = None) -> Engine:
     native = FakeNative(script=script) if script is not None else FakeNative()
     native._info = replace(native._info, name="fake-ds4")
     return ds4py.open("f.gguf", ctx=8192, think=think, native=native, cancel=cancel)
 
 
-def user(text: Any="hello") -> ModelRequest:
+def user(text: Any = "hello") -> ModelRequest:
     return ModelRequest([UserPromptPart(text)])
 
 
@@ -42,7 +44,8 @@ def make_model(session: Any, **kwargs: Any) -> DS4Model:
 
 
 def native_tokens(session: Any) -> tuple[int, ...]:
-    return tuple(session._worker.call(lambda engine, native: native.tokens()).result())
+    values = session._worker.call(lambda engine, native: native.tokens()).result()
+    return tuple(int(token) for token in values)
 
 
 def native_calls(session: Any) -> list[Any]:
@@ -51,13 +54,11 @@ def native_calls(session: Any) -> list[Any]:
 
 def scripted_text(text: Any) -> Any:
     tokens = tuple(tokenize_rendered(text))
-    return lambda prompt, generated: (
-        tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
-    )
+    return lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
 
 def response_text(response: Any) -> str:
-    return "".join(part.content for part in response.parts if isinstance(part, TextPart))
+    return "".join(str(part.content) for part in response.parts if isinstance(part, TextPart))
 
 
 def test_asyncio_cancellation_cancels_facade_and_preserves_partial_response() -> None:
@@ -81,16 +82,18 @@ def test_asyncio_cancellation_cancels_facade_and_preserves_partial_response() ->
             session = engine.session()
             model = make_model(session)
             async with model.request_stream(
-                [user()], None, ModelRequestParameters(),
+                [user()],
+                None,
+                ModelRequestParameters(),
             ) as stream:
-                pull = asyncio.create_task(cast(Any, anext(stream.__aiter__())))
+                pull = asyncio.create_task(cast("Any", anext(stream.__aiter__())))
                 await asyncio.wait_for(asyncio.to_thread(reached.wait, 5), 10)
                 pull.cancel()
                 await asyncio.wait_for(asyncio.to_thread(cancel.wait, 5), 10)
                 gate.set()
                 with pytest.raises(asyncio.CancelledError):
                     await asyncio.wait_for(pull, 10)
-                response = cast(Any, stream).get()
+                response = cast("Any", stream).get()
 
             assert response.state == "interrupted"
             assert response_text(response) == "abc"
@@ -124,14 +127,16 @@ def test_close_stream_cancels_without_waiting_for_another_token() -> None:
             session = engine.session()
             model = make_model(session)
             async with model.request_stream(
-                [user()], None, ModelRequestParameters(),
+                [user()],
+                None,
+                ModelRequestParameters(),
             ) as stream:
                 iterator = stream.__aiter__()
                 first = await asyncio.wait_for(anext(iterator), 10)
-                assert cast(Any, first).part == TextPart("a")
+                assert cast("Any", first).part == TextPart("a")
                 await asyncio.wait_for(asyncio.to_thread(reached.wait, 5), 10)
                 await asyncio.wait_for(stream.cancel(), 10)
-                response = cast(Any, stream).get()
+                response = cast("Any", stream).get()
 
                 assert response.state == "interrupted"
                 assert response_text(response) == "a"
@@ -143,11 +148,13 @@ def test_close_stream_cancels_without_waiting_for_another_token() -> None:
     asyncio.run(scenario())
 
 
-def test_cancel_during_prefill_leaves_transcript_intact(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cancel_during_prefill_leaves_transcript_intact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     waiting, release = threading.Event(), threading.Event()
     original_sync = FakeSession.sync
 
-    def blocking_sync(self: Any, tokens: Any, *, progress: Any=None, cancel: Any=None) -> Any:
+    def blocking_sync(self: Any, tokens: Any, *, progress: Any = None, cancel: Any = None) -> Any:
         waiting.set()
         assert release.wait(5), "prefill release timed out"
         return original_sync(self, tokens, progress=progress, cancel=cancel)
@@ -159,18 +166,20 @@ def test_cancel_during_prefill_leaves_transcript_intact(monkeypatch: pytest.Monk
             session = engine.session()
             model = make_model(session)
             async with model.request_stream(
-                [user()], None, ModelRequestParameters(),
+                [user()],
+                None,
+                ModelRequestParameters(),
             ) as stream:
                 prompt = session.transcript.tokens
                 cancel = session._worker.cancel_event
-                pull = asyncio.create_task(cast(Any, anext(stream.__aiter__())))
+                pull = asyncio.create_task(cast("Any", anext(stream.__aiter__())))
                 await asyncio.wait_for(asyncio.to_thread(waiting.wait, 5), 10)
                 pull.cancel()
                 await asyncio.wait_for(asyncio.to_thread(cancel.wait, 5), 10)
                 release.set()
                 with pytest.raises(asyncio.CancelledError):
                     await asyncio.wait_for(pull, 10)
-                response = cast(Any, stream).get()
+                response = cast("Any", stream).get()
 
             assert response.state == "interrupted"
             assert response.parts == []
@@ -184,7 +193,9 @@ def test_cancel_during_prefill_leaves_transcript_intact(monkeypatch: pytest.Monk
     asyncio.run(scenario())
 
 
-def test_cancel_during_speculative_block_rewinds_uncommitted_drafts(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cancel_during_speculative_block_publishes_evaluated_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tokens = tuple(tokenize_rendered("abcdefgh"))
     target = tokens[4]
     reached, gate = threading.Event(), threading.Event()
@@ -197,11 +208,13 @@ def test_cancel_during_speculative_block_rewinds_uncommitted_drafts(monkeypatch:
         return original_eval(self, token)
 
     monkeypatch.setattr(FakeSession, "eval", blocking_eval)
-    # First block commits "ab". The second block drafts "def"; cancellation is
-    # requested while its drafts are evaluated, so none of them may commit.
+    # First block commits "ab". Cancellation arrives while the second block's
+    # third token is evaluated, so exactly that accepted prefix is published.
     blocks = [tokens[1:2], tokens[3:6]]
     monkeypatch.setattr(
-        decode_module, "PlainStep", lambda: FakeMultiTokenStep(blocks),
+        decode_module,
+        "PlainStep",
+        lambda: FakeMultiTokenStep(blocks),
     )
 
     async def scenario() -> None:
@@ -209,8 +222,11 @@ def test_cancel_during_speculative_block_rewinds_uncommitted_drafts(monkeypatch:
             session = engine.session()
             model = make_model(session)
             async with model.request_stream(
-                [user()], None, ModelRequestParameters(),
+                [user()],
+                None,
+                ModelRequestParameters(),
             ) as stream:
+
                 async def consume() -> None:
                     async for _ in stream:
                         pass
@@ -223,21 +239,17 @@ def test_cancel_during_speculative_block_rewinds_uncommitted_drafts(monkeypatch:
                 gate.set()
                 with pytest.raises(asyncio.CancelledError):
                     await asyncio.wait_for(consumer, 10)
-                response = cast(Any, stream).get()
+                response = cast("Any", stream).get()
 
             assert response.state == "interrupted"
-            assert response_text(response) == "ab"
+            assert response_text(response) == "abcde"
             assert session.transcript.tokens == native_tokens(session)
-            assert session.transcript.tokens[-2:] == tokens[:2]
+            assert session.transcript.tokens[-5:] == tokens[:5]
             calls = native_calls(session)
-            evaluated = {token for kind, token in calls if kind == "eval"}
-            assert tokens[2] in evaluated and tokens[3] in evaluated
-            prefix = max(
-                segment.end for segment in session.transcript.segments
-                if segment.kind == "assistant_prefix"
-            )
-            assert session.transcript.tokens[prefix:] == tokens[:2]
-            assert any(kind == "rewind" for kind, *_ in calls)
+            evaluated = [token for kind, token in calls if kind == "eval"]
+            assert evaluated == list(tokens[:5])
+            prefix = max(segment.end for segment in session.transcript.segments if segment.kind == "assistant_prefix")
+            assert session.transcript.tokens[prefix:] == tokens[:5]
 
     asyncio.run(scenario())
 
@@ -248,21 +260,19 @@ def test_context_reserve_default_fails_clearly_without_compaction() -> None:
             session = engine.session()
             model = make_model(session)
             async with model.request_stream(
-                [user()], None, ModelRequestParameters(),
+                [user()],
+                None,
+                ModelRequestParameters(),
             ) as stream:
                 prompt_length = len(session.transcript)
-                prefix = len(PromptBuilder(session.engine).assistant_prefix(
-                    session.transcript.tokens
-                ))
+                prefix = len(PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens))
                 session._worker.call(
-                    lambda engine, native: setattr(
-                        native, "_ctx", prompt_length + prefix + 2
-                    )
+                    lambda engine, native: setattr(native, "_ctx", prompt_length + prefix + 2)
                 ).result()
                 with pytest.raises(ContextReserveError) as raised:
                     async for _ in stream:
                         pass
-                response = cast(Any, stream).get()
+                response = cast("Any", stream).get()
 
             message = str(raised.value)
             assert "context reserve" in message
@@ -293,13 +303,13 @@ def test_paused_round_can_resume_without_second_assistant_prefix() -> None:
             session = engine.session()
             model = make_model(session)
             async with model.request_stream(
-                [user()], None, ModelRequestParameters(),
+                [user()],
+                None,
+                ModelRequestParameters(),
             ) as stream:
                 async for _ in stream:
                     pass
-                return session.transcript.tokens, [
-                    segment.kind for segment in session.transcript.segments
-                ]
+                return session.transcript.tokens, [segment.kind for segment in session.transcript.segments]
 
     expected_tokens, expected_kinds = asyncio.run(baseline())
 
@@ -310,27 +320,23 @@ def test_paused_round_can_resume_without_second_assistant_prefix() -> None:
 
             def make_room(needed: Any) -> int:
                 decisions.append(needed)
-                session._worker.call(
-                    lambda engine, native: setattr(native, "_ctx", 4096)
-                ).result()
+                session._worker.call(lambda engine, native: setattr(native, "_ctx", 4096)).result()
                 return 0
 
             model = make_model(session, reserve_handler=make_room)
             async with model.request_stream(
-                [user()], None, ModelRequestParameters(),
+                [user()],
+                None,
+                ModelRequestParameters(),
             ) as stream:
                 prompt_length = len(session.transcript)
-                prefix = len(PromptBuilder(session.engine).assistant_prefix(
-                    session.transcript.tokens
-                ))
+                prefix = len(PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens))
                 session._worker.call(
-                    lambda engine, native: setattr(
-                        native, "_ctx", prompt_length + prefix + 2
-                    )
+                    lambda engine, native: setattr(native, "_ctx", prompt_length + prefix + 2)
                 ).result()
                 async for _ in stream:
                     pass
-                response = cast(Any, stream).get()
+                response = cast("Any", stream).get()
 
             assert decisions == [1]
             assert response_text(response) == "abc"
@@ -341,7 +347,7 @@ def test_paused_round_can_resume_without_second_assistant_prefix() -> None:
             assert kinds.count("assistant") == 1
             expected_prefill = prompt_length + prefix
             assert response.usage.input_tokens == expected_prefill
-            assert cast(Any, response.usage.details) == {"prefill_tokens": expected_prefill}
+            assert response.usage.details == {"prefill_tokens": expected_prefill}
             assert response.usage.output_tokens == 3
             assert response.usage.requests == 1
             assert response.usage.total_tokens == expected_prefill + 3
@@ -369,52 +375,63 @@ def test_public_request_timeout_cleans_up_round_and_preserves_partial_response()
             bindings = 0
             original_bind = binder.bind_response
 
-            def counted_bind(response: Any, **kwargs: Any) -> None:
+            def counted_bind(response: ModelResponse, **kwargs: Any) -> None:
                 nonlocal bindings
                 bindings += 1
                 original_bind(response, **kwargs)
 
-            binder.bind_response = counted_bind
+            binder.bind_response = counted_bind  # ty: ignore[invalid-assignment]  # Instance-level test double replaces a bound method.
             events = []
-            stream = None
-            with pytest.raises(ModelRequestTimeout):
-                async with model_request_stream(
-                    model, [user()], model_settings={"request_timeout": 0.2},
-                ) as stream:
-                    async for event in stream:
-                        events.append(event)
 
+            stream: DS4StreamedResponse | None = None
+
+            async def consume() -> DS4StreamedResponse:
+                nonlocal stream
+                async with model_request_stream(
+                    model,
+                    [user()],
+                    model_settings={"request_timeout": 0.2},
+                ) as response:
+                    stream = cast("DS4StreamedResponse", response)
+                    async for event in response:
+                        events.append(event)
+                return stream
+
+            with pytest.raises(ModelRequestTimeout):
+                await consume()
+
+            assert stream is not None
             assert reached.is_set()
-            assert [event.part for event in events if isinstance(event, PartStartEvent)] == [
-                TextPart("a")
-            ]
-            response = cast(Any, stream).get()
+            assert [event.part for event in events if isinstance(event, PartStartEvent)] == [TextPart("a")]
+            response = stream.get()
             assert response.state == "interrupted"
             assert response_text(response) == "a"
             assert response.usage.input_tokens > 0
-            assert cast(Any, response.usage.details) == {
+            assert response.usage.details == {
                 "prefill_tokens": response.usage.input_tokens,
             }
             assert response.usage.output_tokens == 1
             assert response.usage.requests == 1
             assert bindings == 1
-            assert cast(Any, stream)._bound and cast(Any, stream)._round_exhausted
+            assert stream._bound and stream._round_exhausted
             assert session._active_round is False
             assert session.transcript.tokens == native_tokens(session)
             sampled = [p for p in binder.export_segments() if p.source == "sampled"]
             assert [p.kind for p in sampled] == ["assistant"]
-            assert sampled[0].key == cast(Any, response.metadata)["ds4.key"]
+            assert sampled[0].key == cast("Any", response.metadata)["ds4.key"]
             assert not cancel.is_set()
 
     asyncio.run(scenario())
 
 
-def test_second_round_prefill_cancel_preserves_prior_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_second_round_prefill_cancel_preserves_prior_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     waiting, release = threading.Event(), threading.Event()
     original_sync = FakeSession.sync
     syncs = []
 
-    def blocking_sync(self: Any, tokens: Any, *, progress: Any=None, cancel: Any=None) -> Any:
+    def blocking_sync(self: Any, tokens: Any, *, progress: Any = None, cancel: Any = None) -> Any:
         syncs.append(len(tokens))
         if len(syncs) == 2:
             waiting.set()
@@ -426,8 +443,8 @@ def test_second_round_prefill_cancel_preserves_prior_provenance(monkeypatch: pyt
 
     def script(prompt: Any, generated: Any) -> Any:
         if not generated:
-            cast(Any, script).current = outputs.pop(0)
-        tokens = cast(Any, script).current
+            cast("Any", script).current = outputs.pop(0)
+        tokens = cast("Any", script).current
         return tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
     async def scenario() -> None:
@@ -437,7 +454,9 @@ def test_second_round_prefill_cancel_preserves_prior_provenance(monkeypatch: pyt
             model = make_model(session, binder=binder)
             request = user("hello")
             async with model.request_stream(
-                [request], None, ModelRequestParameters(),
+                [request],
+                None,
+                ModelRequestParameters(),
             ) as stream:
                 async for _ in stream:
                     pass
@@ -452,9 +471,11 @@ def test_second_round_prefill_cancel_preserves_prior_provenance(monkeypatch: pyt
             second_user = user("second")
             messages = [request, first, second_user]
             async with model.request_stream(
-                messages, None, ModelRequestParameters(),
+                messages,
+                None,
+                ModelRequestParameters(),
             ) as stream:
-                pull = asyncio.create_task(cast(Any, anext(stream.__aiter__())))
+                pull = asyncio.create_task(cast("Any", anext(stream.__aiter__())))
                 await asyncio.wait_for(asyncio.to_thread(waiting.wait, 5), 10)
                 cancel = session._worker.cancel_event
                 pull.cancel()
@@ -466,16 +487,14 @@ def test_second_round_prefill_cancel_preserves_prior_provenance(monkeypatch: pyt
 
             assert cancelled.parts == []
             assert cancelled.state == "interrupted"
-            assert session.transcript.tokens[:len(before_tokens)] == before_tokens
-            assert [segment.kind for segment in session.transcript.segments[
-                :len(before_kinds)
-            ]] == before_kinds
-            assert binder.export_segments()[:len(before_provenance)] == before_provenance
-            assert tuple(binder._records[:len(before_records)]) == before_records
+            assert session.transcript.tokens[: len(before_tokens)] == before_tokens
+            assert [segment.kind for segment in session.transcript.segments[: len(before_kinds)]] == before_kinds
+            assert binder.export_segments()[: len(before_provenance)] == before_provenance
+            assert tuple(binder._records[: len(before_records)]) == before_records
             records = tuple(binder._records)
             assert len(records) == len(before_records) + 1
-            assert all(left.end <= right.start for left, right in zip(records, records[1:]))
-            assert records[-1].key == cast(Any, second_user.metadata)["ds4.key"]
+            assert all(left.end <= right.start for left, right in pairwise(records))
+            assert records[-1].key == cast("Any", second_user.metadata)["ds4.key"]
             assert records[-1].end == len(session.transcript)
             # The interrupted prefill kept the previous committed KV and added no
             # assistant prefix or draft: the new user message is transcript-only
@@ -486,27 +505,29 @@ def test_second_round_prefill_cancel_preserves_prior_provenance(monkeypatch: pyt
             assert not cancel.is_set()
 
             async with model.request_stream(
-                messages, None, ModelRequestParameters(),
+                messages,
+                None,
+                ModelRequestParameters(),
             ) as stream:
                 async for _ in stream:
                     pass
                 second = stream.get()
 
             assert response_text(second) == "xy"
-            assert session.transcript.tokens[:len(before_tokens)] == before_tokens
+            assert session.transcript.tokens[: len(before_tokens)] == before_tokens
             provenance = binder.export_segments()
-            assert provenance[:len(before_provenance)] == before_provenance
-            assert all(left.end == right.start for left, right in zip(provenance, provenance[1:]))
+            assert provenance[: len(before_provenance)] == before_provenance
+            assert all(left.end == right.start for left, right in pairwise(provenance))
             records = tuple(binder._records)
-            assert all(left.end <= right.start for left, right in zip(records, records[1:]))
+            assert all(left.end <= right.start for left, right in pairwise(records))
             native = native_tokens(session)
-            assert session.transcript.tokens[:len(native)] == native
+            assert session.transcript.tokens[: len(native)] == native
 
             # A replacement turn rewrites only from the second user message;
             # the cancelled round left no overlapping prefix behind.
             change = binder.prepare([request, first, user("replacement")])
             assert change.kind == "rewrite"
             assert change.start == len(before_tokens)
-            assert binder.export_segments()[:len(before_provenance)] == before_provenance
+            assert binder.export_segments()[: len(before_provenance)] == before_provenance
 
     asyncio.run(scenario())

@@ -1,12 +1,26 @@
 """Shared lifecycle for GLM and Qwen delimiter-based tool calls."""
-from copy import deepcopy
-from types import MappingProxyType
 
-from .base import ToolParser
+from copy import deepcopy
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import override
+
+from .base import ToolParser, freeze_argument, thaw_arguments
 from .model import ToolArgument, ToolCall
 
 _ASCII_SPACE = b" \t\r\n"
 _START = b"<tool_call>"
+
+
+@dataclass(frozen=True)
+class DelimiterParserState:
+    after_call: bool
+    call_start: int
+    current_name: str | None
+    args: tuple[tuple[str, ToolArgument], ...]
+    param_name: str | None
+    param_value_start: int
+    param_scan_pos: int
 
 
 class DelimiterParser(ToolParser):
@@ -26,9 +40,39 @@ class DelimiterParser(ToolParser):
         self._param_scan_pos = 0
         super().__init__()
 
+    @override
     def _opening_forms(self) -> tuple[tuple[bytes, bool], ...]:
         return ((_START, False),)
 
+    @override
+    def _capture_family(self) -> DelimiterParserState:
+        return DelimiterParserState(
+            self._after_call,
+            self._call_start,
+            self._current_name,
+            tuple((name, freeze_argument(argument)) for name, argument in self._args.items()),
+            self._param_name,
+            self._param_value_start,
+            self._param_scan_pos,
+        )
+
+    @override
+    def _restore_family(self, state: object) -> None:
+        if not isinstance(state, DelimiterParserState):
+            raise TypeError("DelimiterParser requires DelimiterParserState")
+        self._after_call = state.after_call
+        self._call_start = state.call_start
+        self._current_name = state.current_name
+        self._args = thaw_arguments(state.args)
+        self._param_name = state.param_name
+        self._param_value_start = state.param_value_start
+        self._param_scan_pos = state.param_scan_pos
+
+    @override
+    def _new_fork(self) -> DelimiterParser:
+        return type(self)()
+
+    @override
     def _start(self, implicit_invoke: bool) -> None:
         self.state = "STRUCTURAL"
         self._active = True
@@ -55,16 +99,17 @@ class DelimiterParser(ToolParser):
 
     def _push_current(self) -> None:
         if self._current_name is not None:
-            args = MappingProxyType({
-                name: deepcopy(argument.value) for name, argument in self._args.items()
-            })
-            raw = bytes(self.raw[self._call_start:self.parse_pos]).decode()
+            args = MappingProxyType({name: deepcopy(argument.value) for name, argument in self._args.items()})
+            raw = bytes(self.raw[self._call_start : self.parse_pos]).decode()
             self._calls.append(ToolCall(self._current_name, args, raw))
         self._current_name = None
         self._args = {}
         self._param_name = None
 
-    def _parse(self) -> None:
+    @override
+    def _parse(  # noqa: PLR0911 - Parser states have distinct return protocols.
+        self,
+    ) -> None:
         while self.state in ("STRUCTURAL", "PARAM_VALUE"):
             if self.state == "PARAM_VALUE":
                 if not self._parse_parameter_value():
@@ -75,7 +120,7 @@ class DelimiterParser(ToolParser):
                 return
             if self._after_call:
                 self._parse_after_call()
-                if self.state != "STRUCTURAL" or self._after_call:
+                if self.state != "STRUCTURAL" or self._after_call:  # ty: ignore[redundant-condition-strict]  # The parser callback can reset both fields.
                     return
                 continue
             if self._current_name is None:
@@ -115,18 +160,18 @@ class DelimiterParser(ToolParser):
         if self._partial(_START, self.parse_pos):
             return
         # The first non-tool byte belongs to ordinary output, not the stanza.
-        del self.raw[self.parse_pos:]
+        del self.raw[self.parse_pos :]
         self.state = "DONE"
 
+    @override
     def _update_param_close_prefix(self) -> None:
-        tail = bytes(self.raw[-len(self._parameter_close):])
+        tail = bytes(self.raw[-len(self._parameter_close) :])
         start = tail.rfind(b"<")
-        self.param_close_prefix = (
-            start >= 0 and self._parameter_close.startswith(tail[start:])
-        )
+        self.param_close_prefix = start >= 0 and self._parameter_close.startswith(tail[start:])
 
+    @override
     def _finish_active(self) -> None:
-        trailing = self.raw[self.parse_pos:]
+        trailing = self.raw[self.parse_pos :]
         if self._after_call and all(byte in _ASCII_SPACE for byte in trailing):
             self.parse_pos = len(self.raw)
             self._after_call = False
