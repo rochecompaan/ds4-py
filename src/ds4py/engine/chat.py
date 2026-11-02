@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING, cast
 
 from ds4py.errors import EngineError
+
 from .decode import GenerateJob
 from .pause import resolve_control
 from .prompt import PromptBuilder
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 
 
 def _append(
-    session: "Session",
+    session: Session,
     tokens: Sequence[int],
     kind: str,
     meta: Mapping[str, object] | None = None,
@@ -32,7 +33,7 @@ def _append(
 
 
 def start_chat(
-    session: "Session",
+    session: Session,
     tools: Iterable[ToolDefinition] = (),
     instructions: str | None = None,
 ) -> None:
@@ -44,7 +45,7 @@ def start_chat(
     session._transcript.set_chat()
 
 
-def _start_if_empty(session: "Session") -> None:
+def _start_if_empty(session: Session) -> None:
     if session._transcript.chat:
         return
     if len(session._transcript):
@@ -52,13 +53,13 @@ def _start_if_empty(session: "Session") -> None:
     start_chat(session)
 
 
-def _require_chat(session: "Session") -> None:
+def _require_chat(session: Session) -> None:
     if not session._transcript.chat:
         raise EngineError("chat is not initialized")
 
 
 def append_user(
-    session: "Session",
+    session: Session,
     text: str,
     images: Sequence[object] = (),
 ) -> Segment:
@@ -68,7 +69,7 @@ def append_user(
     retire_paused(session)
     builder = PromptBuilder(session._engine)
     return cast(
-        Segment,
+        "Segment",
         _append(
             session,
             builder.message(session._transcript.tokens, "user", text),
@@ -77,7 +78,7 @@ def append_user(
     )
 
 
-def append_prefix(session: "Session", turns: Iterable[PrefixTurn]) -> None:
+def append_prefix(session: Session, turns: Iterable[PrefixTurn]) -> None:
     turns = tuple(turns)
     if any(turn.role not in ("user", "assistant") for turn in turns):
         raise ValueError("prefix turns must have user or assistant roles")
@@ -92,11 +93,11 @@ def append_prefix(session: "Session", turns: Iterable[PrefixTurn]) -> None:
 
 
 def run_round(
-    session: "Session",
+    session: Session,
     max_tokens: int,
     sampling: SamplingPolicy | None,
     stop_sequences: Sequence[bytes] = (),
-) -> Generator[Event, None, None]:
+) -> Generator[Event]:
     stream = session._paused_stream
     resuming = stream is not None
     control = resolve_control(stream.control if stream is not None else None, stop_sequences)
@@ -148,28 +149,28 @@ def run_round(
             append_assistant_end(session)
 
 
-def append_assistant_prefix(session: "Session") -> Segment | None:
+def append_assistant_prefix(session: Session) -> Segment | None:
     _require_chat(session)
     builder = PromptBuilder(session._engine)
     tokens = builder.assistant_prefix(session._transcript.tokens)
     return _append(session, tokens, "assistant_prefix")
 
 
-def append_assistant_end(session: "Session") -> Segment | None:
+def append_assistant_end(session: Session) -> Segment | None:
     _require_chat(session)
     return _append(session, PromptBuilder(session._engine).append_assistant_end(), "eos")
 
 
-def append_tool_results(session: "Session", results: Iterable[str]) -> Segment:
+def append_tool_results(session: Session, results: Iterable[str]) -> Segment:
     _require_chat(session)
     retire_paused(session)
     builder = PromptBuilder(session._engine)
     tokens = builder.tool_results(session._transcript.tokens, results)
-    return cast(Segment, _append(session, tokens, "tool"))
+    return cast("Segment", _append(session, tokens, "tool"))
 
 
 def append_system_note(
-    session: "Session",
+    session: Session,
     text: str,
     subtype: str | None = None,
 ) -> Segment:
@@ -178,12 +179,12 @@ def append_system_note(
     builder = PromptBuilder(session._engine)
     tokens = builder.message(session._transcript.tokens, "system", "\n" + text)
     meta: dict[str, str] = {"text": text}
-    if subtype:
+    if bool(subtype):
         meta["subtype"] = subtype
-    return cast(Segment, _append(session, tokens, "note", meta))
+    return cast("Segment", _append(session, tokens, "note", meta))
 
 
-def retire_paused(session: "Session") -> None:
+def retire_paused(session: Session) -> None:
     """Close a paused assistant before accepting a different conversation turn."""
     if session._paused_stream is not None:
         session._paused_stream = session._paused_control = None

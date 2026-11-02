@@ -151,10 +151,10 @@ def test_canonical_tool_results_pair_by_id_and_count_denials() -> None:
     summary = summarize_events(canonical_events(), wall_seconds=1)
 
     assert summary.tool_calls == 2
-    assert cast(Any, summary.tool_accounting).executed == 1
-    assert cast(Any, summary.tool_accounting).refused == 1
-    assert cast(Any, summary.tool_accounting).retried == 0
-    assert cast(Any, summary.tool_accounting).complete
+    assert cast("Any", summary.tool_accounting).executed == 1
+    assert cast("Any", summary.tool_accounting).refused == 1
+    assert cast("Any", summary.tool_accounting).retried == 0
+    assert cast("Any", summary.tool_accounting).complete
 
 
 def test_canonical_retry_prompt_is_a_resolution_not_an_execution() -> None:
@@ -177,9 +177,9 @@ def test_canonical_retry_prompt_is_a_resolution_not_an_execution() -> None:
 
     summary = summarize_events(events, wall_seconds=1)
 
-    assert cast(Any, summary.tool_accounting).executed == 0
-    assert cast(Any, summary.tool_accounting).retried == 1
-    assert cast(Any, summary.tool_accounting).complete
+    assert cast("Any", summary.tool_accounting).executed == 0
+    assert cast("Any", summary.tool_accounting).retried == 1
+    assert cast("Any", summary.tool_accounting).complete
 
 
 @pytest.mark.parametrize(

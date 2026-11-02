@@ -148,7 +148,7 @@ class FooterModel:
         self.custom: dict[str, str] = {}
         self._unsubscribe = runtime.on_event(self.handle_event)
 
-    def handle_event(self, event: SessionEvent) -> None:
+    def handle_event(self, event: SessionEvent) -> None:  # noqa: PLR0912 - Each session event owns a footer transition.
         if event.kind == "run_start":
             self.status = "running"
             self.prefill = None

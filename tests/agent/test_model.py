@@ -1,20 +1,11 @@
-from typing import Any, cast
-from collections.abc import Callable, Sequence
 import asyncio
 import copy
-from dataclasses import replace
 import math
+from collections.abc import Callable, Sequence
+from dataclasses import replace
+from typing import Any, cast
 
 import pytest
-
-import ds4py
-from ds4py import ThinkMode
-from ds4py._native.fake import FAKE_EOS, FakeNative
-from ds4py._native.fake_chat import tokenize_rendered
-from ds4py.binding import MessageBinder
-from ds4py.engine.session import Engine
-from ds4py.engine.sampling import SamplingPolicy
-from ds4py.model import DS4Model, ResponseTerminalError
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelRequest,
@@ -27,6 +18,15 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+
+import ds4py
+from ds4py import ThinkMode
+from ds4py._native.fake import FAKE_EOS, FakeNative
+from ds4py._native.fake_chat import tokenize_rendered
+from ds4py.binding import MessageBinder
+from ds4py.engine.sampling import SamplingPolicy
+from ds4py.engine.session import Engine
+from ds4py.model import DS4Model, ResponseTerminalError
 
 
 def fake_engine(*, family: str = "deepseek4", script: Any = None, think: ThinkMode = ThinkMode.NONE) -> Engine:
@@ -78,7 +78,7 @@ def test_identity_profile_and_native_tool_capabilities() -> None:
 
         assert model.model_name == "fake-ds4"
         assert model.system == "ds4"
-        profile = cast(Any, model.profile)
+        profile = cast("Any", model.profile)
         assert profile["context_window"] == 8192
         assert profile["supports_thinking"] is True
         assert profile["supports_tools"] is True
@@ -105,14 +105,14 @@ def test_request_prepares_settings_and_uses_concrete_sampling_policy() -> None:
             prepared.append((settings, params))
             return original_prepare(settings, params)
 
-        cast(Any, model).prepare_request = recording_prepare
+        cast("Any", model).prepare_request = recording_prepare
         settings = {"temperature": 0.25, "top_p": 0.8, "top_k": 7}
         response = request(model, settings=settings)
 
         assert len(prepared) == 1
         assert prepared[0][0] is settings
         assert response.parts == [TextPart("sampled")]
-        samples = session._worker.call(lambda engine, native: list(cast(Any, native).samples)).result()
+        samples = session._worker.call(lambda engine, native: list(cast("Any", native).samples)).result()
         assert samples[0] == (0.25, 7, 0.8, 0.05)
 
 
@@ -161,8 +161,8 @@ def test_text_and_thinking_deltas_become_distinct_parts_with_token_usage() -> No
         assert response.model_name == "fake-ds4"
         assert response.provider_name == "ds4"
         assert response.provider_url is None
-        assert cast(Any, response.metadata)["ds4.source"] == "sampled"
-        assert cast(Any, response.metadata)["ds4.key"]
+        assert cast("Any", response.metadata)["ds4.source"] == "sampled"
+        assert cast("Any", response.metadata)["ds4.key"]
         output = len(tokenize_rendered(text))
         assert response.usage.output_tokens == output
         assert response.usage.input_tokens > 0
@@ -182,7 +182,7 @@ def test_tool_calls_have_stable_ids_and_preserve_sampled_raw_syntax() -> None:
         assert part.tool_name == "read"
         assert part.args == {"path": "/tmp/x"}
         assert part.tool_call_id
-        assert part.tool_call_id.startswith(cast(Any, response.metadata)["ds4.key"])
+        assert part.tool_call_id.startswith(cast("Any", response.metadata)["ds4.key"])
         assert part.provider_details == {"ds4py.raw": raw}
         assert response.finish_reason == "tool_call"
 
@@ -312,12 +312,12 @@ def test_adopt_uses_stable_keys_without_collapsing_harness_history() -> None:
 
         adopted = binder.adopt(history)
 
-        assert [cast(Any, message.parts[0]).content for message in adopted] == [
+        assert [cast("Any", message.parts[0]).content for message in adopted] == [
             "question-one",
             "answer-one",
             "question-two",
             "answer-two",
         ]
-        assert [cast(Any, message.metadata)["ds4.key"] for message in adopted] == [
-            cast(Any, message.metadata)["ds4.key"] for message in history
+        assert [cast("Any", message.metadata)["ds4.key"] for message in adopted] == [
+            cast("Any", message.metadata)["ds4.key"] for message in history
         ]

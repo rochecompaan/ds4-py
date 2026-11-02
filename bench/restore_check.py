@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, TypedDict
+from typing import TYPE_CHECKING, Protocol, TypedDict
 
 if TYPE_CHECKING:
     from collections.abc import Generator

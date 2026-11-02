@@ -1,8 +1,8 @@
 """Report-reading commands deserialize real typed benchmark contracts."""
 
-from pathlib import Path
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -102,7 +102,7 @@ def test_replay_command_deserializes_all_c_tasks(
     write_report(report, [task_record(f"task-{index}", "c") for index in range(12)])
     captured: dict[str, Any] = {}
 
-    def replay(tasks: Any, model: Any, *, lib: Any = None, backend: str = "cpu") -> tuple:
+    def replay(tasks: Any, model: Any, *, lib: Any = None, backend: str = "cpu") -> tuple[Any, ...]:
         captured.update(tasks=tasks, model=model, lib=lib, backend=backend)
         return ()
 

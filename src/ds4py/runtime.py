@@ -299,6 +299,7 @@ class AgentRuntime:
         run_id: str,
         messages: Sequence[ModelMessage],
         snapshot: ContinuableSnapshot | None = None,
+        *,
         failed: bool = False,
     ) -> None:
         """Adopt canonical keys and keep the terminal harness snapshot exact."""

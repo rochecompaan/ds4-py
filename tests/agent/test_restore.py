@@ -283,7 +283,7 @@ def test_native_restore_does_not_emit_a_second_date_note(tmp_path: Path) -> None
 def test_stripped_restore_preserves_original_note_text(tmp_path: Path) -> None:
     project, store, record, saved = saved_session(tmp_path, script=("first answer",))
     zero_payload_kv(store, record.session_id)
-    later_clock = lambda: datetime(2026, 10, 22, 9, 30, 0, tzinfo=timezone.utc)
+    later_clock = lambda: datetime(2026, 10, 22, 9, 30, 0, tzinfo=UTC)
 
     with fake_engine(script=scripted_rounds("second answer")) as engine:
         model = make_model(engine)

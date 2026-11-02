@@ -132,7 +132,7 @@ class SegmentProvenance:
                 _string(data["key"], "segment key"),
                 _string(data["content_hash"], "segment content_hash"),
                 _string(data["source"], "segment source"),
-                text=data.get("text"),
+                text=None if data.get("text") is None else _string(data["text"], "segment text"),
             )
         except KeyError as error:
             raise ValueError(f"segment is missing {error.args[0]!r}") from error

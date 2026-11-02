@@ -96,7 +96,7 @@ def test_restore_binds_an_ordered_subsequence_of_canonical_history() -> None:
         assert len(canonical) == 4
         assert restored._bound_messages == bound
         assert [record.key for record in restored._records] == [
-            cast(Any, message.metadata)["ds4.key"] for message in bound
+            cast("Any", message.metadata)["ds4.key"] for message in bound
         ]
 
 

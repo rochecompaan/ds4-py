@@ -57,7 +57,7 @@ class PromptBuilder:
 
         if self.family == "deepseek41":
             append("system", self.engine._render_message(prefix, "system", ""))
-        if instructions:
+        if bool(instructions):
             append("system", self.message(prefix, "system", instructions + "\n\n"))
 
         tool_tokens = self._tool_tokens(tools)

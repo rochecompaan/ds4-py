@@ -1,11 +1,15 @@
 """Publish harness events on the session bus, independently of telemetry."""
 
-from typing import Any
+from typing import TYPE_CHECKING, override
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandStartedEvent
 
-from ds4py.engine.session import Session
+if TYPE_CHECKING:
+    from pydantic_ai.messages import AgentStreamEvent
+    from pydantic_ai.tools import RunContext
+
+    from ds4py.engine.session import Session
 
 
 class HarnessEventBridge(AbstractCapability):
@@ -14,7 +18,8 @@ class HarnessEventBridge(AbstractCapability):
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    async def on_event(self, ctx: Any, *, event: object) -> None:
+    @override
+    async def on_event(self, ctx: RunContext[object], *, event: AgentStreamEvent) -> None:
         emit = getattr(self._session, "emit", None)
         if not callable(emit):
             return

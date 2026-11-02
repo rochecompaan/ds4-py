@@ -1,9 +1,7 @@
 import ds4py
-
 from ds4py._native.fake import FakeNative
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.tool_prompt import ToolDefinition
-
 
 OPENING = (
     "You are a coding agent running in a local workspace. Use tools for local file and system work. "

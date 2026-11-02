@@ -1,8 +1,8 @@
 from typing import Any
+
 import pytest
 
 from ds4py.engine.tool_prompt import ToolDefinition, ToolPromptGenerator
-
 
 READ_SCHEMA = '{"name":"read","description":"Read a file.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}'
 EDIT_SCHEMA = '{"name":"edit","description":"Edit ✓","parameters":{"type":"object","properties":{"path":{"type":"string"},"new_string":{"type":"string"},"whole":{"type":"boolean"}},"required":["path","new_string"]}}'

@@ -413,7 +413,7 @@ class MessageBinder:
         self._signature = None
         self._restored = True
 
-    def _restore_state(  # noqa: PLR0912 - Restore validation covers each persisted contract.
+    def _restore_state(  # noqa: C901, PLR0912, PLR0915 - Restore validation covers each persisted contract.
         self,
         messages: Sequence[ModelMessage],
         segments: Sequence[_Provenance],
@@ -555,7 +555,7 @@ class MessageBinder:
             keyed.append((key, content_hash))
         return keyed
 
-    def prepare(  # noqa: PLR0912, PLR0915 - Binding coordinates each history transition.
+    def prepare(  # noqa: C901, PLR0912, PLR0915 - Binding coordinates each history transition.
         self,
         messages: Sequence[ModelMessage],
         *,

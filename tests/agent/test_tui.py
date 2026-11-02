@@ -1,6 +1,6 @@
-from typing import Any, cast
 import asyncio
 from types import SimpleNamespace
+from typing import Any, cast
 
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.keys import Keys
@@ -14,8 +14,9 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
-
 from test_tui_commands import FakeRuntime, make_tui
+
+from ds4py.engine.events import Prefill
 from ds4py.engine.lifecycle import SessionEvent
 from ds4py.tui import TUI
 from ds4py.tui_render import FooterModel, StreamRenderer, markdown_fragments
@@ -34,7 +35,7 @@ def test_command_error_is_reported_and_loop_remains_usable() -> None:
     runtime: Any = FakeRuntime()
     tui = make_tui(runtime)
     messages = []
-    cast(Any, tui).show_message = messages.append
+    cast("Any", tui).show_message = messages.append
 
     async def scenario() -> None:
         await tui.dispatch("/switch bad")
@@ -108,14 +109,14 @@ def test_enter_submits_and_alt_enter_inserts_newline() -> None:
     alt_enter = tui.key_bindings.get_bindings_for_keys((Keys.Escape, Keys.Enter))[0]
     submitted = []
     inserted = []
-    cast(Any, enter.handler)(
+    cast("Any", enter.handler)(
         SimpleNamespace(
             current_buffer=SimpleNamespace(
                 validate_and_handle=lambda: submitted.append(True),
             )
         )
     )
-    cast(Any, alt_enter.handler)(
+    cast("Any", alt_enter.handler)(
         SimpleNamespace(
             current_buffer=SimpleNamespace(
                 insert_text=inserted.append,
@@ -131,7 +132,7 @@ def test_ctrl_c_cancels_without_touching_partial_text_and_ctrl_d_exits() -> None
     runtime: Any = FakeRuntime()
     tui = make_tui(runtime)
     cancel = tui.key_bindings.get_bindings_for_keys((Keys.ControlC,))[0]
-    assert cast(Any, cancel.handler)(SimpleNamespace()) is None
+    assert cast("Any", cancel.handler)(SimpleNamespace()) is None
     assert runtime.calls == [("cancel",)]
 
     exits = []
@@ -140,7 +141,7 @@ def test_ctrl_c_cancels_without_touching_partial_text_and_ctrl_d_exits() -> None
         exits.append(exception)
 
     ctrl_d = tui.key_bindings.get_bindings_for_keys((Keys.ControlD,))[0]
-    cast(Any, ctrl_d.handler)(
+    cast("Any", ctrl_d.handler)(
         SimpleNamespace(
             app=SimpleNamespace(
                 exit=record_exit,
@@ -152,7 +153,7 @@ def test_ctrl_c_cancels_without_touching_partial_text_and_ctrl_d_exits() -> None
 
 
 def test_footer_distinguishes_prefill_from_token_generation() -> None:
-    footer = FooterModel(cast(Any, FakeRuntime()))
+    footer = FooterModel(cast("Any", FakeRuntime()))
     try:
         footer.handle_event(SessionEvent("run_start", "session", {}))
         assert footer.status == "running"
@@ -161,7 +162,7 @@ def test_footer_distinguishes_prefill_from_token_generation() -> None:
                 "Prefill",
                 "session",
                 {
-                    "event": SimpleNamespace(done=2, total=2, tps=10.0),
+                    "event": Prefill(done=2, total=2, cached_prefix=0, tps=10.0),
                 },
             )
         )

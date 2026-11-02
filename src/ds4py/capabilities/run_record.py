@@ -3,7 +3,7 @@
 import json
 from contextlib import suppress
 from dataclasses import fields, is_dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast, override
 
@@ -86,9 +86,9 @@ class DS4RunRecord(AbstractCapability):
             raise
 
     def _line(self, kind: str, payload: Mapping[str, object]) -> dict[str, object]:
-        values = cast(dict[str, JsonValue], _json_safe(dict(payload)))
+        values = cast("dict[str, JsonValue]", _json_safe(dict(payload)))
         return {
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": datetime.now(UTC).isoformat(),
             "kind": kind,
             "session_id": getattr(self.session, "id", None),
             "run_id": values.pop("run_id", self._run_id),
@@ -109,7 +109,7 @@ class DS4RunRecord(AbstractCapability):
                 # Rollback must not replace the original terminal write error.
                 handle.truncate(offset)
             raise
-        written_payload = cast(dict[str, JsonValue], line["payload"])
+        written_payload = cast("dict[str, JsonValue]", line["payload"])
         self._written_run_end = (line["run_id"], written_payload.get("status"))
 
     def _on_engine_event(self, event: SessionEvent) -> None:

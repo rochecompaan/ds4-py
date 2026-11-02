@@ -4,6 +4,7 @@ import asyncio
 import json
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -122,7 +123,7 @@ def test_run_record_writes_one_bridged_agent_event_from_the_session_bus(
     with fake_engine() as engine:
         session = engine.session()
         record = DS4RunRecord(session, path)
-        ctx = SimpleNamespace(conversation_id="conversation", run_id="run")
+        ctx = run_context(conversation_id="conversation", run_id="run")
         asyncio.run(record.for_run(ctx))
         event = SimpleNamespace(parts=[])
 

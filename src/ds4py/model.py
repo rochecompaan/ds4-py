@@ -1,12 +1,12 @@
 """Adapt the ds4 engine facade to Pydantic AI requests and streamed responses."""
 
 import asyncio
-from collections.abc import Buffer
-from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 import math
 import operator
 import sys
+from collections.abc import Buffer
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar, SupportsFloat, SupportsIndex, cast, override
 from uuid import uuid4
 
@@ -261,7 +261,7 @@ class DS4StreamedResponse(StreamedResponse):
         self._model = model
         self._session = model.session
         self._binder = model.binder
-        self._timestamp = datetime.now(timezone.utc)
+        self._timestamp = datetime.now(UTC)
         self._response_key = uuid4().hex
         self.metadata = {"ds4.key": self._response_key, "ds4.source": "sampled"}
         self._round = self._session.run_round(
@@ -314,7 +314,7 @@ class DS4StreamedResponse(StreamedResponse):
 
     def _stopped(self, reason: str) -> None:
         self.finish_reason = cast(
-            FinishReason | None,
+            "FinishReason | None",
             {
                 "stop_token": "stop",
                 "stop_sequence": "stop",
