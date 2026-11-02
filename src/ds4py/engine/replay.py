@@ -22,9 +22,7 @@ _GENERATION = re.compile(
     r"^generation finished tool_round=(-?\d+) generated=(-?\d+) "
     r"carried=(-?\d+) context_limited=(-?\d+)$"
 )
-_WORKER = re.compile(
-    r"^agent worker start ctx=(\S+) backend=(\S+) model=(.*?) trace=(\S+)$"
-)
+_WORKER = re.compile(r"^agent worker start ctx=(\S+) backend=(\S+) model=(.*?) trace=(\S+)$")
 
 
 @dataclass
@@ -246,9 +244,7 @@ class _Reader:
             self.error("second prefill before generation finished")
         if self.base is None:
             self.error("missing initial system prompt")
-        number, transcript, prompt_length, cached, suffix_length = (
-            int(value) for value in match.groups()[:5]
-        )
+        number, transcript, prompt_length, cached, suffix_length = (int(value) for value in match.groups()[:5])
         think = _think_mode(match.group(6), self, self.line)
         if self.rounds:
             next_number = self.rounds[-1].number + 1

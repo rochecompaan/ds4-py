@@ -41,9 +41,7 @@ def scripted(*tokens: Any) -> Any:
 
 
 @contextmanager
-def chat_session(
-    *tokens: Any, ctx: Any = 673, cancel: Any = None, think: Any = ThinkMode.NONE
-) -> Iterator[Any]:
+def chat_session(*tokens: Any, ctx: Any = 673, cancel: Any = None, think: Any = ThinkMode.NONE) -> Iterator[Any]:
     # The default fake chat prompt plus assistant prefix is 671 tokens.
     with ds4py.open(
         "f.gguf",
@@ -70,11 +68,7 @@ def make_room(session: Any, ctx: Any = 1024) -> None:
 
 
 def content_events(events: Any) -> Any:
-    return [
-        event
-        for event in events
-        if not isinstance(event, (Prefill, Synced, ReserveReached))
-    ]
+    return [event for event in events if not isinstance(event, (Prefill, Synced, ReserveReached))]
 
 
 def test_raw_round_still_reports_context_reserve_directly() -> None:
@@ -165,9 +159,7 @@ def test_advancing_without_a_decision_fails_and_releases_the_round() -> None:
         next_pause(round_, events)
         with pytest.raises(EngineError, match="decision"):
             next(round_)
-        assert [segment.kind for segment in session.transcript.segments].count(
-            "eos"
-        ) == 1
+        assert [segment.kind for segment in session.transcript.segments].count("eos") == 1
         session.append_user("next")
 
 
@@ -209,8 +201,6 @@ def test_closing_a_paused_round_drains_and_preserves_worker_ownership() -> None:
         round_.close()
 
         assert not cancel.is_set()
-        assert [segment.kind for segment in session.transcript.segments].count(
-            "eos"
-        ) == 1
+        assert [segment.kind for segment in session.transcript.segments].count("eos") == 1
         session.append_user("next")
         assert list(session.run_round(max_tokens=0))[-1] == Stopped("max_tokens")

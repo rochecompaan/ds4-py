@@ -37,12 +37,7 @@ def _records(hashes: Mapping[str, str]) -> Iterator[tuple[str, str]]:
         if not isinstance(relative, str):
             raise AbiMismatch("Metal shader paths must be relative strings." + _REBUILD)
         path = PurePosixPath(relative)
-        if (
-            len(path.parts) != 2
-            or path.parts[0] != "metal"
-            or path.suffix != ".metal"
-            or path.as_posix() != relative
-        ):
+        if len(path.parts) != 2 or path.parts[0] != "metal" or path.suffix != ".metal" or path.as_posix() != relative:
             raise AbiMismatch(f"invalid Metal shader path: {relative!r}." + _REBUILD)
         if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
             raise AbiMismatch(f"invalid Metal shader hash for {relative}." + _REBUILD)
@@ -57,9 +52,7 @@ def _check_hash(path: Path, digest: str, label: str) -> None:
     except (OSError, ValueError, RuntimeError) as exc:
         raise AbiMismatch(f"cannot read {label}: {exc}." + _REBUILD) from exc
     if actual != digest:
-        raise AbiMismatch(
-            f"{label}: Metal shader SHA-256 differs from the manifest." + _REBUILD
-        )
+        raise AbiMismatch(f"{label}: Metal shader SHA-256 differs from the manifest." + _REBUILD)
 
 
 def metal_source_env(
@@ -74,13 +67,9 @@ def metal_source_env(
         try:
             bundled = (root / relative).resolve(strict=True)
         except (OSError, ValueError, RuntimeError) as exc:
-            raise AbiMismatch(
-                f"cannot resolve Metal shader {relative}: {exc}." + _REBUILD
-            ) from exc
+            raise AbiMismatch(f"cannot resolve Metal shader {relative}: {exc}." + _REBUILD) from exc
         if not bundled.is_relative_to(root):
-            raise AbiMismatch(
-                f"Metal shader {relative} escapes its install directory." + _REBUILD
-            )
+            raise AbiMismatch(f"Metal shader {relative} escapes its install directory." + _REBUILD)
         _check_hash(bundled, digest, relative)
         key = f"DS4_METAL_{Path(relative).stem.upper()}_SOURCE"
         if overrides is not None and key in overrides:

@@ -24,9 +24,7 @@ from ds4py.engine.tool_syntax.render import render_tool_call
 FAMILIES = ("deepseek4", "deepseek41", "glm", "qwen")
 
 
-def fake_engine(
-    family: Any, *, think: Any = ThinkMode.NONE, script: Any = None
-) -> Engine:
+def fake_engine(family: Any, *, think: Any = ThinkMode.NONE, script: Any = None) -> Engine:
     info = replace(
         FakeNative()._info,
         family=family,
@@ -58,17 +56,12 @@ def parse(data: Any, engine: Any, *, bytewise: Any = False) -> Any:
 
 def contains(tokens: Any, expected: Any) -> Any:
     tokens = list(tokens)
-    return any(
-        tokens[index : index + len(expected)] == expected
-        for index in range(len(tokens) - len(expected) + 1)
-    )
+    return any(tokens[index : index + len(expected)] == expected for index in range(len(tokens) - len(expected) + 1))
 
 
 @pytest.mark.parametrize("family", FAMILIES)
 @pytest.mark.parametrize("bytewise", [False, True])
-def test_restored_assistant_tool_call_round_trips_through_family_parser(
-    family: Any, bytewise: Any
-) -> None:
+def test_restored_assistant_tool_call_round_trips_through_family_parser(family: Any, bytewise: Any) -> None:
     closing = {
         "deepseek4": "</｜DSML｜parameter>",
         "deepseek41": "</｜DSML｜ parameter>",
@@ -86,9 +79,7 @@ def test_restored_assistant_tool_call_round_trips_through_family_parser(
     with fake_engine(family) as engine:
         session = engine.session()
         MessageBinder(session).prepare([response])
-        assistant = next(
-            s for s in session.transcript.segments if s.kind == "assistant"
-        )
+        assistant = next(s for s in session.transcript.segments if s.kind == "assistant")
         tokens = session.transcript.tokens[assistant.start : assistant.end]
         snapshot = parse(decode(engine, tokens), engine, bytewise=bytewise)
 
@@ -104,9 +95,7 @@ def restored_snapshot(response: Any, family: Any, bytewise: Any) -> Any:
     with fake_engine(family) as engine:
         session = engine.session()
         MessageBinder(session).prepare([response])
-        assistant = next(
-            s for s in session.transcript.segments if s.kind == "assistant"
-        )
+        assistant = next(s for s in session.transcript.segments if s.kind == "assistant")
         return parse(
             decode(engine, session.transcript.tokens[assistant.start : assistant.end]),
             engine,
@@ -116,9 +105,7 @@ def restored_snapshot(response: Any, family: Any, bytewise: Any) -> Any:
 
 @pytest.mark.parametrize("family", ["deepseek4", "deepseek41"])
 @pytest.mark.parametrize("bytewise", [False, True])
-def test_restored_dsml_multi_call_canonical_uses_one_outer_block(
-    family: Any, bytewise: Any
-) -> None:
+def test_restored_dsml_multi_call_canonical_uses_one_outer_block(family: Any, bytewise: Any) -> None:
     response = ModelResponse(
         [
             ToolCallPart("first", {"value": "one"}),
@@ -138,9 +125,7 @@ def test_restored_dsml_multi_call_canonical_uses_one_outer_block(
 
 @pytest.mark.parametrize("family", ["deepseek4", "deepseek41"])
 @pytest.mark.parametrize("bytewise", [False, True])
-def test_restored_dsml_multi_call_sampled_raw_uses_one_outer_block(
-    family: Any, bytewise: Any
-) -> None:
+def test_restored_dsml_multi_call_sampled_raw_uses_one_outer_block(family: Any, bytewise: Any) -> None:
     invoke = " invoke" if family == "deepseek41" else "invoke"
     parameter = " parameter" if family == "deepseek41" else "parameter"
 
@@ -154,12 +139,8 @@ def test_restored_dsml_multi_call_sampled_raw_uses_one_outer_block(
 
     response = ModelResponse(
         [
-            ToolCallPart(
-                "ignored", {}, provider_details={"ds4py.raw": raw("first", "one")}
-            ),
-            ToolCallPart(
-                "ignored", {}, provider_details={"ds4py.raw": raw("second", "two")}
-            ),
+            ToolCallPart("ignored", {}, provider_details={"ds4py.raw": raw("first", "one")}),
+            ToolCallPart("ignored", {}, provider_details={"ds4py.raw": raw("second", "two")}),
         ],
         metadata={"ds4.source": "sampled"},
     )
@@ -230,9 +211,7 @@ def test_tool_call_after_ordinary_text_following_call_is_rejected(family: Any) -
 
 @pytest.mark.parametrize("family", ["deepseek4", "deepseek41", "qwen"])
 @pytest.mark.parametrize("bytewise", [False, True])
-def test_structured_arguments_safely_preserve_nested_closing_delimiters(
-    family: Any, bytewise: Any
-) -> None:
+def test_structured_arguments_safely_preserve_nested_closing_delimiters(family: Any, bytewise: Any) -> None:
     closing = {
         "deepseek4": "</｜DSML｜parameter>",
         "deepseek41": "</｜DSML｜ parameter>",
@@ -270,9 +249,7 @@ def test_structured_arguments_safely_preserve_nested_closing_delimiters(
     ],
 )
 @pytest.mark.parametrize("bytewise", [False, True])
-def test_canonical_arguments_preserve_types_and_json_looking_strings(
-    family: Any, args: Any, bytewise: Any
-) -> None:
+def test_canonical_arguments_preserve_types_and_json_looking_strings(family: Any, args: Any, bytewise: Any) -> None:
     response = ModelResponse([ToolCallPart("typed", args)])
 
     snapshot = restored_snapshot(response, family, bytewise)
@@ -293,9 +270,7 @@ def test_canonical_arguments_preserve_types_and_json_looking_strings(
         ("qwen", '{"x":1}'),
     ],
 )
-def test_render_tool_call_rejects_unrepresentable_argument_values(
-    family: Any, value: Any
-) -> None:
+def test_render_tool_call_rejects_unrepresentable_argument_values(family: Any, value: Any) -> None:
     with pytest.raises(ValueError, match="cannot preserve"):
         render_tool_call(family, "typed", {"value": value})
 
@@ -402,9 +377,7 @@ def test_glm_argument_key_uses_existing_closing_tag_escaping(bytewise: Any) -> N
         ("qwen", "safe", ""),
     ],
 )
-def test_render_rejects_nonrepresentable_structural_names(
-    family: Any, name: Any, key: Any
-) -> None:
+def test_render_rejects_nonrepresentable_structural_names(family: Any, name: Any, key: Any) -> None:
     with pytest.raises(ValueError, match="cannot preserve"):
         render_tool_call(family, name, {key: "value"})
 
@@ -454,9 +427,7 @@ def test_raw_tool_syntax_is_trusted_only_for_sampled_responses(sampled: Any) -> 
     with fake_engine("qwen") as engine:
         session = engine.session()
         MessageBinder(session).prepare([response])
-        assistant = next(
-            s for s in session.transcript.segments if s.kind == "assistant"
-        )
+        assistant = next(s for s in session.transcript.segments if s.kind == "assistant")
         snapshot = parse(
             decode(engine, session.transcript.tokens[assistant.start : assistant.end]),
             engine,
@@ -464,9 +435,7 @@ def test_raw_tool_syntax_is_trusted_only_for_sampled_responses(sampled: Any) -> 
 
         assert snapshot.state == "DONE", snapshot.error
         assert snapshot.calls[0].name == ("raw_tool" if sampled else "canonical_tool")
-        assert dict(snapshot.calls[0].args) == {
-            "path": "raw.txt" if sampled else "canonical.txt"
-        }
+        assert dict(snapshot.calls[0].args) == {"path": "raw.txt" if sampled else "canonical.txt"}
 
 
 def test_sampled_thinking_response_round_trips_native_tokens() -> None:

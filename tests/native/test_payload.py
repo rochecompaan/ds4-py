@@ -80,9 +80,7 @@ def test_zero_length_payload_is_distinct_from_missing_or_truncated(
     "damage",
     ["magic", "version", "count", "checksum", "padding", "truncate"],
 )
-def test_corrupt_payloads_raise_and_do_not_replace_existing_tokens(
-    damage: Any, tmp_path: Path
-) -> None:
+def test_corrupt_payloads_raise_and_do_not_replace_existing_tokens(damage: Any, tmp_path: Path) -> None:
     _, payload = staged(engine(), [5, 6])
     path = tmp_path / f"{damage}.kv"
     write_staged(path, payload)
@@ -214,9 +212,7 @@ def test_native_stage_and_write_release_only_the_duplicate_descriptor(
     assert len(data) == len(HEADER) + staged.bytes + len(b"trailer")
 
 
-def test_native_load_consumes_only_the_declared_bytes(
-    stub_engine: Any, tmp_path: Path
-) -> None:
+def test_native_load_consumes_only_the_declared_bytes(stub_engine: Any, tmp_path: Path) -> None:
     engine, _ = stub_engine
     source = engine.create_session(64)
     source.sync([5, 6, 7, 8])

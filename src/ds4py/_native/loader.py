@@ -70,12 +70,8 @@ class Library:
             try:
                 fn = getattr(handle, binding.name)
             except AttributeError as exc:
-                raise AbiMismatch(
-                    f"{binding.name}: symbol missing from {path}." + _REBUILD
-                ) from exc
-            fn.restype, fn.argtypes = ctypes_signature(
-                parse_prototype(binding.prototype)
-            )
+                raise AbiMismatch(f"{binding.name}: symbol missing from {path}." + _REBUILD) from exc
+            fn.restype, fn.argtypes = ctypes_signature(parse_prototype(binding.prototype))
             self._functions[binding.name] = fn
         try:
             self._free = handle.free
@@ -104,9 +100,7 @@ def load_library(lib: str | Path | None = None) -> Library:
     try:
         real = path.resolve(strict=True)
     except FileNotFoundError as exc:
-        raise LibraryNotFound(
-            f"library not found: {path}. Run `ds4py build --src <ds4 tree>` to build it."
-        ) from exc
+        raise LibraryNotFound(f"library not found: {path}. Run `ds4py build --src <ds4 tree>` to build it.") from exc
     with _load_lock:
         if _loaded is not None:
             if _loaded.path != real:
@@ -118,9 +112,7 @@ def load_library(lib: str | Path | None = None) -> Library:
         try:
             manifest = Manifest.read(manifest_file)
         except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
-            raise AbiMismatch(
-                f"cannot read {manifest_file}: {exc}." + _REBUILD
-            ) from exc
+            raise AbiMismatch(f"cannot read {manifest_file}: {exc}." + _REBUILD) from exc
         bindings = all_bindings()
         layouts = STRUCTS
         validation = validate(

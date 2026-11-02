@@ -239,9 +239,7 @@ def test_stream_renderer_applies_markdown_to_text_deltas() -> None:
 
 
 def test_markdown_becomes_styled_prompt_toolkit_fragments() -> None:
-    fragments: Any = markdown_fragments(
-        "# Heading\n**bold** and *emphasis* with `code`"
-    )
+    fragments: Any = markdown_fragments("# Heading\n**bold** and *emphasis* with `code`")
     styles = [style for style, _text in fragments]
     text = fragment_text(fragments)
 

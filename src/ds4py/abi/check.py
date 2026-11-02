@@ -38,9 +38,7 @@ def check_library(lib: str | Path | None) -> CheckReport:
         for name, record in library.manifest.bindings.items()
         if name in checked and record.source != "core"
     }
-    return CheckReport(
-        library.path, library.manifest, library.validation, extensions, None
-    )
+    return CheckReport(library.path, library.manifest, library.validation, extensions, None)
 
 
 def format_report(r: CheckReport) -> str:
@@ -69,8 +67,7 @@ def format_report(r: CheckReport) -> str:
     optional = [
         name
         for name in m.bindings
-        if name in v.available | v.absent
-        and (not m.bindings[name].required or name in r.extensions)
+        if name in v.available | v.absent and (not m.bindings[name].required or name in r.extensions)
     ]
     for name in optional:
         status = "absent" if name in v.absent else "present"
@@ -80,14 +77,10 @@ def format_report(r: CheckReport) -> str:
         lines.append("optional: none")
     if "sync_plans" in m.live_checks:
         sync = m.live_checks["sync_plans"]
-        lines.append(
-            f"sync:     {'ok' if sync['ok'] else 'failed'} ({sync['message']})"
-        )
+        lines.append(f"sync:     {'ok' if sync['ok'] else 'failed'} ({sync['message']})")
     if "restore" in m.live_checks:
         restore = m.live_checks["restore"]
-        lines.append(
-            f"restore:  {'ok' if restore['ok'] else 'disabled'} ({restore['message']})"
-        )
+        lines.append(f"restore:  {'ok' if restore['ok'] else 'disabled'} ({restore['message']})")
     else:
         lines.append("restore:  not verified (run `ds4py check --live --model PATH`)")
     return "\n".join(lines)
@@ -124,9 +117,7 @@ def _timed_sync(
 
 def _greedy_run(worker: EngineWorker, count: int) -> tuple[list[int], str]:
     tokens: list[int] = []
-    for event in worker.submit(
-        GenerateJob(SamplingPolicy(temperature=0.0), Rng(1), count, Transcript())
-    ):
+    for event in worker.submit(GenerateJob(SamplingPolicy(temperature=0.0), Rng(1), count, Transcript())):
         if isinstance(event, Token):
             tokens.append(event.id)
         elif isinstance(event, Stopped):
@@ -169,9 +160,7 @@ def run_live_checks(
     """Compare planned reuse counts and greedy restore/rebuild output, not speed."""
     ctx = worker.call(lambda e, s: s.ctx()).result()
     if prefix + generate + 1 > ctx:
-        raise EngineError(
-            f"ds4py check --live needs a context of at least {prefix + generate + 1}"
-        )
+        raise EngineError(f"ds4py check --live needs a context of at least {prefix + generate + 1}")
     text = LIVE_TEXT
     tokens = worker.call(lambda e, s: e.tokenize(text)).result()
     while len(tokens) < prefix:
@@ -227,9 +216,7 @@ def check_live(lib: str | Path | None, model: Path, *, ctx: int = 4096) -> Check
     library = load_library(lib)
     native = LibNative(library)
     native.restore_enabled = True
-    worker = EngineWorker(
-        native, EngineConfig(Path(model), ctx=ctx, backend=native.backend)
-    )
+    worker = EngineWorker(native, EngineConfig(Path(model), ctx=ctx, backend=native.backend))
     try:
         checks = run_live_checks(worker)
     finally:

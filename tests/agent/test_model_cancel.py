@@ -28,9 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "engine"))
 from fake_steps import FakeMultiTokenStep  # type: ignore[import-not-found]
 
 
-def fake_engine(
-    *, script: Any = None, think: Any = ThinkMode.NONE, cancel: Any = None
-) -> Engine:
+def fake_engine(*, script: Any = None, think: Any = ThinkMode.NONE, cancel: Any = None) -> Engine:
     native = FakeNative(script=script) if script is not None else FakeNative()
     native._info = replace(native._info, name="fake-ds4")
     return ds4py.open("f.gguf", ctx=8192, think=think, native=native, cancel=cancel)
@@ -54,15 +52,11 @@ def native_calls(session: Any) -> list[Any]:
 
 def scripted_text(text: Any) -> Any:
     tokens = tuple(tokenize_rendered(text))
-    return lambda prompt, generated: (
-        tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
-    )
+    return lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
 
 def response_text(response: Any) -> str:
-    return "".join(
-        part.content for part in response.parts if isinstance(part, TextPart)
-    )
+    return "".join(part.content for part in response.parts if isinstance(part, TextPart))
 
 
 def test_asyncio_cancellation_cancels_facade_and_preserves_partial_response() -> None:
@@ -158,9 +152,7 @@ def test_cancel_during_prefill_leaves_transcript_intact(
     waiting, release = threading.Event(), threading.Event()
     original_sync = FakeSession.sync
 
-    def blocking_sync(
-        self: Any, tokens: Any, *, progress: Any = None, cancel: Any = None
-    ) -> Any:
+    def blocking_sync(self: Any, tokens: Any, *, progress: Any = None, cancel: Any = None) -> Any:
         waiting.set()
         assert release.wait(5), "prefill release timed out"
         return original_sync(self, tokens, progress=progress, cancel=cancel)
@@ -254,11 +246,7 @@ def test_cancel_during_speculative_block_rewinds_uncommitted_drafts(
             calls = native_calls(session)
             evaluated = {token for kind, token in calls if kind == "eval"}
             assert tokens[2] in evaluated and tokens[3] in evaluated
-            prefix = max(
-                segment.end
-                for segment in session.transcript.segments
-                if segment.kind == "assistant_prefix"
-            )
+            prefix = max(segment.end for segment in session.transcript.segments if segment.kind == "assistant_prefix")
             assert session.transcript.tokens[prefix:] == tokens[:2]
             assert any(kind == "rewind" for kind, *_ in calls)
 
@@ -276,15 +264,9 @@ def test_context_reserve_default_fails_clearly_without_compaction() -> None:
                 ModelRequestParameters(),
             ) as stream:
                 prompt_length = len(session.transcript)
-                prefix = len(
-                    PromptBuilder(session.engine).assistant_prefix(
-                        session.transcript.tokens
-                    )
-                )
+                prefix = len(PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens))
                 session._worker.call(
-                    lambda engine, native: setattr(
-                        native, "_ctx", prompt_length + prefix + 2
-                    )
+                    lambda engine, native: setattr(native, "_ctx", prompt_length + prefix + 2)
                 ).result()
                 with pytest.raises(ContextReserveError) as raised:
                     async for _ in stream:
@@ -326,9 +308,7 @@ def test_paused_round_can_resume_without_second_assistant_prefix() -> None:
             ) as stream:
                 async for _ in stream:
                     pass
-                return session.transcript.tokens, [
-                    segment.kind for segment in session.transcript.segments
-                ]
+                return session.transcript.tokens, [segment.kind for segment in session.transcript.segments]
 
     expected_tokens, expected_kinds = asyncio.run(baseline())
 
@@ -339,9 +319,7 @@ def test_paused_round_can_resume_without_second_assistant_prefix() -> None:
 
             def make_room(needed: Any) -> int:
                 decisions.append(needed)
-                session._worker.call(
-                    lambda engine, native: setattr(native, "_ctx", 4096)
-                ).result()
+                session._worker.call(lambda engine, native: setattr(native, "_ctx", 4096)).result()
                 return 0
 
             model = make_model(session, reserve_handler=make_room)
@@ -351,15 +329,9 @@ def test_paused_round_can_resume_without_second_assistant_prefix() -> None:
                 ModelRequestParameters(),
             ) as stream:
                 prompt_length = len(session.transcript)
-                prefix = len(
-                    PromptBuilder(session.engine).assistant_prefix(
-                        session.transcript.tokens
-                    )
-                )
+                prefix = len(PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens))
                 session._worker.call(
-                    lambda engine, native: setattr(
-                        native, "_ctx", prompt_length + prefix + 2
-                    )
+                    lambda engine, native: setattr(native, "_ctx", prompt_length + prefix + 2)
                 ).result()
                 async for _ in stream:
                     pass
@@ -374,9 +346,7 @@ def test_paused_round_can_resume_without_second_assistant_prefix() -> None:
             assert kinds.count("assistant") == 1
             expected_prefill = prompt_length + prefix
             assert response.usage.input_tokens == expected_prefill
-            assert cast("Any", response.usage.details) == {
-                "prefill_tokens": expected_prefill
-            }
+            assert cast("Any", response.usage.details) == {"prefill_tokens": expected_prefill}
             assert response.usage.output_tokens == 3
             assert response.usage.requests == 1
             assert response.usage.total_tokens == expected_prefill + 3
@@ -384,9 +354,7 @@ def test_paused_round_can_resume_without_second_assistant_prefix() -> None:
     asyncio.run(scenario())
 
 
-def test_public_request_timeout_cleans_up_round_and_preserves_partial_response() -> (
-    None
-):
+def test_public_request_timeout_cleans_up_round_and_preserves_partial_response() -> None:
     cancel = threading.Event()
     reached = threading.Event()
     tokens = tuple(tokenize_rendered("ab"))
@@ -424,9 +392,7 @@ def test_public_request_timeout_cleans_up_round_and_preserves_partial_response()
                         events.append(event)
 
             assert reached.is_set()
-            assert [
-                event.part for event in events if isinstance(event, PartStartEvent)
-            ] == [TextPart("a")]
+            assert [event.part for event in events if isinstance(event, PartStartEvent)] == [TextPart("a")]
             response = cast("Any", stream).get()
             assert response.state == "interrupted"
             assert response_text(response) == "a"
@@ -455,9 +421,7 @@ def test_second_round_prefill_cancel_preserves_prior_provenance(
     original_sync = FakeSession.sync
     syncs = []
 
-    def blocking_sync(
-        self: Any, tokens: Any, *, progress: Any = None, cancel: Any = None
-    ) -> Any:
+    def blocking_sync(self: Any, tokens: Any, *, progress: Any = None, cancel: Any = None) -> Any:
         syncs.append(len(tokens))
         if len(syncs) == 2:
             waiting.set()
@@ -514,19 +478,12 @@ def test_second_round_prefill_cancel_preserves_prior_provenance(
             assert cancelled.parts == []
             assert cancelled.state == "interrupted"
             assert session.transcript.tokens[: len(before_tokens)] == before_tokens
-            assert [
-                segment.kind
-                for segment in session.transcript.segments[: len(before_kinds)]
-            ] == before_kinds
-            assert (
-                binder.export_segments()[: len(before_provenance)] == before_provenance
-            )
+            assert [segment.kind for segment in session.transcript.segments[: len(before_kinds)]] == before_kinds
+            assert binder.export_segments()[: len(before_provenance)] == before_provenance
             assert tuple(binder._records[: len(before_records)]) == before_records
             records = tuple(binder._records)
             assert len(records) == len(before_records) + 1
-            assert all(
-                left.end <= right.start for left, right in zip(records, records[1:])
-            )
+            assert all(left.end <= right.start for left, right in zip(records, records[1:]))
             assert records[-1].key == cast("Any", second_user.metadata)["ds4.key"]
             assert records[-1].end == len(session.transcript)
             # The interrupted prefill kept the previous committed KV and added no
@@ -550,14 +507,9 @@ def test_second_round_prefill_cancel_preserves_prior_provenance(
             assert session.transcript.tokens[: len(before_tokens)] == before_tokens
             provenance = binder.export_segments()
             assert provenance[: len(before_provenance)] == before_provenance
-            assert all(
-                left.end == right.start
-                for left, right in zip(provenance, provenance[1:])
-            )
+            assert all(left.end == right.start for left, right in zip(provenance, provenance[1:]))
             records = tuple(binder._records)
-            assert all(
-                left.end <= right.start for left, right in zip(records, records[1:])
-            )
+            assert all(left.end <= right.start for left, right in zip(records, records[1:]))
             native = native_tokens(session)
             assert session.transcript.tokens[: len(native)] == native
 
@@ -566,8 +518,6 @@ def test_second_round_prefill_cancel_preserves_prior_provenance(
             change = binder.prepare([request, first, user("replacement")])
             assert change.kind == "rewrite"
             assert change.start == len(before_tokens)
-            assert (
-                binder.export_segments()[: len(before_provenance)] == before_provenance
-            )
+            assert binder.export_segments()[: len(before_provenance)] == before_provenance
 
     asyncio.run(scenario())

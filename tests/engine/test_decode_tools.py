@@ -36,9 +36,7 @@ QWEN = "<tool_call><function=read><parameter=path>/tmp/x</parameter></function><
 
 def scripted(tokens: Any) -> Any:
     tokens = tuple(tokens)
-    return lambda prompt, generated: (
-        tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
-    )
+    return lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
 
 def native_for(family: Any, text: Any) -> FakeNative:
@@ -117,9 +115,7 @@ def test_chat_tool_calls_stop_and_emit_before_stopped(
 
 def test_parser_terminal_overrides_simultaneous_caller_limit(workers: Any) -> None:
     ids = tokenize_rendered(DSML)
-    events, _, _, _ = run_native(
-        workers, native_for("deepseek4", DSML), max_tokens=len(ids)
-    )
+    events, _, _, _ = run_native(workers, native_for("deepseek4", DSML), max_tokens=len(ids))
     assert events[-1] == Stopped("tool_call_complete")
     assert len(event_calls(events)) == 1
 
@@ -154,12 +150,8 @@ def test_structural_tokens_switch_actual_sampling_and_values_restore_it(
     assert normal in samples[first_greedy + 1 :]
 
 
-@pytest.mark.parametrize(
-    "family,text", [("deepseek4", DSML), ("glm", GLM_TWO), ("qwen", QWEN)]
-)
-def test_markup_in_thinking_is_parser_error_without_calls(
-    workers: Any, family: Any, text: Any
-) -> None:
+@pytest.mark.parametrize("family,text", [("deepseek4", DSML), ("glm", GLM_TWO), ("qwen", QWEN)])
+def test_markup_in_thinking_is_parser_error_without_calls(workers: Any, family: Any, text: Any) -> None:
     events, _, _, _ = run_native(
         workers,
         native_for(family, text),
@@ -259,9 +251,7 @@ def test_raw_and_chat_use_their_respective_stop_bindings() -> None:
 
 def test_stream_observe_snapshots_once_per_token() -> None:
     stream = RoundStream(FakeNative()._info, ThinkMode.NONE)
-    prefix = (
-        '<｜DSML｜tool_calls><｜DSML｜invoke name="read"><｜DSML｜parameter name="path" string="true">'
-    ).encode()
+    prefix = ('<｜DSML｜tool_calls><｜DSML｜invoke name="read"><｜DSML｜parameter name="path" string="true">').encode()
     for byte in prefix:
         stream.observe(byte, bytes([byte]), lambda event: None)
     assert stream.snapshot.state == "PARAM_VALUE"

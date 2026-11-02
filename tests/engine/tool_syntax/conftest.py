@@ -13,17 +13,11 @@ def load_cases() -> Any:
     cases = []
     fixture_root = Path(__file__).parents[2] / "fixtures" / "tool_syntax"
     for syntax in ("dsml", "glm", "qwen"):
-        for index, case in enumerate(
-            json.loads((fixture_root / f"{syntax}.json").read_text())
-        ):
+        for index, case in enumerate(json.loads((fixture_root / f"{syntax}.json").read_text())):
             item = dict(case, syntax=syntax, id=f"{syntax}-{index}:{case['source']}")
             cases.append(item)
     for syntax in ("dsml", "glm", "qwen"):
-        valid = next(
-            case
-            for case in cases
-            if case["syntax"] == syntax and case["state"] == "DONE"
-        )
+        valid = next(case for case in cases if case["syntax"] == syntax and case["state"] == "DONE")
         cases.append(
             dict(
                 valid,
@@ -58,9 +52,7 @@ def run_chunks(case: Any, chunks: Any) -> Any:
         "greedy_before_finish": greedy_before_finish,
         "greedy": parser.wants_greedy_sampling(),
         "raw": finished.raw,
-        "calls": tuple(
-            (call.name, tuple(call.args.items())) for call in finished.calls
-        ),
+        "calls": tuple((call.name, tuple(call.args.items())) for call in finished.calls),
         "call_raw": tuple(call.raw for call in finished.calls),
         "param_close_prefix": finished.param_close_prefix,
         "in_think": finished.in_think,
@@ -77,11 +69,7 @@ def simple_stanza(syntax: Any, v41: Any = False, value: Any = "abc") -> str:
         return f"<tool_call>echo<arg_key>value</arg_key><arg_value>{value}</arg_value></tool_call>"
     if syntax == "qwen":
         return f"<tool_call><function=echo><parameter=value>{value}</parameter></function></tool_call>"
-    tags = (
-        (" calls", " invoke", " parameter")
-        if v41
-        else ("tool_calls", "invoke", "parameter")
-    )
+    tags = (" calls", " invoke", " parameter") if v41 else ("tool_calls", "invoke", "parameter")
     calls, invoke, parameter = tags
     return (
         f'<｜DSML｜{calls}><｜DSML｜{invoke} name="echo">'

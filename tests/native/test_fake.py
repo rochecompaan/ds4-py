@@ -26,11 +26,7 @@ def test_tokenizer_round_trips_bytes() -> None:
     e = engine()
     assert b"".join(e.token_text(t) for t in e.tokenize("héllo")) == "héllo".encode()
     assert e.tokenize("héllo", rendered=True) == e.tokenize("héllo")
-    assert (
-        e.eos() == FAKE_EOS
-        and e.is_stop(FAKE_EOS)
-        and not e.is_stop(e.tokenize("a")[0])
-    )
+    assert e.eos() == FAKE_EOS and e.is_stop(FAKE_EOS) and not e.is_stop(e.tokenize("a")[0])
     assert e.token_text(FAKE_EOS) == b"</s>"
     assert (
         e.info().name,
@@ -151,9 +147,7 @@ def test_eval_context_full_and_token_copy() -> None:
 
 @pytest.mark.parametrize("state", ["fresh", "invalidated", "rewound"])
 @pytest.mark.parametrize("operation", ["eval", "save_snapshot"])
-def test_invalid_checkpoint_operations_leave_state_unchanged(
-    state: Any, operation: Any
-) -> None:
+def test_invalid_checkpoint_operations_leave_state_unchanged(state: Any, operation: Any) -> None:
     s = engine().create_session(64)
     if state != "fresh":
         s.sync([1, 2, 3])

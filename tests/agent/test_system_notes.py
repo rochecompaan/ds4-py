@@ -29,10 +29,7 @@ def test_date_note_emitted_once() -> None:
     notes = DS4SystemNotes(session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0))
     result = notes.notes([user_req()])
     assert len(result) == 1
-    assert (
-        "Current local date and time at session start: 2024-01-01 12:00:00"
-        in result[0][0]
-    )
+    assert "Current local date and time at session start: 2024-01-01 12:00:00" in result[0][0]
     assert result[0][1] == "date"
     result2 = notes.notes([user_req()])
     assert len(result2) == 0
@@ -48,9 +45,7 @@ def test_hints_off_by_default() -> None:
 
 def test_hints_lifecycle() -> None:
     session: Any = MockSession()
-    notes = DS4SystemNotes(
-        session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0), hints=True
-    )
+    notes = DS4SystemNotes(session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0), hints=True)
     result = notes.notes([user_req()])
     assert len(result) == 2
     assert result[1][1] == "hints_full"
@@ -72,9 +67,7 @@ def test_hints_lifecycle() -> None:
 
 def test_compaction_resets_hints() -> None:
     session: Any = MockSession()
-    notes = DS4SystemNotes(
-        session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0), hints=True
-    )
+    notes = DS4SystemNotes(session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0), hints=True)
     notes.notes([user_req()])
     assert notes._hints_full_emitted is True
     notes._on_compacted(cast("Any", None))
@@ -119,9 +112,7 @@ def test_note_segments_have_empty_keys_and_do_not_become_messages() -> None:
         is_qwen4=False,
     )
     tokens = tuple(tokenize_rendered("answer"))
-    script = lambda prompt, generated: (
-        tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
-    )
+    script = lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
     with ds4py.open(
         "f.gguf",
         ctx=4096,
@@ -235,9 +226,7 @@ def test_exported_provenance_names_note_subtypes_and_default() -> None:
 
     with _fake_engine() as engine:
         session = engine.session()
-        notes = DS4SystemNotes(
-            session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0), hints=True
-        )
+        notes = DS4SystemNotes(session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0), hints=True)
         binder: Any = MessageBinder(session)
         binder.note_provider = notes
         binder.prepare([user_req()])
@@ -247,9 +236,7 @@ def test_exported_provenance_names_note_subtypes_and_default() -> None:
         assert kinds.count("system_note:hints_full") == 1
 
         session.append_system_note("plain note")
-        assert [segment.kind for segment in binder.export_segments()].count(
-            "system_note"
-        ) == 1
+        assert [segment.kind for segment in binder.export_segments()].count("system_note") == 1
 
 
 def test_fresh_provider_restores_exported_note_provenance() -> None:
@@ -257,17 +244,13 @@ def test_fresh_provider_restores_exported_note_provenance() -> None:
 
     with _fake_engine() as engine:
         session = engine.session()
-        notes = DS4SystemNotes(
-            session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0), hints=True
-        )
+        notes = DS4SystemNotes(session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0), hints=True)
         binder: Any = MessageBinder(session)
         binder.note_provider = notes
         binder.prepare([user_req()])
         exported = binder.export_segments()
 
-        fresh = DS4SystemNotes(
-            session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0), hints=False
-        )
+        fresh = DS4SystemNotes(session, clock=lambda: datetime(2024, 1, 1, 12, 0, 0), hints=False)
         fresh.restore_from_segments(exported)
 
         assert fresh._date_emitted is True
@@ -298,9 +281,7 @@ def test_restore_restores_hints_enabled_from_latest_note() -> None:
     assert notes._hints_full_emitted is True
 
     off = DS4SystemNotes(session)
-    off.restore_from_segments(
-        [Seg("system_note:hints_on"), Seg("system_note:hints_off")]
-    )
+    off.restore_from_segments([Seg("system_note:hints_on"), Seg("system_note:hints_off")])
     assert off.hints_enabled is False
     assert off._hints_applied is False
 
@@ -399,10 +380,7 @@ def test_same_key_user_rewrite_keeps_date_note_once() -> None:
 
         changed = deepcopy(request)
         cast("UserPromptPart", changed.parts[0]).content = "changed"
-        assert (
-            cast("Any", changed.metadata)["ds4.key"]
-            == cast("Any", request.metadata)["ds4.key"]
-        )
+        assert cast("Any", changed.metadata)["ds4.key"] == cast("Any", request.metadata)["ds4.key"]
 
         change = binder.prepare([changed])
 

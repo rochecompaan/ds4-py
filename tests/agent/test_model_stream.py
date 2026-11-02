@@ -24,9 +24,7 @@ from ds4py.engine.worker import SyncJob
 from ds4py.model import DS4Model
 
 
-def fake_engine(
-    *, script: Any = None, think: Any = ThinkMode.NONE, cancel: Any = None
-) -> Engine:
+def fake_engine(*, script: Any = None, think: Any = ThinkMode.NONE, cancel: Any = None) -> Engine:
     native = FakeNative(script=script) if script is not None else FakeNative()
     info = replace(native._info, name="fake-ds4")
     native._info = info
@@ -35,9 +33,7 @@ def fake_engine(
 
 def scripted_text(text: Any) -> Any:
     tokens = tuple(tokenize_rendered(text))
-    return lambda prompt, generated: (
-        tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
-    )
+    return lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
 
 def user(text: Any = "hello") -> ModelRequest:
@@ -90,9 +86,7 @@ def test_empty_output_and_zero_prefill_have_zero_usage(
 
 def test_thinking_only_output_is_retained() -> None:
     async def scenario() -> None:
-        with fake_engine(
-            script=scripted_text("thought"), think=ThinkMode.HIGH
-        ) as engine:
+        with fake_engine(script=scripted_text("thought"), think=ThinkMode.HIGH) as engine:
             response, events = await collect(make_model(engine.session()), [user()])
             assert response.parts == [ThinkingPart("thought")]
             assert response.finish_reason == "stop"
@@ -168,15 +162,11 @@ def test_closing_event_iteration_binds_only_the_published_partial_response() -> 
             assert len(sampled) == 1
             assert sampled[0].kind == "assistant"
             assert sampled[0].key == cast("Any", response.metadata)["ds4.key"]
-            assert session.transcript.tokens[
-                sampled[0].start : sampled[0].end
-            ] == tuple(tokenize_rendered("p"))
+            assert session.transcript.tokens[sampled[0].start : sampled[0].end] == tuple(tokenize_rendered("p"))
             assert sampled[0].end == len(session.transcript)
             assert not [p for p in provenance if p.kind == "eos"]
             assert binder._records[-1].end == len(session.transcript)
-            native_tokens = session._worker.call(
-                lambda engine, native: native.tokens()
-            ).result()
+            native_tokens = session._worker.call(lambda engine, native: native.tokens()).result()
             assert tuple(native_tokens) == session.transcript.tokens
 
             before = session.transcript.tokens
@@ -268,9 +258,7 @@ def test_request_relies_on_stream_terminal_binding_exactly_once() -> None:
     asyncio.run(scenario())
 
 
-def test_direct_stream_response_is_reused_by_the_next_request_without_rerendering() -> (
-    None
-):
+def test_direct_stream_response_is_reused_by_the_next_request_without_rerendering() -> None:
     outputs = [tuple(tokenize_rendered("first")), tuple(tokenize_rendered("second"))]
 
     def script(prompt: Any, generated: Any) -> Any:
@@ -289,9 +277,7 @@ def test_direct_stream_response_is_reused_by_the_next_request_without_rerenderin
             first, _ = await collect(model, [request])
             first_key = cast("Any", first.metadata)["ds4.key"]
             first_hash = next(
-                p.content_hash
-                for p in binder.export_segments()
-                if p.key == first_key and p.source == "sampled"
+                p.content_hash for p in binder.export_segments() if p.key == first_key and p.source == "sampled"
             )
             before = session.transcript.tokens
             before_provenance = binder.export_segments()
@@ -308,14 +294,7 @@ def test_direct_stream_response_is_reused_by_the_next_request_without_rerenderin
             assert binder._records[1].end == len(before)
             later = binder.export_segments()
             assert later[: len(before_provenance)] == before_provenance
-            assert (
-                next(
-                    p.content_hash
-                    for p in later
-                    if p.key == first_key and p.source == "sampled"
-                )
-                == first_hash
-            )
+            assert next(p.content_hash for p in later if p.key == first_key and p.source == "sampled") == first_hash
             assert len([p for p in later if p.kind == "assistant"]) == 2
             assert not outputs
 

@@ -41,17 +41,12 @@ def read_ds4py(path: Path, text: str) -> ReplayTrace:
             if not isinstance(value[name], str) or not value[name]:
                 error(line_number, f"{name} must be a nonempty string")
         for name in ("step_index", "round_index", "cached"):
-            if (
-                isinstance(value[name], bool)
-                or not isinstance(value[name], int)
-                or value[name] < 0
-            ):
+            if isinstance(value[name], bool) or not isinstance(value[name], int) or value[name] < 0:
                 error(line_number, f"{name} must be a nonnegative integer")
         for name in ("prompt", "prefill_suffix", "sampled"):
             tokens = value[name]
             if not isinstance(tokens, list) or any(
-                isinstance(token, bool) or not isinstance(token, int) or token < 0
-                for token in tokens
+                isinstance(token, bool) or not isinstance(token, int) or token < 0 for token in tokens
             ):
                 error(line_number, f"{name} must be a list of nonnegative token IDs")
         think = value["think"]
@@ -70,9 +65,7 @@ def read_ds4py(path: Path, text: str) -> ReplayTrace:
         prompt = tuple(value["prompt"])
         suffix = tuple(value["prefill_suffix"])
         if cached + len(suffix) != len(prompt):
-            error(
-                line_number, "cached + prefill_suffix length must equal prompt length"
-            )
+            error(line_number, "cached + prefill_suffix length must equal prompt length")
         if prompt[cached:] != suffix:
             error(line_number, "suffix does not match prompt")
         if value["round_index"] != len(rounds):

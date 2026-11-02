@@ -32,11 +32,7 @@ def fake_engine(*, ctx: Any = 64, cancel: Any = None, **fake: Any) -> Engine:
 
 def test_open_checks_backend_and_think_mode() -> None:
     with fake_engine() as e:
-        assert (
-            e.info.name == "fake"
-            and e.config.backend == "cpu"
-            and e.think == ThinkMode.HIGH
-        )
+        assert e.info.name == "fake" and e.config.backend == "cpu" and e.think == ThinkMode.HIGH
     with pytest.raises(EngineError, match="built for cpu"):
         ds4py.open("f.gguf", backend="metal", native=FakeNative())
     with ds4py.open("f.gguf", ctx=64, think=ThinkMode.MAX, native=FakeNative()) as e:
@@ -74,10 +70,7 @@ def test_think_helper_runs_on_owner_and_failure_closes_worker(fail: Any) -> None
     else:
         with ds4py.open("f.gguf", ctx=64, think=ThinkMode.MAX, native=native) as e:
             assert e.think == ThinkMode.HIGH
-            assert (
-                e.session().on_worker(lambda h: threading.current_thread()).result()
-                is calls[0]
-            )
+            assert e.session().on_worker(lambda h: threading.current_thread()).result() is calls[0]
     assert len(handles) == 2 and all(handle.raw == 0 for handle in handles)
     assert len(calls) == 1 and calls[0] is not threading.current_thread()
     assert not calls[0].is_alive()
@@ -195,9 +188,7 @@ def test_overlapping_round_is_refused_without_releasing_the_first(
 
 
 @pytest.mark.parametrize("method", ["sync", "eval"])
-def test_worker_error_releases_the_round(
-    method: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_worker_error_releases_the_round(method: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     original = getattr(FakeSession, method)
     failed = False
 
@@ -262,26 +253,16 @@ def test_extension_binding_runs_on_the_worker(ext_site: Any) -> None:
     with ds4py.open("f.gguf", ctx=64, native=native) as e:
         layer_count = e.native.bind("ds4_engine_layer_count")
         count, session_ptr, thread = (
-            e.session()
-            .on_worker(
-                lambda h: (layer_count(h.engine), h.session, threading.get_ident())
-            )
-            .result()
+            e.session().on_worker(lambda h: (layer_count(h.engine), h.session, threading.get_ident())).result()
         )
-        assert (
-            count == 43
-            and isinstance(session_ptr, int)
-            and thread != threading.get_ident()
-        )
+        assert count == 43 and isinstance(session_ptr, int) and thread != threading.get_ident()
 
 
 # Exceptional admission and deterministic in-flight round cleanup.
 
 
 @pytest.mark.parametrize("failure", ["capture", "submit"])
-def test_failure_before_submission_releases_ownership(
-    failure: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_failure_before_submission_releases_ownership(failure: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     with open("f.gguf", ctx=64, native=FakeNative()) as e:
         s = e.session()
         s.append_tokens([5, 6], "user")
@@ -320,9 +301,7 @@ def test_close_drains_inflight_commits_before_releasing_ownership(
         return original(self, token)
 
     monkeypatch.setattr(FakeSession, "eval", blocked_eval)
-    with open(
-        "f.gguf", ctx=64, native=FakeNative(script=reply(b"abc")), cancel=cancel
-    ) as e:
+    with open("f.gguf", ctx=64, native=FakeNative(script=reply(b"abc")), cancel=cancel) as e:
         s = e.session()
         s.append_tokens([5, 6], "user")
         rnd = s.run_round()
@@ -361,9 +340,7 @@ def test_round_uses_current_sampling_defaults_but_keeps_one_rng(
     calls = []
     original = FakeSession.sample
 
-    def record(
-        self: Any, temperature: Any, top_k: Any, top_p: Any, min_p: Any, rng: Any
-    ) -> Any:
+    def record(self: Any, temperature: Any, top_k: Any, top_p: Any, min_p: Any, rng: Any) -> Any:
         calls.append((temperature, top_k, top_p, min_p, rng, rng.value))
         return original(self, temperature, top_k, top_p, min_p, rng)
 

@@ -141,15 +141,11 @@ def test_note_provenance_round_trips_text_and_accepts_legacy_kv_records() -> Non
         ),
     ],
 )
-def test_token_digest_is_sha256_over_fixed_big_endian_uint32(
-    tokens: Any, expected: Any
-) -> None:
+def test_token_digest_is_sha256_over_fixed_big_endian_uint32(tokens: Any, expected: Any) -> None:
     assert token_digest(tokens) == expected
 
 
-def test_default_root_reads_ds4py_home_at_call_time(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_default_root_reads_ds4py_home_at_call_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     first = tmp_path / "first"
     second = tmp_path / "second"
     monkeypatch.setenv("DS4PY_HOME", str(first))
@@ -163,9 +159,7 @@ def test_default_root_reads_ds4py_home_at_call_time(
     assert not second.exists()
 
 
-def test_default_root_expands_a_home_redirect(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_default_root_expands_a_home_redirect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("DS4PY_HOME", "~/state")
 
@@ -176,9 +170,7 @@ def test_default_root_expands_a_home_redirect(
 
 
 @pytest.mark.parametrize("value", [None, ""])
-def test_default_root_falls_back_to_dot_ds4py(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: Any
-) -> None:
+def test_default_root_falls_back_to_dot_ds4py(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: Any) -> None:
     if value is None:
         monkeypatch.delenv("DS4PY_HOME", raising=False)
     else:

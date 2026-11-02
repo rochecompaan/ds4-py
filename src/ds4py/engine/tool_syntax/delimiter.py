@@ -56,12 +56,7 @@ class DelimiterParser(ToolParser):
 
     def _push_current(self) -> None:
         if self._current_name is not None:
-            args = MappingProxyType(
-                {
-                    name: deepcopy(argument.value)
-                    for name, argument in self._args.items()
-                }
-            )
+            args = MappingProxyType({name: deepcopy(argument.value) for name, argument in self._args.items()})
             raw = bytes(self.raw[self._call_start : self.parse_pos]).decode()
             self._calls.append(ToolCall(self._current_name, args, raw))
         self._current_name = None
@@ -125,9 +120,7 @@ class DelimiterParser(ToolParser):
     def _update_param_close_prefix(self) -> None:
         tail = bytes(self.raw[-len(self._parameter_close) :])
         start = tail.rfind(b"<")
-        self.param_close_prefix = start >= 0 and self._parameter_close.startswith(
-            tail[start:]
-        )
+        self.param_close_prefix = start >= 0 and self._parameter_close.startswith(tail[start:])
 
     def _finish_active(self) -> None:
         trailing = self.raw[self.parse_pos :]

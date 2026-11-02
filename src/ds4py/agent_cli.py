@@ -61,18 +61,12 @@ def parser() -> argparse.ArgumentParser:
     think = result.add_mutually_exclusive_group()
     think.add_argument("--think", nargs="?", const="high", choices=tuple(_THINK_MODES))
     think.add_argument("--think-level", type=_level)
-    think.add_argument(
-        "--think-max", dest="think_mode", action="store_const", const=ThinkMode.MAX
-    )
-    think.add_argument(
-        "--nothink", dest="think_mode", action="store_const", const=ThinkMode.NONE
-    )
+    think.add_argument("--think-max", dest="think_mode", action="store_const", const=ThinkMode.MAX)
+    think.add_argument("--nothink", dest="think_mode", action="store_const", const=ThinkMode.NONE)
     backends = result.add_mutually_exclusive_group()
     backends.add_argument("--backend")
     for backend in ("cpu", "metal", "cuda"):
-        backends.add_argument(
-            f"--{backend}", dest="backend", action="store_const", const=backend
-        )
+        backends.add_argument(f"--{backend}", dest="backend", action="store_const", const=backend)
     result.add_argument("-t", "--threads", type=int, default=0)
     result.add_argument("--lib", type=Path)
     return result
@@ -99,9 +93,7 @@ async def _question_answerer(request: AskUserRequest) -> AskUserResponse:
         print(question.question, file=sys.stderr, flush=True)
         for index, option in enumerate(question.options, 1):
             description = f" — {option.description}" if option.description else ""
-            print(
-                f"  {index}. {option.label}{description}", file=sys.stderr, flush=True
-            )
+            print(f"  {index}. {option.label}{description}", file=sys.stderr, flush=True)
         prompt = "Choices (comma-separated)" if question.multi_select else "Choice"
         answer = sys.stdin.readline()
         if answer == "":

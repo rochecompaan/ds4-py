@@ -20,9 +20,7 @@ def test_raw_matches_ds4_agent(live_lib: Any, tmp_path: Path) -> None:
     backend = manifest.backend
     c_env = os.environ.copy()
     if backend == "metal":
-        c_env.update(
-            metal_source_env(live_lib.resolve().parent, manifest.metal_sources, c_env)
-        )
+        c_env.update(metal_source_env(live_lib.resolve().parent, manifest.metal_sources, c_env))
     common = [
         "-m",
         os.environ["DS4_TEST_MODEL"],
@@ -68,7 +66,5 @@ def test_raw_matches_ds4_agent(live_lib: Any, tmp_path: Path) -> None:
         capture_output=True,
     )
     assert c.returncode == 0 and p.returncode == 0, (c.stderr, p.stderr)
-    assert read_trace_tokens(tmp_path / "py.log") == read_trace_tokens(
-        tmp_path / "c.log"
-    )
+    assert read_trace_tokens(tmp_path / "py.log") == read_trace_tokens(tmp_path / "c.log")
     assert p.stdout == c.stdout

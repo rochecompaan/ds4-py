@@ -9,9 +9,7 @@ from pydantic_ai.toolsets import AbstractToolset, PreparedToolset
 from pydantic_ai_harness import FileSystem
 
 
-def prepare_file_tool_definitions(
-    tool_defs: list[ToolDefinition], *, default_read_lines: int
-) -> list[ToolDefinition]:
+def prepare_file_tool_definitions(tool_defs: list[ToolDefinition], *, default_read_lines: int) -> list[ToolDefinition]:
     """Describe the configured read default without changing tool execution."""
     prepared = []
     for tool_def in tool_defs:

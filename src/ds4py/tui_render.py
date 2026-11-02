@@ -91,9 +91,7 @@ class StreamRenderer:
     def handle_event(self, event: object) -> StyleAndTextTuples:
         fragments = self._fragments(event)
         if fragments:
-            newline = isinstance(
-                event, (FunctionToolCallEvent, FunctionToolResultEvent)
-            )
+            newline = isinstance(event, (FunctionToolCallEvent, FunctionToolResultEvent))
             print_formatted_text(
                 FormattedText(fragments),
                 output=self.output,
@@ -179,9 +177,7 @@ class FooterModel:
         if self.prefill is not None:
             done, total, tps = self.prefill
             filled = min(32, round(32 * done / total)) if total else 0
-            parts.append(
-                f"prefill {'▶' * filled}{'·' * (32 - filled)} {done}/{total} {tps:.1f} tok/s"
-            )
+            parts.append(f"prefill {'▶' * filled}{'·' * (32 - filled)} {done}/{total} {tps:.1f} tok/s")
         if self.service_status is not None:
             parts.append(f"shell {self.service_pid or '-'} {self.service_status}")
         parts.extend(f"{key}: {value}" for key, value in sorted(self.custom.items()))

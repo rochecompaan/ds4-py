@@ -55,12 +55,8 @@ class Manifest:
     @classmethod
     def read(cls, path: Path) -> Manifest:
         data = json.loads(path.read_text())
-        data["bindings"] = {
-            name: BindingRecord(**record) for name, record in data["bindings"].items()
-        }
-        data["layouts"] = {
-            name: StructLayout(**layout) for name, layout in data["layouts"].items()
-        }
+        data["bindings"] = {name: BindingRecord(**record) for name, record in data["bindings"].items()}
+        data["layouts"] = {name: StructLayout(**layout) for name, layout in data["layouts"].items()}
         return cls(**data)
 
     def write(self, path: Path) -> None:
@@ -95,14 +91,10 @@ def validate(
     bindings: Sequence[Binding],
     layouts: dict[str, StructLayout],
 ) -> Validation:
-    if m.backend == "metal" and (
-        not isinstance(m.metal_sources, dict) or not m.metal_sources
-    ):
+    if m.backend == "metal" and (not isinstance(m.metal_sources, dict) or not m.metal_sources):
         raise AbiMismatch("Metal shader records are missing or invalid." + _REBUILD)
     if m.type_map_version != TYPE_MAP_VERSION:
-        raise AbiMismatch(
-            "type-map version differs from the installed version." + _REBUILD
-        )
+        raise AbiMismatch("type-map version differs from the installed version." + _REBUILD)
     if m.library_sha256 != lib_sha256:
         raise AbiMismatch("library SHA-256 differs from its manifest." + _REBUILD)
     available, absent = set(), set()
@@ -116,30 +108,20 @@ def validate(
                 f"\nbut ds4py declares\n  {binding.normalized}" + _REBUILD
             )
         if type(record.ok) is not bool:
-            raise AbiMismatch(
-                f"{binding.name}: probe result must be a boolean." + _REBUILD
-            )
+            raise AbiMismatch(f"{binding.name}: probe result must be a boolean." + _REBUILD)
         if not record.ok and binding.required:
-            raise AbiMismatch(
-                f"{binding.name}: required signature probe failed: {record.message}"
-                + _REBUILD
-            )
+            raise AbiMismatch(f"{binding.name}: required signature probe failed: {record.message}" + _REBUILD)
         (available if record.ok else absent).add(binding.name)
     for name, expected in layouts.items():
         actual = m.layouts.get(name)
         if actual is None:
             raise AbiMismatch(f"{name}: no layout recorded." + _REBUILD)
         if actual.size != expected.size:
-            raise AbiMismatch(
-                f"{name}: size {actual.size} differs from {expected.size}." + _REBUILD
-            )
+            raise AbiMismatch(f"{name}: size {actual.size} differs from {expected.size}." + _REBUILD)
         for field_name, offset in expected.fields.items():
             recorded = actual.fields.get(field_name)
             if recorded != offset:
-                raise AbiMismatch(
-                    f"{name}.{field_name}: offset {recorded} differs from {offset}."
-                    + _REBUILD
-                )
+                raise AbiMismatch(f"{name}.{field_name}: offset {recorded} differs from {offset}." + _REBUILD)
     warnings = tuple(
         f"unknown header {name}: {digest[:12]}"
         for name, digest in m.headers.items()

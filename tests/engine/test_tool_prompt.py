@@ -84,9 +84,7 @@ def qwen_expected(schemas: Any) -> str:
 
 
 def test_deepseek_prompt_is_exact() -> None:
-    assert ToolPromptGenerator("deepseek4").generate(DEFINITIONS) == deepseek_expected(
-        SCHEMAS
-    )
+    assert ToolPromptGenerator("deepseek4").generate(DEFINITIONS) == deepseek_expected(SCHEMAS)
 
 
 def test_deepseek41_prompt_uses_spaced_dsml_tag_names() -> None:
@@ -104,12 +102,7 @@ def test_glm_prompt_is_exact() -> None:
 
 def test_qwen_prompt_is_exact_and_wraps_each_schema() -> None:
     wrapped = (
-        '{"type":"function","function":'
-        + READ_SCHEMA
-        + "}\n"
-        + '{"type":"function","function":'
-        + EDIT_SCHEMA
-        + "}"
+        '{"type":"function","function":' + READ_SCHEMA + "}\n" + '{"type":"function","function":' + EDIT_SCHEMA + "}"
     )
     prompt = ToolPromptGenerator("qwen").generate(DEFINITIONS)
     assert prompt == qwen_expected(wrapped)
@@ -158,9 +151,7 @@ def test_every_generated_example_executes_the_intended_call(family: Any) -> None
 
     prompt = ToolPromptGenerator(family).generate([])
     if family.startswith("deepseek"):
-        examples = prompt.split("writing exactly this shape:\n\n", 1)[1].split(
-            "\n\n", 1
-        )[0]
+        examples = prompt.split("writing exactly this shape:\n\n", 1)[1].split("\n\n", 1)[0]
         examples = (
             examples.replace("$TOOL_NAME", "read")
             .replace("$PARAMETER_NAME", "path")
@@ -169,9 +160,7 @@ def test_every_generated_example_executes_the_intended_call(family: Any) -> None
         )
     else:
         examples = prompt.split("Call example:\n", 1)[1].split("\n\n", 1)[0]
-    factory = {"glm": Glm, "qwen": Qwen}.get(
-        family, lambda: Dsml(v41=family == "deepseek41")
-    )
+    factory = {"glm": Glm, "qwen": Qwen}.get(family, lambda: Dsml(v41=family == "deepseek41"))
     # No prose or unsupported teaching stanza may be silently skipped.
     examples = examples.splitlines() if family == "glm" else [examples]
     assert examples
@@ -180,6 +169,4 @@ def test_every_generated_example_executes_the_intended_call(family: Any) -> None
         parser.feed(example.encode())
         result = parser.finish()
         assert result.state == "DONE"
-        assert [(call.name, dict(call.args)) for call in result.calls] == [
-            ("read", {"path": "README.md"})
-        ]
+        assert [(call.name, dict(call.args)) for call in result.calls] == [("read", {"path": "README.md"})]

@@ -86,9 +86,7 @@ def open(
     config = EngineConfig(Path(model), ctx, native.backend, threads)
     worker = EngineWorker(native, config, cancel=cancel)
     try:
-        think = worker.call(
-            lambda e, s: native.think_mode_for_context(think, ctx)
-        ).result()
+        think = worker.call(lambda e, s: native.think_mode_for_context(think, ctx)).result()
         return Engine(
             native,
             worker,
@@ -117,9 +115,7 @@ class Engine:
         self._session_lock = threading.Lock()
 
     def tokenize(self, text: str, *, rendered: bool = False) -> list[int]:
-        return self._worker.call(
-            lambda e, s: e.tokenize(text, rendered=rendered)
-        ).result()
+        return self._worker.call(lambda e, s: e.tokenize(text, rendered=rendered)).result()
 
     def _chat_begin(self) -> list[int]:
         return self._worker.call(lambda e, s: e.chat_begin()).result()
@@ -127,12 +123,8 @@ class Engine:
     def _think_prefix(self, prefix: Sequence[int], mode: int) -> list[int]:
         return self._worker.call(lambda e, s: e.think_prefix(prefix, mode)).result()
 
-    def _render_message(
-        self, prefix: Sequence[int], role: str, content: str
-    ) -> list[int]:
-        return self._worker.call(
-            lambda e, s: e.render_message(prefix, role, content)
-        ).result()
+    def _render_message(self, prefix: Sequence[int], role: str, content: str) -> list[int]:
+        return self._worker.call(lambda e, s: e.render_message(prefix, role, content)).result()
 
     def _assistant_prefix(self, prefix: Sequence[int], mode: int) -> list[int]:
         return self._worker.call(lambda e, s: e.assistant_prefix(prefix, mode)).result()
@@ -336,9 +328,7 @@ class Session:
         self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
         self._transcript.reset()
 
-    def append_tokens(
-        self, tokens: Sequence[int], kind: str, meta: Mapping | None = None
-    ) -> Segment:
+    def append_tokens(self, tokens: Sequence[int], kind: str, meta: Mapping | None = None) -> Segment:
         with self._lock:
             self._require_idle()
             return self._transcript.append(tokens, kind, meta)
@@ -371,9 +361,7 @@ class Session:
                 raise EngineError("image input requires M5 vision support")
             chat_ops._start_if_empty(self)
             chat_ops.retire_paused(self)
-            tokens = PromptBuilder(self._engine).message(
-                self._transcript.tokens, role, text
-            )
+            tokens = PromptBuilder(self._engine).message(self._transcript.tokens, role, text)
             return self._transcript.append(tokens, role, meta)
 
     def truncate(self, token_count: int) -> None:
@@ -386,9 +374,7 @@ class Session:
             for key, length in tuple(self._checkpoint_tokens.items()):
                 if length > token_count:
                     self.drop_checkpoint(key)
-            self._paused_stream = self._paused_control = self._paused_sampled_tokens = (
-                None
-            )
+            self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
             self._transcript.truncate(token_count)
 
     def reconcile_round(self, token_count: int) -> None:
@@ -400,9 +386,7 @@ class Session:
         with self._lock:
             self._require_idle()
             self.truncate(token_count)
-            self._worker.call(
-                lambda engine, native: native.rewind(token_count)
-            ).result()
+            self._worker.call(lambda engine, native: native.rewind(token_count)).result()
             self._worker.cancel_event.clear()
 
     def append_user(self, text: str, images: Sequence[object] = ()) -> Segment:
@@ -505,11 +489,7 @@ class Session:
                 interrupted = isinstance(event, Interrupted) or (
                     isinstance(event, Stopped) and event.reason == "interrupted"
                 )
-                if (
-                    pause_on_reserve
-                    and isinstance(event, Stopped)
-                    and event.reason == "context_reserve"
-                ):
+                if pause_on_reserve and isinstance(event, Stopped) and event.reason == "context_reserve":
                     return (yield from self._reserve_decision(cast("GenerateJob", job)))
                 self._publish(event)
                 yield event
@@ -540,9 +520,7 @@ class Session:
         stop_sequences: Sequence[bytes] = (),
     ) -> Generator[Event]:
         resuming = self._paused_control is not None and self._paused_stream is None
-        control = resolve_control(
-            self._paused_control if resuming else None, stop_sequences
-        )
+        control = resolve_control(self._paused_control if resuming else None, stop_sequences)
         sampled_tokens = self._paused_sampled_tokens if resuming else []
         assert sampled_tokens is not None
         try:
@@ -657,9 +635,7 @@ class Session:
             if loaded is None:
                 raise EngineError("load did not complete")
             self._checkpoint_tokens.clear()
-            self._paused_stream = self._paused_control = self._paused_sampled_tokens = (
-                None
-            )
+            self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
             return list(self._transcript.tokens)
 
     def on_worker(self, fn: Callable[[Handles], T]) -> Future[T]:

@@ -91,9 +91,7 @@ def _open_environment(second: Path, sources: dict[str, str]) -> Iterator[None]:
                 os.environ[key] = value
 
 
-def engine_options(
-    config: EngineConfig, *, inspect_only: bool = False
-) -> structs.EngineOptions:
+def engine_options(config: EngineConfig, *, inspect_only: bool = False) -> structs.EngineOptions:
     if config.backend not in BACKENDS:
         raise ValueError(f"unknown backend: {config.backend}")
     return structs.EngineOptions(
@@ -112,20 +110,14 @@ class LibNative:
     def __init__(self, lib: Library) -> None:
         self.lib = lib
         self.backend = lib.manifest.backend
-        self.restore_enabled = (
-            lib.manifest.live_checks.get("restore", {}).get("ok") is not False
-        )
+        self.restore_enabled = lib.manifest.live_checks.get("restore", {}).get("ok") is not False
 
     def bind(self, name: str) -> Callable[..., Any]:
         return self.lib.fn(name)
 
     def parse_think_level(self, text: str) -> int | None:
         mode = C.c_int()
-        return (
-            mode.value
-            if self.bind("ds4_think_mode_parse_level")(text.encode(), C.byref(mode))
-            else None
-        )
+        return mode.value if self.bind("ds4_think_mode_parse_level")(text.encode(), C.byref(mode)) else None
 
     def think_mode_for_context(self, mode: int, ctx: int) -> int:
         return self.bind("ds4_think_mode_for_context")(mode, ctx)
@@ -161,9 +153,7 @@ class LibNative:
                 options = engine_options(config)
                 raw = C.c_void_p()
                 with _open_environment(second, sources):
-                    status = self.bind("ds4_engine_open")(
-                        C.byref(raw), C.byref(options)
-                    )
+                    status = self.bind("ds4_engine_open")(C.byref(raw), C.byref(options))
                 if status:
                     raise EngineError(f"ds4_engine_open failed ({status})")
                 try:
@@ -183,9 +173,7 @@ class _Handle:
         self._thread = threading.get_ident()
 
     def _assert_thread(self) -> None:
-        assert threading.get_ident() == self._thread, (
-            "native handle used on another thread"
-        )
+        assert threading.get_ident() == self._thread, "native handle used on another thread"
 
     def _call(self, name: str, *args: Any) -> Any:
         self._assert_thread()
@@ -255,9 +243,7 @@ class NativeEngine(_Handle):
         """Return only the appended think delta; worker-thread use only."""
         return chat.append_delta(self, prefix, "ds4_chat_append_think_prefix", mode)
 
-    def render_message(
-        self, prefix: Sequence[int], role: str, content: str
-    ) -> list[int]:
+    def render_message(self, prefix: Sequence[int], role: str, content: str) -> list[int]:
         """Return the native role/message delta without changing prefix; worker only."""
         return chat.append_delta(
             self,
@@ -341,9 +327,7 @@ class NativeStagedPayload:
             raise EngineError("staged payload is closed")
         error = C.create_string_buffer(512)
         with payload.native_stream(file, "wb") as stream:
-            status = self._lib.fn("ds4_session_write_staged_payload")(
-                C.byref(self._data), stream, error, len(error)
-            )
+            status = self._lib.fn("ds4_session_write_staged_payload")(C.byref(self._data), stream, error, len(error))
         if status:
             raise EngineError(error.value.decode(errors="replace"))
 
@@ -404,9 +388,7 @@ class NativeSession(_Handle):
             if not tokens:
                 raise EmptyPromptError("empty prompt")
             error = C.create_string_buffer(512)
-            status = self._call(
-                "ds4_session_sync", C.byref(_tokens(tokens)), error, len(error)
-            )
+            status = self._call("ds4_session_sync", C.byref(_tokens(tokens)), error, len(error))
             if self._callback_error is not None:
                 raise self._callback_error
             if status == 0:
@@ -428,9 +410,7 @@ class NativeSession(_Handle):
         min_p: float,
         rng: C.c_uint64,
     ) -> int:
-        token = self._call(
-            "ds4_session_sample", temperature, top_k, top_p, min_p, C.byref(rng)
-        )
+        token = self._call("ds4_session_sample", temperature, top_k, top_p, min_p, C.byref(rng))
         return token
 
     def argmax(self) -> int:

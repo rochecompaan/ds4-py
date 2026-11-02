@@ -21,9 +21,7 @@ def built_upstream(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Mani
     src = os.environ.get("DS4_SRC_UPSTREAM")
     if not src:
         pytest.skip("DS4_SRC_UPSTREAM is not set")
-    lib = build_library(
-        Path(src), backend="cpu", out_dir=tmp_path_factory.mktemp("upstream-build")
-    )
+    lib = build_library(Path(src), backend="cpu", out_dir=tmp_path_factory.mktemp("upstream-build"))
     return lib, Manifest.read(manifest_path(lib))
 
 
@@ -36,15 +34,11 @@ def built_fork(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Manifest
     if not src:
         pytest.skip("DS4_SRC_FORK is not set")
     with pytest.MonkeyPatch.context() as mp:
-        mp.syspath_prepend(
-            str((Path(__file__).parent / "fixtures" / "ext_site").resolve())
-        )
+        mp.syspath_prepend(str((Path(__file__).parent / "fixtures" / "ext_site").resolve()))
         importlib.invalidate_caches()
         MetadataPathFinder().invalidate_caches()
         try:
-            lib = build_library(
-                Path(src), backend="cpu", out_dir=tmp_path_factory.mktemp("fork-build")
-            )
+            lib = build_library(Path(src), backend="cpu", out_dir=tmp_path_factory.mktemp("fork-build"))
             return lib, Manifest.read(manifest_path(lib))
         finally:
             MetadataPathFinder().invalidate_caches()

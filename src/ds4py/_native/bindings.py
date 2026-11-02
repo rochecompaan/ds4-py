@@ -33,9 +33,7 @@ CORE_BINDINGS: tuple[Binding, ...] = (
         "int ds4_engine_open(ds4_engine **out, const ds4_engine_options *opt)",
     ),
     Binding("ds4_engine_close", "void ds4_engine_close(ds4_engine *e)"),
-    Binding(
-        "ds4_engine_model_name", "const char *ds4_engine_model_name(ds4_engine *e)"
-    ),
+    Binding("ds4_engine_model_name", "const char *ds4_engine_model_name(ds4_engine *e)"),
     Binding("ds4_engine_model_id", "int ds4_engine_model_id(ds4_engine *e)"),
     Binding("ds4_engine_is_deepseek41", "bool ds4_engine_is_deepseek41(ds4_engine *e)"),
     Binding("ds4_engine_is_glm_dsa", "bool ds4_engine_is_glm_dsa(ds4_engine *e)"),
@@ -45,9 +43,7 @@ CORE_BINDINGS: tuple[Binding, ...] = (
         "ds4_engine_routed_quant_bits",
         "int ds4_engine_routed_quant_bits(ds4_engine *e)",
     ),
-    Binding(
-        "ds4_engine_mtp_draft_tokens", "int ds4_engine_mtp_draft_tokens(ds4_engine *e)"
-    ),
+    Binding("ds4_engine_mtp_draft_tokens", "int ds4_engine_mtp_draft_tokens(ds4_engine *e)"),
     Binding("ds4_engine_vocab_size", "int ds4_engine_vocab_size(ds4_engine *e)"),
     Binding(
         "ds4_tokenize_text",
@@ -74,9 +70,7 @@ CORE_BINDINGS: tuple[Binding, ...] = (
         "ds4_qwen4_reasoning_effort_text",
         "const char *ds4_qwen4_reasoning_effort_text(ds4_think_mode mode)",
     ),
-    Binding(
-        "ds4_token_text", "char *ds4_token_text(ds4_engine *e, int token, size_t *len)"
-    ),
+    Binding("ds4_token_text", "char *ds4_token_text(ds4_engine *e, int token, size_t *len)"),
     Binding("ds4_token_eos", "int ds4_token_eos(ds4_engine *e)"),
     Binding("ds4_token_is_stop", "bool ds4_token_is_stop(ds4_engine *e, int token)"),
     Binding(
@@ -118,9 +112,7 @@ CORE_BINDINGS: tuple[Binding, ...] = (
     Binding("ds4_session_rewind", "void ds4_session_rewind(ds4_session *s, int pos)"),
     Binding("ds4_session_pos", "int ds4_session_pos(ds4_session *s)"),
     Binding("ds4_session_ctx", "int ds4_session_ctx(ds4_session *s)"),
-    Binding(
-        "ds4_session_tokens", "const ds4_tokens *ds4_session_tokens(ds4_session *s)"
-    ),
+    Binding("ds4_session_tokens", "const ds4_tokens *ds4_session_tokens(ds4_session *s)"),
     Binding(
         "ds4_session_common_prefix",
         "int ds4_session_common_prefix(ds4_session *s, const ds4_tokens *prompt)",
@@ -194,9 +186,7 @@ def discover_extension_bindings() -> tuple[Binding, ...]:
             if not isinstance(binding, Binding):
                 raise TypeError(f"{entry_point.name} must provide Binding records")
             if binding.name in core_names:
-                raise ValueError(
-                    f"extension {entry_point.name} redeclares core binding {binding.name}"
-                )
+                raise ValueError(f"extension {entry_point.name} redeclares core binding {binding.name}")
             previous = found.get(binding.name)
             if previous is None:
                 found[binding.name] = replace(binding, source=entry_point.name)

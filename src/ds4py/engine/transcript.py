@@ -78,9 +78,7 @@ class Transcript:
         with self._lock:
             return len(self._tokens)
 
-    def append(
-        self, tokens: Sequence[int], kind: str, meta: Mapping | None = None
-    ) -> Segment:
+    def append(self, tokens: Sequence[int], kind: str, meta: Mapping | None = None) -> Segment:
         with self._lock:
             if kind not in KINDS:
                 raise ValueError(f"unknown segment kind: {kind}")
@@ -133,9 +131,7 @@ class Transcript:
             expected = 0
             for segment in installed:
                 if segment.start != expected or segment.end <= segment.start:
-                    raise ValueError(
-                        "installed segments must cover the tokens without gaps"
-                    )
+                    raise ValueError("installed segments must cover the tokens without gaps")
                 expected = segment.end
             if expected != len(self._tokens):
                 raise ValueError(

@@ -33,9 +33,7 @@ def scripted_rounds(*texts: Any) -> Any:
     return script
 
 
-def test_text_and_tool_rounds_append_replayable_records(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_text_and_tool_rounds_append_replayable_records(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "prefill.jsonl"
     info = replace(FakeNative()._info, family="qwen", is_qwen4=True)
     native = FakeNative(info=info, script=scripted_rounds("hello", TOOL_TEXT))
@@ -53,9 +51,7 @@ def test_text_and_tool_rounds_append_replayable_records(
         monkeypatch.setattr(
             session,
             "append_tool_results",
-            lambda results: (_ for _ in ()).throw(
-                AssertionError("trace executed a tool")
-            ),
+            lambda results: (_ for _ in ()).throw(AssertionError("trace executed a tool")),
         )
         with PrefillTraceWriter(session, path, think=engine.think) as writer:
             session.start_chat()
@@ -108,9 +104,7 @@ def synced(pos: Any, reused: Any = 0) -> Synced:
     return Synced(pos, Plan("extend", reused, pos - reused, True, None), 0)
 
 
-def emit_round(
-    session: Any, run_id: Any, *, fail: Any = False, repeated_sync: Any = False
-) -> None:
+def emit_round(session: Any, run_id: Any, *, fail: Any = False, repeated_sync: Any = False) -> None:
     session.emit("run_start", run_id=run_id)
     session.emit("Synced", event=synced(2, 1))
     session.emit("Token", event=Token(3, b"a"))
@@ -190,9 +184,7 @@ def test_trace_write_failure_publishes_an_error_event(
 ) -> None:
     session: Any = TraceSession([1, 2, 3, 4])
     events = []
-    session.on_event(
-        lambda event: events.append(event) if event.kind == "trace_error" else None
-    )
+    session.on_event(lambda event: events.append(event) if event.kind == "trace_error" else None)
     trace = tmp_path / "missing" / "trace.jsonl"
     original_open = Path.open
 
@@ -238,9 +230,7 @@ def write_record(tmp_path: Path, value: Any) -> Any:
         (lambda value: value.update(round_index=True), "round_index"),
     ],
 )
-def test_ds4py_replay_records_fail_loudly(
-    tmp_path: Path, mutate: Any, fragment: Any
-) -> None:
+def test_ds4py_replay_records_fail_loudly(tmp_path: Path, mutate: Any, fragment: Any) -> None:
     value = dict(VALID)
     mutate(value)
     path = write_record(tmp_path, value)

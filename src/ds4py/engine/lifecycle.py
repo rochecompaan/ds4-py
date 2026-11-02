@@ -32,9 +32,7 @@ class SessionEvent:
 class SessionLifecycle:
     """Identity, subscriptions, and state objects owned by one live session."""
 
-    def __init__(
-        self, *, error_handler: Callable[[Exception], None] | None = None
-    ) -> None:
+    def __init__(self, *, error_handler: Callable[[Exception], None] | None = None) -> None:
         self._id = uuid4().hex
         self._listeners: list[tuple[Listener, frozenset[str] | None]] = []
         self._states: dict[str, object] = {}
@@ -51,14 +49,8 @@ class SessionLifecycle:
         self._id = uuid4().hex if new_id is None else new_id
         return self._id
 
-    def on_event(
-        self, listener: Listener, *, kinds: Iterable[str] | None = None
-    ) -> Callable[[], None]:
-        allowed = (
-            None
-            if kinds is None
-            else frozenset((kinds,) if isinstance(kinds, str) else kinds)
-        )
+    def on_event(self, listener: Listener, *, kinds: Iterable[str] | None = None) -> Callable[[], None]:
+        allowed = None if kinds is None else frozenset((kinds,) if isinstance(kinds, str) else kinds)
         entry = (listener, allowed)
         with self._lock:
             self._listeners.append(entry)

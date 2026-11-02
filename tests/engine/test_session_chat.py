@@ -15,9 +15,7 @@ from ds4py.engine.session import Engine
 from ds4py.errors import EngineError
 
 
-def fake_engine(
-    family: Any = "deepseek4", script: Any = None, cancel: Any = None
-) -> Engine:
+def fake_engine(family: Any = "deepseek4", script: Any = None, cancel: Any = None) -> Engine:
     info = replace(
         FakeNative()._info,
         family=family,
@@ -25,14 +23,8 @@ def fake_engine(
         is_glm_dsa=family == "glm",
         is_qwen4=family == "qwen",
     )
-    native = (
-        FakeNative(info=info)
-        if script is None
-        else FakeNative(info=info, script=script)
-    )
-    return ds4py.open(
-        "f.gguf", ctx=1024, think=ThinkMode.NONE, native=native, cancel=cancel
-    )
+    native = FakeNative(info=info) if script is None else FakeNative(info=info, script=script)
+    return ds4py.open("f.gguf", ctx=1024, think=ThinkMode.NONE, native=native, cancel=cancel)
 
 
 def decode(engine: Any, tokens: Any) -> str:
@@ -41,9 +33,7 @@ def decode(engine: Any, tokens: Any) -> str:
 
 def scripted_text(text: Any) -> Any:
     tokens = tuple(tokenize_rendered(text))
-    return lambda prompt, generated: (
-        tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
-    )
+    return lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
 
 @pytest.mark.parametrize(
@@ -57,9 +47,7 @@ def test_start_chat_appends_ordered_system_deltas_and_rejects_reinitialization(
         session = engine.session()
         session.start_chat()
         assert session.transcript.chat
-        assert [segment.kind for segment in session.transcript.segments] == [
-            "system"
-        ] * system_segments
+        assert [segment.kind for segment in session.transcript.segments] == ["system"] * system_segments
         assert len(session.transcript) > 0
         if family != "qwen":
             assert session.transcript.segments[0].start == 0
@@ -77,14 +65,10 @@ def test_append_user_on_empty_session_starts_tool_less_chat() -> None:
         assert session.transcript.chat
         assert segment.kind == "user"
         assert "# Tools" in decode(engine, session.transcript.tokens[: segment.start])
-        assert decode(
-            engine, session.transcript.tokens[segment.start : segment.end]
-        ).endswith("hello <tool_call>")
+        assert decode(engine, session.transcript.tokens[segment.start : segment.end]).endswith("hello <tool_call>")
 
 
-def test_append_prefix_on_empty_session_starts_chat_and_closes_assistant_turns() -> (
-    None
-):
+def test_append_prefix_on_empty_session_starts_chat_and_closes_assistant_turns() -> None:
     turns = [
         PrefixTurn("user", "u1"),
         PrefixTurn("assistant", "a1"),
@@ -173,9 +157,7 @@ def test_system_note_uses_newline_prefix_and_note_kind() -> None:
         session.start_chat()
         segment = session.append_system_note("remember <tool_call>")
         assert segment.kind == "note"
-        assert "\nremember <tool_call>" in decode(
-            engine, session.transcript.tokens[segment.start : segment.end]
-        )
+        assert "\nremember <tool_call>" in decode(engine, session.transcript.tokens[segment.start : segment.end])
 
 
 def test_all_chat_helpers_refuse_to_mutate_during_an_active_round() -> None:
@@ -184,15 +166,11 @@ def test_all_chat_helpers_refuse_to_mutate_during_an_active_round() -> None:
         session.start_chat()
         rnd = session.run_round()
         try:
-            assert isinstance(
-                next(event for event in rnd if isinstance(event, Token)), Token
-            )
+            assert isinstance(next(event for event in rnd if isinstance(event, Token)), Token)
             calls = [
                 lambda: session.start_chat(),
                 lambda: session.append_user("user"),
-                lambda: session.append_prefix(
-                    [PrefixTurn("user", "u"), PrefixTurn("assistant", "a")]
-                ),
+                lambda: session.append_prefix([PrefixTurn("user", "u"), PrefixTurn("assistant", "a")]),
                 lambda: session.append_tool_results(["result"]),
                 lambda: session.append_system_note("note"),
             ]
@@ -232,23 +210,14 @@ def test_chat_run_round_syncs_prefix_and_closes_assistant_turn(family: Any) -> N
         significant = [event for event in events if not isinstance(event, Prefill)]
         synced = next(event for event in significant if isinstance(event, Synced))
         segments = session.transcript.segments
-        prefix = next(
-            segment for segment in segments if segment.kind == "assistant_prefix"
-        )
+        prefix = next(segment for segment in segments if segment.kind == "assistant_prefix")
         assistant = next(segment for segment in segments if segment.kind == "assistant")
         assert prefix.start == before and synced.pos == prefix.end
         assert synced.prefilled == synced.pos
-        assert [
-            event.id for event in significant if isinstance(event, Token)
-        ] == engine.tokenize("ok")
-        assert (
-            decode(engine, session.transcript.tokens[assistant.start : assistant.end])
-            == "ok"
-        )
+        assert [event.id for event in significant if isinstance(event, Token)] == engine.tokenize("ok")
+        assert decode(engine, session.transcript.tokens[assistant.start : assistant.end]) == "ok"
         assert significant[-1] == Stopped("stop_token")
-        suffix = ["assistant_prefix", "assistant"] + (
-            [] if family == "glm" else ["eos"]
-        )
+        suffix = ["assistant_prefix", "assistant"] + ([] if family == "glm" else ["eos"])
         assert [segment.kind for segment in segments[-len(suffix) :]] == suffix
         eos_tokens = 0 if family == "glm" else 1
         assert session.ctx_used == len(session.transcript) - eos_tokens
@@ -279,14 +248,8 @@ def test_public_chat_round_emits_calls_before_stopped_then_closes_turn() -> None
         assert calls.calls[0].name == "read" and calls.calls[0].args["path"] == "/tmp/x"
         assert events[-1] == Stopped("tool_call_complete")
         assert events.index(calls) == len(events) - 2
-        assistant = next(
-            segment
-            for segment in session.transcript.segments
-            if segment.kind == "assistant"
-        )
-        assert list(
-            session.transcript.tokens[assistant.start : assistant.end]
-        ) == tokenize_rendered(text)
+        assistant = next(segment for segment in session.transcript.segments if segment.kind == "assistant")
+        assert list(session.transcript.tokens[assistant.start : assistant.end]) == tokenize_rendered(text)
         assert session.transcript.segments[-1].kind == "eos"
 
 
@@ -315,6 +278,4 @@ def test_chat_caller_limit_and_interruption_close_turn_once() -> None:
             "assistant",
             "eos",
         ]
-        assert [segment.kind for segment in session.transcript.segments].count(
-            "eos"
-        ) == 1
+        assert [segment.kind for segment in session.transcript.segments].count("eos") == 1

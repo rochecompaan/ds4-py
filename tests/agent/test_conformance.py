@@ -40,9 +40,7 @@ def fake_engine(*, script: Any = None, ctx: Any = 8192) -> Engine:
 
 
 def reserialize(messages: Any) -> list[Any]:
-    return ModelMessagesTypeAdapter.validate_json(
-        ModelMessagesTypeAdapter.dump_json(messages)
-    )
+    return ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
 
 
 def sync(session: Any) -> Any:
@@ -100,12 +98,8 @@ def test_binding_rewrite_keeps_prefix_and_checkpoint_boundary() -> None:
         old_tokens = session.transcript.tokens
         old_segments = binder.export_segments()
         changed_key = original[1].metadata["ds4.key"]
-        cut = next(
-            segment.start for segment in old_segments if segment.key == changed_key
-        )
-        prefix_segments = tuple(
-            segment for segment in old_segments if segment.end <= cut
-        )
+        cut = next(segment.start for segment in old_segments if segment.key == changed_key)
+        prefix_segments = tuple(segment for segment in old_segments if segment.end <= cut)
 
         rewritten = reserialize(original)
         rewritten[1].parts[0].content = "a longer replacement first request"
@@ -122,9 +116,7 @@ def test_binding_rewrite_keeps_prefix_and_checkpoint_boundary() -> None:
         assert synced.plan.kind == "restore"
         assert synced.plan.checkpoint == "before-cut"
         assert synced.plan.reused == cut
-        assert b"longer replacement" in b"".join(
-            engine.token_text(token) for token in session.transcript.tokens[cut:]
-        )
+        assert b"longer replacement" in b"".join(engine.token_text(token) for token in session.transcript.tokens[cut:])
 
 
 def test_extension_command_and_status_use_existing_registries(tmp_path: Path) -> None:
@@ -170,9 +162,7 @@ def test_declared_native_binding_is_called_on_worker(ext_site: Any) -> None:
     ds4py_test_ext = importlib.import_module("ds4py_test_ext")
     from ds4py._native.bindings import all_bindings
 
-    assert "ds4_engine_layer_count" in {
-        binding.name for binding in ds4py_test_ext.BINDINGS
-    }
+    assert "ds4_engine_layer_count" in {binding.name for binding in ds4py_test_ext.BINDINGS}
     assert "ds4_engine_layer_count" in {binding.name for binding in all_bindings()}
     native = FakeNative(bindings={"ds4_engine_layer_count": lambda engine_ptr: 43})
     with ds4py.open("f.gguf", ctx=64, native=native) as engine:

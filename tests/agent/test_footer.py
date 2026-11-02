@@ -98,9 +98,7 @@ def test_runtime_bridge_publishes_shell_events_without_a_run_record() -> None:
     ctx = SimpleNamespace(conversation_id="session", run_id="run")
 
     async def scenario() -> None:
-        await bridge.on_event(
-            ctx, event=CommandStartedEvent(command="sleep 1", pid=321)
-        )
+        await bridge.on_event(ctx, event=CommandStartedEvent(command="sleep 1", pid=321))
         await bridge.on_event(
             ctx,
             event=CommandFinishedEvent(

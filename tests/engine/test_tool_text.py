@@ -19,10 +19,7 @@ def test_literal_and_escaped_closing_delimiters_round_trip(closing: Any) -> None
     escaped = "&lt;" + closing[1:]
     doubly_escaped = "&amp;lt;" + closing[1:]
 
-    assert (
-        escape_tool_text(f"before {closing} after", closing)
-        == f"before {escaped} after"
-    )
+    assert escape_tool_text(f"before {closing} after", closing) == f"before {escaped} after"
     assert escape_tool_text(escaped, closing) == doubly_escaped
     assert unescape_tool_text(escaped, closing) == closing
     assert unescape_tool_text(doubly_escaped, closing) == escaped

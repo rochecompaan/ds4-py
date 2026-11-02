@@ -36,10 +36,7 @@ def report_with(
     live_checks: Any = None,
 ) -> Any:
     extensions = extensions or {}
-    records = {
-        b.name: BindingRecord(b.normalized, b.required, b.source, True)
-        for b in CORE_BINDINGS
-    }
+    records = {b.name: BindingRecord(b.normalized, b.required, b.source, True) for b in CORE_BINDINGS}
     for name, source in extensions.items():
         records[name] = BindingRecord("", False, source, True)
     for name in absent:
@@ -61,9 +58,7 @@ def report_with(
         live_checks=live_checks or {},
     )
     warnings = () if headers_known else (f"unknown header ds4.h: {FORK_HASH[:12]}",)
-    validation = Validation(
-        frozenset(records) - frozenset(absent), frozenset(absent), warnings
-    )
+    validation = Validation(frozenset(records) - frozenset(absent), frozenset(absent), warnings)
     return CheckReport(Path("/lib") / LIB_NAME, manifest, validation, extensions, None)
 
 
@@ -117,9 +112,7 @@ def test_refused_library_exits_1(tmp_path: Path) -> None:
     assert result.stderr == ""
 
 
-def test_check_resolves_environment_path_on_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_check_resolves_environment_path_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     lib = tmp_path / LIB_NAME
     monkeypatch.setenv("DS4_LIB", str(lib))
     report = check_library(None)
@@ -160,10 +153,7 @@ def test_report_shows_the_live_checks() -> None:
         )
     )
     assert "sync:     ok (extend of 64 tokens took 0.120 s)" in text
-    assert (
-        "restore:  disabled (the runs differ at token 3: 7 after a restore, 9 after a rebuild)"
-        in text
-    )
+    assert "restore:  disabled (the runs differ at token 3: 7 after a restore, 9 after a rebuild)" in text
     assert "sync:" not in format_report(report_with())
 
 
@@ -235,9 +225,7 @@ def test_live_persists_checks_only_after_success_and_closes(
     report = report_with(live_checks={"restore": {"ok": False}})
     lib = tmp_path / LIB_NAME
     lib.touch()
-    library = SimpleNamespace(
-        path=lib, manifest=report.manifest, validation=report.validation
-    )
+    library = SimpleNamespace(path=lib, manifest=report.manifest, validation=report.validation)
     library.manifest.write(manifest_path(lib))
     native = FakeNative(script=lambda p, g: 98, restore_enabled=False)
     monkeypatch.setattr(check, "load_library", lambda path: library)
@@ -261,9 +249,7 @@ def test_live_persists_checks_only_after_success_and_closes(
     if fail:
         with pytest.raises(EngineError, match="sync failed"):
             check.check_live(lib, Path("f.gguf"), ctx=512)
-        assert Manifest.read(manifest_path(lib)).live_checks == {
-            "restore": {"ok": False}
-        }
+        assert Manifest.read(manifest_path(lib)).live_checks == {"restore": {"ok": False}}
     else:
         result = check.check_live(lib, Path("f.gguf"), ctx=512)
         saved = Manifest.read(manifest_path(lib)).live_checks

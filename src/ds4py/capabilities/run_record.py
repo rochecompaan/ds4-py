@@ -24,10 +24,7 @@ def _json_safe(value: object) -> JsonValue:
     if isinstance(value, (list, tuple, set, frozenset)):
         return [_json_safe(item) for item in value]
     if is_dataclass(value) and not isinstance(value, type):
-        return {
-            field.name: _json_safe(getattr(value, field.name))
-            for field in fields(value)
-        }
+        return {field.name: _json_safe(getattr(value, field.name)) for field in fields(value)}
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return str(value)
@@ -117,9 +114,7 @@ class DS4RunRecord(AbstractCapability):
         payload = dict(getattr(event, "payload", {}) or {})
         if kind == "agent_event":
             harness_event = payload.get("event")
-            line = self._line(
-                type(harness_event).__name__, _event_payload(harness_event)
-            )
+            line = self._line(type(harness_event).__name__, _event_payload(harness_event))
             line["conversation_id"] = payload.get("conversation_id")
             if payload.get("run_id") is not None:
                 line["run_id"] = payload["run_id"]

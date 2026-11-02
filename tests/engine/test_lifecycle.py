@@ -142,11 +142,7 @@ class CloseCounter:
 
 def kinds(items: Any) -> Any:
     return [
-        item
-        if isinstance(item, str)
-        else item.kind
-        if isinstance(item, SessionEvent)
-        else type(item).__name__
+        item if isinstance(item, str) else item.kind if isinstance(item, SessionEvent) else type(item).__name__
         for item in items
     ]
 
@@ -276,9 +272,7 @@ def test_new_propagates_an_unrelated_native_sync_error_without_starting_a_sessio
         # and the native snapshot survive, so checkpoint operations still work.
         assert facade_checkpoints == {"turn": checkpointed.tokens}
         assert session._checkpoint_tokens == facade_checkpoints
-        assert session.engine._worker._checkpoints == {
-            "turn": (native_tokens, snapshot)
-        }
+        assert session.engine._worker._checkpoints == {"turn": (native_tokens, snapshot)}
         assert not snapshot.closed
         # The worker owns a still-usable session after the failed reset.
         session.append_user("after")
@@ -454,11 +448,8 @@ def test_engine_events_are_published_before_the_consumer_receives_them() -> None
 
         assert kinds(published) == kinds(consumer)
         assert all(
-            bus_kind == event.payload["event"].__class__.__name__
-            and event.payload["event"] is delivered_event
-            for bus_kind, event, delivered_event in zip(
-                kinds(published), published, consumer
-            )
+            bus_kind == event.payload["event"].__class__.__name__ and event.payload["event"] is delivered_event
+            for bus_kind, event, delivered_event in zip(kinds(published), published, consumer)
         )
         assert consumer[-1] == Stopped("stop_token")
 
@@ -528,15 +519,11 @@ def test_set_think_invalidates_the_bound_prefix_without_mutating_a_live_round() 
         change = binder.prepare(messages)
         assert change.kind == "rewrite" and change.start == 0
         assert session.transcript.tokens != before
-        assert b"Reasoning Effort" in b"".join(
-            session.engine.token_text(token) for token in session.transcript.tokens
-        )
+        assert b"Reasoning Effort" in b"".join(session.engine.token_text(token) for token in session.transcript.tokens)
 
         rnd = session.run_round(max_tokens=0)
         try:
-            assert isinstance(
-                next(event for event in rnd if isinstance(event, Synced)), Synced
-            )
+            assert isinstance(next(event for event in rnd if isinstance(event, Synced)), Synced)
             with pytest.raises(EngineError, match="round"):
                 session.set_think(ThinkMode.NONE)
         finally:

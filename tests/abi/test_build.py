@@ -42,9 +42,7 @@ def test_missing_source_file_is_reported_first(
         build_library(fake_tree, backend="cpu", out_dir=tmp_path / "out")
 
 
-def test_no_compiler(
-    tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_no_compiler(tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CC", str(tmp_path / "no-such-cc"))
     with pytest.raises(BuildError, match="no C compiler"):
         build_library(fake_tree, backend="cpu", out_dir=tmp_path / "out")
@@ -60,36 +58,26 @@ def only_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *names: Any) -> 
     monkeypatch.delenv("CC", raising=False)
 
 
-def test_no_make(
-    tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_no_make(tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     only_tools(tmp_path, monkeypatch, "cc")
     with pytest.raises(BuildError, match="make not found on PATH"):
         build_library(fake_tree, backend="cpu", out_dir=tmp_path / "out")
 
 
-def test_rocm_is_refused(
-    tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_rocm_is_refused(tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     only_tools(tmp_path, monkeypatch, "cc", "make")
-    with pytest.raises(
-        BuildError, match="backend rocm is not supported by ds4py build yet"
-    ):
+    with pytest.raises(BuildError, match="backend rocm is not supported by ds4py build yet"):
         build_library(fake_tree, backend="rocm", out_dir=tmp_path / "out")
 
 
 @pytest.mark.skipif(sys.platform == "darwin", reason="metal builds on macOS")
-def test_metal_needs_macos(
-    tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_metal_needs_macos(tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     only_tools(tmp_path, monkeypatch, "cc", "make")
     with pytest.raises(BuildError, match="backend metal needs macOS"):
         build_library(fake_tree, backend="metal", out_dir=tmp_path / "out")
 
 
-def test_changed_argument_type_fails_before_make(
-    cc: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_changed_argument_type_fails_before_make(cc: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     tree = doctored(
         tmp_path,
         "int ds4_session_eval(ds4_session *s, int token,",
@@ -104,9 +92,7 @@ def test_changed_argument_type_fails_before_make(
     assert not (tmp_path / "out" / LIB_NAME).exists()
 
 
-def test_one_build_per_out_dir(
-    cc: Any, tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_one_build_per_out_dir(cc: Any, tmp_path: Path, fake_tree: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     out = tmp_path / "out"
     out.mkdir()
     held = os.open(out / ".build.lock", os.O_RDWR | os.O_CREAT, 0o600)
@@ -121,9 +107,7 @@ def test_one_build_per_out_dir(
 
 def installed(out: Any) -> Any:
     lib = out / LIB_NAME
-    return lib.read_bytes(), Manifest.read(
-        manifest_path(lib)
-    ).library_sha256 == file_sha256(lib)
+    return lib.read_bytes(), Manifest.read(manifest_path(lib)).library_sha256 == file_sha256(lib)
 
 
 def test_install_switches_the_library_and_manifest_together(
@@ -161,9 +145,7 @@ def test_install_switches_the_library_and_manifest_together(
     assert len(list((out / "installs").iterdir())) == 2
 
 
-@pytest.mark.parametrize(
-    "failure", ["missing_root", "changed_shader", "copy", "switch"]
-)
+@pytest.mark.parametrize("failure", ["missing_root", "changed_shader", "copy", "switch"])
 def test_shader_publication_failure_keeps_old_generation(
     make_manifest: Any,
     tmp_path: Path,
@@ -178,9 +160,7 @@ def test_shader_publication_failure_keeps_old_generation(
     (source / "metal/dense.metal").write_bytes(b"original shader")
     lib, m = make_manifest(source, upstream_headers)
     m.backend = "metal"
-    m.metal_sources = {
-        "metal/dense.metal": hashlib.sha256(b"original shader").hexdigest()
-    }
+    m.metal_sources = {"metal/dense.metal": hashlib.sha256(b"original shader").hexdigest()}
     out = tmp_path / "out"
     current = build.install(lib, m, out, metal_root=source)
     old = current.resolve()
@@ -205,9 +185,7 @@ def test_shader_publication_failure_keeps_old_generation(
 
         monkeypatch.setattr(os, "replace", fail_replace)
     with pytest.raises((BuildError, OSError)):
-        build.install(
-            lib, m, out, metal_root=None if failure == "missing_root" else source
-        )
+        build.install(lib, m, out, metal_root=None if failure == "missing_root" else source)
     assert current.resolve() == old
     assert (old.parent / "metal/dense.metal").read_bytes() == b"original shader"
     assert len(list((out / "installs").iterdir())) == 1
@@ -236,9 +214,7 @@ def test_metal_build_captures_assets_before_make_and_loads_after_relocation(
     monkeypatch.setattr(build, "_run_make", native_make)
     lib = build_library(fake_tree, backend="metal", out_dir=tmp_path / "out", cc=cc)
     m = Manifest.read(manifest_path(lib))
-    assert m.metal_sources == {
-        "metal/dense.metal": hashlib.sha256(b"captured shader").hexdigest()
-    }
+    assert m.metal_sources == {"metal/dense.metal": hashlib.sha256(b"captured shader").hexdigest()}
     shutil.rmtree(fake_tree)
     moved = tmp_path / "moved"
     lib.parent.rename(moved)
@@ -267,14 +243,9 @@ def test_mirror_skips_git_and_objects(tmp_path: Path) -> None:
         (src / rel).write_text(rel)
     build._mirror(src, farm)
     build._mirror(src, farm)
-    files = {
-        str(Path(d, f).relative_to(farm)) for d, _, fs in os.walk(farm) for f in fs
-    }
+    files = {str(Path(d, f).relative_to(farm)) for d, _, fs in os.walk(farm) for f in fs}
     assert files == {"ds4.c", "metal/ds4.metal"} and not (farm / ".git").exists()
-    assert all(
-        (farm / f).is_symlink() and (farm / f).resolve() == (src / f).resolve()
-        for f in files
-    )
+    assert all((farm / f).is_symlink() and (farm / f).resolve() == (src / f).resolve() for f in files)
     assert not (farm / "metal").is_symlink()
 
 
@@ -413,9 +384,7 @@ def test_make_failure_streams_output_and_reports_tail(tmp_path: Path) -> None:
     assert "line0\n" not in str(error.value) and "line44\n" in str(error.value)
 
 
-def test_cli_build_reports_errors(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_build_reports_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     from ds4py.cli import main
 
     assert main(["build", "--src", str(tmp_path)]) == 1
@@ -423,18 +392,12 @@ def test_cli_build_reports_errors(
 
 
 @pytest.mark.build
-def test_cpu_build_of_upstream(
-    built_upstream: Any, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cpu_build_of_upstream(built_upstream: Any, capsys: pytest.CaptureFixture[str]) -> None:
     from ds4py.cli import main
 
     lib, m = built_upstream
     assert lib.name == LIB_NAME and m.library_sha256 == file_sha256(lib)
-    assert (
-        all(r.ok for r in m.bindings.values())
-        and m.headers_known
-        and m.backend == "cpu"
-    )
+    assert all(r.ok for r in m.bindings.values()) and m.headers_known and m.backend == "cpu"
     if (Path(os.environ["DS4_SRC_UPSTREAM"]) / ".git").exists():
         assert m.source_commit == pins.UPSTREAM.commit
     # The CLI rebuild shares the farm: objects survive and are not recompiled.

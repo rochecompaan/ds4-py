@@ -28,13 +28,9 @@ HIDDEN_TEST = EXERCISE.name + "_test.py"
 def make_exercise(root: Any, initial: Any = "good") -> Any:
     source = root / "benchmark" / EXERCISE
     (source / ".docs").mkdir(parents=True)
-    (source / ".docs" / "instructions.md").write_text(
-        "Implement value() so it returns 'good'.\n"
-    )
+    (source / ".docs" / "instructions.md").write_text("Implement value() so it returns 'good'.\n")
     (source / "solution.py").write_text(f"def value():\n    return {initial!r}\n")
-    (source / HIDDEN_TEST).write_text(
-        "from solution import value\n\ndef test_value():\n    assert value() == 'good'\n"
-    )
+    (source / HIDDEN_TEST).write_text("from solution import value\n\ndef test_value():\n    assert value() == 'good'\n")
     return source
 
 
@@ -64,9 +60,7 @@ def test_exercise_has_visible_starter_and_grader_owned_hidden_tests(
     source = make_exercise(tmp_path)
     workspace = prepare_exercise(source, tmp_path / "staged")
 
-    assert (workspace.agent_dir / "TASK.md").read_text() == (
-        source / ".docs" / "instructions.md"
-    ).read_text()
+    assert (workspace.agent_dir / "TASK.md").read_text() == (source / ".docs" / "instructions.md").read_text()
     assert (workspace.agent_dir / "solution.py").is_file()
     assert not (workspace.agent_dir / HIDDEN_TEST).exists()
     assert (workspace.grader_dir / HIDDEN_TEST).is_file()
@@ -83,11 +77,7 @@ def test_real_grading_leaves_no_hidden_source_or_bytecode_in_agent_workspace(
     result = grade_workspace(workspace)
 
     assert result.passed, result.output
-    hidden_artifacts = [
-        path
-        for path in workspace.agent_dir.rglob("*")
-        if Path(HIDDEN_TEST).stem in path.name
-    ]
+    hidden_artifacts = [path for path in workspace.agent_dir.rglob("*") if Path(HIDDEN_TEST).stem in path.name]
     assert hidden_artifacts == []
     assert (workspace.grader_dir / HIDDEN_TEST).is_file()
 
@@ -131,9 +121,7 @@ def test_attempts_stop_at_two_and_cleanup_survives_failures(tmp_path: Path) -> N
         assert cwd == workspace.grader_dir
         assert not (workspace.agent_dir / HIDDEN_TEST).exists()
         assert str(workspace.grader_dir / HIDDEN_TEST) in command
-        return subprocess.CompletedProcess(
-            command, 1, stdout="still failing", stderr=""
-        )
+        return subprocess.CompletedProcess(command, 1, stdout="still failing", stderr="")
 
     grades = run_attempts(workspace, agent, runner=fail)
 
@@ -152,11 +140,7 @@ def test_agents_receive_separate_but_equivalent_workspace_copies(
     python_workspace = clone_workspace(staged, tmp_path / "ds4py")
 
     def files(root: Any) -> Any:
-        return {
-            str(path.relative_to(root)): path.read_bytes()
-            for path in root.rglob("*")
-            if path.is_file()
-        }
+        return {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()}
 
     assert files(c_workspace.agent_dir) == files(python_workspace.agent_dir)
     assert c_workspace.agent_dir != python_workspace.agent_dir
@@ -182,9 +166,7 @@ def test_ctx_repository_copy_keeps_hidden_grader_outside(tmp_path: Path) -> None
     (repo / "src" / "ds4py").mkdir(parents=True)
     (repo / "src" / "ds4py" / "__init__.py").write_text("")
     (repo / "tests" / "engine" / "tool_syntax").mkdir(parents=True)
-    (repo / "tests" / "engine" / "tool_syntax" / "test_glm.py").write_text(
-        "# visible\n"
-    )
+    (repo / "tests" / "engine" / "tool_syntax" / "test_glm.py").write_text("# visible\n")
     (repo / "bench" / "graders").mkdir(parents=True)
     (repo / "bench" / "graders" / "test_ctx_command.py").write_text("# secret\n")
     commit_repo(repo)
@@ -200,19 +182,11 @@ def test_ctx_repository_copy_keeps_hidden_grader_outside(tmp_path: Path) -> None
         grader=external_grader,
     )
 
-    assert (
-        workspace.agent_dir / "TASK.md"
-    ).read_text() == "Add /ctx without generation."
+    assert (workspace.agent_dir / "TASK.md").read_text() == "Add /ctx without generation."
     assert not (workspace.agent_dir / "bench").exists()
-    assert not (
-        workspace.agent_dir / "tests" / "bakeoff_hidden" / "test_ctx_command.py"
-    ).exists()
-    assert (
-        workspace.grader_dir / "tests" / "bakeoff_hidden" / "test_ctx_command.py"
-    ).is_file()
-    assert (
-        workspace.agent_dir / "tests" / "engine" / "tool_syntax" / "test_glm.py"
-    ).is_file()
+    assert not (workspace.agent_dir / "tests" / "bakeoff_hidden" / "test_ctx_command.py").exists()
+    assert (workspace.grader_dir / "tests" / "bakeoff_hidden" / "test_ctx_command.py").is_file()
+    assert (workspace.agent_dir / "tests" / "engine" / "tool_syntax" / "test_glm.py").is_file()
 
 
 def test_glm_patch_fails_focused_test_and_clean_tree_passes(tmp_path: Path) -> None:
@@ -249,12 +223,8 @@ def test_workspace_cannot_bypass_grading_with_startup_or_pytest_configuration(
     source = make_exercise(tmp_path, initial="bad")
     workspace = prepare_exercise(source, tmp_path / "staged")
     agent_dir = workspace.agent_dir
-    (agent_dir / "conftest.py").write_text(
-        "import solution\nsolution.value = lambda: 'good'\n"
-    )
-    (agent_dir / "workspace_bypass.py").write_text(
-        "import solution\nsolution.value = lambda: 'good'\n"
-    )
+    (agent_dir / "conftest.py").write_text("import solution\nsolution.value = lambda: 'good'\n")
+    (agent_dir / "workspace_bypass.py").write_text("import solution\nsolution.value = lambda: 'good'\n")
     (agent_dir / "pytest.ini").write_text("[pytest]\naddopts = -p workspace_bypass\n")
     (agent_dir / "src").mkdir()
     (agent_dir / "src" / "sitecustomize.py").write_text(
@@ -269,12 +239,8 @@ def test_workspace_cannot_bypass_grading_with_startup_or_pytest_configuration(
     assert "return 'bad'" in (agent_dir / "solution.py").read_text()
 
 
-@pytest.mark.parametrize(
-    "content", ["", "---\n", "- not\n- a\n- mapping\n", "scalar\n"]
-)
-def test_empty_or_non_mapping_manifest_is_a_path_aware_preparation_error(
-    tmp_path: Path, content: Any
-) -> None:
+@pytest.mark.parametrize("content", ["", "---\n", "- not\n- a\n- mapping\n", "scalar\n"])
+def test_empty_or_non_mapping_manifest_is_a_path_aware_preparation_error(tmp_path: Path, content: Any) -> None:
     path = tmp_path / "manifest.yaml"
     path.write_text(content)
 

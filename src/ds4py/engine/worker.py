@@ -159,9 +159,7 @@ class EngineWorker:
         throttle: float = 0.1,
     ) -> None:
         message = "checkpoint_budget_bytes must be a non-negative integer"
-        if isinstance(checkpoint_budget_bytes, bool) or not isinstance(
-            checkpoint_budget_bytes, int
-        ):
+        if isinstance(checkpoint_budget_bytes, bool) or not isinstance(checkpoint_budget_bytes, int):
             raise TypeError(message)
         if checkpoint_budget_bytes < 0:
             raise ValueError(message)
@@ -174,9 +172,7 @@ class EngineWorker:
         self._lock = threading.Lock()
         self._closed = False
         ready: Future[EngineInfo] = Future()
-        self._thread = threading.Thread(
-            target=self._run, args=(config, ready), daemon=True
-        )
+        self._thread = threading.Thread(target=self._run, args=(config, ready), daemon=True)
         self._thread.start()
         try:
             self.info: EngineInfo = ready.result()
@@ -278,9 +274,7 @@ class EngineWorker:
         elif isinstance(job, ResetJob):
             self._reset(session)
         elif isinstance(job, GenerateJob):
-            reason = generate(
-                engine, session, job, cancelled=self.cancel_event.is_set, emit=emit
-            )
+            reason = generate(engine, session, job, cancelled=self.cancel_event.is_set, emit=emit)
             if reason == "interrupted":
                 self.cancel_event.clear()
             emit(Stopped(reason))
@@ -299,9 +293,7 @@ class EngineWorker:
     ) -> SyncStatus:
         plan = self._plan(session, tokens)
         if not plan.fits:
-            raise EngineError(
-                f"prompt of {len(tokens)} tokens does not fit a context of {session.ctx()}"
-            )
+            raise EngineError(f"prompt of {len(tokens)} tokens does not fit a context of {session.ctx()}")
         if plan.kind == "restore":
             assert plan.checkpoint is not None
             session.load_snapshot(self._checkpoints[plan.checkpoint][1])
@@ -324,14 +316,10 @@ class EngineWorker:
                 return
             done = max(0, min(done, prefilled))
             elapsed = now - start
-            emit(
-                Prefill(done, prefilled, cached, done / elapsed if elapsed > 0 else 0.0)
-            )
+            emit(Prefill(done, prefilled, cached, done / elapsed if elapsed > 0 else 0.0))
             last_emit = now
 
-        status = session.sync(
-            tokens, cancel=self.cancel_event.is_set, progress=progress
-        )
+        status = session.sync(tokens, cancel=self.cancel_event.is_set, progress=progress)
         if status == SyncStatus.INTERRUPTED:
             self.cancel_event.clear()
             emit(Interrupted(session.pos()))
@@ -356,9 +344,7 @@ class EngineWorker:
             staged.write(job.file)
             written = job.file.tell() - start - len(job.header)
             if written != payload_bytes:
-                raise EngineError(
-                    f"staged payload wrote {written} bytes, declared {payload_bytes}"
-                )
+                raise EngineError(f"staged payload wrote {written} bytes, declared {payload_bytes}")
         finally:
             staged.close()
         emit(Saved(len(job.tokens), payload_bytes))
@@ -407,16 +393,10 @@ class EngineWorker:
             return
         budget = self._checkpoint_budget_bytes
         if budget == 0:
-            raise CheckpointError(
-                "checkpoint creation is disabled (checkpoint_budget_bytes=0)"
-            )
+            raise CheckpointError("checkpoint creation is disabled (checkpoint_budget_bytes=0)")
         if not session.checkpoint_valid() or session.pos() <= 0:
             raise CheckpointError("no valid state to checkpoint")
-        retained = sum(
-            snapshot.nbytes
-            for key, (_, snapshot) in self._checkpoints.items()
-            if key != job.key
-        )
+        retained = sum(snapshot.nbytes for key, (_, snapshot) in self._checkpoints.items() if key != job.key)
         error = f"checkpoint_budget_bytes ({budget}) exceeded; drop a checkpoint first"
         if retained + session.payload_bytes() > budget:
             raise CheckpointError(error)

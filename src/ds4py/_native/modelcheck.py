@@ -15,9 +15,7 @@ NATIVE_REFUSED = 3
 PYTHON_ERROR = 4
 
 
-def exit_error(
-    status: int, stderr: str, model: Path, lock_file: Path
-) -> EngineError | None:
+def exit_error(status: int, stderr: str, model: Path, lock_file: Path) -> EngineError | None:
     if status == 0:
         return None
     lines = stderr.splitlines()
@@ -29,9 +27,7 @@ def exit_error(
             return ModelFileError(f"{model}: {native[-1]}")
         if status == NATIVE_REFUSED:
             return EngineError(native[-1])
-    return EngineError(
-        f"model inspection exited with status {status}:\n" + "\n".join(lines[-20:])
-    )
+    return EngineError(f"model inspection exited with status {status}:\n" + "\n".join(lines[-20:]))
 
 
 def inspect_model(lib: Path, config: EngineConfig, lock_file: Path) -> None:
@@ -60,9 +56,7 @@ def main(argv: list[str]) -> int:
         from .loader import load_library
 
         lib = load_library(Path(argv[0]))
-        options = engine_options(
-            EngineConfig(Path(argv[1]), backend=argv[2]), inspect_only=True
-        )
+        options = engine_options(EngineConfig(Path(argv[1]), backend=argv[2]), inspect_only=True)
         raw = ctypes.c_void_p()
         if lib.fn("ds4_engine_open")(ctypes.byref(raw), ctypes.byref(options)):
             return NATIVE_REFUSED

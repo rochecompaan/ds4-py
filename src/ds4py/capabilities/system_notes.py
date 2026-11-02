@@ -66,20 +66,14 @@ class DS4SystemNotes(AbstractCapability):
             return []
         parts = last.parts
         is_user = any(isinstance(part, UserPromptPart) for part in parts)
-        is_continuation = any(
-            isinstance(part, (ToolReturnPart, RetryPromptPart)) for part in parts
-        )
+        is_continuation = any(isinstance(part, (ToolReturnPart, RetryPromptPart)) for part in parts)
         if not (is_user or is_continuation):
             return []
 
         result: list[tuple[str, str]] = []
         if is_user and not self._date_emitted:
             now = self.clock()
-            when = (
-                now.strftime("%Y-%m-%d %H:%M:%S %Z")
-                if isinstance(now, datetime)
-                else str(now)
-            )
+            when = now.strftime("%Y-%m-%d %H:%M:%S %Z") if isinstance(now, datetime) else str(now)
             result.append((f"{DATE_PREFIX}{when}{DATE_SUFFIX}", "date"))
 
         if self.hints_enabled and not self._hints_full_emitted:

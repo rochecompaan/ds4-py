@@ -46,15 +46,7 @@ class EngineInfo:
 
 
 def family_of(*, deepseek41: bool, glm: bool, qwen: bool) -> str:
-    return (
-        "deepseek41"
-        if deepseek41
-        else "glm"
-        if glm
-        else "qwen"
-        if qwen
-        else "deepseek4"
-    )
+    return "deepseek41" if deepseek41 else "glm" if glm else "qwen" if qwen else "deepseek4"
 
 
 class SyncStatus(Enum):
@@ -123,9 +115,7 @@ class EngineHandle(Protocol):
     def tokenize(self, text: str, *, rendered: bool = False) -> list[int]: ...
     def chat_begin(self) -> list[int]: ...
     def think_prefix(self, prefix: Sequence[int], mode: int) -> list[int]: ...
-    def render_message(
-        self, prefix: Sequence[int], role: str, content: str
-    ) -> list[int]: ...
+    def render_message(self, prefix: Sequence[int], role: str, content: str) -> list[int]: ...
     def assistant_prefix(self, prefix: Sequence[int], mode: int) -> list[int]: ...
     def qwen_reasoning_effort(self, mode: int) -> str | None: ...
     def token_text(self, token: int) -> bytes: ...

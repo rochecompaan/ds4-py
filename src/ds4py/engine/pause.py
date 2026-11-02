@@ -36,9 +36,7 @@ class StopSequenceMatcher:
 
     @property
     def active_sequences(self) -> list[bytes]:
-        return [
-            sequence for sequence, state in zip(self.sequences, self._states) if state
-        ]
+        return [sequence for sequence, state in zip(self.sequences, self._states) if state]
 
     def feed(self, data: bytes) -> bytes | None:
         """Consume arbitrary byte chunks and return the first completed sequence."""
@@ -90,9 +88,7 @@ class ControlSpan:
         self.active_stop_sequences = self.matcher.active_sequences
 
 
-def resolve_control(
-    current: ControlSpan | None, sequences: Iterable[bytes]
-) -> ControlSpan:
+def resolve_control(current: ControlSpan | None, sequences: Iterable[bytes]) -> ControlSpan:
     """Create fresh control or validate that a paused round keeps its sequences."""
     if current is None:
         return ControlSpan(sequences)

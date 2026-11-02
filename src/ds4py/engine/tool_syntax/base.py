@@ -6,9 +6,7 @@ from .model import Snapshot, ToolCall
 
 _THINK_OPEN = b"<think>"
 _THINK_CLOSE = b"</think>"
-_DSML_MARKERS = tuple(
-    marker.encode() for marker in ("｜DSML｜", "|DSML|", "<DSML｜", "</DSML｜")
-)
+_DSML_MARKERS = tuple(marker.encode() for marker in ("｜DSML｜", "|DSML|", "<DSML｜", "</DSML｜"))
 
 
 class ToolParser:
@@ -99,9 +97,7 @@ class ToolParser:
                 else:
                     self._start(form[1])
                 return
-            markers = (_THINK_OPEN, _THINK_CLOSE) + tuple(
-                form[0] for form in self._forms
-            )
+            markers = (_THINK_OPEN, _THINK_CLOSE) + tuple(form[0] for form in self._forms)
             if any(marker.startswith(pending) for marker in markers):
                 return
             ordinary = self._pending[0]
@@ -129,9 +125,7 @@ class ToolParser:
             return self._snapshot()
         if self._active:
             self._finish_active()
-        elif len(self._pending) > 1 and any(
-            form[0].startswith(self._pending) for form in self._forms
-        ):
+        elif len(self._pending) > 1 and any(form[0].startswith(self._pending) for form in self._forms):
             self._fail("incomplete tool-call opening marker")
         return self._snapshot()
 
@@ -143,9 +137,7 @@ class ToolParser:
         if self.state in ("DONE", "ERROR"):
             return False
         pending = bytes(self._pending)
-        if len(pending) > 1 and any(
-            form[0].startswith(pending) for form in self._forms
-        ):
+        if len(pending) > 1 and any(form[0].startswith(pending) for form in self._forms):
             return True
         if not self._active:
             return False

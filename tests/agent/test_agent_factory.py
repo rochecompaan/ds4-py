@@ -50,9 +50,7 @@ class MockSession:
 
 
 def _has_tool_return(messages: Any) -> bool:
-    return any(
-        isinstance(p, ToolReturnPart) for m in messages for p in getattr(m, "parts", [])
-    )
+    return any(isinstance(p, ToolReturnPart) for m in messages for p in getattr(m, "parts", []))
 
 
 def test_build_agent_components_behavior(tmp_path: Path) -> None:
@@ -71,9 +69,7 @@ def test_build_agent_components_behavior(tmp_path: Path) -> None:
         if _has_tool_return(messages):
             yield "done"
         else:
-            yield {
-                0: DeltaToolCall(name="read_file", json_args='{"path": "hello.txt"}')
-            }
+            yield {0: DeltaToolCall(name="read_file", json_args='{"path": "hello.txt"}')}
 
     base_model: Any = FunctionModel(scripted, stream_function=stream_function)
     base_model.session = MockSession()
@@ -81,12 +77,7 @@ def test_build_agent_components_behavior(tmp_path: Path) -> None:
 
     result = asyncio.run(components.agent.run("read hello"))
 
-    values = [
-        p
-        for m in result.all_messages()
-        for p in getattr(m, "parts", [])
-        if isinstance(p, ToolReturnPart)
-    ]
+    values = [p for m in result.all_messages() for p in getattr(m, "parts", []) if isinstance(p, ToolReturnPart)]
     assert any("world" in str(v.content) for v in values)
 
     events_file = tmp_path / "events.jsonl"
@@ -264,9 +255,7 @@ def test_no_ask_user_unless_interactive(tmp_path: Path) -> None:
     async def question_answerer(request: AskUserRequest) -> AskUserResponse:
         return AskUserResponse(
             answers=tuple(
-                AskUserAnswer(
-                    header=question.header, selected=(question.options[0].label,)
-                )
+                AskUserAnswer(header=question.header, selected=(question.options[0].label,))
                 for question in request.questions
             )
         )
@@ -294,9 +283,7 @@ def test_question_callback_has_a_typed_contract(tmp_path: Path) -> None:
         assert isinstance(request, AskUserRequest)
         return AskUserResponse(
             answers=tuple(
-                AskUserAnswer(
-                    header=question.header, selected=(question.options[0].label,)
-                )
+                AskUserAnswer(header=question.header, selected=(question.options[0].label,))
                 for question in request.questions
             )
         )

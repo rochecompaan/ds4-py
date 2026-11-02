@@ -14,34 +14,22 @@ from ds4py.errors import AbiMismatch
 LAYOUTS = {name: struct_layout(cls) for name, cls in STRUCTS.items()}
 
 
-def test_matching_manifest_is_accepted(
-    make_manifest: Any, tmp_path: Path, upstream_headers: Any
-) -> None:
+def test_matching_manifest_is_accepted(make_manifest: Any, tmp_path: Path, upstream_headers: Any) -> None:
     lib, m = make_manifest(tmp_path, upstream_headers)
-    v = manifest.validate(
-        m, lib_sha256=manifest.file_sha256(lib), bindings=CORE_BINDINGS, layouts=LAYOUTS
-    )
+    v = manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=CORE_BINDINGS, layouts=LAYOUTS)
     assert v.available == {b.name for b in CORE_BINDINGS} and v.warnings == ()
 
 
-def test_unknown_headers_only_warn(
-    make_manifest: Any, tmp_path: Path, fork_headers: Any
-) -> None:
+def test_unknown_headers_only_warn(make_manifest: Any, tmp_path: Path, fork_headers: Any) -> None:
     lib, m = make_manifest(tmp_path, fork_headers)
     m.headers["ds4.h"] = "0" * 64
-    v = manifest.validate(
-        m, lib_sha256=manifest.file_sha256(lib), bindings=CORE_BINDINGS, layouts=LAYOUTS
-    )
+    v = manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=CORE_BINDINGS, layouts=LAYOUTS)
     assert "unknown header ds4.h: 000000000000" in v.warnings
 
 
-def test_changed_prototype_is_refused(
-    make_manifest: Any, tmp_path: Path, upstream_headers: Any
-) -> None:
+def test_changed_prototype_is_refused(make_manifest: Any, tmp_path: Path, upstream_headers: Any) -> None:
     lib, m = make_manifest(tmp_path, upstream_headers)
-    m.bindings[
-        "ds4_session_eval"
-    ].prototype = "int ds4_session_eval(ds4_session *, long, char *, size_t)"
+    m.bindings["ds4_session_eval"].prototype = "int ds4_session_eval(ds4_session *, long, char *, size_t)"
     with pytest.raises(AbiMismatch) as e:
         manifest.validate(
             m,
@@ -62,9 +50,7 @@ def test_moved_field_is_refused(make_manifest: Any, tmp_path: Path) -> None:
         "    int context_size;\n    int n_threads;",
     )
     lib, m = make_manifest(tmp_path, inc)
-    with pytest.raises(
-        AbiMismatch, match=r"ds4_engine_options\.(n_threads|context_size)"
-    ):
+    with pytest.raises(AbiMismatch, match=r"ds4_engine_options\.(n_threads|context_size)"):
         manifest.validate(
             m,
             lib_sha256=manifest.file_sha256(lib),
@@ -90,13 +76,9 @@ def test_failed_required_probe_is_refused(make_manifest: Any, tmp_path: Path) ->
         )
 
 
-def test_library_hash_mismatch_is_refused(
-    make_manifest: Any, tmp_path: Path, upstream_headers: Any
-) -> None:
+def test_library_hash_mismatch_is_refused(make_manifest: Any, tmp_path: Path, upstream_headers: Any) -> None:
     lib, m = make_manifest(tmp_path, upstream_headers)
-    lib.write_bytes(
-        lib.read_bytes() + b"rebuilt"
-    )  # the library changed after its manifest was written
+    lib.write_bytes(lib.read_bytes() + b"rebuilt")  # the library changed after its manifest was written
     with pytest.raises(AbiMismatch, match="ds4py build"):
         manifest.validate(
             m,
@@ -106,9 +88,7 @@ def test_library_hash_mismatch_is_refused(
         )
 
 
-def test_type_map_version_mismatch_is_refused(
-    make_manifest: Any, tmp_path: Path, upstream_headers: Any
-) -> None:
+def test_type_map_version_mismatch_is_refused(make_manifest: Any, tmp_path: Path, upstream_headers: Any) -> None:
     lib, m = make_manifest(tmp_path, upstream_headers)
     m = replace(m, type_map_version=TYPE_MAP_VERSION + 1)
     with pytest.raises(AbiMismatch, match="ds4py build"):
@@ -123,9 +103,7 @@ def test_type_map_version_mismatch_is_refused(
 def test_unprobed_extension_binding_is_refused(
     make_manifest: Any, tmp_path: Path, upstream_headers: Any, ext_site: Any
 ) -> None:
-    lib, m = make_manifest(
-        tmp_path, upstream_headers
-    )  # probed before the extension was installed
+    lib, m = make_manifest(tmp_path, upstream_headers)  # probed before the extension was installed
     with pytest.raises(AbiMismatch, match="ds4_engine_layer_count"):
         manifest.validate(
             m,
@@ -145,10 +123,7 @@ def test_absent_optional_binding_is_listed(
         bindings=all_bindings(),
         layouts=LAYOUTS,
     )
-    assert (
-        v.absent == {"ds4_engine_sampling_defaults"}
-        and "ds4_engine_layer_count" in v.available
-    )
+    assert v.absent == {"ds4_engine_sampling_defaults"} and "ds4_engine_layer_count" in v.available
 
 
 @pytest.mark.parametrize("records", [{}, None, []])
@@ -167,9 +142,7 @@ def test_metal_manifest_requires_shader_records(
         )
 
 
-def test_manifest_round_trips(
-    make_manifest: Any, tmp_path: Path, upstream_headers: Any
-) -> None:
+def test_manifest_round_trips(make_manifest: Any, tmp_path: Path, upstream_headers: Any) -> None:
     lib, m = make_manifest(tmp_path, upstream_headers)
     m.write(tmp_path / "m.json")
     assert manifest.Manifest.read(tmp_path / "m.json") == m
@@ -231,9 +204,7 @@ def test_failed_atomic_write_preserves_old_manifest(
     assert set(tmp_path.iterdir()) == {lib, path}
 
 
-@pytest.mark.parametrize(
-    "ok", ["false", "true", 1, 0, {"ok": False}, [False], None, ""]
-)
+@pytest.mark.parametrize("ok", ["false", "true", 1, 0, {"ok": False}, [False], None, ""])
 @pytest.mark.parametrize("required", [True, False])
 def test_non_boolean_probe_result_is_refused(
     make_manifest: Any, tmp_path: Path, upstream_headers: Any, ok: Any, required: Any
@@ -242,14 +213,10 @@ def test_non_boolean_probe_result_is_refused(
     binding = replace(CORE_BINDINGS[0], required=required)
     m.bindings[binding.name].ok = ok
     with pytest.raises(AbiMismatch, match=rf"{binding.name}.*boolean.*ds4py build"):
-        manifest.validate(
-            m, lib_sha256=manifest.file_sha256(lib), bindings=[binding], layouts=LAYOUTS
-        )
+        manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=[binding], layouts=LAYOUTS)
 
 
-@pytest.mark.parametrize(
-    "ok, required", [(True, True), (False, True), (True, False), (False, False)]
-)
+@pytest.mark.parametrize("ok, required", [(True, True), (False, True), (True, False), (False, False)])
 def test_boolean_probe_results_preserve_required_and_optional_semantics(
     make_manifest: Any,
     tmp_path: Path,
@@ -264,9 +231,7 @@ def test_boolean_probe_results_preserve_required_and_optional_semantics(
     m.write(path)
     m = manifest.Manifest.read(path)
     if required and not ok:
-        with pytest.raises(
-            AbiMismatch, match=rf"{binding.name}.*required signature probe failed"
-        ):
+        with pytest.raises(AbiMismatch, match=rf"{binding.name}.*required signature probe failed"):
             manifest.validate(
                 m,
                 lib_sha256=manifest.file_sha256(lib),
@@ -274,8 +239,6 @@ def test_boolean_probe_results_preserve_required_and_optional_semantics(
                 layouts=LAYOUTS,
             )
     else:
-        v = manifest.validate(
-            m, lib_sha256=manifest.file_sha256(lib), bindings=[binding], layouts=LAYOUTS
-        )
+        v = manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=[binding], layouts=LAYOUTS)
         assert v.available == ({binding.name} if ok else set())
         assert v.absent == (set() if ok else {binding.name})

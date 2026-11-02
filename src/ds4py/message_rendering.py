@@ -43,12 +43,8 @@ def stable_text(value: object) -> str:
         return value
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
-    if isinstance(value, Mapping) or (
-        isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
-    ):
-        return json.dumps(
-            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        )
+    if isinstance(value, Mapping) or (isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return str(value)
 
 
@@ -95,9 +91,7 @@ class MessageRenderer:
                 index += 1
             else:
                 results = []
-                while index < len(parts) and isinstance(
-                    parts[index], (ToolReturnPart, RetryPromptPart)
-                ):
+                while index < len(parts) and isinstance(parts[index], (ToolReturnPart, RetryPromptPart)):
                     current = parts[index]
                     if isinstance(current, ToolReturnPart):
                         results.append(
@@ -132,11 +126,7 @@ class MessageRenderer:
         spans: list[tuple[str, bool]] = []
         sampled = (message.metadata or {}).get("ds4.source") == "sampled"
         family = self.engine.info.family
-        parts = [
-            part
-            for part in message.parts
-            if not isinstance(part, (TextPart, ThinkingPart)) or part.content
-        ]
+        parts = [part for part in message.parts if not isinstance(part, (TextPart, ThinkingPart)) or part.content]
         in_thinking = False
 
         def close_thinking() -> None:
@@ -158,9 +148,7 @@ class MessageRenderer:
                     spans.append((part.content, True))
                     in_thinking = True
                 else:
-                    spans.extend(
-                        (("<think>", True), (part.content, False), ("</think>", True))
-                    )
+                    spans.extend((("<think>", True), (part.content, False), ("</think>", True)))
                 index += 1
             elif family in ("deepseek4", "deepseek41"):
                 close_thinking()
@@ -220,18 +208,12 @@ class MessageRenderer:
         if isinstance(message, ModelRequest):
             segments = self.request_segments(builder, target.transcript.tokens, message)
         else:
-            segments = self.response_segments(
-                builder, target.transcript.tokens, message
-            )
+            segments = self.response_segments(builder, target.transcript.tokens, message)
         meta = {"key": key, "content_hash": content_hash, "source": "rendered"}
-        sampled = isinstance(message, ModelResponse) and (
-            (message.metadata or {}).get("ds4.source") == "sampled"
-        )
+        sampled = isinstance(message, ModelResponse) and ((message.metadata or {}).get("ds4.source") == "sampled")
         for segment in segments:
             if segment.tokens:
-                segment_meta = (
-                    None if sampled and segment.kind == "assistant_prefix" else meta
-                )
+                segment_meta = None if sampled and segment.kind == "assistant_prefix" else meta
                 target.append_tokens(segment.tokens, segment.kind, segment_meta)
         return start, len(target.transcript)
 
@@ -249,9 +231,7 @@ class MessageRenderer:
                 if not isinstance(part, ToolCallPart):
                     continue
                 if separated:
-                    raise ValueError(
-                        "cannot restore a tool call after ordinary text following a call"
-                    )
+                    raise ValueError("cannot restore a tool call after ordinary text following a call")
                 saw_call = True
                 details = part.provider_details or {}
                 if sampled and isinstance(details.get("ds4py.raw"), str):

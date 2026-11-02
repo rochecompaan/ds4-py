@@ -16,21 +16,15 @@ def event(kind: Any, payload: Any = None, run_id: Any = "run-1") -> dict[str, An
     return {"kind": kind, "run_id": run_id, "payload": payload or {}}
 
 
-def synced(
-    kind: Any = "extend", reused: Any = 80, to_prefill: Any = 20, reason: Any = None
-) -> Any:
+def synced(kind: Any = "extend", reused: Any = 80, to_prefill: Any = 20, reason: Any = None) -> Any:
     plan = {"kind": kind, "reused": reused, "to_prefill": to_prefill}
-    payload = {
-        "event": {"pos": reused + to_prefill, "plan": plan, "prefilled": to_prefill}
-    }
+    payload = {"event": {"pos": reused + to_prefill, "plan": plan, "prefilled": to_prefill}}
     if reason is not None:
         payload["exception_reason"] = reason
     return event("Synced", payload)
 
 
-def result_part(
-    part_kind: Any = "tool-return", outcome: Any = "success"
-) -> dict[str, Any]:
+def result_part(part_kind: Any = "tool-return", outcome: Any = "success") -> dict[str, Any]:
     return event(
         "ToolResultEvent",
         {

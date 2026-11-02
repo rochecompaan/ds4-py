@@ -81,9 +81,7 @@ def write_raw_record(path: Path, data: dict) -> None:
         (KV_HEADER.pack(KV_MAGIC, KV_VERSION, 3) + b"abcd", "extra"),
     ],
 )
-def test_corrupt_kv_files_fail_with_the_path_and_reason(
-    tmp_path: Path, contents: Any, reason: Any
-) -> None:
+def test_corrupt_kv_files_fail_with_the_path_and_reason(tmp_path: Path, contents: Any, reason: Any) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("session-1") / "session.kv"
     path.parent.mkdir(parents=True)
@@ -100,9 +98,7 @@ def test_corrupt_kv_files_fail_with_the_path_and_reason(
     "contents",
     [b"{not json", b"\xff\xfe", b"[]", b"null"],
 )
-def test_malformed_record_json_fails_with_the_path(
-    tmp_path: Path, contents: Any
-) -> None:
+def test_malformed_record_json_fails_with_the_path(tmp_path: Path, contents: Any) -> None:
     store = SessionStore(tmp_path)
     path = store.session_dir("session-1") / "save.json"
     path.parent.mkdir(parents=True)

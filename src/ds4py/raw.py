@@ -21,16 +21,11 @@ from ds4py.errors import EngineError
 
 def _escape(data: bytes) -> bytes:
     escapes = {92: b"\\\\", 10: b"\\n", 13: b"\\r", 9: b"\\t", 34: b'\\"'}
-    return b"".join(
-        escapes.get(b, f"\\x{b:02x}".encode() if b < 32 or b == 127 else bytes([b]))
-        for b in data
-    )
+    return b"".join(escapes.get(b, f"\\x{b:02x}".encode() if b < 32 or b == 127 else bytes([b])) for b in data)
 
 
 class Trace:
-    def __init__(
-        self, path: Path, *, now: Callable[[], datetime] = datetime.now
-    ) -> None:
+    def __init__(self, path: Path, *, now: Callable[[], datetime] = datetime.now) -> None:
         self.path, self.now = path, now
 
     def __enter__(self) -> Trace:
@@ -102,9 +97,7 @@ def run_raw(
     session = engine.session()
     session.append_tokens(tokens, "user")
     if not session.plan().fits:
-        err.write(
-            f"ds4py: prompt of {len(tokens)} tokens does not fit a context of {engine.config.ctx}\n"
-        )
+        err.write(f"ds4py: prompt of {len(tokens)} tokens does not fit a context of {engine.config.ctx}\n")
         return 2
     main_thread = threading.current_thread() is threading.main_thread()
     previous: Any = None

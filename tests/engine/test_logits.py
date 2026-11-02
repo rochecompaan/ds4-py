@@ -18,15 +18,11 @@ from ds4py.errors import EngineError
 
 
 def scripted(*tokens: Any) -> Any:
-    return lambda prompt, generated: (
-        tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
-    )
+    return lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
 
 @contextmanager
-def fake_session(
-    script: Any, *, chat: Any = False, think: Any = ThinkMode.HIGH
-) -> Iterator[Any]:
+def fake_session(script: Any, *, chat: Any = False, think: Any = ThinkMode.HIGH) -> Iterator[Any]:
     with ds4py.open(
         Path("f.gguf"),
         ctx=1024,
@@ -140,24 +136,17 @@ def test_raw_sampled_tokens_survive_stop_sequence_resume() -> None:
     def script(prompt: Any, generated: Any) -> Any:
         tokens = (
             following
-            if any(
-                tuple(prompt[index : index + len(stop)]) == stop
-                for index in range(len(prompt) - len(stop) + 1)
-            )
+            if any(tuple(prompt[index : index + len(stop)]) == stop for index in range(len(prompt) - len(stop) + 1))
             else stop
         )
         return tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
     states = []
     with fake_session(script, think=ThinkMode.NONE) as session:
-        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped(
-            "stop_sequence"
-        )
+        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped("stop_sequence")
         # Registration after the pause proves the round owns this history.
         session.add_logits_hook(lambda view: states.append(view.sampled_tokens))
-        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped(
-            "stop_token"
-        )
+        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped("stop_token")
 
     assert states[0] == stop
     assert states[-1] == stop + following
@@ -174,9 +163,7 @@ def test_hook_state_tracks_only_committed_tokens() -> None:
         prompt_length = len(session.transcript.tokens)
         # run_round appends the assistant prefix before the first hook.
         assistant_prefix = session._worker.call(
-            lambda engine, native: engine.assistant_prefix(
-                session._transcript.tokens, ThinkMode.NONE
-            )
+            lambda engine, native: engine.assistant_prefix(session._transcript.tokens, ThinkMode.NONE)
         ).result()
         initial_position = prompt_length + len(assistant_prefix)
         states = []
@@ -195,9 +182,7 @@ def test_hook_state_tracks_only_committed_tokens() -> None:
         session.add_logits_hook(hook)
         events = list(session.run_round())
         assert emitted_ids(events) == tokens
-        assert [state[0] for state in states] == [
-            initial_position + index for index in range(len(tokens) + 1)
-        ]
+        assert [state[0] for state in states] == [initial_position + index for index in range(len(tokens) + 1)]
         assert [state[1] for state in states] == [
             True,
             True,
@@ -210,9 +195,7 @@ def test_hook_state_tracks_only_committed_tokens() -> None:
         ]
         assert [state[2] for state in states] == [0, 1, 2, 0, 0, 1, 2, 0]
         assert [state[3] for state in states] == ["SEARCH"] * (len(tokens) + 1)
-        assert [state[4] for state in states] == [
-            tuple(tokens[:index]) for index in range(len(tokens) + 1)
-        ]
+        assert [state[4] for state in states] == [tuple(tokens[:index]) for index in range(len(tokens) + 1)]
 
 
 def test_hooks_share_a_view_and_run_in_order_on_the_worker_thread() -> None:
@@ -227,9 +210,7 @@ def test_hooks_share_a_view_and_run_in_order_on_the_worker_thread() -> None:
         views.append(view)
 
     with fake_session(scripted(7, FAKE_EOS)) as session:
-        worker_thread = session.on_worker(
-            lambda handles: threading.get_ident()
-        ).result()
+        worker_thread = session.on_worker(lambda handles: threading.get_ident()).result()
         session.add_logits_hook(first)
         session.add_logits_hook(second)
         list(session.run_round())
@@ -284,9 +265,7 @@ def test_literal_think_in_tool_argument_does_not_change_hook_control_state() -> 
     ) as engine:
         session = engine.session()
         session.append_user("read")
-        session.add_logits_hook(
-            lambda view: states.append((view.in_think, view.think_tokens))
-        )
+        session.add_logits_hook(lambda view: states.append((view.in_think, view.think_tokens)))
         events = list(session.run_round())
     assert events[-1] == Stopped("tool_call_complete")
     assert len(states) == len(tokens) + 1

@@ -119,9 +119,7 @@ def test_targeted_runs_each_task_three_times_independently(
         for task_id in ("scale-generator", "repo-ctx-command")
         for repetition in range(1, 4)
     ]
-    assert all(
-        call[1].tokens == 8192 and call[1].request_limit == 100 for call in calls
-    )
+    assert all(call[1].tokens == 8192 and call[1].request_limit == 100 for call in calls)
 
     data = json.loads((results / "targeted.json").read_text())
     assert len(data) == 6

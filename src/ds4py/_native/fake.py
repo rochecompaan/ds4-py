@@ -53,24 +53,18 @@ def decode_payload(data: bytes, payload_bytes: int) -> list[int]:
     if payload_bytes == 0:
         return []
     if len(data) != payload_bytes:
-        raise EngineError(
-            f"truncated payload: declared {payload_bytes} bytes, read {len(data)}"
-        )
+        raise EngineError(f"truncated payload: declared {payload_bytes} bytes, read {len(data)}")
     if payload_bytes % PAYLOAD_STRIDE:
         raise EngineError(f"corrupt payload: invalid size {payload_bytes}")
     if payload_bytes < PAYLOAD_HEADER.size:
-        raise EngineError(
-            f"corrupt payload: header is truncated at {payload_bytes} bytes"
-        )
+        raise EngineError(f"corrupt payload: header is truncated at {payload_bytes} bytes")
     magic, version, count, checksum = PAYLOAD_HEADER.unpack_from(data)
     if magic != PAYLOAD_MAGIC:
         raise EngineError("corrupt payload: bad magic")
     if version != PAYLOAD_VERSION:
         raise EngineError(f"corrupt payload: unsupported version {version}")
     if count != payload_bytes // PAYLOAD_STRIDE:
-        raise EngineError(
-            f"corrupt payload: token count {count} does not match its size"
-        )
+        raise EngineError(f"corrupt payload: token count {count} does not match its size")
     end = PAYLOAD_HEADER.size + count * 4
     raw = data[PAYLOAD_HEADER.size : end]
     if data[end:] != bytes(payload_bytes - end):
@@ -167,9 +161,7 @@ class _Handle:
         self._thread = threading.get_ident()
 
     def _assert_thread(self) -> None:
-        assert threading.get_ident() == self._thread, (
-            "fake handle used on another thread"
-        )
+        assert threading.get_ident() == self._thread, "fake handle used on another thread"
 
     def _check(self) -> None:
         self._assert_thread()
@@ -208,9 +200,7 @@ class FakeEngine(_Handle):
         self._check()
         return fake_chat.think_prefix(self, prefix, mode)
 
-    def render_message(
-        self, prefix: Sequence[int], role: str, content: str
-    ) -> list[int]:
+    def render_message(self, prefix: Sequence[int], role: str, content: str) -> list[int]:
         self._check()
         return fake_chat.render_message(self, prefix, role, content)
 
@@ -335,9 +325,7 @@ class FakeSession(_Handle):
         if not self._valid:
             return None
         if self._logits is None:
-            token = self._native.script(
-                self._tokens[: self._prompt_length], self._tokens[self._prompt_length :]
-            )
+            token = self._native.script(self._tokens[: self._prompt_length], self._tokens[self._prompt_length :])
             distribution = [0.0] * self._engine.info().vocab_size
             if 0 <= token < len(distribution):
                 distribution[token] = 1.0

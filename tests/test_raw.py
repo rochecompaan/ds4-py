@@ -26,9 +26,7 @@ def raw(
     cancel: Any = None,
 ) -> Any:
     out, err = io.BytesIO(), io.StringIO()
-    with ds4py.open(
-        "f.gguf", ctx=ctx, cancel=cancel, native=FakeNative(script=script)
-    ) as e:
+    with ds4py.open("f.gguf", ctx=ctx, cancel=cancel, native=FakeNative(script=script)) as e:
         code = run_raw(
             e,
             prompt,
@@ -46,9 +44,7 @@ def test_writes_the_token_bytes_and_nothing_else() -> None:
     assert raw(script=reply(b"hello"), max_tokens=3) == (0, b"hel", "")
 
 
-def test_cli_negative_budget_generates_no_output(
-    opened: Any, capsysbinary: pytest.CaptureFixture[bytes]
-) -> None:
+def test_cli_negative_budget_generates_no_output(opened: Any, capsysbinary: pytest.CaptureFixture[bytes]) -> None:
     assert cli.main(["raw", "hi", "-n", "-1"]) == 0
     captured = capsysbinary.readouterr()
     assert captured.out == b"" and captured.err == b""
@@ -110,13 +106,9 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return seen
 
 
-def test_cli_passes_the_flags_through(
-    opened: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cli_passes_the_flags_through(opened: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     ran = []
-    monkeypatch.setattr(
-        raw_mod, "run_raw", lambda engine, prompt, **kw: ran.append((prompt, kw)) or 0
-    )
+    monkeypatch.setattr(raw_mod, "run_raw", lambda engine, prompt, **kw: ran.append((prompt, kw)) or 0)
     assert (
         cli.main(
             [
@@ -203,16 +195,12 @@ def test_cli_reports_errors_without_a_traceback(
     opened: Any, capsysbinary: pytest.CaptureFixture[bytes], tmp_path: Path
 ) -> None:
     assert cli.main(["raw", "-p", ""]) == 1
-    assert (
-        capsysbinary.readouterr().err == b"ds4py: raw prompt tokenized to no tokens\n"
-    )
+    assert capsysbinary.readouterr().err == b"ds4py: raw prompt tokenized to no tokens\n"
     assert cli.main(["raw", "--prompt-file", str(tmp_path / "missing")]) == 1
     assert b"ds4py:" in capsysbinary.readouterr().err
 
 
-def test_cli_trace_and_explicit_prompt(
-    opened: Any, capsysbinary: pytest.CaptureFixture[bytes], tmp_path: Path
-) -> None:
+def test_cli_trace_and_explicit_prompt(opened: Any, capsysbinary: pytest.CaptureFixture[bytes], tmp_path: Path) -> None:
     path = tmp_path / "trace.log"
     assert cli.main(["raw", "-p", "a", "--trace", str(path), "--min-p", "0"]) == 0
     assert capsysbinary.readouterr().out == b"ok"
@@ -233,10 +221,7 @@ def test_cli_prompt_file_preserves_crlf_and_lone_cr(
     prompt_file = tmp_path / "prompt.txt"
     prompt_file.write_bytes(b"a\r\nb\rc\n")
     trace_file = tmp_path / "trace.log"
-    assert (
-        cli.main(["raw", "--prompt-file", str(prompt_file), "--trace", str(trace_file)])
-        == 0
-    )
+    assert cli.main(["raw", "--prompt-file", str(prompt_file), "--trace", str(trace_file)]) == 0
     assert capsysbinary.readouterr().out == b"ok"
     assert read_trace_tokens(trace_file) == ([98, 14, 11, 99, 14, 100, 11], [112, 108])
 
@@ -248,9 +233,7 @@ def test_cli_prompt_file_preserves_crlf_and_lone_cr(
         b"2026-10-21 09:05:07.042 tokens label=raw_prompt_tokens start=0 len=1",
     ],
 )
-def test_trace_reader_does_not_treat_token_payload_as_run_marker(
-    tmp_path: Path, payload: Any
-) -> None:
+def test_trace_reader_does_not_treat_token_payload_as_run_marker(tmp_path: Path, payload: Any) -> None:
     path = tmp_path / "trace.log"
     with Trace(path, now=lambda: datetime(2026, 10, 21, 9, 5, 7, 42_000)) as trace:
         trace.line("tokens label=raw_prompt_tokens start=0 len=1")

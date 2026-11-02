@@ -125,12 +125,8 @@ def test_system_and_instruction_parts_are_separate_system_segments() -> None:
         assert decoded.index("# Tools") < decoded.index("system text")
         segments = session.transcript.segments[before:][-2:]
         assert [segment.kind for segment in segments] == ["system", "system"]
-        assert "system text" in decode(
-            engine, session.transcript.tokens[segments[0].start : segments[0].end]
-        )
-        assert "instruction text" in decode(
-            engine, session.transcript.tokens[segments[1].start : segments[1].end]
-        )
+        assert "system text" in decode(engine, session.transcript.tokens[segments[0].start : segments[0].end])
+        assert "instruction text" in decode(engine, session.transcript.tokens[segments[1].start : segments[1].end])
 
 
 def test_user_text_is_plain_and_tool_markup_is_not_rendered() -> None:
@@ -141,10 +137,7 @@ def test_user_text_is_plain_and_tool_markup_is_not_rendered() -> None:
         segment = session.transcript.segments[-1]
         tokens = list(session.transcript.tokens[segment.start : segment.end])
         plain = engine.tokenize(payload)
-        assert any(
-            tokens[index : index + len(plain)] == plain
-            for index in range(len(tokens) - len(plain) + 1)
-        )
+        assert any(tokens[index : index + len(plain)] == plain for index in range(len(tokens) - len(plain) + 1))
 
 
 def test_tool_results_join_in_history_order_as_one_tool_message() -> None:
@@ -167,10 +160,7 @@ def test_tool_results_join_in_history_order_as_one_tool_message() -> None:
             engine,
             session.transcript.tokens[tool_segments[0].start : tool_segments[0].end],
         )
-        assert (
-            "Tool result 1 (read_file):\nresult 1\n\nTool result 2 (edit_file):\nresult 2"
-            in text
-        )
+        assert "Tool result 1 (read_file):\nresult 1\n\nTool result 2 (edit_file):\nresult 2" in text
 
 
 def test_scalar_and_structured_tool_results_have_stable_text() -> None:
@@ -212,22 +202,14 @@ def test_unknown_tool_result_uses_tool_error_text() -> None:
                 )
             ]
         )
-        assert "Tool error: unknown tool missing" in decode(
-            engine, session.transcript.tokens
-        )
+        assert "Tool error: unknown tool missing" in decode(engine, session.transcript.tokens)
 
 
 def test_images_fail_before_mutating_the_transcript() -> None:
     with fake_engine() as engine:
         session = engine.session()
         binder = MessageBinder(session)
-        message = ModelRequest(
-            [
-                UserPromptPart(
-                    [BinaryImage(data=b"not really a png", media_type="image/png")]
-                )
-            ]
-        )
+        message = ModelRequest([UserPromptPart([BinaryImage(data=b"not really a png", media_type="image/png")])])
 
         with pytest.raises(EngineError, match="M5"):
             binder.prepare([message], tools=[tool()], instructions="rules")

@@ -34,18 +34,12 @@ def test_multiple_installs_keep_a_readers_generation(
         pairs.append(make_manifest(src, upstream_headers))
     out = tmp_path / "out"
     current = build.install(pairs[0][0], pairs[0][1], out)
-    held = (
-        load_library(current).path
-        if reader_state == "loaded"
-        else current.resolve(strict=True)
-    )
+    held = load_library(current).path if reader_state == "loaded" else current.resolve(strict=True)
     expected = held.read_bytes()
     build.install(pairs[1][0], pairs[1][1], out)
     build.install(pairs[2][0], pairs[2][1], out)
     assert held.read_bytes() == expected
-    assert manifest.Manifest.read(
-        manifest_path(held)
-    ).library_sha256 == manifest.file_sha256(held)
+    assert manifest.Manifest.read(manifest_path(held)).library_sha256 == manifest.file_sha256(held)
     assert load_library(held).path == held
 
 
@@ -84,9 +78,7 @@ def test_default_root_is_expanded_at_call_time(
     assert loader.default_lib_dir() == tmp_path / "another/lib"
 
 
-def test_custom_root_loses_to_explicit_library_paths(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_custom_root_loses_to_explicit_library_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "custom"
     monkeypatch.setenv("DS4PY_HOME", str(root))
     monkeypatch.delenv("DS4_LIB", raising=False)
@@ -107,27 +99,21 @@ def test_resolution_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert resolve_lib_path(None) == tmp_path / ".ds4py" / "lib" / LIB_NAME
 
 
-def test_missing_library_says_how_to_build(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_missing_library_says_how_to_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("DS4_LIB", raising=False)
     with pytest.raises(LibraryNotFound, match="ds4py build --src"):
         load_library()
 
 
-def test_missing_manifest_is_refused_before_dlopen(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_missing_manifest_is_refused_before_dlopen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / LIB_NAME).write_bytes(b"x")
     monkeypatch.setattr(loader, "_dlopen", lambda p: pytest.fail("dlopen called"))
     with pytest.raises(AbiMismatch, match="libds4.abi.json"):
         load_library(tmp_path / LIB_NAME)
 
 
-def test_one_library_per_process(
-    make_manifest: Any, tmp_path: Path, upstream_headers: Any, stub_dlopen: Any
-) -> None:
+def test_one_library_per_process(make_manifest: Any, tmp_path: Path, upstream_headers: Any, stub_dlopen: Any) -> None:
     paths = []
     for name in ("a", "b"):  # two valid pairs in two directories
         (tmp_path / name).mkdir()
@@ -136,9 +122,7 @@ def test_one_library_per_process(
         paths.append(lib)
     lib_a, lib_b = paths
     assert load_library(lib_a) is load_library(lib_a)
-    with pytest.raises(
-        LibraryAlreadyLoaded, match=re.escape(str(lib_a.resolve()))
-    ):  # the loader reports real paths
+    with pytest.raises(LibraryAlreadyLoaded, match=re.escape(str(lib_a.resolve()))):  # the loader reports real paths
         load_library(lib_b)
 
 
@@ -154,9 +138,7 @@ def test_symlink_pairs_with_the_manifest_beside_the_real_file(
     link = tmp_path / LIB_NAME
     link.symlink_to(real)
     opened = []
-    monkeypatch.setattr(
-        loader, "_dlopen", lambda p: opened.append(p) or mock.MagicMock()
-    )
+    monkeypatch.setattr(loader, "_dlopen", lambda p: opened.append(p) or mock.MagicMock())
     real = real.resolve()  # tmp_path may itself sit under a symlink
     assert load_library(link).path == real and opened == [real]
 
@@ -171,12 +153,8 @@ def test_absent_optional_binding_raises_missing_binding(
     lib, m = make_manifest(tmp_path, upstream_headers, bindings=all_bindings())
     m.write(manifest_path(lib))
     loaded = load_library(lib)
-    assert loaded.has("ds4_engine_layer_count") and not loaded.has(
-        "ds4_engine_sampling_defaults"
-    )
-    with pytest.raises(
-        MissingBinding, match="ds4_engine_sampling_defaults is absent from this library"
-    ):
+    assert loaded.has("ds4_engine_layer_count") and not loaded.has("ds4_engine_sampling_defaults")
+    with pytest.raises(MissingBinding, match="ds4_engine_sampling_defaults is absent from this library"):
         loaded.fn("ds4_engine_sampling_defaults")
 
 
@@ -186,12 +164,8 @@ def test_undeclared_name_raises_missing_binding(
     lib, m = make_manifest(tmp_path, upstream_headers)
     m.write(manifest_path(lib))
     loaded = load_library(lib)
-    assert not loaded.has(
-        "ds4_session_tp_spec_cycle"
-    )  # in ds4.h, but no binding declares it
-    with pytest.raises(
-        MissingBinding, match="ds4py does not declare ds4_session_tp_spec_cycle"
-    ):
+    assert not loaded.has("ds4_session_tp_spec_cycle")  # in ds4.h, but no binding declares it
+    with pytest.raises(MissingBinding, match="ds4py does not declare ds4_session_tp_spec_cycle"):
         loaded.fn("ds4_session_tp_spec_cycle")
 
 

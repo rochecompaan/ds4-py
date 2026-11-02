@@ -26,9 +26,7 @@ DSML = (
 
 def scripted(tokens: Any) -> Any:
     tokens = tuple(tokens)
-    return lambda prompt, generated: (
-        tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
-    )
+    return lambda prompt, generated: tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
 
 
 @pytest.fixture
@@ -102,17 +100,11 @@ def token_ids(events: Any) -> Any:
 
 
 def test_first_stop_token_has_no_eval_or_commit(workers: Any) -> None:
-    reason, events, transcript, worker, step, positions, error = run_step(
-        workers, [0], []
-    )
-    assert (
-        error is None and reason == "stop_token" and events == [Stopped("stop_token")]
-    )
+    reason, events, transcript, worker, step, positions, error = run_step(workers, [0], [])
+    assert error is None and reason == "stop_token" and events == [Stopped("stop_token")]
     assert transcript.tokens == (5, 6) and positions == []
     assert worker.call(lambda e, s: s.pos()).result() == 2
-    assert not [
-        call for call in worker.call(lambda e, s: s.calls).result() if call[0] == "eval"
-    ]
+    assert not [call for call in worker.call(lambda e, s: s.calls).result() if call[0] == "eval"]
 
 
 def test_later_stop_rewinds_before_publishing_kept_tokens(workers: Any) -> None:
@@ -163,9 +155,7 @@ def test_tool_boundary_discards_later_drafts(workers: Any) -> None:
 def test_drafts_are_capped_at_sixteen_and_sampling_resumes(workers: Any) -> None:
     tokens = list(range(1, 41))
     blocks = [tokens[1:], *block_chunks(tokens[17:])]
-    reason, events, transcript, worker, step, positions, error = run_step(
-        workers, tokens, blocks
-    )
+    reason, events, transcript, worker, step, positions, error = run_step(workers, tokens, blocks)
     assert error is None and reason == "stop_token"
     assert token_ids(events) == tokens and transcript.tokens == (5, 6, *tokens)
     assert step.block_sizes == [17, 17, 6]
@@ -173,9 +163,7 @@ def test_drafts_are_capped_at_sixteen_and_sampling_resumes(workers: Any) -> None
 
 
 def test_empty_engine_block_raises_without_new_events(workers: Any) -> None:
-    reason, events, transcript, worker, step, positions, error = run_step(
-        workers, [98], [None]
-    )
+    reason, events, transcript, worker, step, positions, error = run_step(workers, [98], [None])
     assert reason is None and isinstance(error, EngineError)
     assert str(error) == "decode returned no tokens"
     assert events == [] and transcript.tokens == (5, 6) and positions == []

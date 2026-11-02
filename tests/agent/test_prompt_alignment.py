@@ -41,9 +41,7 @@ def test_default_prompt_aligns_agent_native_and_read_guidance() -> None:
 
     assert OPENING in prompt
     assert prompt.index(OPENING) < prompt.index("You have access to native DSML tools.")
-    assert prompt.index("You have access to native DSML tools.") < prompt.index(
-        '{"name":"read_file"'
-    )
+    assert prompt.index("You have access to native DSML tools.") < prompt.index('{"name":"read_file"')
     assert READ_GUIDANCE in prompt
 
     assert "edit_file" in prompt

@@ -35,9 +35,7 @@ def write_c_trace(path: Any, text: Any) -> Any:
         STAMP + f"agent worker start ctx=4096 backend=cpu model={MODEL} trace=c.trace",
         STAMP + f"tokens label=initial_system_prompt start=0 len={len(prompt)}",
     ]
-    lines.extend(
-        STAMP + f"token index={index} id={token}" for index, token in enumerate(prompt)
-    )
+    lines.extend(STAMP + f"token index={index} id={token}" for index, token in enumerate(prompt))
     lines.extend(
         [
             STAMP
@@ -45,17 +43,9 @@ def write_c_trace(path: Any, text: Any) -> Any:
             STAMP + f"tokens label=prefill_suffix start=0 len={len(prompt)}",
         ]
     )
-    lines.extend(
-        STAMP + f"token index={index} id={token}" for index, token in enumerate(prompt)
-    )
-    lines.extend(
-        STAMP + f"token index={index} id={token}"
-        for index, token in enumerate(sampled, 1)
-    )
-    lines.append(
-        STAMP
-        + f"generation finished tool_round=0 generated={len(sampled)} carried=0 context_limited=0"
-    )
+    lines.extend(STAMP + f"token index={index} id={token}" for index, token in enumerate(prompt))
+    lines.extend(STAMP + f"token index={index} id={token}" for index, token in enumerate(sampled, 1))
+    lines.append(STAMP + f"generation finished tool_round=0 generated={len(sampled)} carried=0 context_limited=0")
     path.write_text("\n".join(lines) + "\n")
     return sampled
 
@@ -213,9 +203,7 @@ def test_selection_includes_every_c_attempt_trace_and_requires_twelve_tasks(
     selected = select_c_traces(cast("Any", tasks))
 
     assert len(selected) == 24
-    assert [path for _task, path in selected] == [
-        path for pair in paths for path in pair
-    ]
+    assert [path for _task, path in selected] == [path for pair in paths for path in pair]
 
 
 def test_gate_six_cannot_pass_without_tool_call_evidence() -> None:

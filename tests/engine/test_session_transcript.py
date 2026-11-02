@@ -19,9 +19,7 @@ from ds4py.engine.events import Stopped, Synced, Token
         ("truncate", (0,)),
     ],
 )
-def test_public_transcript_has_no_mutators(
-    round_open: Any, method: Any, args: Any
-) -> None:
+def test_public_transcript_has_no_mutators(round_open: Any, method: Any, args: Any) -> None:
     with ds4py.open("f.gguf", ctx=64, native=FakeNative()) as engine:
         session = engine.session()
         session.append_tokens([5, 6], "user")
@@ -69,9 +67,7 @@ def test_retained_view_observes_worker_commits_without_exposing_writes(
         tokens, segments = view.tokens, view.segments
         rnd = session.run_round(max_tokens=2)
         try:
-            assert next(event for event in rnd if isinstance(event, Token)) == Token(
-                98, b"a"
-            )
+            assert next(event for event in rnd if isinstance(event, Token)) == Token(98, b"a")
             assert evaluating.wait(5)
             for method, args in [
                 ("append", ([7], "user")),

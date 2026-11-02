@@ -112,9 +112,7 @@ def test_whitespace_only_turn_with_remaining_content_is_accepted() -> None:
 
 
 def test_invalid_utf8_reports_the_source_line() -> None:
-    with pytest.raises(
-        PrefixError, match="line 3: invalid UTF-8 in ASSISTANT turn"
-    ) as caught:
+    with pytest.raises(PrefixError, match="line 3: invalid UTF-8 in ASSISTANT turn") as caught:
         parse_prefix(b"USER: ok\nASSISTANT: first\n\xff")
     assert isinstance(caught.value.__cause__, UnicodeDecodeError)
 
@@ -130,17 +128,13 @@ def test_load_prefix_reads_bytes(tmp_path: Path) -> None:
 
 def test_load_open_failure_includes_path_and_cause(tmp_path: Path) -> None:
     path = tmp_path / "missing.txt"
-    with pytest.raises(
-        PrefixError, match=rf"cannot open prefix file .*{path.name}"
-    ) as caught:
+    with pytest.raises(PrefixError, match=rf"cannot open prefix file .*{path.name}") as caught:
         load_prefix(path)
     assert str(path) in str(caught.value)
     assert isinstance(caught.value.__cause__, FileNotFoundError)
 
 
-def test_load_read_failure_includes_path_and_cause(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_load_read_failure_includes_path_and_cause(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "broken.txt"
 
     class BrokenReader:
@@ -154,9 +148,7 @@ def test_load_read_failure_includes_path_and_cause(
             raise OSError("read failed")
 
     monkeypatch.setattr(Path, "open", lambda self, *args: BrokenReader())
-    with pytest.raises(
-        PrefixError, match=rf"cannot read prefix file .*{path.name}: read failed"
-    ) as caught:
+    with pytest.raises(PrefixError, match=rf"cannot read prefix file .*{path.name}: read failed") as caught:
         load_prefix(path)
     assert str(path) in str(caught.value)
     assert isinstance(caught.value.__cause__, OSError)

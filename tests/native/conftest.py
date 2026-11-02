@@ -38,14 +38,10 @@ def stub_engine(cc: Any, upstream_headers: Any, tmp_path: Path) -> Iterator[Any]
     lib = Library(
         path,
         cast("Any", None),
-        cast(
-            "Any", SimpleNamespace(available={b.name for b in bindings}, absent=set())
-        ),
+        cast("Any", SimpleNamespace(available={b.name for b in bindings}, absent=set())),
         handle,
         bindings,
     )
-    engine = NativeEngine(
-        lib, 0x1234, EngineOptions(), InstanceLock.acquire(tmp_path / "lock")
-    )
+    engine = NativeEngine(lib, 0x1234, EngineOptions(), InstanceLock.acquire(tmp_path / "lock"))
     yield engine, handle
     engine.close()

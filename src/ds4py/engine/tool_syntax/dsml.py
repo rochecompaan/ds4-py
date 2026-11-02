@@ -100,12 +100,7 @@ class Dsml(ToolParser):
 
     def _push_current(self, end: int) -> None:
         if self._current_name is not None:
-            args = MappingProxyType(
-                {
-                    name: deepcopy(argument.value)
-                    for name, argument in self._args.items()
-                }
-            )
+            args = MappingProxyType({name: deepcopy(argument.value) for name, argument in self._args.items()})
             raw = self._decode(self.raw[self._call_start : end], "tool call raw")
             if raw is None:
                 return
@@ -183,9 +178,7 @@ class Dsml(ToolParser):
         while True:
             candidate = self.raw.find(_CLOSE_PREFIX, cursor)
             if candidate < 0:
-                self._param_scan_pos = max(
-                    self._param_value_start, len(self.raw) - len(_CLOSE_PREFIX) + 1
-                )
+                self._param_scan_pos = max(self._param_value_start, len(self.raw) - len(_CLOSE_PREFIX) + 1)
                 return None
             end = self._close_tag_at(candidate, self._parameter_name)
             if end is not None:

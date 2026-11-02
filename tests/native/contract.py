@@ -19,9 +19,7 @@ def check_extend_matches_rebuild(engine: Any, prompt: Any) -> None:
     events = []
     assert s.sync(prompt, progress=lambda *e: events.append(e)) is SyncStatus.DONE
     assert s.tokens() == list(prompt) and s.checkpoint_valid()
-    chunks = [
-        e for e in events if e[0] == "prefill_chunk"
-    ]  # Metal interleaves prefill_display
+    chunks = [e for e in events if e[0] == "prefill_chunk"]  # Metal interleaves prefill_display
     assert chunks[-1] == ("prefill_chunk", len(prompt), len(prompt))
     assert s.argmax() == rebuilt_argmax(s, prompt)
 
@@ -42,9 +40,7 @@ def check_eval_rewind_and_greedy(engine: Any, prompt: Any) -> None:
     s = engine.create_session(len(prompt) + 64)
     s.sync(prompt)
     tok = s.argmax()
-    assert (
-        s.sample(0.0, 0, 1.0, 0.0, ctypes.c_uint64(1)) == tok
-    )  # temperature 0 is greedy
+    assert s.sample(0.0, 0, 1.0, 0.0, ctypes.c_uint64(1)) == tok  # temperature 0 is greedy
     s.eval(tok)
     assert s.pos() == len(prompt) + 1
     s.rewind(len(prompt))

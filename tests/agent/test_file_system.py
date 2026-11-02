@@ -32,11 +32,7 @@ class MockSession:
 
 
 def _has_tool_return(messages: Any) -> bool:
-    return any(
-        isinstance(part, ToolReturnPart)
-        for message in messages
-        for part in getattr(message, "parts", [])
-    )
+    return any(isinstance(part, ToolReturnPart) for message in messages for part in getattr(message, "parts", []))
 
 
 def _run_agent(
@@ -113,9 +109,7 @@ def test_read_schema_uses_configured_default() -> None:
     assert set(schema["properties"]) == {"path", "offset", "limit"}
     assert schema["required"] == ["path"]
     assert schema["properties"]["limit"]["default"] is None
-    assert schema["properties"]["limit"]["description"] == (
-        "Maximum number of lines to return (default: 77)."
-    )
+    assert schema["properties"]["limit"]["description"] == ("Maximum number of lines to return (default: 77).")
     assert prepared[1] is other
 
 
@@ -126,15 +120,11 @@ def test_agent_exposes_configured_read_schema(tmp_path: Path) -> None:
     assert set(schema["properties"]) == {"path", "offset", "limit"}
     assert schema["required"] == ["path"]
     assert schema["properties"]["limit"]["default"] is None
-    assert schema["properties"]["limit"]["description"] == (
-        "Maximum number of lines to return (default: 160)."
-    )
+    assert schema["properties"]["limit"]["description"] == ("Maximum number of lines to return (default: 160).")
 
 
 def test_default_read_returns_160_lines_and_next_offset(tmp_path: Path) -> None:
-    (tmp_path / "lines.txt").write_text(
-        "".join(f"line-{number:03}\n" for number in range(1, 166))
-    )
+    (tmp_path / "lines.txt").write_text("".join(f"line-{number:03}\n" for number in range(1, 166)))
 
     content = _read_result(tmp_path, {"path": "lines.txt"})
 
@@ -144,9 +134,7 @@ def test_default_read_returns_160_lines_and_next_offset(tmp_path: Path) -> None:
 
 
 def test_explicit_read_limit_overrides_default(tmp_path: Path) -> None:
-    (tmp_path / "lines.txt").write_text(
-        "".join(f"line-{number:03}\n" for number in range(1, 166))
-    )
+    (tmp_path / "lines.txt").write_text("".join(f"line-{number:03}\n" for number in range(1, 166)))
 
     content = _read_result(tmp_path, {"path": "lines.txt", "limit": 20})
 
@@ -156,9 +144,7 @@ def test_explicit_read_limit_overrides_default(tmp_path: Path) -> None:
 
 
 def test_read_retains_50000_character_cap(tmp_path: Path) -> None:
-    (tmp_path / "large.txt").write_text(
-        "".join(f"{number:03}-" + "x" * 1000 + "\n" for number in range(120))
-    )
+    (tmp_path / "large.txt").write_text("".join(f"{number:03}-" + "x" * 1000 + "\n" for number in range(120)))
 
     content = _read_result(tmp_path, {"path": "large.txt"})
 

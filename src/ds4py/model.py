@@ -62,10 +62,7 @@ class ResponseTerminalError(EngineError):
 
 
 def _context_reserve_message(needed: int | None) -> str:
-    return (
-        f"context reserve reached with {needed} token(s) needed; "
-        "M4 compaction is not available in this build"
-    )
+    return f"context reserve reached with {needed} token(s) needed; M4 compaction is not available in this build"
 
 
 def _next(iterator: Iterator[T]) -> T | object:
@@ -170,9 +167,7 @@ class DS4Model(Model):
     ) -> tuple[SamplingPolicy, int, tuple[bytes, ...]]:
         settings = settings or {}
         policy = SamplingPolicy(
-            temperature=_finite(
-                settings.get("temperature", self.sampling.temperature), "temperature"
-            ),
+            temperature=_finite(settings.get("temperature", self.sampling.temperature), "temperature"),
             top_p=_finite(settings.get("top_p", self.sampling.top_p), "top_p"),
             min_p=_finite(settings.get("min_p", self.sampling.min_p), "min_p"),
             top_k=_integer(settings.get("top_k", self.sampling.top_k), "top_k"),
@@ -182,9 +177,7 @@ class DS4Model(Model):
         stops = settings.get("stop_sequences", self.stop_sequences)
         if stops is None:
             raise ValueError("stop_sequences must be concrete strings or bytes")
-        stop_sequences = tuple(
-            stop.encode() if isinstance(stop, str) else bytes(stop) for stop in stops
-        )
+        stop_sequences = tuple(stop.encode() if isinstance(stop, str) else bytes(stop) for stop in stops)
         return policy, max_tokens, stop_sequences
 
     @asynccontextmanager
@@ -221,9 +214,7 @@ class DS4Model(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        settings, params = self.prepare_request(
-            model_settings, model_request_parameters
-        )
+        settings, params = self.prepare_request(model_settings, model_request_parameters)
         async with self._open_stream(messages, settings, params) as stream:
             async for _ in stream:
                 pass
@@ -237,9 +228,7 @@ class DS4Model(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator["DS4StreamedResponse"]:
-        settings, params = self.prepare_request(
-            model_settings, model_request_parameters
-        )
+        settings, params = self.prepare_request(model_settings, model_request_parameters)
         async with self._open_stream(messages, settings, params) as stream:
             yield stream
 
@@ -360,11 +349,7 @@ class DS4StreamedResponse(StreamedResponse):
         outputs: list[ModelResponseStreamEvent] = []
         if isinstance(event, ReserveReached):
             self._reserve_needed = event.needed
-            budget = (
-                self._model.reserve_handler(event.needed)
-                if self._model.reserve_handler is not None
-                else None
-            )
+            budget = self._model.reserve_handler(event.needed) if self._model.reserve_handler is not None else None
             if budget is None:
                 event.fail()
             else:
@@ -470,11 +455,7 @@ class DS4StreamedResponse(StreamedResponse):
             if event is not _END:
                 self._dispatch(event)
         await asyncio.to_thread(self._round.close)
-        sampled_start = (
-            self._sampled_start
-            if self._sampled_start is not None
-            else self._round_start
-        )
+        sampled_start = self._sampled_start if self._sampled_start is not None else self._round_start
         cutoff = sampled_start + self._output_tokens
 
         await asyncio.to_thread(self._session.reconcile_round, cutoff)
@@ -533,9 +514,7 @@ class DS4StreamedResponse(StreamedResponse):
                 for part_event in self._dispatch(event):
                     yield part_event
                 if self._context_exhausted:
-                    raise ContextReserveError(
-                        _context_reserve_message(self._reserve_needed)
-                    )
+                    raise ContextReserveError(_context_reserve_message(self._reserve_needed))
                 if isinstance(event, Stopped) and event.reason in {
                     "max_tokens",
                     "parser_error",

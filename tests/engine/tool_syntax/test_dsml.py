@@ -9,9 +9,7 @@ from ds4py._native.fake import FakeNative
 from ds4py.engine.tool_syntax import make_parser
 from ds4py.engine.tool_syntax.dsml import Dsml
 
-CASES = json.loads(
-    (Path(__file__).parents[2] / "fixtures" / "tool_syntax" / "dsml.json").read_text()
-)
+CASES = json.loads((Path(__file__).parents[2] / "fixtures" / "tool_syntax" / "dsml.json").read_text())
 
 
 def observed_calls(snapshot: Any) -> Any:
@@ -105,9 +103,7 @@ def test_greedy_sampling_follows_structure_and_partial_closing_delimiter() -> No
     parser = Dsml()
     structural = parser.feed("<｜DSML｜tool_calls>".encode())
     assert structural.state == "STRUCTURAL" and parser.wants_greedy_sampling()
-    value = parser.feed(
-        '<｜DSML｜invoke name="read"><｜DSML｜parameter name="path" string="true">abc'.encode()
-    )
+    value = parser.feed('<｜DSML｜invoke name="read"><｜DSML｜parameter name="path" string="true">abc'.encode())
     assert value.state == "PARAM_VALUE" and not parser.wants_greedy_sampling()
     closing = parser.feed("</｜DSML｜param".encode())
     assert closing.param_close_prefix and parser.wants_greedy_sampling()
@@ -158,9 +154,7 @@ def test_invalid_utf8_in_ignored_attribute_is_parser_error_for_all_chunks(
         for chunk in chunks:
             snapshot = parser.feed(chunk)
         assert snapshot.state == "ERROR"
-        assert "raw" in cast("Any", snapshot.error) and "UTF-8" in cast(
-            "Any", snapshot.error
-        )
+        assert "raw" in cast("Any", snapshot.error) and "UTF-8" in cast("Any", snapshot.error)
         assert snapshot.calls == ()
 
 
@@ -176,11 +170,7 @@ def test_split_think_markers_reject_dsml_inside_thinking() -> None:
 
 def test_think_tags_inside_parameter_values_are_literal() -> None:
     snapshot = Dsml().feed(
-        next(
-            case
-            for case in CASES
-            if case["source"].startswith("C test_agent_tool_argument")
-        )["input"].encode()
+        next(case for case in CASES if case["source"].startswith("C test_agent_tool_argument"))["input"].encode()
     )
     assert snapshot.state == "DONE"
     assert not snapshot.in_think and not snapshot.dsml_in_think

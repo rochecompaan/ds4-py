@@ -94,8 +94,6 @@ def build_agent_components(
 
     options: AgentOptions = {
         "capabilities": components,
-        "instructions": system
-        if system is not None
-        else DEFAULT_CODING_AGENT_INSTRUCTIONS,
+        "instructions": system if system is not None else DEFAULT_CODING_AGENT_INSTRUCTIONS,
     }
     return AgentComponents(agent=Agent(model, **options), components=components)

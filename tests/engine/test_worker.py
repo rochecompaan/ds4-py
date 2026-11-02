@@ -35,11 +35,7 @@ def worker(
     **fake: Any,
 ) -> Any:
     clock = clock or FakeClock()
-    limits = (
-        {}
-        if checkpoint_budget_bytes is None
-        else {"checkpoint_budget_bytes": checkpoint_budget_bytes}
-    )
+    limits = {} if checkpoint_budget_bytes is None else {"checkpoint_budget_bytes": checkpoint_budget_bytes}
     w = EngineWorker(
         FakeNative(clock=clock, **fake),
         EngineConfig(Path("f.gguf"), ctx=ctx),
@@ -71,9 +67,7 @@ def test_each_sync_reports_the_plan_it_carried_out() -> None:
     ]:
         predicted = w.plan(tokens)
         *_, synced = run(w, SyncJob(tuple(tokens)))
-        assert predicted.kind == kind and synced == Synced(
-            len(tokens), predicted, predicted.to_prefill
-        )
+        assert predicted.kind == kind and synced == Synced(len(tokens), predicted, predicted.to_prefill)
         plans.append(predicted)
     assert sync_calls(w)[1:] == [p.to_prefill for p in plans] == [12, 2, 2]
 
@@ -105,9 +99,7 @@ def test_cancel_interrupts_sync_and_clears_the_flag() -> None:
     cancel.set()  # Ctrl+C
     assert run(w, SyncJob(tuple(P)))[-1] == Interrupted(6)
     assert w.cancel_event is cancel and not cancel.is_set()
-    assert w.plan(P) == Plan(
-        "extend", 6, 34, True, None
-    )  # the prefix done so far is kept
+    assert w.plan(P) == Plan("extend", 6, 34, True, None)  # the prefix done so far is kept
 
 
 # Checkpoint payload admission and ownership.
@@ -219,9 +211,7 @@ def test_oversized_returned_snapshot_is_freed_without_losing_retained_state(
     assert closed == [(saved[-1], owner)]
     prefix = 3 if replacement else 2
     *_, synced = run(w, SyncJob(tuple(P[:prefix] + [99])))
-    assert synced.plan == Plan(
-        "restore", prefix, 1, True, "a" if replacement else SYSTEM
-    )
+    assert synced.plan == Plan("restore", prefix, 1, True, "a" if replacement else SYSTEM)
     w.close()
     assert all(s.closed for s in saved) and len(closed) == len(saved)
 
@@ -252,16 +242,12 @@ def test_zero_budget_disables_even_zero_byte_checkpoints() -> None:
         (None, TypeError),
     ],
 )
-def test_bad_checkpoint_budget_is_refused_before_native_open(
-    budget: Any, error: Any
-) -> None:
+def test_bad_checkpoint_budget_is_refused_before_native_open(budget: Any, error: Any) -> None:
     class NeverOpened(FakeNative):
         def open_engine(self, config: Any) -> Any:
             pytest.fail("invalid budget opened a native engine")
 
-    with pytest.raises(
-        error, match="checkpoint_budget_bytes must be a non-negative integer"
-    ):
+    with pytest.raises(error, match="checkpoint_budget_bytes must be a non-negative integer"):
         EngineWorker(
             cast("Any", NeverOpened()),
             EngineConfig(Path("f")),
@@ -319,9 +305,7 @@ def test_a_checkpoint_is_kept_until_its_replacement_is_saved() -> None:
     with pytest.raises(EngineError, match="out of memory"):
         run(w, CheckpointJob("a"))
     *_, synced = run(w, SyncJob(tuple(P[:12] + [99])))
-    assert synced.plan == Plan(
-        "restore", 12, 1, True, "a"
-    )  # closing first would fail this restore
+    assert synced.plan == Plan("restore", 12, 1, True, "a")  # closing first would fail this restore
 
 
 def test_sync_refuses_a_prompt_that_does_not_fit() -> None:
@@ -336,9 +320,7 @@ def test_engine_calls_run_on_one_worker_thread() -> None:
     ids = {w.call(lambda e, s: threading.get_ident()).result() for _ in range(3)}
     assert len(ids) == 1 and threading.get_ident() not in ids
     assert isinstance(w.call(lambda e, s: 1 / 0).exception(), ZeroDivisionError)
-    assert (
-        w.call(lambda e, s: s.pos()).result() == 0
-    )  # the worker survives a failed call
+    assert w.call(lambda e, s: s.pos()).result() == 0  # the worker survives a failed call
     assert w.info.name == "fake"
 
 

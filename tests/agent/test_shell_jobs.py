@@ -29,9 +29,7 @@ class MockSession:
 
 
 def _has_tool_return(messages: Any) -> bool:
-    return any(
-        isinstance(p, ToolReturnPart) for m in messages for p in getattr(m, "parts", [])
-    )
+    return any(isinstance(p, ToolReturnPart) for m in messages for p in getattr(m, "parts", []))
 
 
 def test_start_command_tracked_and_stopped(tmp_path: Path) -> None:
@@ -43,9 +41,7 @@ def test_start_command_tracked_and_stopped(tmp_path: Path) -> None:
             return ModelResponse(parts=[TextPart("done")])
         return ModelResponse(
             parts=[
-                ToolCallPart(
-                    "start_command", {"command": "sleep 60"}, tool_call_id="call-1"
-                ),
+                ToolCallPart("start_command", {"command": "sleep 60"}, tool_call_id="call-1"),
             ]
         )
 
@@ -80,17 +76,13 @@ def test_cross_prompt_job_visible(tmp_path: Path) -> None:
             run_count[0] += 1
             return ModelResponse(
                 parts=[
-                    ToolCallPart(
-                        "start_command", {"command": "sleep 60"}, tool_call_id="call-1"
-                    ),
+                    ToolCallPart("start_command", {"command": "sleep 60"}, tool_call_id="call-1"),
                 ]
             )
         job_id = next(iter(session.states["shell_jobs"].job_ids))
         return ModelResponse(
             parts=[
-                ToolCallPart(
-                    "check_command", {"command_id": job_id}, tool_call_id="call-2"
-                ),
+                ToolCallPart("check_command", {"command_id": job_id}, tool_call_id="call-2"),
             ]
         )
 
@@ -181,9 +173,7 @@ def test_switch_and_exit_stop_a_term_ignoring_job(tmp_path: Path) -> None:
         is_glm_dsa=False,
         is_qwen4=False,
     )
-    engine = ds4py.open(
-        "f.gguf", ctx=1024, think=ThinkMode.NONE, native=FakeNative(info=info)
-    )
+    engine = ds4py.open("f.gguf", ctx=1024, think=ThinkMode.NONE, native=FakeNative(info=info))
     session = engine.session()
     jobs = DS4ShellJobs(session, tmp_path)
     command = "trap '' TERM; : > ready; while :; do sleep 1; done"
@@ -193,9 +183,7 @@ def test_switch_and_exit_stop_a_term_ignoring_job(tmp_path: Path) -> None:
             return ModelResponse(parts=[TextPart("done")])
         return ModelResponse(
             parts=[
-                ToolCallPart(
-                    "start_command", {"command": command}, tool_call_id="call-1"
-                ),
+                ToolCallPart("start_command", {"command": command}, tool_call_id="call-1"),
             ]
         )
 
@@ -270,9 +258,7 @@ def test_close_kills_background_child_after_wrapper_publishes_exit(
             return ModelResponse(parts=[TextPart("done")])
         return ModelResponse(
             parts=[
-                ToolCallPart(
-                    "start_command", {"command": command}, tool_call_id="call-1"
-                ),
+                ToolCallPart("start_command", {"command": command}, tool_call_id="call-1"),
             ]
         )
 

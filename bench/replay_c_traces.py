@@ -66,19 +66,13 @@ def select_c_traces(
     tasks = [item for item in task_results if item.agent == "c"]
     identifiers = [item.task_id for item in tasks]
     if len(tasks) != expected_tasks or len(set(identifiers)) != expected_tasks:
-        raise ReplaySelectionError(
-            f"gate 6 needs {expected_tasks} distinct C tasks, found {len(set(identifiers))}"
-        )
+        raise ReplaySelectionError(f"gate 6 needs {expected_tasks} distinct C tasks, found {len(set(identifiers))}")
     selected = []
     for item in tasks:
         paths = item.attempt_trace_paths
         if len(paths) != item.attempts or any(path is None for path in paths):
-            raise ReplaySelectionError(
-                f"{item.task_id}: {len(paths)}/{item.attempts} C attempt traces are present"
-            )
-        selected.extend(
-            (item.task_id, Path(path)) for path in paths if path is not None
-        )
+            raise ReplaySelectionError(f"{item.task_id}: {len(paths)}/{item.attempts} C attempt traces are present")
+        selected.extend((item.task_id, Path(path)) for path in paths if path is not None)
     return selected
 
 
@@ -142,9 +136,7 @@ def _check_round(
     transcript: Transcript,
 ) -> tuple[bool, str]:
     if not events or not isinstance(events[-1], Stopped):
-        raise ReplayMismatch(
-            f"{task_id} trace round {ordinal} did not drain to Stopped"
-        )
+        raise ReplayMismatch(f"{task_id} trace round {ordinal} did not drain to Stopped")
     emitted = tuple(event.id for event in events if isinstance(event, Token))
     additions = transcript.tokens[len(round_.prompt) :]
     _assert_tokens(engine, task_id, ordinal, round_, emitted, "emitted token")
@@ -156,8 +148,7 @@ def _check_round(
     if not round_.prefix_only and not round_.context_limited:
         if stopped.reason not in ("stop_token", "tool_call_complete", "parser_error"):
             raise ReplayMismatch(
-                f"{task_id} trace round {ordinal} did not stop naturally at C's "
-                f"boundary: {stopped.reason}"
+                f"{task_id} trace round {ordinal} did not stop naturally at C's boundary: {stopped.reason}"
             )
         if stopped.reason == "tool_call_complete":
             if c_snapshot.state != "DONE" or c_snapshot.dsml_in_think:
@@ -168,24 +159,17 @@ def _check_round(
         elif stopped.reason == "parser_error":
             if c_snapshot.state != "ERROR" and not c_snapshot.dsml_in_think:
                 raise ReplayMismatch(
-                    f"{task_id} trace round {ordinal}: parser_error but C text "
-                    f"parsed as {c_snapshot.state}"
+                    f"{task_id} trace round {ordinal}: parser_error but C text parsed as {c_snapshot.state}"
                 )
     tool_call = c_snapshot.state == "DONE" and bool(c_snapshot.calls)
     if tool_call:
-        bytewise = _parse_c(
-            engine, round_, (data[index : index + 1] for index in range(len(data)))
-        )
+        bytewise = _parse_c(engine, round_, (data[index : index + 1] for index in range(len(data))))
         if bytewise != c_snapshot:
-            raise ReplayMismatch(
-                f"{task_id} trace round {ordinal}: bytewise parser mismatch"
-            )
+            raise ReplayMismatch(f"{task_id} trace round {ordinal}: bytewise parser mismatch")
         for split in range(len(data) + 1):
             observed = _parse_c(engine, round_, [data[:split], data[split:]])
             if observed != c_snapshot:
-                raise ReplayMismatch(
-                    f"{task_id} trace round {ordinal}: tool stanza differs at byte split {split}"
-                )
+                raise ReplayMismatch(f"{task_id} trace round {ordinal}: tool stanza differs at byte split {split}")
     # Parsing a call is the terminal boundary; replay never executes it.
     return tool_call, stopped.reason
 
@@ -201,11 +185,7 @@ def _reserve(engine: Engine, round_: ReplayRound) -> int:
 
 def generation_limit(engine: Engine, round_: ReplayRound) -> int:
     """Natural rounds need one EOS/token slot; bounded rounds use the exact prefix."""
-    return (
-        len(round_.sampled)
-        if round_.prefix_only or round_.context_limited
-        else len(round_.sampled) + 1
-    )
+    return len(round_.sampled) if round_.prefix_only or round_.context_limited else len(round_.sampled) + 1
 
 
 def replay_round(
@@ -299,17 +279,11 @@ def replay_with_engine(
         try:
             trace = read_replay(path)
             if trace.model is None or trace.ctx is None:
-                raise ReplaySelectionError(
-                    f"trace {path} is missing model or context metadata"
-                )
+                raise ReplaySelectionError(f"trace {path} is missing model or context metadata")
             if Path(trace.model).expanduser().resolve() != model:
-                raise ReplaySelectionError(
-                    f"trace model {trace.model} does not match selected {model}"
-                )
+                raise ReplaySelectionError(f"trace model {trace.model} does not match selected {model}")
             if trace.ctx != engine.config.ctx:
-                raise ReplaySelectionError(
-                    f"trace ctx {trace.ctx} does not match engine ctx {engine.config.ctx}"
-                )
+                raise ReplaySelectionError(f"trace ctx {trace.ctx} does not match engine ctx {engine.config.ctx}")
         except (OSError, ValueError) as error:
             results.append(
                 ReplayResult(
@@ -367,9 +341,7 @@ def replay_c_traces(
     if first.model is None or first.ctx is None:
         raise ReplaySelectionError("C trace is missing model or context metadata")
     if Path(first.model).expanduser().resolve() != Path(model).expanduser().resolve():
-        raise ReplaySelectionError(
-            f"trace model {first.model} does not match selected {model}"
-        )
+        raise ReplaySelectionError(f"trace model {first.model} does not match selected {model}")
     with ds4py.open(model, ctx=first.ctx, backend=backend, lib=lib, seed=1) as engine:
         return replay_with_engine(engine, selected)
 
@@ -406,9 +378,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--model", type=Path, default=os.environ.get("DS4_TEST_MODEL"))
-    parser.add_argument(
-        "--backend", default=os.environ.get("DS4_BAKEOFF_BACKEND", "cpu")
-    )
+    parser.add_argument("--backend", default=os.environ.get("DS4_BAKEOFF_BACKEND", "cpu"))
     parser.add_argument("--lib")
     args = parser.parse_args(argv)
     if args.model is None:
@@ -421,10 +391,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     results = replay_task_results(tasks, args.model, lib=args.lib, backend=args.backend)
     gate = update_replay_report(report_path, results)
     for result in results:
-        print(
-            f"{'PASS' if result.passed else 'FAIL'} {result.task_id} "
-            f"round {result.round_index}: {result.detail}"
-        )
+        print(f"{'PASS' if result.passed else 'FAIL'} {result.task_id} round {result.round_index}: {result.detail}")
     print(f"gate-6: {'PASS' if gate.passed else 'FAIL'} — {gate.detail}")
     return 0 if gate.passed else 1
 

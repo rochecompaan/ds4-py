@@ -38,17 +38,11 @@ def test_instance_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         held.write("4242")
         held.flush()
         fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        with pytest.raises(
-            EngineLockedError, match=rf"{re.escape(str(path))}.*pid 4242"
-        ):
+        with pytest.raises(EngineLockedError, match=rf"{re.escape(str(path))}.*pid 4242"):
             InstanceLock.acquire(path)
     with InstanceLock.acquire(path):
-        assert (
-            path.read_text() == f"{os.getpid()}\n"
-        )  # a C tool's refusal names this process
-        with pytest.raises(
-            EngineLockedError
-        ):  # a second descriptor conflicts, as ds4's would
+        assert path.read_text() == f"{os.getpid()}\n"  # a C tool's refusal names this process
+        with pytest.raises(EngineLockedError):  # a second descriptor conflicts, as ds4's would
             InstanceLock.acquire(path)
     InstanceLock.acquire(path).close()  # closing released it
 
@@ -57,11 +51,7 @@ def test_exit_error() -> None:
     m, lk = Path("/m.gguf"), Path("/tmp/ds4.lock.engine")
     assert exit_error(0, "", m, lk) is None
     e = exit_error(1, "ds4: loading\nds4: only GGUF v3 is supported\n", m, lk)
-    assert (
-        type(e) is ModelFileError
-        and "/m.gguf" in str(e)
-        and str(e).endswith("only GGUF v3 is supported")
-    )
+    assert type(e) is ModelFileError and "/m.gguf" in str(e) and str(e).endswith("only GGUF v3 is supported")
     e = exit_error(
         2,
         "ds4: another ds4 process is already running (pid 7); refusing to start\n",
@@ -69,10 +59,7 @@ def test_exit_error() -> None:
         lk,
     )
     assert type(e) is EngineLockedError and str(lk) in str(e) and "pid 7" in str(e)
-    assert (
-        type(exit_error(NATIVE_REFUSED, "ds4: V4.1 vision requires Metal\n", m, lk))
-        is EngineError
-    )
+    assert type(exit_error(NATIVE_REFUSED, "ds4: V4.1 vision requires Metal\n", m, lk)) is EngineError
     tb = "Traceback (most recent call last):\n  ...\nImportError: no module named ds4py\n"
     for status in (
         1,
@@ -86,9 +73,7 @@ def test_exit_error() -> None:
 
 
 def test_engine_options(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    o = engine_options(
-        EngineConfig(Path("/m.gguf"), ctx=4096, backend="rocm", threads=3)
-    )
+    o = engine_options(EngineConfig(Path("/m.gguf"), ctx=4096, backend="rocm", threads=3))
     assert (
         o.model_path,
         o.backend,
@@ -105,9 +90,7 @@ def test_engine_options(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert (o.mtp_draft_tokens, o.mtp_margin, o.inspect_only) == (1, 3.0, False)
     assert engine_options(EngineConfig(Path("/m.gguf")), inspect_only=True).inspect_only
     monkeypatch.chdir(tmp_path)
-    assert (
-        EngineConfig(Path("m.gguf")).model == Path.cwd() / "m.gguf"
-    )  # absolute on the caller's thread
+    assert EngineConfig(Path("m.gguf")).model == Path.cwd() / "m.gguf"  # absolute on the caller's thread
     with pytest.raises(ValueError, match="vulkan"):
         engine_options(EngineConfig(Path("/m"), backend="vulkan"))
 
@@ -122,19 +105,14 @@ def test_open_failures_become_exceptions(
     lock = tmp_path / "ds4.lock"
     monkeypatch.setenv("DS4_LOCK_FILE", str(lock))
     native = LibNative(load_library(built_upstream[0]))
-    assert (
-        native.parse_think_level("42") == 1042
-        and native.parse_think_level("high") is None
-    )
+    assert native.parse_think_level("42") == 1042 and native.parse_think_level("high") is None
     assert native.think_mode_for_context(ThinkMode.MAX, 4096) == ThinkMode.HIGH
     (tmp_path / "v0.gguf").write_bytes(b"GGUF" + bytes(60))  # GGUF version 0
     for model, text in [
         ("missing.gguf", "cannot open model"),
         ("v0.gguf", "only GGUF v3"),
     ]:
-        with pytest.raises(
-            ModelFileError, match=text
-        ):  # ds4 exit()s; only the child dies
+        with pytest.raises(ModelFileError, match=text):  # ds4 exit()s; only the child dies
             native.open_engine(EngineConfig(tmp_path / model))
     with InstanceLock.acquire(lock):  # another holder of the real lock
         with pytest.raises(EngineLockedError):
@@ -148,10 +126,7 @@ def test_open_failures_become_exceptions(
 @pytest.mark.live
 @pytest.mark.parametrize("check", CONTRACT, ids=lambda f: f.__name__)
 def test_contract_live(live_engine: Any, check: Any) -> None:
-    if (
-        check is check_snapshot_restore_matches_rebuild
-        and not live_engine._test_native.restore_enabled
-    ):
+    if check is check_snapshot_restore_matches_rebuild and not live_engine._test_native.restore_enabled:
         pytest.skip("snapshot restore disabled by live checks")
     check(
         live_engine,
@@ -166,9 +141,7 @@ def live_engine() -> Iterator[Any]:
         pytest.skip("DS4_TEST_MODEL is not set")
     native = LibNative(load_library())
     previous = os.environ.get("DS4_LOCK_FILE")
-    engine = native.open_engine(
-        EngineConfig(Path(model), ctx=4096, backend=native.backend)
-    )
+    engine = native.open_engine(EngineConfig(Path(model), ctx=4096, backend=native.backend))
     cast("Any", engine)._test_native = native
     cast("Any", engine)._test_lock_env = previous
     yield engine
@@ -177,10 +150,7 @@ def live_engine() -> Iterator[Any]:
 
 @pytest.mark.live
 def test_token_text_live(live_engine: Any) -> None:
-    assert (
-        b"".join(live_engine.token_text(t) for t in live_engine.tokenize("Hello world"))
-        == b"Hello world"
-    )
+    assert b"".join(live_engine.token_text(t) for t in live_engine.tokenize("Hello world")) == b"Hello world"
 
 
 @pytest.mark.live
@@ -198,9 +168,7 @@ def test_session_abi_and_ownership(stub_engine: Any) -> None:
     engine, c = stub_engine
     session = engine.create_session(64)
     events = []
-    assert (
-        session.sync([1, 2, 3], progress=lambda *e: events.append(e)) is SyncStatus.DONE
-    )
+    assert session.sync([1, 2, 3], progress=lambda *e: events.append(e)) is SyncStatus.DONE
     assert events == [("prefill_display", 0, 3), ("prefill_chunk", 3, 3)]
     assert c.stub_clears() == 3
     tokens = session.tokens()
@@ -332,20 +300,13 @@ def test_open_environment_and_failure_cleanup(
     original_open = lib.fn("ds4_engine_open")
 
     def observe(*args: Any) -> Any:
-        seen.append(
-            {
-                k: os.environ.get(k)
-                for k in ("DS4_METAL_MOE_SOURCE", "DS4_METAL_FLASH_ATTN_SOURCE")
-            }
-        )
+        seen.append({k: os.environ.get(k) for k in ("DS4_METAL_MOE_SOURCE", "DS4_METAL_FLASH_ATTN_SOURCE")})
         return original_open(*args)
 
     monkeypatch.setitem(lib._functions, "ds4_engine_open", observe)
     native = LibNative(lib)
     assert not native.restore_enabled
-    monkeypatch.setattr(
-        api, "inspect_model", lambda *args: None
-    )  # actual child refusal is covered by CPU build test
+    monkeypatch.setattr(api, "inspect_model", lambda *args: None)  # actual child refusal is covered by CPU build test
     lock = tmp_path / "open.lock"
     monkeypatch.setenv("DS4_LOCK_FILE", str(lock))
     override = tmp_path / "user-override.metal"
@@ -360,9 +321,7 @@ def test_open_environment_and_failure_cleanup(
     assert Path.cwd() == before
     assert seen[-1] == {
         "DS4_METAL_MOE_SOURCE": str(override),
-        "DS4_METAL_FLASH_ATTN_SOURCE": str(
-            tmp_path.resolve() / "metal/flash_attn.metal"
-        )
+        "DS4_METAL_FLASH_ATTN_SOURCE": str(tmp_path.resolve() / "metal/flash_attn.metal")
         if backend == "metal"
         else None,
     }
@@ -381,9 +340,7 @@ def test_open_environment_and_failure_cleanup(
 
 
 @pytest.fixture
-def metal_native(
-    stub_engine: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Any:
+def metal_native(stub_engine: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     from types import SimpleNamespace
 
     from ds4py._native import api
@@ -397,9 +354,7 @@ def metal_native(
         backend="metal",
         live_checks={},
         source_path="/deleted/checkout",
-        metal_sources={
-            "metal/dense.metal": hashlib.sha256(b"first bundle").hexdigest()
-        },
+        metal_sources={"metal/dense.metal": hashlib.sha256(b"first bundle").hexdigest()},
     )
     monkeypatch.setattr(api, "inspect_model", lambda *args: None)
     monkeypatch.setenv("DS4_LOCK_FILE", str(tmp_path / "native.lock"))
@@ -414,9 +369,7 @@ def test_metal_environment_restored_on_python_exception(
     before = dict(os.environ)
 
     def fail(*args: Any) -> Never:
-        assert os.environ["DS4_METAL_DENSE_SOURCE"] == str(
-            tmp_path.resolve() / "metal/dense.metal"
-        )
+        assert os.environ["DS4_METAL_DENSE_SOURCE"] == str(tmp_path.resolve() / "metal/dense.metal")
         raise RuntimeError("open raised")
 
     monkeypatch.setitem(native.lib._functions, "ds4_engine_open", fail)
@@ -443,9 +396,7 @@ def test_later_metal_open_uses_another_bundle(
     (second / "metal").mkdir(parents=True)
     (second / "metal/dense.metal").write_bytes(b"second bundle")
     native.lib.path = second / "stub.so"
-    native.lib.manifest.metal_sources = {
-        "metal/dense.metal": hashlib.sha256(b"second bundle").hexdigest()
-    }
+    native.lib.manifest.metal_sources = {"metal/dense.metal": hashlib.sha256(b"second bundle").hexdigest()}
     native.open_engine(EngineConfig(tmp_path / "model", backend="metal")).close()
     assert seen == [str(shader.resolve()), str(second.resolve() / "metal/dense.metal")]
     assert "DS4_METAL_DENSE_SOURCE" not in os.environ

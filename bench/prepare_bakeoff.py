@@ -20,18 +20,14 @@ from bench.workspaces import (
 def benchmark_checkout(argument: str | None = None) -> Path:
     value = argument or os.environ.get("POLYGLOT_BENCHMARK")
     if not value:
-        raise BenchError(
-            "set POLYGLOT_BENCHMARK to the pinned Aider polyglot-benchmark checkout"
-        )
+        raise BenchError("set POLYGLOT_BENCHMARK to the pinned Aider polyglot-benchmark checkout")
     return Path(value).expanduser().resolve()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     script = Path(__file__).resolve()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--manifest", type=Path, default=script.with_name("bakeoff.yaml")
-    )
+    parser.add_argument("--manifest", type=Path, default=script.with_name("bakeoff.yaml"))
     parser.add_argument("--benchmark", help="defaults to POLYGLOT_BENCHMARK")
     parser.add_argument(
         "--output",

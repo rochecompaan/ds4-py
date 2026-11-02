@@ -98,9 +98,7 @@ def run_round(
 ) -> Generator[Event, None, None]:
     stream = session._paused_stream
     resuming = stream is not None
-    control = resolve_control(
-        stream.control if stream is not None else None, stop_sequences
-    )
+    control = resolve_control(stream.control if stream is not None else None, stop_sequences)
     if not resuming:
         append_assistant_prefix(session)
     try:
@@ -157,9 +155,7 @@ def append_assistant_prefix(session: "Session") -> Segment | None:
 
 def append_assistant_end(session: "Session") -> Segment | None:
     _require_chat(session)
-    return _append(
-        session, PromptBuilder(session._engine).append_assistant_end(), "eos"
-    )
+    return _append(session, PromptBuilder(session._engine).append_assistant_end(), "eos")
 
 
 def append_tool_results(session: "Session", results: Iterable[str]) -> Segment:

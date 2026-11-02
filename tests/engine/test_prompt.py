@@ -23,12 +23,8 @@ def family_info(family: Any) -> Any:
     )
 
 
-def fake_engine(
-    family: Any = "deepseek4", *, think: Any = ThinkMode.NONE, ctx: Any = 64
-) -> Engine:
-    return ds4py.open(
-        "f.gguf", ctx=ctx, think=think, native=FakeNative(info=family_info(family))
-    )
+def fake_engine(family: Any = "deepseek4", *, think: Any = ThinkMode.NONE, ctx: Any = 64) -> Engine:
+    return ds4py.open("f.gguf", ctx=ctx, think=think, native=FakeNative(info=family_info(family)))
 
 
 def flatten(segments: Any) -> Any:
@@ -36,10 +32,7 @@ def flatten(segments: Any) -> Any:
 
 
 def contains(tokens: Any, expected: Any) -> bool:
-    return any(
-        tokens[index : index + len(expected)] == expected
-        for index in range(len(tokens) - len(expected) + 1)
-    )
+    return any(tokens[index : index + len(expected)] == expected for index in range(len(tokens) - len(expected) + 1))
 
 
 def decode(engine: Any, tokens: Any) -> str:

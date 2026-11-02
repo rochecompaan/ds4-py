@@ -9,9 +9,7 @@ from ds4py._native.fake import FakeNative
 from ds4py.engine.tool_syntax import make_parser
 from ds4py.engine.tool_syntax.qwen import Qwen
 
-CASES = json.loads(
-    (Path(__file__).parents[2] / "fixtures" / "tool_syntax" / "qwen.json").read_text()
-)
+CASES = json.loads((Path(__file__).parents[2] / "fixtures" / "tool_syntax" / "qwen.json").read_text())
 
 
 def observed_calls(snapshot: Any) -> Any:
@@ -57,12 +55,8 @@ def test_numeric_classification_uses_the_c_64_byte_guard() -> None:
         (".5", 0.5, float),
     ],
 )
-def test_c_numeric_forms_preserve_typed_arguments(
-    text: Any, expected: Any, value_type: Any
-) -> None:
-    snapshot = parse(
-        f"<tool_call><function=echo><parameter=value>{text}</parameter></function></tool_call>"
-    )
+def test_c_numeric_forms_preserve_typed_arguments(text: Any, expected: Any, value_type: Any) -> None:
+    snapshot = parse(f"<tool_call><function=echo><parameter=value>{text}</parameter></function></tool_call>")
     assert snapshot.state == "DONE", snapshot.error
     value = snapshot.calls[0].args["value"]
     assert value == expected

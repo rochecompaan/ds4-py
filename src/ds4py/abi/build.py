@@ -52,9 +52,7 @@ def _mirror(src: Path, farm: Path) -> None:
     farm = farm.resolve()
     farm.mkdir(parents=True, exist_ok=True)
     for directory, dirs, names in os.walk(src):
-        dirs[:] = [
-            name for name in dirs if name != ".git" and Path(directory) / name != farm
-        ]
+        dirs[:] = [name for name in dirs if name != ".git" and Path(directory) / name != farm]
         target = farm / Path(directory).relative_to(src)
         # A previously mirrored file may now be a source directory. Never
         # traverse its stale symlink, which points back into the source tree.
@@ -83,9 +81,7 @@ def _run_make(farm: Path, backend: str, cc: str, jobs: int | None, log: TextIO) 
         f"-j{jobs or os.cpu_count() or 1}",
     ]
     tail: deque[str] = deque(maxlen=40)
-    with subprocess.Popen(
-        command, cwd=farm, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-    ) as process:
+    with subprocess.Popen(command, cwd=farm, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as process:
         assert process.stdout is not None
         for line in process.stdout:
             log.write(line)
@@ -119,14 +115,10 @@ def install(
         try:
             if manifest.backend == "metal":
                 if metal_root is None:
-                    raise BuildError(
-                        "Metal sources are missing. Run `ds4py build` to rebuild."
-                    )
+                    raise BuildError("Metal sources are missing. Run `ds4py build` to rebuild.")
                 hashes = copy_metal_sources(metal_root, staged_dir)
                 if hashes != manifest.metal_sources:
-                    raise BuildError(
-                        "Metal sources differ from the manifest. Run `ds4py build` to rebuild."
-                    )
+                    raise BuildError("Metal sources differ from the manifest. Run `ds4py build` to rebuild.")
                 metal_source_env(staged_dir, manifest.metal_sources)
             validate(
                 Manifest.read(manifest_path(staged)),
@@ -147,9 +139,7 @@ def install(
             # replace can publish before an interrupt prevents recording switched.
             # Never delete a generation that is current or cannot be ruled out.
             try:
-                published = (
-                    out_dir / LIB_NAME
-                ).resolve() == staged_dir.resolve() / LIB_NAME
+                published = (out_dir / LIB_NAME).resolve() == staged_dir.resolve() / LIB_NAME
             except OSError, RuntimeError:
                 published = True
             if not published:
@@ -219,13 +209,9 @@ def build_library(
     bindings = all_bindings()
     with tempfile.TemporaryDirectory(prefix="ds4py-probe-") as directory:
         work = Path(directory)
-        signatures = probe.probe_signatures(
-            src, bindings, compiler, work / "signatures"
-        )
+        signatures = probe.probe_signatures(src, bindings, compiler, work / "signatures")
         failed = [
-            f"{b.name}: {signatures[b.name].message}"
-            for b in bindings
-            if b.required and not signatures[b.name].ok
+            f"{b.name}: {signatures[b.name].message}" for b in bindings if b.required and not signatures[b.name].ok
         ]
         if failed:
             raise BuildError("required signature probes failed:\n" + "\n".join(failed))
@@ -239,13 +225,9 @@ def build_library(
             farm = out_dir / "build" / f"{backend}-{key}"
             _mirror(src, farm)
             (farm / "Makefile.lib").unlink(missing_ok=True)
-            (farm / "Makefile.lib").write_bytes(
-                files(__package__).joinpath("Makefile.lib").read_bytes()
-            )
+            (farm / "Makefile.lib").write_bytes(files(__package__).joinpath("Makefile.lib").read_bytes())
             metal_root = work / "sources" if backend == "metal" else None
-            metal_sources = (
-                copy_metal_sources(src, metal_root) if metal_root is not None else {}
-            )
+            metal_sources = copy_metal_sources(src, metal_root) if metal_root is not None else {}
             _run_make(farm, backend, compiler, jobs, log)
             try:
                 manifest = _build_manifest(

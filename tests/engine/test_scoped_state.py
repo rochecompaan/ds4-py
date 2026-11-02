@@ -61,21 +61,10 @@ def test_state_is_created_once_and_survives_two_prompts() -> None:
         session = engine.session()
         assert session.state("jobs", factory) is state
         session.append_user("one")
-        assert (
-            cast("Any", list(session.run_round(max_tokens=2))[-1]).reason
-            == "max_tokens"
-        )
-        assert (
-            session.state(
-                "jobs", lambda: (_ for _ in ()).throw(AssertionError("recreated"))
-            )
-            is state
-        )
+        assert cast("Any", list(session.run_round(max_tokens=2))[-1]).reason == "max_tokens"
+        assert session.state("jobs", lambda: (_ for _ in ()).throw(AssertionError("recreated"))) is state
         session.append_user("two")
-        assert (
-            cast("Any", list(session.run_round(max_tokens=2))[-1]).reason
-            == "max_tokens"
-        )
+        assert cast("Any", list(session.run_round(max_tokens=2))[-1]).reason == "max_tokens"
         assert session.state("jobs", lambda: State()) is state
         assert calls == ["created"]
 

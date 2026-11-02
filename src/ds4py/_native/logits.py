@@ -22,11 +22,7 @@ def _native_float32_view(values: Any) -> memoryview | None:
         view = memoryview(values)
     except TypeError:
         return None
-    if (
-        view.format == "f"
-        and view.itemsize == C.sizeof(C.c_float)
-        and view.c_contiguous
-    ):
+    if view.format == "f" and view.itemsize == C.sizeof(C.c_float) and view.c_contiguous:
         return view
     return None
 
@@ -39,14 +35,10 @@ def copy_logits(session: NativeSession, out: Any) -> None:
     try:
         out_buffer = buffer_type.from_buffer(out)
     except (BufferError, TypeError) as error:
-        raise TypeError(
-            "logits output must be a writable contiguous float32 buffer"
-        ) from error
+        raise TypeError("logits output must be a writable contiguous float32 buffer") from error
     copied = session._call("ds4_session_copy_logits", out_buffer, size)
     if copied != size:
-        raise EngineError(
-            f"ds4_session_copy_logits failed: returned {copied}, expected {size}"
-        )
+        raise EngineError(f"ds4_session_copy_logits failed: returned {copied}, expected {size}")
 
 
 def set_logits(session: NativeSession, values: Sequence[float]) -> None:

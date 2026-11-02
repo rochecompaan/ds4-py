@@ -72,9 +72,7 @@ class Glm(DelimiterParser):
     def _parse_parameter_value(self) -> bool:
         end = self.raw.find(_ARG_VALUE_CLOSE, self._param_scan_pos)
         if end < 0:
-            self._param_scan_pos = max(
-                self._param_value_start, len(self.raw) - len(_ARG_VALUE_CLOSE) + 1
-            )
+            self._param_scan_pos = max(self._param_value_start, len(self.raw) - len(_ARG_VALUE_CLOSE) + 1)
             return False
         text = self._decode(
             self.raw[self._param_value_start : end],

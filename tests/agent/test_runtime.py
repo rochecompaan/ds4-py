@@ -38,19 +38,14 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-READ_CALL = (
-    "<tool_call><function=read_file><parameter=path>hello.txt</parameter>"
-    "</function></tool_call>"
-)
+READ_CALL = "<tool_call><function=read_file><parameter=path>hello.txt</parameter></function></tool_call>"
 
 
 def fixed_clock() -> datetime:
     return datetime(2026, 10, 21, 9, 30, 0, tzinfo=timezone.utc)
 
 
-def fake_engine(
-    *, script: Any = None, family: str = "qwen", model_id: int = 7
-) -> Engine:
+def fake_engine(*, script: Any = None, family: str = "qwen", model_id: int = 7) -> Engine:
     info = replace(
         FakeNative()._info,
         name="fake-ds4",
@@ -60,11 +55,7 @@ def fake_engine(
         is_glm_dsa=False,
         is_qwen4=family == "qwen",
     )
-    native = (
-        FakeNative(info=info)
-        if script is None
-        else FakeNative(info=info, script=script)
-    )
+    native = FakeNative(info=info) if script is None else FakeNative(info=info, script=script)
     return ds4py.open("f.gguf", ctx=65536, think=ThinkMode.NONE, native=native)
 
 
@@ -118,9 +109,7 @@ def test_runtime_exposes_context_and_updates_hint_notes(tmp_path: Path) -> None:
 def test_two_prompts_and_a_tool_round_persist_exact_snapshots(tmp_path: Path) -> None:
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
-    with fake_engine(
-        script=scripted_rounds(READ_CALL, "first answer", "second answer")
-    ) as engine:
+    with fake_engine(script=scripted_rounds(READ_CALL, "first answer", "second answer")) as engine:
         model = make_model(engine)
         runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
 
@@ -143,25 +132,15 @@ def test_two_prompts_and_a_tool_round_persist_exact_snapshots(tmp_path: Path) ->
 
     # A tool round ran for real: a keyed call and its returned content.
     all_parts = [part for message in final_messages for part in message.parts]
-    assert any(
-        isinstance(part, ToolCallPart) and part.tool_name == "read_file"
-        for part in all_parts
-    )
-    assert any(
-        isinstance(part, ToolReturnPart) and "world" in str(part.content)
-        for part in all_parts
-    )
+    assert any(isinstance(part, ToolCallPart) and part.tool_name == "read_file" for part in all_parts)
+    assert any(isinstance(part, ToolReturnPart) and "world" in str(part.content) for part in all_parts)
 
     steps = store.session_dir(session_id) / "steps"
 
     async def inspect() -> Any:
         store_ = runtime_steps(steps)
-        return {
-            run_id: await store_.latest_snapshot(run_id=run_id)
-            for run_id in (first.run_id, second.run_id)
-        }, {
-            run_id: await store_.list_unresolved_tool_effects(run_id=run_id)
-            for run_id in (first.run_id, second.run_id)
+        return {run_id: await store_.latest_snapshot(run_id=run_id) for run_id in (first.run_id, second.run_id)}, {
+            run_id: await store_.list_unresolved_tool_effects(run_id=run_id) for run_id in (first.run_id, second.run_id)
         }
 
     snapshots, unresolved = asyncio.run(inspect())
@@ -180,11 +159,7 @@ def test_two_prompts_and_a_tool_round_persist_exact_snapshots(tmp_path: Path) ->
     # Responses are persistent harness objects, so their binding key is stored.
     responses = [m for m in second_snapshot.messages if isinstance(m, ModelResponse)]
     assert responses
-    assert all(
-        cast(Any, m.metadata)["ds4.key"]
-        and cast(Any, m.metadata)["ds4.source"] == "sampled"
-        for m in responses
-    )
+    assert all(cast(Any, m.metadata)["ds4.key"] and cast(Any, m.metadata)["ds4.source"] == "sampled" for m in responses)
 
     # Usage comes from the real engine round; the tool effect ledger is settled.
     assert first.usage.input_tokens > 0
@@ -192,10 +167,7 @@ def test_two_prompts_and_a_tool_round_persist_exact_snapshots(tmp_path: Path) ->
     assert first.usage.requests >= 2
     assert unresolved[first.run_id] == []
     call_id = next(
-        part.tool_call_id
-        for message in final_messages
-        for part in message.parts
-        if isinstance(part, ToolCallPart)
+        part.tool_call_id for message in final_messages for part in message.parts if isinstance(part, ToolCallPart)
     )
 
     async def effect() -> Any:
@@ -240,12 +212,8 @@ def test_prefill_trace_uses_persistence_step_indices(tmp_path: Path) -> None:
         finally:
             asyncio.run(runtime.close())
 
-    read_replay(
-        trace_path
-    )  # Validate the records before inspecting harness-only metadata.
-    trace_steps = [
-        json.loads(line)["step_index"] for line in trace_path.read_text().splitlines()
-    ]
+    read_replay(trace_path)  # Validate the records before inspecting harness-only metadata.
+    trace_steps = [json.loads(line)["step_index"] for line in trace_path.read_text().splitlines()]
     snapshot_steps = sorted({snapshot.step_index for snapshot in snapshots})
     assert snapshot_steps == [1, 2]
     assert trace_steps == snapshot_steps
@@ -285,9 +253,7 @@ def test_run_record_is_valid_jsonl_with_ids_and_hex_token_bytes(tmp_path: Path) 
     assert terminal[0]["payload"]["status"] == "success"
 
     token_lines = [line for line in events if line["kind"] == "Token"]
-    encoded = {
-        value for line in token_lines for value in _find_token_bytes(line["payload"])
-    }
+    encoded = {value for line in token_lines for value in _find_token_bytes(line["payload"])}
     assert encoded
     assert all(isinstance(value, str) for value in encoded)
     assert all(all(char in "0123456789abcdef" for char in value) for value in encoded)
@@ -414,9 +380,7 @@ def test_request_limit_failure_saves_only_executed_bound_history(
             asyncio.run(runtime.close())
 
     run_ends = [
-        line
-        for line in read_events(store.session_dir(session_id) / "events.jsonl")
-        if line["kind"] == "run_end"
+        line for line in read_events(store.session_dir(session_id) / "events.jsonl") if line["kind"] == "run_end"
     ]
     assert run_ends[-1]["payload"]["status"] == "error"
     assert "request_limit" in run_ends[-1]["payload"]["error"]
@@ -468,9 +432,7 @@ def test_response_terminal_failures_have_error_records_and_nonzero_exit(
             asyncio.run(runtime.close())
 
     run_ends = [
-        line
-        for line in read_events(store.session_dir(session_id) / "events.jsonl")
-        if line["kind"] == "run_end"
+        line for line in read_events(store.session_dir(session_id) / "events.jsonl") if line["kind"] == "run_end"
     ]
     assert run_ends[-1]["payload"]["status"] == "error"
     assert reason in run_ends[-1]["payload"]["error"]
@@ -483,9 +445,7 @@ def test_canonical_snapshot_write_failure_ends_a_successful_run_as_error(
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
     with fake_engine(script=scripted_rounds("answer")) as engine:
-        runtime = AgentRuntime(
-            make_model(engine), project, store=store, clock=fixed_clock
-        )
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
         original_save = runtime._holder().current.save_snapshot
 
         async def fail_canonical_save(snapshot: Any) -> Any:
@@ -493,9 +453,7 @@ def test_canonical_snapshot_write_failure_ends_a_successful_run_as_error(
                 raise OSError("canonical snapshot write failed")
             return await original_save(snapshot)
 
-        monkeypatch.setattr(
-            runtime._holder().current, "save_snapshot", fail_canonical_save
-        )
+        monkeypatch.setattr(runtime._holder().current, "save_snapshot", fail_canonical_save)
         try:
             with pytest.raises(OSError, match="canonical snapshot write failed"):
                 asyncio.run(runtime.run("hello"))
@@ -505,9 +463,7 @@ def test_canonical_snapshot_write_failure_ends_a_successful_run_as_error(
             asyncio.run(runtime.close())
 
     terminal = [
-        line
-        for line in read_events(store.session_dir(session_id) / "events.jsonl")
-        if line["kind"] == "run_end"
+        line for line in read_events(store.session_dir(session_id) / "events.jsonl") if line["kind"] == "run_end"
     ]
     assert terminal[-1]["payload"]["status"] == "error"
     assert "canonical snapshot write failed" in terminal[-1]["payload"]["error"]
@@ -520,9 +476,7 @@ def test_canonical_snapshot_write_failure_preserves_the_model_error(
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
     with fake_engine(script=scripted_rounds(READ_CALL, "never reached")) as engine:
-        model = FailingModel(
-            engine.session(), sampling=SamplingPolicy(seed=1), fail_from_request=2
-        )
+        model = FailingModel(engine.session(), sampling=SamplingPolicy(seed=1), fail_from_request=2)
         runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
         original_save = runtime._holder().current.save_snapshot
 
@@ -531,9 +485,7 @@ def test_canonical_snapshot_write_failure_preserves_the_model_error(
                 raise OSError("canonical snapshot write failed")
             return await original_save(snapshot)
 
-        monkeypatch.setattr(
-            runtime._holder().current, "save_snapshot", fail_canonical_save
-        )
+        monkeypatch.setattr(runtime._holder().current, "save_snapshot", fail_canonical_save)
         try:
             with pytest.raises(RuntimeError, match="scripted model failure"):
                 asyncio.run(runtime.run("read hello"))
@@ -543,16 +495,11 @@ def test_canonical_snapshot_write_failure_preserves_the_model_error(
             asyncio.run(runtime.close())
 
     terminal = [
-        line
-        for line in read_events(store.session_dir(session_id) / "events.jsonl")
-        if line["kind"] == "run_end"
+        line for line in read_events(store.session_dir(session_id) / "events.jsonl") if line["kind"] == "run_end"
     ]
     assert terminal[-1]["payload"]["status"] == "error"
     assert "scripted model failure" in terminal[-1]["payload"]["error"]
-    assert (
-        terminal[-1]["payload"]["persistence_error"]
-        == "canonical snapshot write failed"
-    )
+    assert terminal[-1]["payload"]["persistence_error"] == "canonical snapshot write failed"
 
 
 class BlockingModel(DS4Model):
@@ -651,9 +598,7 @@ def test_load_prefix_seeds_history_the_next_run_renders(tmp_path: Path) -> None:
             asyncio.run(runtime.close())
 
 
-def test_terminal_success_record_failure_is_an_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_terminal_success_record_failure_is_an_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
     with fake_engine(script=scripted_rounds("answer")) as engine:
@@ -666,10 +611,7 @@ def test_terminal_success_record_failure_is_an_error(
         blocked.mkdir()
 
         def fail_terminal_success(record: Any) -> Any:
-            if (
-                record["kind"] == "run_end"
-                and record["payload"].get("status") == "success"
-            ):
+            if record["kind"] == "run_end" and record["payload"].get("status") == "success":
                 path = cast(Any, runtime._record).path
                 cast(Any, runtime._record).path = blocked
                 try:
@@ -712,18 +654,13 @@ def test_terminal_success_close_failure_rolls_back_before_error(
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
     with fake_engine(script=scripted_rounds("answer")) as engine:
-        runtime = AgentRuntime(
-            make_model(engine), project, store=store, clock=fixed_clock
-        )
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
         terminal_events = []
         runtime.on_event(terminal_events.append, kinds={"run_end"})
         original_write = cast(Any, runtime._record)._write
 
         def fail_terminal_close(record: Any) -> Any:
-            if (
-                record["kind"] == "run_end"
-                and record["payload"].get("status") == "success"
-            ):
+            if record["kind"] == "run_end" and record["payload"].get("status") == "success":
                 original_write(record)
                 error = OSError("terminal close failed")
                 cast(Any, runtime._record).failure = error
@@ -791,9 +728,7 @@ def test_prefill_trace_failure_fails_the_run(
             asyncio.run(runtime.close())
 
 
-def test_snapshot_history_failure_fails_the_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_snapshot_history_failure_fails_the_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = SessionStore(tmp_path / "home")
     with fake_engine(script=scripted_rounds("answer")) as engine:
         runtime = AgentRuntime(make_model(engine), project_dir(tmp_path), store=store)

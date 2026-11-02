@@ -63,9 +63,7 @@ class Workspace:
             raise ValueError("Bakeoff workspaces allow one or two attempts")
 
 
-CommandRunner = Callable[
-    [Sequence[str], Path, Mapping[str, str]], subprocess.CompletedProcess[Any]
-]
+CommandRunner = Callable[[Sequence[str], Path, Mapping[str, str]], subprocess.CompletedProcess[Any]]
 
 
 def _reset_directory(path: str | Path) -> None:
@@ -77,9 +75,7 @@ def _reset_directory(path: str | Path) -> None:
 
 def _is_test_file(path: Path) -> bool:
     name = path.name
-    return path.suffix == ".py" and (
-        name.endswith("_test.py") or name.startswith("test_") or name == "tests.py"
-    )
+    return path.suffix == ".py" and (name.endswith("_test.py") or name.startswith("test_") or name == "tests.py")
 
 
 def _copy_file(source: str | Path, destination: Path) -> None:
@@ -136,9 +132,7 @@ def archive_repository(repo_root: str | Path, destination: str | Path) -> None:
         stderr=subprocess.PIPE,
     )
     if result.returncode:
-        raise PreparationError(
-            f"git archive HEAD failed in {repo_root}: {result.stderr.decode(errors='replace')}"
-        )
+        raise PreparationError(f"git archive HEAD failed in {repo_root}: {result.stderr.decode(errors='replace')}")
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     with tarfile.open(fileobj=BytesIO(result.stdout), mode="r:") as archive:
@@ -174,9 +168,7 @@ def prepare_repository_task(
             text=True,
         )
         if result.returncode:
-            raise PreparationError(
-                f"could not apply {patch} to {task_id}: {result.stdout}{result.stderr}"
-            )
+            raise PreparationError(f"could not apply {patch} to {task_id}: {result.stdout}{result.stderr}")
     (agent_dir / "TASK.md").write_text(prompt)
     hidden = []
     if grader is not None:
@@ -187,9 +179,7 @@ def prepare_repository_task(
     test_paths = list(hidden)
     if visible_test is not None:
         if not (agent_dir / visible_test).is_file():
-            raise PreparationError(
-                f"{task_id}: visible test is missing: {visible_test}"
-            )
+            raise PreparationError(f"{task_id}: visible test is missing: {visible_test}")
         test_paths.append(visible_test)
     if not test_paths:
         raise PreparationError(f"{task_id}: no grading tests configured")
@@ -207,9 +197,7 @@ def clone_workspace(workspace: Workspace, destination: str | Path) -> Workspace:
     """Make an independent agent/grader copy from one pristine staged task."""
     destination = Path(destination)
     if destination.exists():
-        raise PreparationError(
-            f"refusing to replace existing agent workspace: {destination}"
-        )
+        raise PreparationError(f"refusing to replace existing agent workspace: {destination}")
     destination.mkdir(parents=True)
     agent_dir = destination / "workspace"
     grader_dir = destination / "grader"
@@ -261,14 +249,7 @@ def grade_workspace(
         "no:cacheprovider",
         "--import-mode=importlib",
         *(
-            str(
-                (
-                    workspace.grader_dir
-                    if name in workspace.hidden_tests
-                    else workspace.agent_dir
-                )
-                / name
-            )
+            str((workspace.grader_dir if name in workspace.hidden_tests else workspace.agent_dir) / name)
             for name in workspace.test_paths
         ),
     ]
@@ -292,9 +273,7 @@ def grade_workspace(
             cwd: Path,
             env: Mapping[str, str],
         ) -> subprocess.CompletedProcess[Any]:
-            return subprocess.run(
-                command, cwd=cwd, env=env, capture_output=True, text=True
-            )
+            return subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
 
         command_runner = default_runner
     completed = command_runner(command, workspace.grader_dir, environment)
@@ -329,14 +308,10 @@ def verify_benchmark(benchmark: str | Path, expected_commit: str) -> str:
         text=True,
     )
     if result.returncode:
-        raise BenchmarkError(
-            f"{benchmark}: not a readable git checkout: {result.stderr.strip()}"
-        )
+        raise BenchmarkError(f"{benchmark}: not a readable git checkout: {result.stderr.strip()}")
     actual = result.stdout.strip()
     if actual != expected_commit:
-        raise BenchmarkError(
-            f"benchmark commit mismatch: expected {expected_commit}, got {actual}"
-        )
+        raise BenchmarkError(f"benchmark commit mismatch: expected {expected_commit}, got {actual}")
     return actual
 
 
@@ -364,9 +339,7 @@ def load_manifest(path: str | Path) -> Manifest:
     if missing:
         raise PreparationError(f"{path}: missing manifest keys: {', '.join(missing)}")
     if len(data["exercises"]) != 10 or len(data["repository_tasks"]) != 2:
-        raise PreparationError(
-            f"{path}: bakeoff requires ten exercises and two repository tasks"
-        )
+        raise PreparationError(f"{path}: bakeoff requires ten exercises and two repository tasks")
     return Manifest(
         path=path,
         repository=str(data["repository"]),
@@ -390,9 +363,7 @@ def validate_manifest_sources(manifest: Manifest, benchmark: str | Path) -> None
         source = benchmark / exercise
         if not (source / ".docs" / "instructions.md").is_file():
             raise PreparationError(f"{source}: missing .docs/instructions.md")
-        if not any(
-            path.is_file() and _is_test_file(path) for path in source.rglob("*")
-        ):
+        if not any(path.is_file() and _is_test_file(path) for path in source.rglob("*")):
             raise PreparationError(f"{source}: no Python exercise tests found")
 
 

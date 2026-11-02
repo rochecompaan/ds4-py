@@ -12,9 +12,7 @@ BASIC = FIXTURES / "basic.trace"
 COMPACTED = FIXTURES / "compacted.trace"
 EARLY_EDIT = FIXTURES / "early_edit.trace"
 STAMP = "2026-10-21 09:05:07.042 "
-FIRST_PREFILL = (
-    "prefill tool_round=1 transcript=4 prompt=4 cached=2 suffix=2 think=high"
-)
+FIRST_PREFILL = "prefill tool_round=1 transcript=4 prompt=4 cached=2 suffix=2 think=high"
 
 
 def read(path: Any) -> Any:
@@ -144,9 +142,7 @@ def test_ignores_prefill_sync_status(tmp_path: Path) -> None:
         tmp_path,
         BASIC,
         FIRST_PREFILL,
-        "prefill sync done prompt=4 cached=0 suffix=4 rc=0 1.0 ms\n"
-        + STAMP
-        + FIRST_PREFILL,
+        "prefill sync done prompt=4 cached=0 suffix=4 rc=0 1.0 ms\n" + STAMP + FIRST_PREFILL,
     )
 
     trace = read(path)
@@ -194,9 +190,7 @@ def test_missing_initial_prompt_is_rejected(tmp_path: Path) -> None:
     [
         (
             FIRST_PREFILL,
-            "tokens label=initial_system_prompt start=0 len=2\n"
-            + STAMP
-            + FIRST_PREFILL,
+            "tokens label=initial_system_prompt start=0 len=2\n" + STAMP + FIRST_PREFILL,
             "duplicate initial system prompt",
         ),
         (FIRST_PREFILL, "", "prefill suffix without prefill"),
@@ -271,9 +265,7 @@ def test_missing_initial_prompt_is_rejected(tmp_path: Path) -> None:
         ("think=75", "think=0", "unsupported think name"),
     ],
 )
-def test_malformed_basic_traces_are_rejected(
-    tmp_path: Path, old: Any, new: Any, fragment: Any
-) -> None:
+def test_malformed_basic_traces_are_rejected(tmp_path: Path, old: Any, new: Any, fragment: Any) -> None:
     assert_replay_error(mutate(tmp_path, BASIC, old, new), fragment)
 
 
@@ -288,9 +280,7 @@ def test_missing_context_is_rejected(tmp_path: Path) -> None:
 
 
 def test_invalid_context_is_rejected(tmp_path: Path) -> None:
-    path = mutate(
-        tmp_path, BASIC, "agent worker start ctx=4096", "agent worker start ctx=0"
-    )
+    path = mutate(tmp_path, BASIC, "agent worker start ctx=4096", "agent worker start ctx=0")
     assert_replay_error(path, "invalid context")
 
 
@@ -332,9 +322,7 @@ def test_raw_traces_are_not_replayable(tmp_path: Path, raw_line: Any) -> None:
         "agent worker start ctx=1 backend=cuda model=/models/other.gguf trace=other.trace",
     ],
 )
-def test_duplicate_worker_start_cannot_overwrite_replay_metadata(
-    tmp_path: Path, header: Any
-) -> None:
+def test_duplicate_worker_start_cannot_overwrite_replay_metadata(tmp_path: Path, header: Any) -> None:
     path = tmp_path / "duplicate.trace"
     path.write_text(BASIC.read_text() + STAMP + header + "\n")
     assert_replay_error(path, "duplicate worker start")

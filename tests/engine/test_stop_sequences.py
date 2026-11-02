@@ -120,9 +120,7 @@ def test_stop_sequence_matches_across_tokens_and_stops_after_matching_token() ->
     assert control.stop_sequence == b"stop"
 
 
-def test_stop_sequence_never_matches_thinking_but_matches_following_control_text() -> (
-    None
-):
+def test_stop_sequence_never_matches_thinking_but_matches_following_control_text() -> None:
     texts = {1: b"<think>", 2: b"stop", 3: b"</think>", 4: b"stop"}
     stream = RoundStream(INFO, ThinkMode.HIGH)
     reason, _, transcript, _ = decode(
@@ -138,9 +136,7 @@ def test_stop_sequence_never_matches_thinking_but_matches_following_control_text
 def test_active_sequences_require_a_matching_prefix_after_region_start() -> None:
     stream = RoundStream(INFO, ThinkMode.NONE)
     assert stream.active_stop_sequences == []
-    reason, _, _, control = decode(
-        [ord("x"), ord("s"), 0], [b"stop"], stream=stream, max_tokens=2
-    )
+    reason, _, _, control = decode([ord("x"), ord("s"), 0], [b"stop"], stream=stream, max_tokens=2)
     assert reason == "max_tokens" and control.active_stop_sequences == [b"stop"]
 
 
@@ -217,17 +213,12 @@ def test_public_chat_stop_sequence_leaves_open_and_next_round_resumes() -> None:
     def script(prompt: Any, generated: Any) -> Any:
         source = (
             b"next"
-            if any(
-                tuple(prompt[index : index + len(stop)]) == stop
-                for index in range(len(prompt) - len(stop) + 1)
-            )
+            if any(tuple(prompt[index : index + len(stop)]) == stop for index in range(len(prompt) - len(stop) + 1))
             else b"stop"
         )
         return source[len(generated)] + 1 if len(generated) < len(source) else 0
 
-    with ds4py.open(
-        "f.gguf", think=ThinkMode.NONE, native=FakeNative(script=script)
-    ) as engine:
+    with ds4py.open("f.gguf", think=ThinkMode.NONE, native=FakeNative(script=script)) as engine:
         session = engine.session()
         session.append_user("hi")
         first = list(session.run_round(stop_sequences=[b"stop"]))
@@ -239,24 +230,18 @@ def test_public_chat_stop_sequence_leaves_open_and_next_round_resumes() -> None:
         tokens = session.transcript.tokens
         expected = tuple(byte + 1 for byte in b"stopnext")
         assert any(
-            tokens[index : index + len(expected)] == expected
-            for index in range(len(tokens) - len(expected) + 1)
+            tokens[index : index + len(expected)] == expected for index in range(len(tokens) - len(expected) + 1)
         )
 
 
 @pytest.mark.parametrize("chat", [False, True], ids=["raw", "chat"])
-def test_paused_round_rejects_changed_stop_sequences(
-    chat: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_paused_round_rejects_changed_stop_sequences(chat: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     stop = tuple(byte + 1 for byte in b"stop")
 
     def script(prompt: Any, generated: Any) -> Any:
         source = (
             b"next"
-            if any(
-                tuple(prompt[index : index + len(stop)]) == stop
-                for index in range(len(prompt) - len(stop) + 1)
-            )
+            if any(tuple(prompt[index : index + len(stop)]) == stop for index in range(len(prompt) - len(stop) + 1))
             else b"stop"
         )
         return source[len(generated)] + 1 if len(generated) < len(source) else 0
@@ -270,17 +255,13 @@ def test_paused_round_rejects_changed_stop_sequences(
         return original_sample(self, *args)
 
     monkeypatch.setattr(FakeSession, "sample", counting_sample)
-    with ds4py.open(
-        "f.gguf", think=ThinkMode.NONE, native=FakeNative(script=script)
-    ) as engine:
+    with ds4py.open("f.gguf", think=ThinkMode.NONE, native=FakeNative(script=script)) as engine:
         session = engine.session()
         if chat:
             session.append_user("hi")
         else:
             session.append_tokens([5, 6], "user")
-        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped(
-            "stop_sequence"
-        )
+        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped("stop_sequence")
         sampled_before = sample_calls
         with pytest.raises(
             ValueError,
@@ -288,9 +269,7 @@ def test_paused_round_rejects_changed_stop_sequences(
         ):
             list(session.run_round(stop_sequences=[b"other"]))
         assert sample_calls == sampled_before
-        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped(
-            "stop_token"
-        )
+        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped("stop_token")
         assert sample_calls > sampled_before
 
 
@@ -310,9 +289,7 @@ def test_new_user_retires_paused_stream_and_starts_fresh_assistant() -> None:
     def script(prompt: Any, generated: Any) -> Any:
         return b"stop"[len(generated)] + 1 if len(generated) < 4 else 0
 
-    with ds4py.open(
-        "f.gguf", think=ThinkMode.NONE, native=FakeNative(script=script)
-    ) as engine:
+    with ds4py.open("f.gguf", think=ThinkMode.NONE, native=FakeNative(script=script)) as engine:
         session = engine.session()
         session.append_user("first")
         first = list(session.run_round(stop_sequences=[b"stop"]))
@@ -345,9 +322,7 @@ def test_new_user_retires_paused_stream_and_starts_fresh_assistant() -> None:
         ]
         assert session._paused_stream is not old_stream
         assert len(cast("Any", session._paused_stream).sampled_tokens) == 4
-        assert [s.kind for s in session.transcript.segments].count(
-            "assistant_prefix"
-        ) == 2
+        assert [s.kind for s in session.transcript.segments].count("assistant_prefix") == 2
 
 
 @pytest.mark.parametrize(
@@ -361,9 +336,7 @@ def test_message_mutations_close_a_paused_assistant(mutation: Any, kind: Any) ->
     with ds4py.open("f.gguf", think=ThinkMode.NONE, native=FakeNative()) as engine:
         session = engine.session()
         session.append_user("first")
-        assert list(session.run_round(stop_sequences=[b"ok"]))[-1] == Stopped(
-            "stop_sequence"
-        )
+        assert list(session.run_round(stop_sequences=[b"ok"]))[-1] == Stopped("stop_sequence")
         mutation(session)
         assert session._paused_stream is None
         assert [segment.kind for segment in session.transcript.segments][-2:] == [

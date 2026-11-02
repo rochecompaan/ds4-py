@@ -133,9 +133,7 @@ def summarize_events(
             if kind == "FunctionToolResultEvent":
                 part, call_id = _canonical_tool_part(part)
                 if call_id not in canonical_calls:
-                    raise MetricError(
-                        f"result for unknown canonical tool call: {call_id}"
-                    )
+                    raise MetricError(f"result for unknown canonical tool call: {call_id}")
                 if call_id in resolved_calls:
                     raise MetricError(f"duplicate canonical tool result: {call_id}")
                 resolved_calls.add(call_id)
@@ -156,9 +154,7 @@ def summarize_events(
                 raise MetricError(f"unknown tool result part: {part_kind!r}")
     unresolved = canonical_calls - resolved_calls
     if unresolved:
-        raise MetricError(
-            f"canonical tool calls without outcomes: {sorted(unresolved)!r}"
-        )
+        raise MetricError(f"canonical tool calls without outcomes: {sorted(unresolved)!r}")
     accounting = ToolAccounting(parsed, executed, refused, retried)
     return EventSummary(
         wall_seconds=_wall(wall_seconds),
@@ -231,11 +227,7 @@ def combine_summaries(summaries: Iterable[EventSummary]) -> EventSummary:
                 for field in ("parsed", "executed", "refused", "retried")
             )
         )
-    reasons = tuple(
-        dict.fromkeys(
-            reason for value in values for reason in value.non_extension_reasons
-        )
-    )
+    reasons = tuple(dict.fromkeys(reason for value in values for reason in value.non_extension_reasons))
     return EventSummary(
         wall_seconds=sum(value.wall_seconds for value in values),
         progress_events=sum(value.progress_events for value in values),
@@ -243,12 +235,8 @@ def combine_summaries(summaries: Iterable[EventSummary]) -> EventSummary:
         tool_calls=sum(value.tool_calls for value in values),
         avg_prefill_reuse=sum(ratios) / len(ratios) if ratios else None,
         non_extend_rounds=sum(value.non_extend_rounds for value in values),
-        invalid_non_extend_rounds=sum(
-            value.invalid_non_extend_rounds for value in values
-        ),
-        allowed_non_extend_rounds=sum(
-            value.allowed_non_extend_rounds for value in values
-        ),
+        invalid_non_extend_rounds=sum(value.invalid_non_extend_rounds for value in values),
+        allowed_non_extend_rounds=sum(value.allowed_non_extend_rounds for value in values),
         non_extension_reasons=reasons,
         parser_errors=sum(value.parser_errors for value in values),
         tool_accounting=accounting,

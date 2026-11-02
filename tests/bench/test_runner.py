@@ -76,9 +76,7 @@ def with_summary(item: Any, **changes: Any) -> Any:
     return replace(item, summary=replace(item.summary, **changes))
 
 
-def test_task_result_preserves_summary_evidence_and_derives_last_attempt_paths() -> (
-    None
-):
+def test_task_result_preserves_summary_evidence_and_derives_last_attempt_paths() -> None:
     summary = EventSummary(
         wall_seconds=2,
         progress_events=3,
@@ -169,9 +167,7 @@ def test_request_limit_failure_is_named_in_task_errors(tmp_path: Path) -> None:
         workspace,
         agent,
         tmp_path / "results",
-        grade_runner=lambda *args: subprocess.CompletedProcess(
-            [], 0, stdout="pass", stderr=""
-        ),
+        grade_runner=lambda *args: subprocess.CompletedProcess([], 0, stdout="pass", stderr=""),
     )
 
     assert "attempt 1 request_limit" in completed.errors
@@ -219,9 +215,7 @@ def test_relative_results_root_keeps_attempt_artifacts_at_invocation_root(
         workspace,
         config(tmp_path),
         Path("results"),
-        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(
-            command, 0, "pass", ""
-        ),
+        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(command, 0, "pass", ""),
     )
 
     assert completed.errors == ()
@@ -240,9 +234,7 @@ def test_c_and_python_run_sequentially_on_equivalent_tasks(tmp_path: Path) -> No
         [staged],
         [config(tmp_path, "c"), config(tmp_path)],
         tmp_path / "results",
-        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(
-            command, 0, "pass", ""
-        ),
+        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(command, 0, "pass", ""),
     )
 
     assert [(item.task_id, item.agent) for item in results] == [
@@ -254,11 +246,7 @@ def test_c_and_python_run_sequentially_on_equivalent_tasks(tmp_path: Path) -> No
     assert [item["agent"] for item in invocations] == ["c", "ds4py"]
     assert results[0].tool_accounting is None
     assert not (tmp_path / "concurrency-violation").exists()
-    assert (
-        not (results[0].save_dir or Path("missing")).exists()
-        if results[0].save_dir
-        else True
-    )
+    assert not (results[0].save_dir or Path("missing")).exists() if results[0].save_dir else True
 
 
 def test_sequential_runner_reports_each_task_start_and_finish(
@@ -272,9 +260,7 @@ def test_sequential_runner_reports_each_task_start_and_finish(
         [staged],
         [config(tmp_path, "c"), config(tmp_path)],
         tmp_path / "results",
-        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(
-            command, 0, "pass", ""
-        ),
+        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(command, 0, "pass", ""),
     )
 
     assert capsys.readouterr().out.splitlines() == [
@@ -299,9 +285,7 @@ def test_c_metrics_failure_leaves_tool_accounting_unavailable(tmp_path: Path) ->
         workspace,
         c_config,
         tmp_path / "results",
-        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(
-            command, 0, "pass", ""
-        ),
+        grade_runner=lambda command, cwd, env: subprocess.CompletedProcess(command, 0, "pass", ""),
     )
 
     assert completed.errors
@@ -329,37 +313,21 @@ def test_gate_one_allows_exactly_one_task_of_pass_slack() -> None:
     assert "attempt" in report.gates["gate-1"].detail
 
 
-def test_gate_two_allows_bad_argument_retry_but_not_parser_error_or_missing_outcome() -> (
-    None
-):
+def test_gate_two_allows_bad_argument_retry_but_not_parser_error_or_missing_outcome() -> None:
     c = result(agent="c")
     python = with_summary(result(), tool_accounting=ToolAccounting(2, 1, 0, 1))
-    assert (
-        build_report([c, python], healthy_restore([c, python])).gates["gate-2"].passed
-    )
+    assert build_report([c, python], healthy_restore([c, python])).gates["gate-2"].passed
 
     parser_error = with_summary(python, parser_errors=1)
-    assert (
-        not build_report([c, parser_error], healthy_restore([c, parser_error]))
-        .gates["gate-2"]
-        .passed
-    )
+    assert not build_report([c, parser_error], healthy_restore([c, parser_error])).gates["gate-2"].passed
     missing = with_summary(python, tool_accounting=ToolAccounting(2, 1, 0, 0))
-    assert (
-        not build_report([c, missing], healthy_restore([c, missing]))
-        .gates["gate-2"]
-        .passed
-    )
+    assert not build_report([c, missing], healthy_restore([c, missing])).gates["gate-2"].passed
 
 
 def test_gate_three_enforces_time_and_only_unexplained_non_extensions() -> None:
     c = result(agent="c", wall_seconds=10)
     python = result(wall_seconds=15.01)
-    assert (
-        not build_report([c, python], healthy_restore([c, python]))
-        .gates["gate-3"]
-        .passed
-    )
+    assert not build_report([c, python], healthy_restore([c, python])).gates["gate-3"].passed
 
     on_time = with_summary(
         python,
@@ -367,11 +335,7 @@ def test_gate_three_enforces_time_and_only_unexplained_non_extensions() -> None:
         invalid_non_extend_rounds=1,
         non_extend_rounds=1,
     )
-    assert (
-        not build_report([c, on_time], healthy_restore([c, on_time]))
-        .gates["gate-3"]
-        .passed
-    )
+    assert not build_report([c, on_time], healthy_restore([c, on_time])).gates["gate-3"].passed
 
 
 def test_gate_four_requires_interrupt_resume() -> None:
@@ -495,9 +459,7 @@ with lock_path.open("w") as lock:
 """
 
 
-def test_complete_runner_writes_gate_six_after_acceptance(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import bench.run_bakeoff as runner
 
     order = []

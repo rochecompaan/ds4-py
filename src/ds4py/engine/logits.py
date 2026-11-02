@@ -80,9 +80,7 @@ class LogitsView:
     def set_logits(self, values: Sequence[float]) -> None:
         """Replace native logits after checking the exact vocabulary length."""
         if len(values) != self._vocab_size:
-            raise ValueError(
-                f"logits buffer must equal the vocabulary size ({self._vocab_size})"
-            )
+            raise ValueError(f"logits buffer must equal the vocabulary size ({self._vocab_size})")
         self._session.set_logits(values)
 
     def bias(self, token_id: int, delta: float) -> None:

@@ -24,9 +24,7 @@ def _positive_int(value: str) -> int:
 def _parser() -> argparse.ArgumentParser:
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--manifest", type=Path, default=Path(__file__).with_name("bakeoff.yaml")
-    )
+    parser.add_argument("--manifest", type=Path, default=Path(__file__).with_name("bakeoff.yaml"))
     parser.add_argument("--benchmark", type=Path, default=root.parent / "benchmark")
     parser.add_argument("--repo-root", type=Path, default=root)
     parser.add_argument("--results", type=Path, required=True)
@@ -44,9 +42,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     results_root = args.results.resolve()
     results_root.mkdir(parents=True, exist_ok=False)
     manifest = load_manifest(args.manifest)
-    staged = prepare_manifest(
-        manifest, results_root / "staged", args.benchmark, args.repo_root
-    )
+    staged = prepare_manifest(manifest, results_root / "staged", args.benchmark, args.repo_root)
     workspaces = {workspace.task_id: workspace for workspace in staged}
     missing = sorted(set(args.task) - workspaces.keys())
     if missing:
@@ -83,9 +79,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 flush=True,
             )
 
-    (results_root / "targeted.json").write_text(
-        json.dumps(records, indent=2, sort_keys=True, default=str) + "\n"
-    )
+    (results_root / "targeted.json").write_text(json.dumps(records, indent=2, sort_keys=True, default=str) + "\n")
     return 1 if failed else 0
 
 

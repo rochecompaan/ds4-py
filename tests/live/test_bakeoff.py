@@ -17,10 +17,7 @@ pytestmark = pytest.mark.live
 
 
 def test_complete_bakeoff_passes_all_six_gates() -> None:
-    required = {
-        name: os.environ.get(name)
-        for name in ("DS4_TEST_MODEL", "DS4_AGENT", "POLYGLOT_BENCHMARK")
-    }
+    required = {name: os.environ.get(name) for name in ("DS4_TEST_MODEL", "DS4_AGENT", "POLYGLOT_BENCHMARK")}
     if os.environ.get("DS4_RUN_BAKEOFF") != "1" or not all(required.values()):
         pytest.skip(
             "set DS4_RUN_BAKEOFF=1, DS4_TEST_MODEL, DS4_AGENT, and POLYGLOT_BENCHMARK for the complete live bake-off"
@@ -57,9 +54,7 @@ def test_complete_bakeoff_passes_all_six_gates() -> None:
     written = json.loads((root / "bench/results/bakeoff.json").read_text())
     gates = written["gates"]
     assert set(gates) == {f"gate-{index}" for index in range(1, 7)}
-    failed = {
-        name: gate["detail"] for name, gate in gates.items() if not gate["passed"]
-    }
+    failed = {name: gate["detail"] for name, gate in gates.items() if not gate["passed"]}
     assert not failed, f"live bakeoff gates failed: {failed}"
     assert len(written["replay"]) > 0
     assert report.passed

@@ -38,9 +38,7 @@ class FakeMultiTokenStep:
                 ctx.rng,
             )
             if sampled < 0:
-                raise EngineError(
-                    "cannot sample: the session state is not valid; sync first"
-                )
+                raise EngineError("cannot sample: the session state is not valid; sync first")
             if ctx.is_stop(sampled):
                 ctx.accept(sampled)
                 return
@@ -91,9 +89,7 @@ class FakeMultiTokenStep:
             if index:
                 ctx.before_sample()
                 p = ctx.sampling()
-                token = session.sample(
-                    p.temperature, p.top_k, p.top_p, p.min_p, ctx.rng
-                )
+                token = session.sample(p.temperature, p.top_k, p.top_p, p.min_p, ctx.rng)
                 if token < 0:
                     raise EngineError("cannot sample: sync first")
             verdict = ctx.accept(token)

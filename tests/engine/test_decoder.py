@@ -86,9 +86,7 @@ def test_display_decoding_does_not_mutate_transcript_or_tool_parser() -> None:
     parser = Glm()
     before = parser.feed(b"")
     decoder = Decoder()
-    decoder.feed(
-        b"<tool_call>read<arg_key>path</arg_key><arg_value>x</arg_value></tool_call>"
-    )
+    decoder.feed(b"<tool_call>read<arg_key>path</arg_key><arg_value>x</arg_value></tool_call>")
     decoder.finish()
     assert transcript.tokens == () and transcript.segments == ()
     assert parser.feed(b"") == before

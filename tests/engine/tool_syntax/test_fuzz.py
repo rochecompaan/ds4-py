@@ -34,11 +34,7 @@ def make_stanza(syntax: Any, v41: Any, value: Any) -> str:
         return f"<tool_call>echo<arg_key>value</arg_key><arg_value>{escaped}</arg_value></tool_call>"
     if syntax == "qwen":
         return f"<tool_call><function=echo><parameter=value>{escaped}</parameter></function></tool_call>"
-    calls, invoke, parameter = (
-        (" calls", " invoke", " parameter")
-        if v41
-        else ("tool_calls", "invoke", "parameter")
-    )
+    calls, invoke, parameter = (" calls", " invoke", " parameter") if v41 else ("tool_calls", "invoke", "parameter")
     return (
         f'<｜DSML｜{calls}><｜DSML｜{invoke} name="echo">'
         f'<｜DSML｜{parameter} name="value" string="true">{escaped}</｜DSML｜{parameter}>'
@@ -88,9 +84,7 @@ def test_seeded_valid_calls_roundtrip_and_match_random_chunking(
 
 
 @pytest.mark.parametrize("syntax,v41", FAMILIES)
-def test_seeded_plain_prose_never_becomes_executable(
-    parse_chunks: Any, syntax: Any, v41: Any
-) -> None:
+def test_seeded_plain_prose_never_becomes_executable(parse_chunks: Any, syntax: Any, v41: Any) -> None:
     rng = random.Random(f"0:prose:{syntax}:{v41}")
     tokens = (
         "word",
@@ -127,9 +121,7 @@ def test_seeded_plain_prose_never_becomes_executable(
 
 
 @pytest.mark.parametrize("syntax,v41", FAMILIES)
-def test_empty_chunks_and_repeated_terminal_operations_are_stable(
-    syntax: Any, v41: Any
-) -> None:
+def test_empty_chunks_and_repeated_terminal_operations_are_stable(syntax: Any, v41: Any) -> None:
     parser = parser_for(syntax, v41)
     initial = parser.feed(b"")
     assert parser.feed(b"") == initial
@@ -154,9 +146,7 @@ def test_empty_chunks_and_repeated_terminal_operations_are_stable(
 
 
 @pytest.mark.parametrize("syntax,v41", FAMILIES)
-def test_alternating_empty_chunks_matches_one_shot(
-    parse_chunks: Any, syntax: Any, v41: Any
-) -> None:
+def test_alternating_empty_chunks_matches_one_shot(parse_chunks: Any, syntax: Any, v41: Any) -> None:
     case = {"syntax": syntax, "v41": v41}
     data = make_stanza(syntax, v41, "x<>&\ny").encode()
     chunks = [piece for byte in data for piece in (b"", bytes([byte]), b"")]

@@ -61,13 +61,9 @@ class DecodeContext:
         self._session = session
         self._accepted = 0
         self._committed = False
-        self._sampled_tokens = (
-            job.stream.sampled_tokens if job.stream is not None else job.sampled_tokens
-        )
+        self._sampled_tokens = job.stream.sampled_tokens if job.stream is not None else job.sampled_tokens
         self._logits_view = (
-            LogitsView(cast("SessionHandle", session), engine.info().vocab_size)
-            if job.logits_hooks
-            else None
+            LogitsView(cast("SessionHandle", session), engine.info().vocab_size) if job.logits_hooks else None
         )
         self._verdict = Verdict.CONTINUE
         self._event_buffer: list[Event] | None = None
@@ -109,10 +105,7 @@ class DecodeContext:
 
     def sampling(self) -> SamplingPolicy:
         policy = self._job.sampling
-        if (
-            self._job.stream is not None
-            and self._job.stream.parser.wants_greedy_sampling()
-        ):
+        if self._job.stream is not None and self._job.stream.parser.wants_greedy_sampling():
             return replace(policy, temperature=0.0, top_k=0, top_p=1.0, min_p=0.0)
         return policy
 
@@ -156,9 +149,7 @@ class DecodeContext:
         elif self._job.control.sequences:
             self._job.control.feed(text)
         # Stop sequences can pause a raw round before any hook is registered.
-        if stream is None and (
-            self._logits_view is not None or self._job.control.sequences
-        ):
+        if stream is None and (self._logits_view is not None or self._job.control.sequences):
             self._sampled_tokens.append(token)
         if stream is not None and stream.malformed:
             self.finish("parser_error")
@@ -225,9 +216,7 @@ class PlainStep:
             p = ctx.sampling()
             token = session.sample(p.temperature, p.top_k, p.top_p, p.min_p, ctx.rng)
             if token < 0:
-                raise EngineError(
-                    "cannot sample: the session state is not valid; sync first"
-                )
+                raise EngineError("cannot sample: the session state is not valid; sync first")
             verdict = ctx.accept(token)
             if verdict is Verdict.STOP_BEFORE:
                 return
@@ -248,9 +237,7 @@ def generate(
 ) -> str:
     room = session.ctx() - session.pos()
     limit = min(job.max_tokens, max(room - job.reserve, 0))
-    limit_reason = (
-        "max_tokens" if job.max_tokens <= room - job.reserve else "context_reserve"
-    )
+    limit_reason = "max_tokens" if job.max_tokens <= room - job.reserve else "context_reserve"
     decode_step = step or PlainStep()
     if job.logits_hooks and not decode_step.hooks_every_sample:
         decode_step = PlainStep()

@@ -49,9 +49,7 @@ def test_save_syncs_the_trailing_eos_before_writing_header_and_payload(
     with fake_engine(script=reply(b"ok")) as engine:
         session = chat_session(engine)
         kinds = []
-        session.on_event(
-            lambda event: kinds.append(event.kind), kinds=("Synced", "Saved")
-        )
+        session.on_event(lambda event: kinds.append(event.kind), kinds=("Synced", "Saved"))
         path = tmp_path / "session.kv"
         saved = save_to(path, session)
 
@@ -152,9 +150,7 @@ def test_load_adopts_native_tokens_restores_chat_and_permits_extension(
         assert loaded == list(saved_tokens)
         assert session.transcript.tokens == saved_tokens
         assert session.transcript.chat
-        assert [
-            (segment.start, segment.end) for segment in session.transcript.segments
-        ] == [
+        assert [(segment.start, segment.end) for segment in session.transcript.segments] == [
             (0, len(saved_tokens)),
         ]
         assert session.ctx_used == len(saved_tokens)

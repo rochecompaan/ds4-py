@@ -26,9 +26,7 @@ def close_workers() -> Iterator[Any]:
 
 
 def worker(script: Any, *, ctx: Any = 64, cancel: Any = None) -> Any:
-    w = EngineWorker(
-        FakeNative(script=script), EngineConfig(Path("f"), ctx=ctx), cancel=cancel
-    )
+    w = EngineWorker(FakeNative(script=script), EngineConfig(Path("f"), ctx=ctx), cancel=cancel)
     _workers.append(w)
     return w
 
@@ -73,11 +71,7 @@ def test_ctrl_c_keeps_the_partial_tokens() -> None:
 
     w, t = worker(script, cancel=cancel), Transcript()
     assert gen(w, [5, 6], transcript=t) == [tok("a")] * 3 + [Stopped("interrupted")]
-    assert (
-        len(t) == 3
-        and not cancel.is_set()
-        and w.call(lambda e, s: s.pos()).result() == 5
-    )
+    assert len(t) == 3 and not cancel.is_set() and w.call(lambda e, s: s.pos()).result() == 5
 
 
 def test_sampling_needs_a_valid_state() -> None:
@@ -106,9 +100,7 @@ class StubSession:  # just what PlainStep and generate use
     def pos(self) -> int:
         return 10
 
-    def sample(
-        self, temperature: Any, top_k: Any, top_p: Any, min_p: Any, rng: Any
-    ) -> Any:
+    def sample(self, temperature: Any, top_k: Any, top_p: Any, min_p: Any, rng: Any) -> Any:
         self.seen.append(("sample", temperature, top_k, top_p, min_p, rng.value))
         return self.tokens.pop(0)
 
@@ -128,11 +120,7 @@ def test_plain_step_follows_the_contract() -> None:
         cancelled=lambda: False,
         emit=out.append,
     )
-    assert (
-        reason == "stop_token"
-        and out == [Token(7, b"x")]
-        and PlainStep.hooks_every_sample
-    )
+    assert reason == "stop_token" and out == [Token(7, b"x")] and PlainStep.hooks_every_sample
     assert s.seen == [
         ("sample", 0.5, 3, 0.9, 0.0, 9),
         ("eval", 7),
@@ -171,9 +159,7 @@ def test_a_token_is_committed_after_its_eval_and_before_its_event() -> None:
             cancelled=lambda: False,
             emit=lambda ev: out.append((ev, t.tokens)),
         )
-    assert out == [
-        (Token(7, b"x"), (1, 2, 7))
-    ]  # 8 failed its eval: not kept, not published
+    assert out == [(Token(7, b"x"), (1, 2, 7))]  # 8 failed its eval: not kept, not published
     assert [(seg.kind, seg.end) for seg in t.segments] == [
         ("user", 2),
         ("assistant", 3),

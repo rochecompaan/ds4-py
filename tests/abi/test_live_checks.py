@@ -33,9 +33,7 @@ def test_the_checks_pass_on_an_engine_that_reuses_its_kv() -> None:
         "tokens": 32,
     }
     assert r["sync_plans"]["prefilled"] == {"extend": 16, "restore": 16, "rebuild": 128}
-    assert r["sync_plans"]["seconds"] == pytest.approx(
-        {"extend": 0.04, "restore": 0.04, "rebuild": 0.32}
-    )
+    assert r["sync_plans"]["seconds"] == pytest.approx({"extend": 0.04, "restore": 0.04, "rebuild": 0.32})
     assert r["sync_plans"]["message"] == (
         "extend of 16 tokens took 0.040 s, restore of 16 took 0.040 s, rebuild of 128 took 0.320 s"
     )
@@ -44,19 +42,14 @@ def test_the_checks_pass_on_an_engine_that_reuses_its_kv() -> None:
 def test_a_restore_that_changes_the_output_fails_the_restore_check() -> None:
     starts = []
 
-    def drifting(
-        prompt: Any, generated: Any
-    ) -> Any:  # each run answers with a different token
+    def drifting(prompt: Any, generated: Any) -> Any:  # each run answers with a different token
         if not generated:
             starts.append(None)
         return 2 + len(starts)
 
     r = live(script=drifting)
     assert r["sync_plans"]["ok"] and not r["restore"]["ok"]
-    assert (
-        r["restore"]["message"]
-        == "the runs differ at token 0: 3 after a restore, 4 after a rebuild"
-    )
+    assert r["restore"]["message"] == "the runs differ at token 0: 3 after a restore, 4 after a rebuild"
 
 
 def test_a_snapshot_load_that_does_not_restore_fails_the_sync_check(
@@ -65,10 +58,7 @@ def test_a_snapshot_load_that_does_not_restore_fails_the_sync_check(
     monkeypatch.setattr(FakeSession, "load_snapshot", lambda self, snap: None)
     r = live()
     assert not r["sync_plans"]["ok"]
-    assert (
-        r["sync_plans"]["message"]
-        == "the restore sync prefilled 128 tokens; its plan prefills 16"
-    )
+    assert r["sync_plans"]["message"] == "the restore sync prefilled 128 tokens; its plan prefills 16"
 
 
 def test_a_slow_restore_is_reported_but_not_failed(
@@ -89,9 +79,7 @@ def test_a_slow_restore_is_reported_but_not_failed(
 
 def test_the_context_must_hold_the_check() -> None:
     clock = FakeClock()
-    w = EngineWorker(
-        FakeNative(clock=clock), EngineConfig(Path("f.gguf"), ctx=64), clock=clock
-    )
+    w = EngineWorker(FakeNative(clock=clock), EngineConfig(Path("f.gguf"), ctx=64), clock=clock)
     try:
         with pytest.raises(EngineError, match="needs a context of at least 161"):
             run_live_checks(w, clock=clock, prefix=128, tail=16, generate=32)
@@ -102,9 +90,7 @@ def test_the_context_must_hold_the_check() -> None:
 def test_disabled_restore_is_a_plan_failure() -> None:
     r = live(restore_enabled=False)
     assert not r["sync_plans"]["ok"]
-    assert r["sync_plans"]["message"] == (
-        "the restore sync planned rebuild of 128 tokens, expected restore of 16"
-    )
+    assert r["sync_plans"]["message"] == ("the restore sync planned rebuild of 128 tokens, expected restore of 16")
 
 
 def test_different_stop_points_report_the_end_reason() -> None:

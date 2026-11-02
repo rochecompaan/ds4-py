@@ -129,9 +129,7 @@ def _definitions(tools: Iterable[Any]) -> tuple[ToolDefinition, ...]:
         ToolDefinition(
             tool.name,
             tool.description or "",
-            tool.parameters_json_schema
-            if hasattr(tool, "parameters_json_schema")
-            else tool.parameters,
+            tool.parameters_json_schema if hasattr(tool, "parameters_json_schema") else tool.parameters,
         )
         for tool in tools
     )
@@ -194,9 +192,7 @@ def _projection(message: ModelMessage) -> _MessageProjection:
             }
             details = part.get("provider_details") or {}
             raw = details.get("ds4py.raw")
-            if (message.metadata or {}).get("ds4.source") == "sampled" and isinstance(
-                raw, str
-            ):
+            if (message.metadata or {}).get("ds4.source") == "sampled" and isinstance(raw, str):
                 item["raw"] = raw
             projected["parts"].append(item)
         elif kind == "tool-return":
@@ -249,15 +245,9 @@ def _validate(messages: Iterable[ModelMessage]) -> None:
                     RetryPromptPart,
                 ),
             ):
-                raise EngineError(
-                    f"unsupported harness request part: {type(part).__name__}"
-                )
-            if isinstance(message, ModelResponse) and not isinstance(
-                part, (TextPart, ThinkingPart, ToolCallPart)
-            ):
-                raise EngineError(
-                    f"unsupported harness response part: {type(part).__name__}"
-                )
+                raise EngineError(f"unsupported harness request part: {type(part).__name__}")
+            if isinstance(message, ModelResponse) and not isinstance(part, (TextPart, ThinkingPart, ToolCallPart)):
+                raise EngineError(f"unsupported harness response part: {type(part).__name__}")
 
 
 class MessageBinder:
@@ -327,10 +317,7 @@ class MessageBinder:
                 matches = recoverable.get(_key_recovery_hash(candidate), [])
                 if len(matches) == 1:
                     index = matches[0]
-            if (
-                index is not None
-                and _content_hash(candidate) != self._records[index].content_hash
-            ):
+            if index is not None and _content_hash(candidate) != self._records[index].content_hash:
                 candidate = deepcopy(self._bound_messages[index])
             adopted.append(candidate)
         self._keyed(adopted)
@@ -341,9 +328,7 @@ class MessageBinder:
         bound_keys = {record.key for record in self._records}
         adopted = self.adopt(messages)
         bound_indices = [
-            index
-            for index, message in enumerate(adopted)
-            if (message.metadata or {}).get("ds4.key") in bound_keys
+            index for index, message in enumerate(adopted) if (message.metadata or {}).get("ds4.key") in bound_keys
         ]
         if not bound_indices:
             return []
@@ -378,11 +363,7 @@ class MessageBinder:
         segments = PromptBuilder(self.session.engine).begin(definitions, instructions)
         preamble = tuple(token for segment in segments for token in segment.tokens)
         loaded = self.session.transcript.tokens
-        return (
-            bool(preamble)
-            and len(preamble) <= len(loaded)
-            and loaded[: len(preamble)] == preamble
-        )
+        return bool(preamble) and len(preamble) <= len(loaded) and loaded[: len(preamble)] == preamble
 
     def validate_restore(
         self,
@@ -434,8 +415,7 @@ class MessageBinder:
         for provenance in segments:
             if provenance.start != expected or provenance.end <= provenance.start:
                 raise EngineError(
-                    f"save record segment {provenance.start}:{provenance.end} "
-                    "does not continue the loaded transcript"
+                    f"save record segment {provenance.start}:{provenance.end} does not continue the loaded transcript"
                 )
             expected = provenance.end
             installed.append(self._installed_segment(provenance))
@@ -444,8 +424,7 @@ class MessageBinder:
             if provenance.key in ranges:
                 if provenance.content_hash != hashes[provenance.key]:
                     raise EngineError(
-                        f"save record ranges for message key {provenance.key!r} "
-                        "disagree on the content hash"
+                        f"save record ranges for message key {provenance.key!r} disagree on the content hash"
                     )
                 ranges[provenance.key][1] = provenance.end
             else:
@@ -453,9 +432,7 @@ class MessageBinder:
                 keys.append(provenance.key)
                 hashes[provenance.key] = provenance.content_hash
         if loaded is not None and expected != loaded:
-            raise EngineError(
-                f"save record covers {expected} tokens, the loaded payload has {loaded}"
-            )
+            raise EngineError(f"save record covers {expected} tokens, the loaded payload has {loaded}")
 
         # A response's range starts at its assistant prefix, which has no key.
         pending_prefix = None
@@ -464,10 +441,7 @@ class MessageBinder:
                 if provenance.kind == "assistant_prefix":
                     pending_prefix = provenance.start
                 continue
-            if (
-                pending_prefix is not None
-                and pending_prefix < ranges[provenance.key][0]
-            ):
+            if pending_prefix is not None and pending_prefix < ranges[provenance.key][0]:
                 ranges[provenance.key][0] = pending_prefix
             pending_prefix = None
 
@@ -486,23 +460,14 @@ class MessageBinder:
         for key in keys:
             position = positions.get(key)
             if position is None:
-                raise EngineError(
-                    f"the save record message key {key!r} is absent from the snapshot"
-                )
+                raise EngineError(f"the save record message key {key!r} is absent from the snapshot")
             if position <= previous:
-                raise EngineError(
-                    f"the save record message key {key!r} is out of snapshot order"
-                )
+                raise EngineError(f"the save record message key {key!r} is out of snapshot order")
             message = messages[position]
             content_hash = _content_hash(message)
             if content_hash != hashes[key]:
-                raise EngineError(
-                    f"the save record content hash for message key {key!r} "
-                    "does not match the snapshot"
-                )
-            records.append(
-                _BoundMessage(key, content_hash, ranges[key][0], ranges[key][1])
-            )
+                raise EngineError(f"the save record content hash for message key {key!r} does not match the snapshot")
+            records.append(_BoundMessage(key, content_hash, ranges[key][0], ranges[key][1]))
             bound_messages.append(message)
             previous = position
 
@@ -512,10 +477,7 @@ class MessageBinder:
     def _trailing_request(messages: Sequence[ModelMessage]) -> bool:
         if not messages or not isinstance(messages[-1], ModelRequest):
             return False
-        return any(
-            isinstance(part, (UserPromptPart, ToolReturnPart, RetryPromptPart))
-            for part in messages[-1].parts
-        )
+        return any(isinstance(part, (UserPromptPart, ToolReturnPart, RetryPromptPart)) for part in messages[-1].parts)
 
     @staticmethod
     def _continuation(messages: Sequence[ModelMessage]) -> bool:
@@ -569,11 +531,7 @@ class MessageBinder:
         for index, message in enumerate(messages):
             content_hash = _content_hash(message)
             key = (message.metadata or {}).get("ds4.key")
-            if (
-                key is None
-                and index < len(self._records)
-                and self._records[index].content_hash == content_hash
-            ):
+            if key is None and index < len(self._records) and self._records[index].content_hash == content_hash:
                 key = self._records[index].key
                 metadata = dict(message.metadata or {})
                 metadata["ds4.key"] = key
@@ -601,9 +559,7 @@ class MessageBinder:
             int(self.session.engine.think),
         )
         had_binding = self._signature is not None
-        system_changed = (
-            self._signature != signature or not self.session.transcript.chat
-        )
+        system_changed = self._signature != signature or not self.session.transcript.chat
         provider = note_provider if note_provider is not None else self.note_provider
         if self._restored:
             # A restore adopts a loaded KV without knowing the request that will
@@ -617,9 +573,7 @@ class MessageBinder:
         if system_changed:
             self._renderer.preflight(messages)
             start = 0
-            removed_notes = any(
-                segment.kind == "note" for segment in self.session.transcript.segments
-            )
+            removed_notes = any(segment.kind == "note" for segment in self.session.transcript.segments)
             if len(self.session.transcript):
                 self.session.truncate(0)
             self._records = []
@@ -635,17 +589,12 @@ class MessageBinder:
             while (
                 common < len(messages)
                 and common < len(self._records)
-                and keyed[common]
-                == (self._records[common].key, self._records[common].content_hash)
+                and keyed[common] == (self._records[common].key, self._records[common].content_hash)
             ):
                 common += 1
             if common == len(messages) == len(self._records):
                 pending = getattr(provider, "pending", None)
-                if not (
-                    pending is not None
-                    and self._trailing_request(messages)
-                    and pending(messages)
-                ):
+                if not (pending is not None and self._trailing_request(messages) and pending(messages)):
                     return BindingChange(
                         "unchanged",
                         len(self.session.transcript),
@@ -658,8 +607,7 @@ class MessageBinder:
             if common < len(self._records):
                 start = self._records[common].start
                 removed_notes = any(
-                    segment.kind == "note" and segment.end > start
-                    for segment in self.session.transcript.segments
+                    segment.kind == "note" and segment.end > start for segment in self.session.transcript.segments
                 )
                 self.session.truncate(start)
                 self._records = self._records[:common]
@@ -679,9 +627,7 @@ class MessageBinder:
                 for text, subtype in self._restored_notes.get(key, ()):
                     chat_ops.append_system_note(self.session, text, subtype)
                 if provider is not None:
-                    for text, subtype in provider.notes(
-                        messages[: common + offset + 1]
-                    ):
+                    for text, subtype in provider.notes(messages[: common + offset + 1]):
                         chat_ops.append_system_note(self.session, text, subtype)
             message_start, end = self._renderer.append(
                 self.session,
@@ -707,9 +653,7 @@ class MessageBinder:
         for message in messages:
             key = (message.metadata or {}).get("ds4.key", "")
             self._renderer.append(scratch, message, key, _content_hash(message))
-        prefix = PromptBuilder(self.session.engine).assistant_prefix(
-            scratch.transcript.tokens
-        )
+        prefix = PromptBuilder(self.session.engine).assistant_prefix(scratch.transcript.tokens)
         if prefix:
             scratch.append_tokens(prefix, "assistant_prefix")
         return len(scratch.transcript)
@@ -721,18 +665,12 @@ class MessageBinder:
         content_hash = _content_hash(response)
         segments = self.session.transcript.segments
         prefix_index = max(
-            (
-                index
-                for index, segment in enumerate(segments)
-                if segment.kind == "assistant_prefix"
-            ),
+            (index for index, segment in enumerate(segments) if segment.kind == "assistant_prefix"),
             default=None,
         )
         trailing = [
             segment
-            for segment in segments[
-                (prefix_index + 1) if prefix_index is not None else 0 :
-            ]
+            for segment in segments[(prefix_index + 1) if prefix_index is not None else 0 :]
             if segment.kind in ("assistant", "eos")
         ]
         sampled_start = trailing[0].start if trailing else len(self.session.transcript)
@@ -741,15 +679,9 @@ class MessageBinder:
             kinds=("assistant", "eos"),
             meta={"key": key, "content_hash": content_hash, "source": "sampled"},
         )
-        start = (
-            segments[prefix_index].start if prefix_index is not None else sampled_start
-        )
+        start = segments[prefix_index].start if prefix_index is not None else sampled_start
         record = _BoundMessage(key, content_hash, start, len(self.session.transcript))
-        if (
-            self._records
-            and self._records[-1].key == key
-            and self._records[-1].start == start
-        ):
+        if self._records and self._records[-1].key == key and self._records[-1].start == start:
             self._records[-1] = record
             self._bound_messages[-1] = deepcopy(response)
         else:

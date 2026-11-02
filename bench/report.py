@@ -60,8 +60,7 @@ class BakeoffReport:
     def compact_table(self) -> str:
         lines = ["GATES"]
         lines.extend(
-            f"{name}: {'PASS' if gate.passed else 'FAIL'} — {gate.detail}"
-            for name, gate in self.gates.items()
+            f"{name}: {'PASS' if gate.passed else 'FAIL'} — {gate.detail}" for name, gate in self.gates.items()
         )
         lines.append("")
         lines.append("task | metric | C | ds4py | delta")
@@ -72,9 +71,7 @@ class BakeoffReport:
             for metric in METRICS:
                 left, right = getattr(c, metric), getattr(python, metric)
                 delta = right - left if left is not None and right is not None else None
-                lines.append(
-                    f"{task_id} | {metric} | {_number(left)} | {_number(right)} | {_number(delta)}"
-                )
+                lines.append(f"{task_id} | {metric} | {_number(left)} | {_number(right)} | {_number(delta)}")
         return "\n".join(lines) + "\n"
 
 
@@ -106,9 +103,7 @@ def _task(
     task_id: str,
     agent: str,
 ) -> TaskRunResult:
-    return next(
-        item for item in tasks if item.task_id == task_id and item.agent == agent
-    )
+    return next(item for item in tasks if item.task_id == task_id and item.agent == agent)
 
 
 def _common_tasks(
@@ -170,9 +165,7 @@ def build_report(
     python = [item for item in tasks if item.agent == "ds4py"]
     c_passes = sum(item.passed for item in c)
     python_passes = sum(item.passed for item in python)
-    complete_pairs = (
-        bool(common) and c_ids == python_ids and len(c) == len(python) == len(common)
-    )
+    complete_pairs = bool(common) and c_ids == python_ids and len(c) == len(python) == len(common)
     gate1 = complete_pairs and python_passes >= c_passes - 1
     gates = [
         _gate(
@@ -193,9 +186,7 @@ def build_report(
         if accounting is None:
             reasons.append("tool outcome accounting unavailable")
         elif not accounting.complete:
-            reasons.append(
-                f"tool outcomes {accounting.accounted}/{accounting.parsed} accounted"
-            )
+            reasons.append(f"tool outcomes {accounting.accounted}/{accounting.parsed} accounted")
         if item.errors:
             reasons.extend(item.errors)
         if reasons:
@@ -213,20 +204,14 @@ def build_report(
     timing_failures = []
     for task_id in common:
         left, right = _task(tasks, task_id, "c"), _task(tasks, task_id, "ds4py")
-        if (
-            left.wall_seconds <= 0
-            or right.avg_prefill_reuse is None
-            or left.avg_prefill_reuse is None
-        ):
+        if left.wall_seconds <= 0 or right.avg_prefill_reuse is None or left.avg_prefill_reuse is None:
             timing_failures.append(f"{task_id}: incomplete timing/reuse evidence")
         elif right.wall_seconds > 1.5 * left.wall_seconds:
             timing_failures.append(
                 f"{task_id}: ds4py {right.wall_seconds:.3f}s exceeds 1.5x C {left.wall_seconds:.3f}s"
             )
         if right.invalid_non_extend_rounds:
-            timing_failures.append(
-                f"{task_id}: {right.invalid_non_extend_rounds} unexplained non-extension rounds"
-            )
+            timing_failures.append(f"{task_id}: {right.invalid_non_extend_rounds} unexplained non-extension rounds")
     gates.append(
         _gate(
             "gate-3",
@@ -248,11 +233,7 @@ def build_report(
 
     expected = [save for item in python for save in item.attempt_save_dirs]
     restored = _restore_runs(restore_results)
-    missing = [
-        str(save)
-        for save in expected
-        if save not in restored or not restored[save].passed
-    ]
+    missing = [str(save) for save in expected if save not in restored or not restored[save].passed]
     missing.extend(
         f"{item.task_id}: attempt without save ({len(item.attempt_save_dirs)}/{item.attempts})"
         for item in python

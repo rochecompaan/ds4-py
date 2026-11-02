@@ -21,10 +21,7 @@ class ProbeResult:
 
 
 def header_hashes(include_dir: Path) -> dict[str, str]:
-    return {
-        name: hashlib.sha256((include_dir / name).read_bytes()).hexdigest()
-        for name in HEADER_FILES
-    }
+    return {name: hashlib.sha256((include_dir / name).read_bytes()).hexdigest() for name in HEADER_FILES}
 
 
 def headers_known(hashes: dict[str, str]) -> bool:
@@ -43,9 +40,7 @@ def probe_signatures(
     def compile_binding(binding: Binding) -> tuple[str, ProbeResult]:
         source = workdir / f"{binding.name}.c"
         declaration = probe_declaration(parse_prototype(binding.prototype))
-        source.write_text(
-            f'#include "ds4.h"\n#include "ds4_kvstore.h"\n{declaration} = {binding.name};\n'
-        )
+        source.write_text(f'#include "ds4.h"\n#include "ds4_kvstore.h"\n{declaration} = {binding.name};\n')
         result = subprocess.run(
             [
                 cc,
@@ -80,9 +75,7 @@ def probe_layouts(include_dir: Path, cc: str, workdir: Path) -> dict[str, Struct
     for name, cls in STRUCTS.items():
         lines.append(f'printf("{name} size %zu\\n", sizeof({name}));')
         for field in struct_layout(cls).fields:
-            lines.append(
-                f'printf("{name} field {field} %zu\\n", offsetof({name}, {field}));'
-            )
+            lines.append(f'printf("{name} field {field} %zu\\n", offsetof({name}, {field}));')
     lines.append("return 0;\n}")
     source = workdir / "layouts.c"
     executable = (workdir / "layouts").resolve()

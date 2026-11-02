@@ -80,10 +80,7 @@ def special_token_text(token: int) -> bytes | None:
 
 def think_enabled(mode: int) -> bool:
     value = int(mode)
-    return (
-        value in (ThinkMode.LOW, ThinkMode.MEDIUM, ThinkMode.HIGH, ThinkMode.MAX)
-        or 1001 <= value <= 1100
-    )
+    return value in (ThinkMode.LOW, ThinkMode.MEDIUM, ThinkMode.HIGH, ThinkMode.MAX) or 1001 <= value <= 1100
 
 
 def chat_begin(engine: FakeEngine) -> list[int]:
@@ -104,11 +101,7 @@ def think_prefix(engine: FakeEngine, prefix: Sequence[int], mode: int) -> list[i
             effort = "Reasoning Effort: High"
         elif mode == ThinkMode.MAX:
             effort = "Reasoning Effort: Max"
-        return (
-            engine.tokenize("<|system|>", rendered=True) + engine.tokenize(effort)
-            if effort
-            else []
-        )
+        return engine.tokenize("<|system|>", rendered=True) + engine.tokenize(effort) if effort else []
     if info.is_deepseek41:
         value = int(mode)
         level = value - 1000 if 1000 <= value <= 1100 else -1
@@ -129,18 +122,14 @@ def _escaped_close_at(text: str, position: int, closing: str) -> bool:
     position += 1
     while text.startswith("amp;", position):
         position += 4
-    return text.startswith("lt;", position) and text.startswith(
-        closing[1:], position + 3
-    )
+    return text.startswith("lt;", position) and text.startswith(closing[1:], position + 3)
 
 
 def _escape_closing(text: str, closing: str) -> str:
     output = []
     start = position = 0
     while position < len(text):
-        if text.startswith(closing, position) or _escaped_close_at(
-            text, position, closing
-        ):
+        if text.startswith(closing, position) or _escaped_close_at(text, position, closing):
             output.append(text[start:position])
             output.append("&lt;" if text[position] == "<" else "&amp;")
             position += 1
@@ -168,26 +157,14 @@ def _qwen_message(engine: FakeEngine, role: str, content: str) -> list[int]:
             + engine.tokenize("\n</tool_response>")
             + _qwen_close(engine)
         )
-    name = (
-        "system"
-        if role in ("system", "developer")
-        else "assistant"
-        if role == "assistant"
-        else "user"
-    )
-    body = (
-        engine.tokenize(content, rendered=True)
-        if name == "assistant"
-        else engine.tokenize(content)
-    )
+    name = "system" if role in ("system", "developer") else "assistant" if role == "assistant" else "user"
+    body = engine.tokenize(content, rendered=True) if name == "assistant" else engine.tokenize(content)
     return _qwen_open(engine, name) + body + _qwen_close(engine)
 
 
 def _glm_message(engine: FakeEngine, role: str, content: str) -> list[int]:
     if role in ("system", "developer"):
-        return engine.tokenize("<|system|>", rendered=True) + engine.tokenize(
-            content, rendered=True
-        )
+        return engine.tokenize("<|system|>", rendered=True) + engine.tokenize(content, rendered=True)
     if role == "assistant":
         opening = engine.tokenize("<|assistant|>", rendered=True)
         if not content.startswith(("<think>", "</think>")):
@@ -203,13 +180,8 @@ def _glm_message(engine: FakeEngine, role: str, content: str) -> list[int]:
 
 
 def _deepseek41_system_marker(prefix: Sequence[int]) -> list[int]:
-    roles = {
-        text: SPECIAL_TOKENS[text]
-        for text in ("<｜System｜>", "<｜User｜>", "<｜Assistant｜>")
-    }
-    if any(
-        token in (roles["<｜User｜>"], roles["<｜Assistant｜>"]) for token in prefix
-    ):
+    roles = {text: SPECIAL_TOKENS[text] for text in ("<｜System｜>", "<｜User｜>", "<｜Assistant｜>")}
+    if any(token in (roles["<｜User｜>"], roles["<｜Assistant｜>"]) for token in prefix):
         return [roles["<｜System｜>"]]
     return [] if roles["<｜System｜>"] in prefix else [roles["<｜System｜>"]]
 
@@ -221,9 +193,7 @@ def _deepseek_message(
     content: str,
 ) -> list[int]:
     if role in ("system", "developer"):
-        marker = (
-            _deepseek41_system_marker(prefix) if engine.info().is_deepseek41 else []
-        )
+        marker = _deepseek41_system_marker(prefix) if engine.info().is_deepseek41 else []
         return marker + engine.tokenize(content)
     if role == "assistant":
         opening = engine.tokenize("<｜Assistant｜>", rendered=True)
@@ -232,9 +202,7 @@ def _deepseek_message(
         return opening + engine.tokenize(content)
     if role in ("tool", "function"):
         return engine.tokenize("<｜User｜>", rendered=True) + engine.tokenize(
-            "<tool_result>"
-            + _escape_closing(content, "</tool_result>")
-            + "</tool_result>"
+            "<tool_result>" + _escape_closing(content, "</tool_result>") + "</tool_result>"
         )
     return engine.tokenize("<｜User｜>", rendered=True) + engine.tokenize(content)
 
@@ -262,14 +230,8 @@ def assistant_prefix(
     if info.is_qwen4:
         suffix = engine.tokenize("\n" if think_enabled(mode) else "\n\n")
         if not think_enabled(mode):
-            suffix += engine.tokenize("</think>", rendered=True) + engine.tokenize(
-                "\n\n"
-            )
-        return (
-            _qwen_open(engine, "assistant")
-            + engine.tokenize("<think>", rendered=True)
-            + suffix
-        )
+            suffix += engine.tokenize("</think>", rendered=True) + engine.tokenize("\n\n")
+        return _qwen_open(engine, "assistant") + engine.tokenize("<think>", rendered=True) + suffix
     if info.is_glm_dsa:
         opening = engine.tokenize("<|assistant|>", rendered=True)
         if not think_enabled(mode):

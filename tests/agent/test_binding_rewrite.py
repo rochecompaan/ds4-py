@@ -25,9 +25,7 @@ from ds4py.engine.worker import SyncJob
 from ds4py.errors import CheckpointError, EngineError
 
 
-def fake_engine(
-    family: Any = "deepseek4", *, think: Any = ThinkMode.NONE, **fake: Any
-) -> Engine:
+def fake_engine(family: Any = "deepseek4", *, think: Any = ThinkMode.NONE, **fake: Any) -> Engine:
     info = replace(
         FakeNative()._info,
         family=family,
@@ -56,9 +54,7 @@ def tool(name: Any) -> ToolDefinition:
 
 
 def reserialize(messages: Any) -> list[Any]:
-    return ModelMessagesTypeAdapter.validate_json(
-        ModelMessagesTypeAdapter.dump_json(messages)
-    )
+    return ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
 
 
 def native_calls(session: Any) -> list[Any]:
@@ -74,9 +70,7 @@ def test_identical_reserialized_messages_keep_bound_prefix() -> None:
         before = session.transcript.tokens
         provenance = binder.export_segments()
 
-        change = binder.prepare(
-            reserialize(messages), tools=[tool("read")], instructions="rules"
-        )
+        change = binder.prepare(reserialize(messages), tools=[tool("read")], instructions="rules")
 
         assert change.kind == "unchanged"
         assert change.start == len(before)
@@ -101,17 +95,13 @@ def test_changed_message_renders_only_from_its_segment_start() -> None:
         old_later_start = next(p.start for p in old_provenance if p.key == later_key)
 
         changed = deepcopy(original)
-        cast(
-            "UserPromptPart", changed[0].parts[0]
-        ).content = "a considerably longer first message"
+        cast("UserPromptPart", changed[0].parts[0]).content = "a considerably longer first message"
         change = binder.prepare(changed)
 
         assert change.kind == "rewrite"
         assert change.start == first_start
         assert session.transcript.tokens[:first_start] == old_tokens[:first_start]
-        new_later_start = next(
-            p.start for p in binder.export_segments() if p.key == later_key
-        )
+        new_later_start = next(p.start for p in binder.export_segments() if p.key == later_key)
         assert new_later_start > old_later_start
 
 
@@ -129,14 +119,10 @@ def test_same_key_with_changed_hash_does_not_reuse_old_segment() -> None:
         change = binder.prepare(changed)
 
         assert change.kind == "rewrite"
-        assert b"changed" in b"".join(
-            engine.token_text(token) for token in session.transcript.tokens
-        )
+        assert b"changed" in b"".join(engine.token_text(token) for token in session.transcript.tokens)
 
 
-def test_runtime_ids_and_timestamps_do_not_invalidate_unchanged_rendered_content() -> (
-    None
-):
+def test_runtime_ids_and_timestamps_do_not_invalidate_unchanged_rendered_content() -> None:
     original = [user("same"), ModelResponse([TextPart("answer")])]
     with fake_engine() as engine:
         session = engine.session()
@@ -187,9 +173,7 @@ def test_think_change_rebuilds_system_prefix() -> None:
 
         assert change.kind == "rewrite"
         assert change.start == 0
-        assert b"Reasoning Effort" in b"".join(
-            engine.token_text(token) for token in session.transcript.tokens
-        )
+        assert b"Reasoning Effort" in b"".join(engine.token_text(token) for token in session.transcript.tokens)
 
 
 def test_count_tokens_does_not_mutate_or_sync() -> None:
@@ -202,9 +186,7 @@ def test_count_tokens_does_not_mutate_or_sync() -> None:
         before_segments = session.transcript.segments
         before_calls = native_calls(session)
 
-        count = binder.count_tokens(
-            [*messages, user("next")], tools=[tool("read")], instructions="rules"
-        )
+        count = binder.count_tokens([*messages, user("next")], tools=[tool("read")], instructions="rules")
 
         builder = PromptBuilder(engine)
         user_delta = builder.message(before, "user", "next")
@@ -231,9 +213,7 @@ def test_provenance_covers_every_token_and_marks_sampled_response() -> None:
         assert session.transcript.tokens == before
         assert provenance[0].start == 0
         assert provenance[-1].end == len(before)
-        assert all(
-            left.end == right.start for left, right in zip(provenance, provenance[1:])
-        )
+        assert all(left.end == right.start for left, right in zip(provenance, provenance[1:]))
         sampled = [p for p in provenance if p.source == "sampled"]
         assert [p.kind for p in sampled] == ["assistant", "eos"]
         assert {p.key for p in sampled} == {cast("Any", response.metadata)["ds4.key"]}
@@ -247,10 +227,7 @@ def test_unchanged_messages_leave_paused_sampled_response_resumable() -> None:
     def script(prompt: Any, generated: Any) -> Any:
         text = (
             b"next"
-            if any(
-                tuple(prompt[index : index + len(stop)]) == stop
-                for index in range(len(prompt) - len(stop) + 1)
-            )
+            if any(tuple(prompt[index : index + len(stop)]) == stop for index in range(len(prompt) - len(stop) + 1))
             else b"stop"
         )
         return text[len(generated)] + 1 if len(generated) < len(text) else 0
@@ -284,10 +261,7 @@ def test_completed_pause_resume_refreshes_eos_provenance_and_bound_end() -> None
     def script(prompt: Any, generated: Any) -> Any:
         text = (
             b"next"
-            if any(
-                tuple(prompt[index : index + len(stop)]) == stop
-                for index in range(len(prompt) - len(stop) + 1)
-            )
+            if any(tuple(prompt[index : index + len(stop)]) == stop for index in range(len(prompt) - len(stop) + 1))
             else b"stop"
         )
         return text[len(generated)] + 1 if len(generated) < len(text) else 0
@@ -317,15 +291,9 @@ def test_completed_pause_resume_refreshes_eos_provenance_and_bound_end() -> None
         assert len(binder._records) == 3
         assert provenance[0].start == 0
         assert provenance[-1].end == len(session.transcript)
-        assert all(
-            left.end == right.start for left, right in zip(provenance, provenance[1:])
-        )
+        assert all(left.end == right.start for left, right in zip(provenance, provenance[1:]))
         old_tokens = session.transcript.tokens
-        later_start = next(
-            p.start
-            for p in provenance
-            if p.key == cast("Any", later.metadata)["ds4.key"]
-        )
+        later_start = next(p.start for p in provenance if p.key == cast("Any", later.metadata)["ds4.key"])
 
         change = binder.prepare([request, response, user("replacement")])
 
@@ -364,17 +332,13 @@ def test_append_suffix_retires_paused_response_with_sampled_eos_provenance() -> 
         assert eos.source == "sampled"
         assert provenance[0].start == 0
         assert provenance[-1].end == len(session.transcript)
-        assert all(
-            left.end == right.start for left, right in zip(provenance, provenance[1:])
-        )
+        assert all(left.end == right.start for left, right in zip(provenance, provenance[1:]))
         list(session.run_round(max_tokens=10, stop_sequences=[b"ok"]))
         assert [s.kind for s in session.transcript.segments][-2:] == [
             "assistant_prefix",
             "assistant",
         ]
-        assert [s.kind for s in session.transcript.segments].count(
-            "assistant_prefix"
-        ) == 2
+        assert [s.kind for s in session.transcript.segments].count("assistant_prefix") == 2
 
 
 def test_truncate_drops_only_checkpoints_beyond_the_cut() -> None:
@@ -461,9 +425,7 @@ def test_rewriting_sampled_response_rebuilds_native_prefix() -> None:
         binder.prepare([request])
         list(session.run_round(max_tokens=10))
         binder.bind_response(response)
-        old_prefix = next(
-            p for p in binder.export_segments() if p.kind == "assistant_prefix"
-        )
+        old_prefix = next(p for p in binder.export_segments() if p.kind == "assistant_prefix")
         old_prefix_tokens = session.transcript.tokens[old_prefix.start : old_prefix.end]
 
         changed = deepcopy(response)
@@ -474,14 +436,9 @@ def test_rewriting_sampled_response_rebuilds_native_prefix() -> None:
         assert change.start == old_prefix.start
         prefixes = [p for p in binder.export_segments() if p.kind == "assistant_prefix"]
         assert len(prefixes) == 1
-        assert (
-            session.transcript.tokens[prefixes[0].start : prefixes[0].end]
-            == old_prefix_tokens
-        )
+        assert session.transcript.tokens[prefixes[0].start : prefixes[0].end] == old_prefix_tokens
         assert len([p for p in binder.export_segments() if p.kind == "assistant"]) == 1
-        decoded = b"".join(
-            engine.token_text(token) for token in session.transcript.tokens
-        )
+        decoded = b"".join(engine.token_text(token) for token in session.transcript.tokens)
         assert b"replacement" in decoded
 
 

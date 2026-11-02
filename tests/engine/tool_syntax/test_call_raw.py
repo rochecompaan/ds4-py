@@ -15,12 +15,7 @@ def test_each_call_retains_its_own_canonical_stanza_at_every_split(family: Any) 
         first = f'<｜DSML｜{invoke} name="one"></｜DSML｜{invoke}>'
         second = f'<｜DSML｜{invoke} name="two"></｜DSML｜{invoke} \t｜>'
         # An accepted implicit missing-bar opener must be canonicalized.
-        data = (
-            first.replace("<｜DSML｜", "<DSML｜", 1)
-            + "\n"
-            + second
-            + f"</｜DSML｜{calls}>"
-        ).encode()
+        data = (first.replace("<｜DSML｜", "<DSML｜", 1) + "\n" + second + f"</｜DSML｜{calls}>").encode()
         factory = lambda: Dsml(v41=v41)
     elif family == "glm":
         first = "<tool_call> one </tool_call>"

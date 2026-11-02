@@ -11,9 +11,7 @@ from ds4py.tui import TUI
 from ds4py.tui_commands import CommandError, SlashCommandRegistry
 
 
-def save_record(
-    session_id: Any = "saved-session", title: Any = "Saved title"
-) -> SaveRecord:
+def save_record(session_id: Any = "saved-session", title: Any = "Saved title") -> SaveRecord:
     return SaveRecord(
         session_id=session_id,
         conversation_id=session_id,
@@ -125,9 +123,7 @@ def test_slash_completion_covers_only_builtin_commands_and_extensions() -> None:
     tui = make_tui()
     names = {item.text.strip() for item in tui.commands.completions("/")}
     assert names == {"/exit", "/new", "/save", "/switch", "/hints"}
-    assert {item.text.strip() for item in tui.commands.completions("/sw")} == {
-        "/switch"
-    }
+    assert {item.text.strip() for item in tui.commands.completions("/sw")} == {"/switch"}
 
     tui.commands.register("custom", lambda: "ok", description="Custom command")
     assert "/custom" in {item.text.strip() for item in tui.commands.completions("/")}

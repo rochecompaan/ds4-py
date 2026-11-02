@@ -165,16 +165,12 @@ def test_fake_rendered_specials_never_leak_into_plain_tokenization() -> None:
 def test_fake_chat_rendering_appends_only_the_native_delta() -> None:
     engine = fake_engine()
     prefix = engine.tokenize("prefix")
-    assert engine.chat_begin() == engine.tokenize(
-        "<｜begin▁of▁sentence｜>", rendered=True
-    )
+    assert engine.chat_begin() == engine.tokenize("<｜begin▁of▁sentence｜>", rendered=True)
     assert engine.think_prefix(prefix, ThinkMode.NONE) == []
     assert engine.render_message(prefix, "user", "hello") == (
         engine.tokenize("<｜User｜>", rendered=True) + engine.tokenize("hello")
     )
-    assert engine.assistant_prefix(prefix, ThinkMode.HIGH) == (
-        engine.tokenize("<｜Assistant｜><think>", rendered=True)
-    )
+    assert engine.assistant_prefix(prefix, ThinkMode.HIGH) == (engine.tokenize("<｜Assistant｜><think>", rendered=True))
     assert prefix == engine.tokenize("prefix")
 
 
@@ -193,9 +189,7 @@ def test_fake_qwen_native_tool_markup_is_plain_like_pinned_upstream() -> None:
 def test_public_engine_chat_counterparts_run_on_the_worker() -> None:
     engine = open_engine(Path("fake.gguf"), native=FakeNative())
     try:
-        assert engine._chat_begin() == engine.tokenize(
-            "<｜begin▁of▁sentence｜>", rendered=True
-        )
+        assert engine._chat_begin() == engine.tokenize("<｜begin▁of▁sentence｜>", rendered=True)
         assert engine._think_prefix([], ThinkMode.NONE) == []
         assert engine._render_message([], "user", "x")
         assert engine._assistant_prefix([], ThinkMode.HIGH)

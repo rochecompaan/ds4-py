@@ -53,11 +53,7 @@ def fake_engine(
     )
     if quant_bits is not None:
         info = replace(info, routed_quant_bits=quant_bits)
-    native = (
-        FakeNative(info=info)
-        if script is None
-        else FakeNative(info=info, script=script)
-    )
+    native = FakeNative(info=info) if script is None else FakeNative(info=info, script=script)
     return ds4py.open("f.gguf", ctx=65536, think=ThinkMode.NONE, native=native)
 
 
@@ -107,9 +103,7 @@ def read_events(path: Any) -> Any:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
-def saved_session(
-    tmp_path: Path, script: Any = (READ_CALL, "first answer"), *, hints: Any = False
-) -> Any:
+def saved_session(tmp_path: Path, script: Any = (READ_CALL, "first answer"), *, hints: Any = False) -> Any:
     """Run one prompt and save; return the runtime parts still needed."""
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
@@ -146,9 +140,7 @@ def test_save_and_switch_with_skill_history_preserves_provenance(
     assert any("test-skill" in str(message) for message in saved["messages"])
 
     with fake_engine() as engine:
-        runtime = AgentRuntime(
-            make_model(engine), project, store=store, clock=fixed_clock
-        )
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
         try:
             restored = asyncio.run(runtime.switch(record.session_id))
             assert restored == record
@@ -164,25 +156,16 @@ def test_partial_response_does_not_replace_bound_history_in_saved_snapshot(
     # completed response is the version represented by the sampled tokens.
     project, store, record, saved = saved_session(tmp_path, script=("first answer",))
     with fake_engine() as engine:
-        runtime = AgentRuntime(
-            make_model(engine), project, store=store, clock=fixed_clock
-        )
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
         try:
             asyncio.run(runtime.switch(record.session_id))
             steps = _steps(store.session_dir(record.session_id))
             snapshot = asyncio.run(steps.latest_snapshot(run_id=record.run_id))
-            response = next(
-                message
-                for message in snapshot.messages
-                if isinstance(message, ModelResponse)
-            )
+            response = next(message for message in snapshot.messages if isinstance(message, ModelResponse))
             partial = deepcopy(response)
             partial.parts = partial.parts[:1]
             cast("TextPart", partial.parts[0]).content = "partial"
-            candidates = [
-                partial if message is response else message
-                for message in snapshot.messages
-            ]
+            candidates = [partial if message is response else message for message in snapshot.messages]
             snapshot.messages = candidates
             asyncio.run(runtime._adopt_history(record.run_id, candidates, snapshot))
             updated = asyncio.run(runtime.save())
@@ -190,9 +173,7 @@ def test_partial_response_does_not_replace_bound_history_in_saved_snapshot(
             asyncio.run(runtime.close())
 
     with fake_engine() as engine:
-        runtime = AgentRuntime(
-            make_model(engine), project, store=store, clock=fixed_clock
-        )
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
         try:
             restored = asyncio.run(runtime.switch(updated.session_id))
             assert restored == updated
@@ -227,9 +208,7 @@ def test_valid_kv_switch_restores_binding_without_prefill(tmp_path: Path) -> Non
             assert len(loaded) == record.tokens
             assert token_digest(loaded) == record.tokens_sha256
             assert dump(runtime.messages) == dump(saved["messages"])
-            assert all(
-                cast("Any", message.metadata)["ds4.key"] for message in runtime.messages
-            )
+            assert all(cast("Any", message.metadata)["ds4.key"] for message in runtime.messages)
 
             # Every saved provenance range is installed on the loaded transcript
             # and every keyed range still names its snapshot message.
@@ -238,9 +217,7 @@ def test_valid_kv_switch_restores_binding_without_prefill(tmp_path: Path) -> Non
                     (
                         segment.start,
                         segment.end,
-                        "note"
-                        if segment.kind.startswith("system_note")
-                        else segment.kind,
+                        "note" if segment.kind.startswith("system_note") else segment.kind,
                         segment.key,
                         segment.content_hash,
                         segment.source,
@@ -261,14 +238,10 @@ def test_valid_kv_switch_restores_binding_without_prefill(tmp_path: Path) -> Non
             ]
             assert installed == installed_view(record.segments)
             assert [
-                segment.meta.get("subtype")
-                for segment in model.session.transcript.segments
-                if segment.kind == "note"
+                segment.meta.get("subtype") for segment in model.session.transcript.segments if segment.kind == "note"
             ] == ["date"]
             responses = [m for m in runtime.messages if isinstance(m, ModelResponse)]
-            assert responses and all(
-                cast("Any", m.metadata)["ds4.key"] for m in responses
-            )
+            assert responses and all(cast("Any", m.metadata)["ds4.key"] for m in responses)
             keyed = [segment for segment in record.segments if segment.key]
             assert keyed and all(segment.key for segment in keyed)
 
@@ -319,15 +292,8 @@ def test_stripped_restore_preserves_original_note_text(tmp_path: Path) -> None:
             asyncio.run(runtime.switch(record.session_id))
             asyncio.run(runtime.run("follow up"))
 
-            assert (
-                list(model.session.transcript.tokens[: len(saved["tokens"])])
-                == saved["tokens"]
-            )
-            notes = [
-                segment
-                for segment in model.session.transcript.segments
-                if segment.kind == "note"
-            ]
+            assert list(model.session.transcript.tokens[: len(saved["tokens"])]) == saved["tokens"]
+            notes = [segment for segment in model.session.transcript.segments if segment.kind == "note"]
             assert [segment.meta.get("subtype") for segment in notes] == ["date"]
         finally:
             asyncio.run(runtime.close())
@@ -354,9 +320,7 @@ def test_stripped_legacy_note_without_text_fails_instead_of_regenerating(
 
 
 @pytest.mark.parametrize("hints", [False, True])
-def test_stripped_payload_switch_renders_fresh_with_full_prefill(
-    tmp_path: Path, hints: Any
-) -> None:
+def test_stripped_payload_switch_renders_fresh_with_full_prefill(tmp_path: Path, hints: Any) -> None:
     project, store, record, saved = saved_session(tmp_path, hints=hints)
     session_id = saved["session_id"]
 
@@ -395,14 +359,10 @@ def test_stripped_payload_switch_renders_fresh_with_full_prefill(
             rebuilt = list(model.session.transcript.tokens[: len(saved["tokens"])])
             assert rebuilt == saved["tokens"]
             note_subtypes = [
-                segment.meta.get("subtype")
-                for segment in model.session.transcript.segments
-                if segment.kind == "note"
+                segment.meta.get("subtype") for segment in model.session.transcript.segments if segment.kind == "note"
             ]
             assert note_subtypes == (["date", "hints_full"] if hints else ["date"])
-            assert dump(runtime.messages[: len(saved["messages"])]) == dump(
-                saved["messages"]
-            )
+            assert dump(runtime.messages[: len(saved["messages"])]) == dump(saved["messages"])
             assert output == reference["output"]
         finally:
             asyncio.run(runtime.close())
@@ -433,9 +393,7 @@ def test_newer_kv_than_record_takes_the_render_path_and_reports_the_mismatch(
             asyncio.run(runtime.close())
 
     switched = [
-        line
-        for line in read_events(store.session_dir(session_id) / "events.jsonl")
-        if line["kind"] == "switched"
+        line for line in read_events(store.session_dir(session_id) / "events.jsonl") if line["kind"] == "switched"
     ]
     assert switched[-1]["payload"]["restore_path"] == "render"
     assert str(record.payload_bytes) in switched[-1]["payload"]["mismatch"]
@@ -468,9 +426,7 @@ def test_token_hash_mismatch_renders_and_reports_the_actual_path(
             asyncio.run(runtime.close())
 
     switched = [
-        line
-        for line in read_events(store.session_dir(session_id) / "events.jsonl")
-        if line["kind"] == "switched"
+        line for line in read_events(store.session_dir(session_id) / "events.jsonl") if line["kind"] == "switched"
     ]
     assert switched[-1]["payload"]["restore_path"] == "render"
     assert "hash" in switched[-1]["payload"]["mismatch"]
@@ -482,9 +438,7 @@ def test_invalid_snapshot_does_not_commit_switch_or_overwrite_target(
     project, store, record, saved = saved_session(tmp_path)
     steps = _steps(store.session_dir(saved["session_id"]))
     snapshot = asyncio.run(steps.latest_snapshot(run_id=record.run_id))
-    response = next(
-        message for message in snapshot.messages if isinstance(message, ModelResponse)
-    )
+    response = next(message for message in snapshot.messages if isinstance(message, ModelResponse))
     metadata = dict(response.metadata or {})
     metadata.pop("ds4.key")
     response.metadata = metadata
@@ -575,23 +529,16 @@ def test_missing_named_snapshot_fails_with_the_run_id(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("restore_path", ["kv", "render"])
-def test_missing_segment_key_fails_with_the_key(
-    tmp_path: Path, restore_path: Any
-) -> None:
+def test_missing_segment_key_fails_with_the_key(tmp_path: Path, restore_path: Any) -> None:
     project, store, record, saved = saved_session(tmp_path)
     if restore_path == "render":
         zero_payload_kv(store, saved["session_id"])
     keyed = [index for index, segment in enumerate(record.segments) if segment.key]
     assert keyed
     target_key = record.segments[keyed[-1]].key
-    changed = [
-        replace(segment, key="0" * 32) if segment.key == target_key else segment
-        for segment in record.segments
-    ]
+    changed = [replace(segment, key="0" * 32) if segment.key == target_key else segment for segment in record.segments]
     broken = replace(record, segments=tuple(changed))
-    store.write_record_atomic(
-        store.session_dir(saved["session_id"]) / "save.json", broken
-    )
+    store.write_record_atomic(store.session_dir(saved["session_id"]) / "save.json", broken)
 
     with fake_engine(script=scripted_rounds("second answer")) as engine:
         model = make_model(engine)
@@ -605,26 +552,19 @@ def test_missing_segment_key_fails_with_the_key(
 
 
 @pytest.mark.parametrize("restore_path", ["kv", "render"])
-def test_first_request_key_tamper_is_rejected(
-    tmp_path: Path, restore_path: Any
-) -> None:
+def test_first_request_key_tamper_is_rejected(tmp_path: Path, restore_path: Any) -> None:
     project, store, record, saved = saved_session(tmp_path)
     if restore_path == "render":
         zero_payload_kv(store, saved["session_id"])
     first_key = next(segment.key for segment in record.segments if segment.key)
-    changed = [
-        replace(segment, key="0" * 32) if segment.key == first_key else segment
-        for segment in record.segments
-    ]
+    changed = [replace(segment, key="0" * 32) if segment.key == first_key else segment for segment in record.segments]
     store.write_record_atomic(
         store.session_dir(saved["session_id"]) / "save.json",
         replace(record, segments=tuple(changed)),
     )
 
     with fake_engine(script=scripted_rounds("second answer")) as engine:
-        runtime = AgentRuntime(
-            make_model(engine), project, store=store, clock=fixed_clock
-        )
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
         try:
             with pytest.raises(StoreError, match="0" * 32):
                 asyncio.run(runtime.switch(saved["session_id"]))
@@ -639,18 +579,14 @@ def test_missing_response_key_is_rejected(tmp_path: Path, restore_path: Any) -> 
         zero_payload_kv(store, saved["session_id"])
     steps = _steps(store.session_dir(saved["session_id"]))
     snapshot = asyncio.run(steps.latest_snapshot(run_id=record.run_id))
-    response = next(
-        message for message in snapshot.messages if isinstance(message, ModelResponse)
-    )
+    response = next(message for message in snapshot.messages if isinstance(message, ModelResponse))
     metadata = dict(response.metadata or {})
     metadata.pop("ds4.key")
     response.metadata = metadata
     _replace_snapshot(steps, snapshot)
 
     with fake_engine(script=scripted_rounds("second answer")) as engine:
-        runtime = AgentRuntime(
-            make_model(engine), project, store=store, clock=fixed_clock
-        )
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
         try:
             with pytest.raises(StoreError, match="key"):
                 asyncio.run(runtime.switch(saved["session_id"]))
@@ -665,11 +601,7 @@ def test_reordered_requests_are_rejected(tmp_path: Path, restore_path: Any) -> N
         zero_payload_kv(store, saved["session_id"])
     steps = _steps(store.session_dir(saved["session_id"]))
     snapshot = asyncio.run(steps.latest_snapshot(run_id=record.run_id))
-    request_indexes = [
-        index
-        for index, message in enumerate(snapshot.messages)
-        if isinstance(message, ModelRequest)
-    ]
+    request_indexes = [index for index, message in enumerate(snapshot.messages) if isinstance(message, ModelRequest)]
     assert len(request_indexes) >= 2
     first, second = request_indexes[:2]
     snapshot.messages[first], snapshot.messages[second] = (
@@ -679,9 +611,7 @@ def test_reordered_requests_are_rejected(tmp_path: Path, restore_path: Any) -> N
     _replace_snapshot(steps, snapshot)
 
     with fake_engine(script=scripted_rounds("second answer")) as engine:
-        runtime = AgentRuntime(
-            make_model(engine), project, store=store, clock=fixed_clock
-        )
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
         try:
             with pytest.raises(StoreError):
                 asyncio.run(runtime.switch(saved["session_id"]))
@@ -690,9 +620,7 @@ def test_reordered_requests_are_rejected(tmp_path: Path, restore_path: Any) -> N
 
 
 @pytest.mark.parametrize("restore_path", ["kv", "render"])
-def test_wrong_content_hash_fails_with_the_key(
-    tmp_path: Path, restore_path: Any
-) -> None:
+def test_wrong_content_hash_fails_with_the_key(tmp_path: Path, restore_path: Any) -> None:
     project, store, record, saved = saved_session(tmp_path)
     if restore_path == "render":
         zero_payload_kv(store, saved["session_id"])
@@ -701,9 +629,7 @@ def test_wrong_content_hash_fails_with_the_key(
     target = changed[keyed[-1]]
     changed[keyed[-1]] = replace(target, content_hash="f" * 64)
     broken = replace(record, segments=tuple(changed))
-    store.write_record_atomic(
-        store.session_dir(saved["session_id"]) / "save.json", broken
-    )
+    store.write_record_atomic(store.session_dir(saved["session_id"]) / "save.json", broken)
 
     with fake_engine(script=scripted_rounds("second answer")) as engine:
         model = make_model(engine)
@@ -754,9 +680,7 @@ def test_corrupt_kv_fails_with_the_path(tmp_path: Path) -> None:
             asyncio.run(runtime.close())
 
 
-def test_save_writes_kv_then_complete_snapshot_then_record(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_save_writes_kv_then_complete_snapshot_then_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
     prompt = "  read\n\n\thello   world\tand " + "x" * 100
@@ -800,22 +724,14 @@ def test_save_writes_kv_then_complete_snapshot_then_record(
     assert record.created_at and record.last_used
     assert record.segments
 
-    snapshot = asyncio.run(
-        _steps(store.session_dir(session_id)).latest_snapshot(run_id=record.run_id)
-    )
+    snapshot = asyncio.run(_steps(store.session_dir(session_id)).latest_snapshot(run_id=record.run_id))
     assert snapshot is not None
     assert snapshot.state == "complete"
     assert snapshot.step_index == record.step_index
     assert any(segment.key for segment in record.segments)
-    assert all(
-        segment.key
-        for segment in record.segments
-        if segment.kind in ("user", "assistant", "tool")
-    )
+    assert all(segment.key for segment in record.segments if segment.kind in ("user", "assistant", "tool"))
 
-    header = (store.session_dir(session_id) / "session.kv").read_bytes()[
-        : KV_HEADER.size
-    ]
+    header = (store.session_dir(session_id) / "session.kv").read_bytes()[: KV_HEADER.size]
     magic, version, payload_bytes = KV_HEADER.unpack(header)
     assert (magic, version, payload_bytes) == (
         KV_MAGIC,
@@ -881,9 +797,7 @@ def test_new_clears_live_history_and_keeps_old_files(tmp_path: Path) -> None:
 def test_fork_keeps_live_state_and_writes_the_new_directory(tmp_path: Path) -> None:
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
-    with fake_engine(
-        script=scripted_rounds(READ_CALL, "first answer", "second answer")
-    ) as engine:
+    with fake_engine(script=scripted_rounds(READ_CALL, "first answer", "second answer")) as engine:
         model = make_model(engine)
         runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
         try:

@@ -84,6 +84,4 @@ def test_moved_field_changes_the_compiled_layout(cc: Any, tmp_path: Path) -> Non
 def test_header_hashes(upstream_headers: Any, fork_headers: Any) -> None:
     assert probe.headers_known(probe.header_hashes(upstream_headers))
     assert probe.headers_known(probe.header_hashes(fork_headers))
-    assert not probe.headers_known(
-        {"ds4.h": "unrecognized", "ds4_kvstore.h": "unrecognized"}
-    )
+    assert not probe.headers_known({"ds4.h": "unrecognized", "ds4_kvstore.h": "unrecognized"})

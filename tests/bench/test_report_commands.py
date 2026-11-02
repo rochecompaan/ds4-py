@@ -102,9 +102,7 @@ def test_replay_command_deserializes_all_c_tasks(
     write_report(report, [task_record(f"task-{index}", "c") for index in range(12)])
     captured: dict[str, Any] = {}
 
-    def replay(
-        tasks: Any, model: Any, *, lib: Any = None, backend: str = "cpu"
-    ) -> tuple:
+    def replay(tasks: Any, model: Any, *, lib: Any = None, backend: str = "cpu") -> tuple:
         captured.update(tasks=tasks, model=model, lib=lib, backend=backend)
         return ()
 
