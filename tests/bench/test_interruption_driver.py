@@ -3,10 +3,12 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bench.pty import drive_interruption_pty  # noqa: I001 - The repository path precedes bench imports.
-
+from bench.pty import _EventFollower, drive_interruption_pty
+from bench.restore_check import CheckResult
 
 FOLLOW_UP = "State the next concrete action in one sentence, then stop."
 
@@ -99,10 +101,13 @@ def test_fragmented_events_drive_one_interrupt_and_ordered_follow_up(tmp_path: P
             raise SystemExit("Ctrl+C followed an unrelated Token")
 
         emit("active", "Token", {"event": {"token": 2, "text": "a"}}, pieces=4)
-        emit("active", "Token", {"event": {"token": 3, "text": "b"}})
         deadline = time.monotonic() + 2
         while not interrupts and time.monotonic() < deadline:
             time.sleep(0.01)
+        if len(interrupts) != 1:
+            raise SystemExit("the fragmented Token did not trigger exactly one Ctrl+C")
+        emit("active", "Token", {"event": {"token": 3, "text": "b"}})
+        time.sleep(0.05)
         if len(interrupts) != 1:
             raise SystemExit(f"expected one Ctrl+C, got {len(interrupts)}")
 
@@ -152,3 +157,146 @@ def test_early_exit_reports_the_expected_initial_token(tmp_path: Path) -> None:
     assert not result.passed
     assert "initial Token" in result.detail
     assert len(result.detail) <= 8100
+
+
+def run_barrier_scenario(tmp_path: Path, mode: str) -> tuple[CheckResult, Path]:
+    home = tmp_path / "home"
+    record = tmp_path / "record.json"
+    script = write_script(
+        tmp_path,
+        """
+        import json
+        import signal
+        import sys
+        import time
+        from pathlib import Path
+
+        home = Path(sys.argv[1])
+        record = Path(sys.argv[2])
+        mode = sys.argv[3]
+        events = home / "sessions" / "test-session" / "events.jsonl"
+        events.parent.mkdir(parents=True)
+        interrupts = []
+        inputs = []
+
+        def save_record():
+            record.write_text(json.dumps({"inputs": inputs}))
+
+        save_record()
+        signal.signal(signal.SIGINT, lambda *_: interrupts.append(1))
+
+        def event(run_id, kind, payload):
+            return json.dumps({
+                "ts": "2026-11-02T00:00:00+00:00",
+                "session_id": "test-session",
+                "run_id": run_id,
+                "kind": kind,
+                "payload": payload,
+            }) + "\\n"
+
+        def emit_batch(items):
+            data = "".join(event(*item) for item in items).encode()
+            with events.open("ab", buffering=0) as stream:
+                stream.write(data)
+
+        emit_batch([("active", "run_start", {})])
+        if mode == "pre_interrupt":
+            emit_batch([
+                ("active", "Token", {"event": {"token": 2, "text": "a"}}),
+                ("active", "Stopped", {"event": {"reason": "interrupted"}}),
+                ("active", "run_end", {"status": "success"}),
+            ])
+        else:
+            emit_batch([("active", "Token", {"event": {"token": 2, "text": "a"}})])
+
+        deadline = time.monotonic() + 2
+        while not interrupts and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if not interrupts:
+            raise SystemExit("driver did not send Ctrl+C")
+
+        if mode == "pre_follow_up":
+            emit_batch([
+                ("active", "Stopped", {"event": {"reason": "interrupted"}}),
+                ("active", "run_end", {"status": "success"}),
+                ("stale", "run_start", {}),
+                ("stale", "run_end", {"status": "success"}),
+            ])
+        elif mode == "ordinary_success":
+            emit_batch([
+                ("active", "Stopped", {"event": {"reason": "stop_token"}}),
+                ("active", "run_end", {"status": "success"}),
+            ])
+
+        for _ in range(2):
+            line = sys.stdin.readline()
+            if not line:
+                break
+            inputs.append(line.strip())
+            save_record()
+        """,
+    )
+    result = drive_interruption_pty(
+        [sys.executable, str(script), str(home), str(record), mode],
+        home=home,
+        follow_up=FOLLOW_UP,
+        timeout=1,
+    )
+    return result, record
+
+
+@pytest.mark.parametrize(
+    ("mode", "awaited"),
+    [
+        ("pre_interrupt", "interrupted Stopped"),
+        ("pre_follow_up", "follow-up run_start"),
+    ],
+)
+def test_pre_input_events_cannot_satisfy_lifecycle(
+    tmp_path: Path,
+    mode: str,
+    awaited: str,
+) -> None:
+    """Events buffered before a control write must not satisfy the state that write enters."""
+    result, record = run_barrier_scenario(tmp_path, mode)
+
+    assert not result.passed
+    assert awaited in result.detail
+    expected_inputs = [] if mode == "pre_interrupt" else [FOLLOW_UP]
+    assert json.loads(record.read_text())["inputs"] == expected_inputs
+
+
+def test_uninterrupted_success_is_rejected(tmp_path: Path) -> None:
+    """Ordinary generation success after Ctrl+C must not masquerade as an interruption."""
+    result, record = run_barrier_scenario(tmp_path, "ordinary_success")
+
+    assert not result.passed
+    assert "interrupted Stopped" in result.detail
+    assert json.loads(record.read_text())["inputs"] == []
+
+
+def test_follower_completes_one_fragment_without_skipping_the_next(tmp_path: Path) -> None:
+    """Splitting a line must defer exactly that event, then preserve the following event."""
+    home = tmp_path / "home"
+    events = home / "sessions" / "test-session" / "events.jsonl"
+    events.parent.mkdir(parents=True)
+    first = {
+        "ts": "2026-11-02T00:00:00+00:00",
+        "session_id": "test-session",
+        "run_id": "active",
+        "kind": "Token",
+        "payload": {"event": {"token": 2, "text": "a"}},
+    }
+    second = {**first, "kind": "Stopped", "payload": {"event": {"reason": "interrupted"}}}
+    data = (json.dumps(first) + "\n").encode()
+    follower = _EventFollower(home)
+
+    with events.open("ab", buffering=0) as stream:
+        stream.write(data[: len(data) // 2])
+    assert follower.read() == []
+    with events.open("ab", buffering=0) as stream:
+        stream.write(data[len(data) // 2 :])
+    assert follower.read() == [first]
+    with events.open("ab", buffering=0) as stream:
+        stream.write((json.dumps(second) + "\n").encode())
+    assert follower.read() == [second]
