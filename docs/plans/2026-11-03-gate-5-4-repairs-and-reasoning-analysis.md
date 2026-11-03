@@ -38,27 +38,27 @@
 - Consumes: existing `switch_via_command(runtime, session_id)` and `AgentRuntime.messages`.
 - Produces: `_relocate_local_workspace(runtime: AgentRuntime) -> None`, called only by the restore driver after `/switch` and before the follow-up.
 
-- [ ] **Step 1: Write the failing regression**
+- [x] **Step 1: Write the failing regression**
 
 Parameterize `test_restore_driver_preserves_noninteractive_prompt_composition` to run once in the original project and once from a copied project. In both cases, require status 0 and `followup_plan == "extend"`; retain the existing noninteractive composition assertion.
 
-- [ ] **Step 2: Run the regression and confirm the original failure**
+- [x] **Step 2: Run the regression and confirm the original failure**
 
 Run: `uv run --extra agent pytest tests/bench/test_bakeoff_restore.py::test_restore_driver_preserves_noninteractive_prompt_composition -q`
 
 Expected: the original-workspace case passes; the copied-workspace case fails with `Skills needs a workspace` naming the original `local:` path.
 
-- [ ] **Step 3: Implement explicit local-workspace relocation**
+- [x] **Step 3: Implement explicit local-workspace relocation**
 
 Add `_relocate_local_workspace(runtime)`. Find the last `ModelResponse`; when its `workspace_ref.provider` is `local`, replace that mutable response's reference with `WorkspaceRef(provider="local", id=str(runtime.project_dir.resolve()))`. Leave missing and non-local references unchanged. Call it in `_restore_operation` immediately after `switch_via_command`.
 
-- [ ] **Step 4: Verify both restore locations and write isolation**
+- [x] **Step 4: Verify both restore locations and write isolation**
 
 Run: `uv run --extra agent pytest tests/bench/test_bakeoff_restore.py::test_restore_driver_preserves_noninteractive_prompt_composition tests/bench/test_bakeoff_restore.py::test_restore_processes_use_disposable_workspace_copies -q`
 
 Expected: 3 tests pass. The copied restore extends the same prompt, and process restores still use distinct disposable copies without writing to the source workspace.
 
-- [ ] **Step 5: Commit the Gate 5 repair**
+- [x] **Step 5: Commit the Gate 5 repair**
 
 ```bash
 git add bench/restore_check.py tests/bench/test_bakeoff_restore.py docs/plans/2026-11-03-gate-5-4-repairs-and-reasoning-analysis.md
@@ -75,21 +75,21 @@ git commit -m "fix(bench): relocate restored workspace metadata"
 - Consumes: `PromptSession.prompt_async()` and `AgentRuntime.cancel()`.
 - Produces: the existing `_ensure_prompt() -> asyncio.Task[str]` contract, now resilient to prompt-level `KeyboardInterrupt`.
 
-- [ ] **Step 1: Write the failing regression**
+- [x] **Step 1: Write the failing regression**
 
 Parameterize `test_tui_ctrl_c_interrupts_generation_and_allows_follow_up` with normal Ctrl+C input and a one-shot `KeyboardInterrupt` raised from `PromptSession.prompt_async` after generation starts. In the exception case, call `runtime.cancel()` as the terminal signal path would and then return to the real prompt implementation. Both cases must produce one interrupted round, a successful follow-up, and clean `/exit`.
 
-- [ ] **Step 2: Run the regression and confirm the original failure**
+- [x] **Step 2: Run the regression and confirm the original failure**
 
 Run: `uv run --extra agent pytest tests/agent/test_tui_interruption.py -q`
 
 Expected: the normal Ctrl+C case passes; the prompt-exception case fails by raising `KeyboardInterrupt` before the follow-up.
 
-- [ ] **Step 3: Keep the prompt alive across terminal interrupts**
+- [x] **Step 3: Keep the prompt alive across terminal interrupts**
 
 In the prompt coroutine inside `_ensure_prompt`, catch only `KeyboardInterrupt` around `self.session.prompt_async("ds4py> ")`. Call `self.runtime.cancel()` and loop back to a fresh `prompt_async()` call. Preserve text validation, EOF, cancellation, and all other exceptions.
 
-- [ ] **Step 4: Run focused and full verification**
+- [x] **Step 4: Run focused and full verification**
 
 Run: `uv run --extra agent pytest tests/agent/test_tui_interruption.py tests/agent/test_tui.py tests/bench/test_pty_driver.py -q`
 
@@ -103,7 +103,7 @@ Run: `uv run prek run --all-files`
 
 Expected: all hooks pass.
 
-- [ ] **Step 5: Commit the Gate 4 repair**
+- [x] **Step 5: Commit the Gate 4 repair**
 
 ```bash
 git add src/ds4py/tui.py tests/agent/test_tui_interruption.py
@@ -121,15 +121,15 @@ git commit -m "fix(agent): recover prompts after terminal interrupts"
 - Consumes: `bakeoff.json`, per-attempt `attempt.json`, `interactive.log`, `trace.jsonl`, and C attempt metrics.
 - Produces: an evidence-backed explanation and ranked next experiments; no production interface changes.
 
-- [ ] **Step 1: Derive comparable round and timing summaries**
+- [x] **Step 1: Derive comparable round and timing summaries**
 
 For `scale-generator`, `affine-cipher`, `tree-building`, and `zipper`, derive per-arm attempt counts, token totals, wall times, prefill/decode rates, tool outcomes, terminal reasons, and the longest model rounds. Inspect the full text of the long ds4-py rounds and compare them with the C path through the same task.
 
-- [ ] **Step 2: Write the analysis**
+- [x] **Step 2: Write the analysis**
 
 Document why `scale-generator` exhausted 8,192 tokens, whether the other long rounds show repetition or useful work, and why token counts alone do not explain Gate 3. Distinguish agent behavior, prompt/context effects, and engine throughput. Rank small next experiments by expected evidence value; do not claim a performance repair without live verification.
 
-- [ ] **Step 3: Verify and commit the report**
+- [x] **Step 3: Verify and commit the report**
 
 Cross-check every quoted count and timing against the retained JSON/JSONL, run `uv run prek run --all-files`, and inspect `git diff --check`. Per the Testing Value Gate, use these direct checks rather than adding tests for documentation text.
 
