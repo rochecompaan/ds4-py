@@ -105,6 +105,44 @@ def test_tool_round_replays_every_token_and_stops_without_tool_execution(
     assert result.terminal_reason == "tool_call_complete"
 
 
+def test_replay_preserves_c_cached_prefill_boundary(tmp_path: Path) -> None:
+    system = tokenize_rendered("SYS")
+    suffix = tokenize_rendered("TASK")
+    sampled = tokenize_rendered("hello")
+    prompt = system + suffix
+    path = tmp_path / "cached.trace"
+    lines = [
+        STAMP + f"agent worker start ctx=4096 backend=cpu model={MODEL} trace=c.trace",
+        STAMP + f"tokens label=initial_system_prompt start=0 len={len(system)}",
+    ]
+    lines.extend(STAMP + f"token index={index} id={token}" for index, token in enumerate(system))
+    lines.extend(
+        [
+            STAMP
+            + f"prefill tool_round=0 transcript={len(prompt)} prompt={len(prompt)} "
+            + f"cached={len(system)} suffix={len(suffix)} think=none",
+            STAMP + f"tokens label=prefill_suffix start={len(system)} len={len(prompt)}",
+        ]
+    )
+    lines.extend(STAMP + f"token index={index} id={token}" for index, token in enumerate(suffix, len(system)))
+    lines.extend(STAMP + f"token index={index} id={token}" for index, token in enumerate(sampled, 1))
+    lines.append(STAMP + f"generation finished tool_round=0 generated={len(sampled)} carried=0 context_limited=0")
+    path.write_text("\n".join(lines) + "\n")
+
+    with engine_for(sampled) as engine:
+        results = replay_with_engine(
+            engine,
+            [("cached-task", path)],
+            require_full_set=False,
+        )
+        calls = engine._worker.call(lambda _engine, session: list(session.calls)).result()
+        native_tokens = engine._worker.call(lambda _engine, session: session.tokens()).result()
+
+    assert results[0].passed, results[0].detail
+    assert calls[:2] == [("sync", len(system)), ("sync", len(suffix))]
+    assert native_tokens[: len(prompt)] == prompt
+
+
 @pytest.mark.parametrize(("text", "tool_call"), [(TOOL_TEXT, True), ("hello", False)])
 def test_token_mismatch_fails_with_task_round_token_index_and_round_type(
     tmp_path: Path,
