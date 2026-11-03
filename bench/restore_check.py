@@ -313,6 +313,18 @@ async def switch_via_command(
     return await registry.execute(f"/switch {session_id}")
 
 
+def _relocate_local_workspace(runtime: AgentRuntime) -> None:
+    """Point restored continuation metadata at the configured workspace copy."""
+    from pydantic_ai.messages import ModelResponse
+    from pydantic_ai.workspaces import WorkspaceRef
+
+    response = next((message for message in reversed(runtime.messages) if isinstance(message, ModelResponse)), None)
+    if response is None or response.workspace_ref is None or response.workspace_ref.provider != "local":
+        return
+    # Workspace references are run metadata and are never rendered into the prompt.
+    response.workspace_ref = WorkspaceRef(provider="local", id=str(runtime.project_dir.resolve()))
+
+
 @contextmanager
 def _runtime(
     args: argparse.Namespace,
@@ -434,6 +446,7 @@ async def _restore_operation(
 
     runtime.model.session.on_event(listener)
     await switch_via_command(runtime, session_id)
+    _relocate_local_workspace(runtime)
     state["followup"] = True
     await runtime.run(FOLLOWUP)
     return state

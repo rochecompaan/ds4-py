@@ -302,8 +302,9 @@ def test_short_restore_sequences_must_share_terminal_reason(tmp_path: Path) -> N
     assert "terminal" in result.detail
 
 
+@pytest.mark.parametrize("copy_workspace", [False, True], ids=["original", "copied"])
 def test_restore_driver_preserves_noninteractive_prompt_composition(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, copy_workspace: bool
 ) -> None:
     project = tmp_path / "project"
     project.mkdir()
@@ -330,7 +331,12 @@ def test_restore_driver_preserves_noninteractive_prompt_composition(
     replacement_engine = restore_fake_engine(restore_script("follow-up answer"))
     metadata = tmp_path / "restore.json"
     trace = tmp_path / "restore.jsonl"
-    monkeypatch.chdir(project)
+    restore_project = tmp_path / "restored-project"
+    if copy_workspace:
+        shutil.copytree(project, restore_project)
+    else:
+        restore_project = project
+    monkeypatch.chdir(restore_project)
     monkeypatch.setenv("DS4PY_HOME", str(store.root))
     monkeypatch.setattr(ds4py, "open", lambda *args, **kwargs: replacement_engine)
 
