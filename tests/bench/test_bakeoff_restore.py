@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -51,6 +52,25 @@ from ds4py.store import (
     SessionStore,
     token_digest,
 )
+
+
+def test_restore_check_script_loads_outside_repository(tmp_path: Path) -> None:
+    """A direct worker must import bench without inheriting runner sys.path changes."""
+    root = Path(__file__).parents[2]
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+
+    completed = subprocess.run(
+        [sys.executable, str(root / "bench" / "restore_check.py")],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1, completed.stderr
+    assert completed.stderr.startswith("usage: restore_check.py attempt|restore|check [options]")
 
 
 def restore_fake_engine(script: Any) -> Engine:

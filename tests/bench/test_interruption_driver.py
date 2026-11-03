@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
@@ -7,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bench.pty import _EventFollower, drive_interruption_pty
+from bench.pty_driver import _EventFollower, drive_interruption_pty
 from bench.restore_check import CheckResult
 
 FOLLOW_UP = "State the next concrete action in one sentence, then stop."
@@ -157,6 +158,43 @@ def test_early_exit_reports_the_expected_initial_token(tmp_path: Path) -> None:
     assert not result.passed
     assert "initial Token" in result.detail
     assert len(result.detail) <= 8100
+
+
+def test_direct_runner_uses_standard_library_pty(tmp_path: Path) -> None:
+    """The bench script directory must not replace stdlib pty during a real fork."""
+    root = Path(__file__).parents[2]
+    script = write_script(tmp_path, "raise SystemExit(0)\n")
+    driver = textwrap.dedent(
+        """
+        import runpy
+        import sys
+        from pathlib import Path
+
+        root = Path(sys.argv[1])
+        sys.path.insert(0, str(root / "bench"))
+        namespace = runpy.run_path(
+            str(root / "bench" / "run_bakeoff.py"),
+            run_name="bakeoff_entrypoint_test",
+        )
+        result = namespace["drive_interruption_pty"](
+            [sys.executable, sys.argv[2]],
+            home=Path(sys.argv[3]),
+            follow_up="continue",
+            timeout=1,
+        )
+        assert not result.passed
+        assert "initial Token" in result.detail
+        """,
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", driver, str(root), str(script), str(tmp_path / "home")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def run_barrier_scenario(tmp_path: Path, mode: str) -> tuple[CheckResult, Path]:

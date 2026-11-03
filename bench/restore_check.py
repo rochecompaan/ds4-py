@@ -22,6 +22,9 @@ if TYPE_CHECKING:
     from ds4py.engine.lifecycle import SessionEvent
     from ds4py.runtime import AgentRuntime
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from bench.models import AgentConfig, TaskRunResult
 from ds4py.engine.events import Stopped, Synced
 from ds4py.engine.replay import read_replay
