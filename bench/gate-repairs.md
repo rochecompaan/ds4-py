@@ -25,8 +25,8 @@ repository tasks.
 
 ## Evidence layout
 
-The commands below set `RUN_ID=gate-repairs-$(git rev-parse --short HEAD)` in
-`/workspace/ds4-py` and retain these remote paths:
+The commands below derive `RUN_ID=gate-repairs-<short-revision>` from the
+uploaded revision marker and retain these remote paths:
 
 - `/workspace/results/$RUN_ID/`: task, restore, interruption, replay, and gate evidence
 - `/workspace/results/$RUN_ID-diagnostic/`: standalone C replay capture
@@ -44,10 +44,13 @@ SSH target and port supplied by Vast.ai:
 ```bash
 export VAST_SSH="root@INSTANCE_IP"
 export VAST_PORT="SSH_PORT"
+export DS4PY_REVISION="$(git rev-parse HEAD)"
 git diff --quiet
 git diff --cached --quiet
 git archive HEAD | ssh -p "$VAST_PORT" "$VAST_SSH" \
   'rm -rf /workspace/ds4-py && mkdir -p /workspace/ds4-py && tar -x -C /workspace/ds4-py'
+ssh -p "$VAST_PORT" "$VAST_SSH" \
+  "printf '%s\\n' '$DS4PY_REVISION' > /workspace/ds4-py/.bakeoff-revision"
 ```
 
 Open a remote shell for all remaining remote commands:
@@ -73,7 +76,8 @@ export DS4_AGENT="$DS4_SRC/ds4-agent"
 export DS4_TEST_MODEL="$DS4_SRC/gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix-0731.gguf"
 export DS4_BAKEOFF_BACKEND=cuda
 export CUDA_ARCH=native
-export RUN_ID="gate-repairs-$(git rev-parse --short HEAD)"
+export DS4PY_REVISION="$(cat /workspace/ds4-py/.bakeoff-revision)"
+export RUN_ID="gate-repairs-${DS4PY_REVISION:0:7}"
 export RESULTS="/workspace/results/$RUN_ID"
 export DIAG="/workspace/results/$RUN_ID-diagnostic"
 
@@ -100,7 +104,7 @@ Record the exact native artifacts before opening the model:
 
 ```bash
 {
-  echo "ds4py_revision=$(git rev-parse HEAD)"
+  echo "ds4py_revision=$DS4PY_REVISION"
   echo "ds4_revision=$(git -C "$DS4_SRC" rev-parse HEAD)"
   echo "polyglot_revision=$(git -C "$POLYGLOT_BENCHMARK" rev-parse HEAD)"
   echo "model=$DS4_TEST_MODEL"

@@ -154,8 +154,9 @@ int main(int argc, char **argv) {
         usage(stderr, argv[0]);
         return 2;
     }
-    ds4_think_mode think_mode;
-    if (!ds4_think_mode_parse_level(cfg.think_name, &think_mode)) {
+    ds4_think_mode think_mode = DS4_THINK_HIGH;
+    if (strcmp(cfg.think_name, "high") != 0 &&
+        !ds4_think_mode_parse_level(cfg.think_name, &think_mode)) {
         fprintf(stderr, "invalid think level: %s\n", cfg.think_name);
         return 2;
     }
