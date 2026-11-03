@@ -403,7 +403,7 @@ def load_manifest(path: str | Path) -> Manifest:
     missing = sorted(required - data.keys())
     if missing:
         raise PreparationError(f"{path}: missing manifest keys: {', '.join(missing)}")
-    if len(data["exercises"]) != 10 or len(data["repository_tasks"]) != 2:
+    if data.get("targeted") is not True and (len(data["exercises"]) != 10 or len(data["repository_tasks"]) != 2):
         raise PreparationError(f"{path}: bakeoff requires ten exercises and two repository tasks")
     return Manifest(
         path=path,

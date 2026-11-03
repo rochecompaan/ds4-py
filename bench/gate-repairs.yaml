@@ -1,0 +1,15 @@
+targeted: true
+repository: https://github.com/Aider-AI/polyglot-benchmark.git
+commit: 7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f
+selection_seed: 20261021
+model: ds4f-q2
+ctx: 100000
+temperature: 0
+seed: 1
+max_attempts: 2
+exercises:
+  - python/exercises/practice/scale-generator
+  - python/exercises/practice/affine-cipher
+  - python/exercises/practice/tree-building
+  - python/exercises/practice/zipper
+repository_tasks: []
