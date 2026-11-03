@@ -202,7 +202,9 @@ def replay_round(  # noqa: PLR0913, PLR0917 - Replay requires model, sampling, a
     transcript = Transcript()
     if round_.prompt:
         transcript.append(round_.prompt, "system")
-    list(engine._worker.submit(SyncJob(round_.prompt)))
+    for tokens in (round_.prompt[: round_.cached], round_.prompt):
+        if tokens:
+            list(engine._worker.submit(SyncJob(tokens)))
     stream = RoundStream(engine.info, round_.think)
     events = list(
         engine._worker.submit(
