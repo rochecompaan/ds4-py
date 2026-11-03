@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
@@ -451,3 +452,33 @@ def test_empty_or_non_mapping_manifest_is_a_path_aware_preparation_error(tmp_pat
 
     assert str(path) in str(caught.value)
     assert "mapping" in str(caught.value)
+
+
+def test_targeted_manifest_allows_selected_exercise_subset(tmp_path: Path) -> None:
+    data = yaml.safe_load((Path(__file__).parents[2] / "bench" / "bakeoff.yaml").read_text())
+    data["exercises"] = [
+        "python/exercises/practice/scale-generator",
+        "python/exercises/practice/affine-cipher",
+        "python/exercises/practice/tree-building",
+        "python/exercises/practice/zipper",
+    ]
+    data["repository_tasks"] = []
+    data["targeted"] = True
+    path = tmp_path / "targeted.yaml"
+    path.write_text(yaml.safe_dump(data))
+
+    manifest = load_manifest(path)
+
+    assert manifest.exercises == tuple(data["exercises"])
+    assert manifest.repository_tasks == ()
+
+
+def test_normal_manifest_still_requires_all_twelve_tasks(tmp_path: Path) -> None:
+    data = yaml.safe_load((Path(__file__).parents[2] / "bench" / "bakeoff.yaml").read_text())
+    data["exercises"] = data["exercises"][:4]
+    data["repository_tasks"] = []
+    path = tmp_path / "incomplete.yaml"
+    path.write_text(yaml.safe_dump(data))
+
+    with pytest.raises(PreparationError, match="requires ten exercises and two repository tasks"):
+        load_manifest(path)
