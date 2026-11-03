@@ -22,7 +22,7 @@ from bench.metrics import (
     summarize_events,
 )
 from bench.models import AgentConfig, TaskRunResult
-from bench.pty import drive_interruption_pty, drive_pty  # noqa: F401 - Compatibility re-export.
+from bench.pty_driver import drive_interruption_pty, drive_pty  # noqa: F401 - Compatibility re-export.
 from bench.replay_c_traces import replay_task_results
 from bench.report import BakeoffReport, build_report
 from bench.restore_check import CheckResult, RestoreSummary, check_result_saves
