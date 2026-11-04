@@ -608,9 +608,7 @@ def _is_step_evidence(value: object) -> TypeIs[_StepEvidence]:
         return False
     top = value.get("top")
     return isinstance(top, list) and all(
-        is_json_object(entry)
-        and type(entry.get("token")) is int
-        and type(entry.get("logit")) in {int, float}
+        is_json_object(entry) and type(entry.get("token")) is int and type(entry.get("logit")) in {int, float}
         for entry in top
     )
 
