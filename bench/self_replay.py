@@ -131,11 +131,7 @@ def replay_ds4py_with_engine(
 ) -> tuple[SelfReplayResult, ...]:
     """Reset per attempt, preserve rounds within each attempt, and execute no tools."""
     if not selected:
-        return (
-            SelfReplayResult(
-                "<selection>", -1, passed=False, detail="no ds4-py traces selected", valid=False
-            ),
-        )
+        return (SelfReplayResult("<selection>", -1, passed=False, detail="no ds4-py traces selected", valid=False),)
     results: list[SelfReplayResult] = []
     for task_id, selected_path in selected:
         path = Path(selected_path)
