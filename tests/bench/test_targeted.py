@@ -130,6 +130,91 @@ def test_targeted_runs_each_task_three_times_independently(
     assert output.count("PASS") == 6
 
 
+def test_targeted_prepends_task_preamble_to_each_independent_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    staged = [workspace(tmp_path / "staged-source", "scale-generator")]
+    (staged[0].agent_dir / "TASK.md").write_text("Original task.\n")
+    preamble = tmp_path / "preamble.md"
+    preamble.write_text("Write a best-effort implementation, then run local checks.\n")
+    prompts: list[str] = []
+
+    monkeypatch.setattr(
+        targeted,
+        "load_manifest",
+        lambda _path: SimpleNamespace(ctx=100_000, temperature=0.0, seed=1),
+    )
+    monkeypatch.setattr(targeted, "prepare_manifest", lambda *args: staged)
+
+    def fake_run_task(workspace: Workspace, *_args: Any) -> TaskRunResult:
+        prompts.append((workspace.agent_dir / "TASK.md").read_text())
+        return completed(workspace)
+
+    monkeypatch.setattr(targeted, "run_task", fake_run_task)
+
+    exit_code = targeted.main(
+        [
+            "--task",
+            "scale-generator",
+            "--repetitions",
+            "2",
+            "--model",
+            "/model.gguf",
+            "--task-preamble",
+            str(preamble),
+            "--results",
+            str(tmp_path / "results"),
+        ]
+    )
+
+    expected = "Write a best-effort implementation, then run local checks.\n\nOriginal task.\n"
+    assert exit_code == 0
+    assert prompts == [expected, expected]
+    assert (staged[0].agent_dir / "TASK.md").read_text() == expected
+
+
+def test_targeted_c_agent_uses_requested_executable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    staged = [workspace(tmp_path / "staged-source", "scale-generator")]
+    configs: list[Any] = []
+
+    monkeypatch.setattr(
+        targeted,
+        "load_manifest",
+        lambda _path: SimpleNamespace(ctx=100_000, temperature=0.0, seed=1),
+    )
+    monkeypatch.setattr(targeted, "prepare_manifest", lambda *args: staged)
+
+    def fake_run_task(workspace: Workspace, config: Any, *_args: Any) -> TaskRunResult:
+        configs.append(config)
+        return completed(workspace)
+
+    monkeypatch.setattr(targeted, "run_task", fake_run_task)
+
+    exit_code = targeted.main(
+        [
+            "--task",
+            "scale-generator",
+            "--repetitions",
+            "2",
+            "--model",
+            "/model.gguf",
+            "--c-agent",
+            "/opt/ds4-agent",
+            "--results",
+            str(tmp_path / "results"),
+        ]
+    )
+
+    assert exit_code == 0
+    assert len(configs) == 2
+    assert all(config.agent == "c" for config in configs)
+    assert all(config.executable == ("/opt/ds4-agent",) for config in configs)
+
+
 @pytest.mark.parametrize(
     ("passed", "errors"),
     [
