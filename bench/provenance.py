@@ -110,7 +110,9 @@ def validate_pair(c: TraceProvenance, ds4py: TraceProvenance) -> tuple[str, ...]
             issues.append(
                 f"{prefix}sync_calls length differs: C={len(c_round.sync_calls)}, ds4-py={len(ds4py_round.sync_calls)}"
             )
-        for call_index, (c_call, ds4py_call) in enumerate(zip(c_round.sync_calls, ds4py_round.sync_calls, strict=False)):
+        for call_index, (c_call, ds4py_call) in enumerate(
+            zip(c_round.sync_calls, ds4py_round.sync_calls, strict=False)
+        ):
             issues.extend(
                 _field_mismatches(
                     c_call,

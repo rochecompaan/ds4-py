@@ -63,7 +63,9 @@ def compare_step(c: StepCapture, ds4py: StepCapture) -> ComparisonResult:
                 detail=f"token differs at rank {rank}: C={c_entry.token}, ds4-py={ds4py_entry.token}",
             )
 
-    max_delta = max(abs(c_entry.logit - ds4py_entry.logit) for c_entry, ds4py_entry in zip(c.top, ds4py.top, strict=True))
+    max_delta = max(
+        abs(c_entry.logit - ds4py_entry.logit) for c_entry, ds4py_entry in zip(c.top, ds4py.top, strict=True)
+    )
     passed = max_delta < LOGIT_ABS_TOLERANCE
     return ComparisonResult(
         passed=passed,

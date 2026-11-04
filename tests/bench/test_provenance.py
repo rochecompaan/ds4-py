@@ -86,7 +86,15 @@ def test_provenance_rejects_different_session_shape_or_missing_chunk_plan() -> N
     )
 
     text = "\n".join(validate_pair(c, ds4py))
-    for field in ("source_trace_sha256", "reset_policy", "think", "prompt_sha256", "prefill_tokens", "position", "progress_chunks"):
+    for field in (
+        "source_trace_sha256",
+        "reset_policy",
+        "think",
+        "prompt_sha256",
+        "prefill_tokens",
+        "position",
+        "progress_chunks",
+    ):
         assert field in text
 
 

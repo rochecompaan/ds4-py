@@ -15,7 +15,9 @@ def _capture() -> StepCapture:
 
 
 def _rate() -> RateEvidence:
-    return RateEvidence(task_id="scale-generator", prefill_tokens=100, prefill_seconds=2.0, decode_steps=40, decode_seconds=4.0)
+    return RateEvidence(
+        task_id="scale-generator", prefill_tokens=100, prefill_seconds=2.0, decode_steps=40, decode_seconds=4.0
+    )
 
 
 def test_topk_requires_identical_ordered_ids_and_positions() -> None:
