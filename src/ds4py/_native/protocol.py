@@ -28,9 +28,13 @@ class EngineConfig:
     ctx: int = 100_000
     backend: str = "cpu"
     threads: int = 0
+    mtp_path: Path | None = None
+    mtp_draft_tokens: int = 1
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "model", Path(self.model).absolute())
+        if self.mtp_path is not None:
+            object.__setattr__(self, "mtp_path", Path(self.mtp_path).absolute())
 
 
 @dataclass(frozen=True)

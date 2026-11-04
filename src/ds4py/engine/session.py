@@ -61,6 +61,8 @@ def open(  # noqa: PLR0913 - Engine construction mirrors the public CLI options.
     think: int = ThinkMode.HIGH,
     seed: int | None = None,
     threads: int = 0,
+    mtp_path: str | Path | None = None,
+    mtp_draft_tokens: int = 1,
     lib: str | Path | None = None,
     native: Native | None = None,
     cancel: threading.Event | None = None,
@@ -85,7 +87,14 @@ def open(  # noqa: PLR0913 - Engine construction mirrors the public CLI options.
         raise EngineError(
             f"this libds4 was built for {native.backend}, not {backend}; run ds4py build --backend {backend}"
         )
-    config = EngineConfig(Path(model), ctx, native.backend, threads)
+    config = EngineConfig(
+        Path(model),
+        ctx=ctx,
+        backend=native.backend,
+        threads=threads,
+        mtp_path=Path(mtp_path) if mtp_path is not None else None,
+        mtp_draft_tokens=mtp_draft_tokens,
+    )
     worker = EngineWorker(native, config, cancel=cancel)
     try:
         think = worker.call(lambda e, s: native.think_mode_for_context(think, ctx)).result()

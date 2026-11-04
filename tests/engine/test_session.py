@@ -39,6 +39,31 @@ def test_open_checks_backend_and_think_mode() -> None:
         assert e.think == ThinkMode.HIGH
 
 
+def test_open_forwards_mtp_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    caller_thread = threading.get_ident()
+    config_threads = []
+    original_post_init = EngineConfig.__post_init__
+
+    def record_config_thread(config: EngineConfig) -> None:
+        config_threads.append(threading.get_ident())
+        original_post_init(config)
+
+    monkeypatch.setattr(EngineConfig, "__post_init__", record_config_thread)
+    with ds4py.open(
+        "model.gguf",
+        mtp_path="drafter.gguf",
+        mtp_draft_tokens=7,
+        native=FakeNative(),
+    ) as engine:
+        assert engine.config.mtp_path == tmp_path / "drafter.gguf"
+        assert engine.config.mtp_draft_tokens == 7
+        assert config_threads == [caller_thread]
+    with ds4py.open("model.gguf", native=FakeNative()) as engine:
+        assert engine.config.mtp_path is None
+        assert engine.config.mtp_draft_tokens == 1
+
+
 @pytest.mark.parametrize("fail", [False, True])
 def test_think_helper_runs_on_owner_and_failure_closes_worker(fail: Any) -> None:
     handles, calls = [], []
