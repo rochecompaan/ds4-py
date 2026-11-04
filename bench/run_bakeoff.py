@@ -1,5 +1,7 @@
 """Sequential bakeoff agent runner and per-task evidence collection."""
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -7,13 +9,22 @@ import re
 import subprocess
 import sys
 import time
-from dataclasses import replace
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from bench.driver_cases import DriverEvidenceError, export_trace_cases, read_driver_ndjson
+from bench.driver_equivalence import (
+    DriverEquivalenceResult,
+    DriverRoundResult,
+    combine_driver_results,
+    compare_driver_rounds,
+    rates_by_task,
+)
 from bench.metrics import (
     EventSummary,
     MetricError,
@@ -22,10 +33,13 @@ from bench.metrics import (
     summarize_events,
 )
 from bench.models import AgentConfig, TaskRunResult
+from bench.provenance import TraceProvenance, write_trace_provenance
 from bench.pty_driver import drive_interruption_pty, drive_pty  # noqa: F401 - Compatibility re-export.
-from bench.replay_c_traces import replay_task_results
-from bench.report import BakeoffReport, build_report
+from bench.replay_c_traces import ReplaySelectionError, select_c_traces
+from bench.report import BakeoffReport, GateResult, build_report
 from bench.restore_check import CheckResult, RestoreSummary, check_result_saves
+from bench.self_replay import SelfReplayContext, replay_ds4py_task_results
+from bench.session import BakeoffSession, record_task_provenance
 from bench.workspaces import (
     CommandRunner,
     GradeResult,
@@ -38,9 +52,13 @@ from bench.workspaces import (
 from ds4py._json import JsonValue, is_json_object
 from ds4py.engine.replay import read_replay
 
-if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+FULL_TASK_COUNT = 12
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Generator, Sequence
+
+    from bench.comparison import RateEvidence
+    from bench.driver_cases import DriverRoundEvidence
     from ds4py.engine.replay_types import ReplayTrace
 
 
@@ -304,6 +322,185 @@ def interruption_acceptance(
     return result
 
 
+@dataclass(frozen=True)
+class ReferencePhase:
+    result: DriverEquivalenceResult
+    rate_evidence: dict[str, tuple[RateEvidence, RateEvidence]]
+    provenance: tuple[tuple[TraceProvenance, TraceProvenance], ...]
+
+
+def _reference_failure(task_id: str, attempt: int, detail: str) -> DriverEquivalenceResult:
+    return DriverEquivalenceResult(
+        rounds=(DriverRoundResult(task_id, attempt, -1, passed=False, detail=detail, valid=False),),
+        decode_steps=0,
+        passed=False,
+        detail=detail,
+        valid=False,
+    )
+
+
+def _run_driver_command(
+    command: list[str],
+    output_path: Path,
+    log_path: Path,
+) -> tuple[tuple[DriverRoundEvidence, ...], tuple[str, ...]]:
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    output_path.write_text(completed.stdout)
+    log_path.write_text(completed.stderr)
+    issues = [f"driver exited {completed.returncode}"] if completed.returncode else []
+    try:
+        rounds = read_driver_ndjson(output_path)
+    except (OSError, DriverEvidenceError) as error:
+        return (), (*issues, f"invalid NDJSON evidence: {error}")
+    return rounds, tuple(issues)
+
+
+def _validate_reference_trace(trace: ReplayTrace, config: AgentConfig) -> None:
+    if (
+        trace.model is not None
+        and Path(trace.model).expanduser().resolve() != Path(config.model).expanduser().resolve()
+    ):
+        raise DriverEvidenceError("C trace model differs from the reference model")
+    if trace.ctx is not None and trace.ctx != config.ctx:
+        raise DriverEvidenceError("C trace context differs from the reference context")
+
+
+def run_reference_equivalence(
+    task_results: Sequence[TaskRunResult],
+    config: AgentConfig,
+    c_driver: str | Path,
+    session: BakeoffSession,
+    results_root: str | Path,
+) -> ReferencePhase:
+    """Run both raw-token reference drivers sequentially for every C attempt."""
+    try:
+        selected = select_c_traces(task_results)
+    except ReplaySelectionError as error:
+        return ReferencePhase(_reference_failure("<selection>", 1, str(error)), {}, ())
+    comparisons: list[DriverEquivalenceResult] = []
+    provenance_pairs: list[tuple[TraceProvenance, TraceProvenance]] = []
+    c_evidence: list[DriverRoundEvidence] = []
+    ds4py_evidence: list[DriverRoundEvidence] = []
+    attempts: dict[str, int] = {}
+    for task_id, trace_path in selected:
+        attempts[task_id] = attempts.get(task_id, 0) + 1
+        attempt = attempts[task_id]
+        destination = Path(results_root) / f"{len(comparisons):03d}-{task_id}-attempt-{attempt}"
+        try:
+            trace = read_replay(trace_path)
+            _validate_reference_trace(trace, config)
+            destination.mkdir(parents=True, exist_ok=True)
+            manifest = export_trace_cases(
+                trace,
+                task_id=task_id,
+                attempt=attempt,
+                destination=destination,
+            )
+            c_output = destination / "c.ndjson"
+            ds4py_output = destination / "ds4py.ndjson"
+            c_rounds, c_issues = _run_driver_command(
+                [
+                    str(c_driver),
+                    "--model",
+                    config.model,
+                    "--cases",
+                    str(manifest),
+                    "--source-trace",
+                    str(trace_path),
+                    "--backend",
+                    config.backend,
+                    "--ctx",
+                    str(config.ctx),
+                ],
+                c_output,
+                destination / "c.log",
+            )
+            ds4py_rounds, ds4py_issues = _run_driver_command(
+                [
+                    sys.executable,
+                    str(Path(__file__).with_name("ds4py_replay_diagnostic.py")),
+                    "--model",
+                    config.model,
+                    "--cases",
+                    str(manifest),
+                    "--source-trace",
+                    str(trace_path),
+                    "--backend",
+                    config.backend,
+                    "--ctx",
+                    str(config.ctx),
+                ],
+                ds4py_output,
+                destination / "ds4py.log",
+            )
+            c_provenance = session.reference_provenance(c_output, trace_path, c_rounds)
+            ds4py_provenance = session.reference_provenance(ds4py_output, trace_path, ds4py_rounds)
+            write_trace_provenance(c_output, c_provenance)
+            write_trace_provenance(ds4py_output, ds4py_provenance)
+            comparisons.append(
+                compare_driver_rounds(
+                    c_rounds,
+                    ds4py_rounds,
+                    c_provenance=c_provenance,
+                    ds4py_provenance=ds4py_provenance,
+                    diagnostic_issues=(
+                        *(f"C driver: {issue}" for issue in c_issues),
+                        *(f"ds4-py driver: {issue}" for issue in ds4py_issues),
+                    ),
+                )
+            )
+            c_evidence.extend(c_rounds)
+            ds4py_evidence.extend(ds4py_rounds)
+            provenance_pairs.append((c_provenance, ds4py_provenance))
+        except (OSError, ValueError, DriverEvidenceError) as error:
+            comparisons.append(_reference_failure(task_id, attempt, str(error)))
+    c_rates = rates_by_task(c_evidence)
+    ds4py_rates = rates_by_task(ds4py_evidence)
+    rates = {
+        task_id: (c_rates[task_id], ds4py_rates[task_id]) for task_id in sorted(c_rates.keys() & ds4py_rates.keys())
+    }
+    return ReferencePhase(combine_driver_results(comparisons), rates, tuple(provenance_pairs))
+
+
+@contextmanager
+def _session_environment(session: BakeoffSession) -> Generator[None]:
+    values = session.environment()
+    previous = {name: os.environ.get(name) for name in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def _cap_parity(tasks: Sequence[TaskRunResult]) -> GateResult:
+    c_ids = {item.task_id for item in tasks if item.agent == "c"}
+    ds4py_ids = {item.task_id for item in tasks if item.agent == "ds4py"}
+    task_ids = sorted(c_ids & ds4py_ids)
+    if not task_ids:
+        return GateResult(passed=False, detail="no paired tasks for cap parity")
+    differences = []
+    for task_id in task_ids:
+        counts = {
+            agent: sum(
+                item.terminal_reasons.count("max_tokens")
+                for item in tasks
+                if item.task_id == task_id and item.agent == agent
+            )
+            for agent in ("c", "ds4py")
+        }
+        if counts["c"] != counts["ds4py"]:
+            differences.append(f"{task_id}: C={counts['c']} ds4-py={counts['ds4py']}")
+    return GateResult(
+        not differences,
+        "cap outcomes match per task" if not differences else "cap outcomes differ: " + ", ".join(differences),
+    )
+
+
 def run_bakeoff(  # noqa: PLR0913 - The manifest and output layout are independent required inputs.
     manifest_path: str | Path,
     benchmark: str | Path,
@@ -311,32 +508,71 @@ def run_bakeoff(  # noqa: PLR0913 - The manifest and output layout are independe
     configs: Sequence[AgentConfig],
     results_root: str | Path,
     *,
+    session: BakeoffSession,
+    c_driver: str | Path,
     grade_runner: CommandRunner | None = None,
+    cap_parity: bool = False,
 ) -> BakeoffReport:
-    """Run all tasks and acceptance checks, then write all six gate results."""
+    """Run one-session tasks, acceptance checks, and both Gate 6 parts."""
     results_root = Path(results_root).resolve()
     results_root.mkdir(parents=True, exist_ok=False)
+    print(f"[bakeoff] session {session.bakeoff_session_id}", flush=True)
     manifest = load_manifest(manifest_path)
     staged = prepare_manifest(manifest, results_root / "staged", benchmark, repo_root)
-    task_results = run_tasks_sequentially(
-        staged,
-        configs,
-        results_root,
-        grade_runner=grade_runner,
+    with _session_environment(session):
+        task_results = run_tasks_sequentially(
+            staged,
+            configs,
+            results_root,
+            grade_runner=grade_runner,
+        )
+        task_provenance = record_task_provenance(task_results, session)
+        ds4_config = next(config for config in configs if config.agent == "ds4py")
+        restore_runs = check_result_saves(task_results, ds4_config, results_root / "restores")
+        interruption_workspace = clone_workspace(
+            staged[0],
+            results_root / "acceptance" / "interruption",
+        )
+        interruption = interruption_acceptance(ds4_config, interruption_workspace, results_root)
+        restore = RestoreSummary(restore_runs, interruption)
+        reference = run_reference_equivalence(
+            task_results,
+            ds4_config,
+            c_driver,
+            session,
+            results_root / "driver-equivalence",
+        )
+        self_results = replay_ds4py_task_results(
+            task_results,
+            ds4_config,
+            provenance=task_provenance,
+            context=SelfReplayContext(
+                bakeoff_session_id=session.bakeoff_session_id,
+                instance_id=session.instance_id,
+                model_sha256=session.model_sha256,
+                libds4_sha256=session.libds4_sha256,
+            ),
+        )
+    report = build_report(
+        task_results,
+        restore,
+        rate_evidence=reference.rate_evidence,
+        provenance=reference.provenance,
+        cap_parity=_cap_parity(task_results) if cap_parity else None,
+        driver_equivalence=reference.result,
+        self_replay_results=self_results,
+        certification="full-12-task" if len(staged) == FULL_TASK_COUNT else "targeted",
+        bakeoff_session_id=session.bakeoff_session_id,
+        instance_id=session.instance_id,
     )
-    ds4_config = next(config for config in configs if config.agent == "ds4py")
-    restore_runs = check_result_saves(task_results, ds4_config, results_root / "restores")
-    interruption_workspace = clone_workspace(
-        staged[0],
-        results_root / "acceptance" / "interruption",
-    )
-    interruption = interruption_acceptance(ds4_config, interruption_workspace, results_root)
-    restore = RestoreSummary(restore_runs, interruption)
-    replay = replay_task_results(task_results, ds4_config)
-    report = build_report(task_results, restore, replay)
     report.write_json(results_root / "bakeoff.json")
     (results_root / "report.txt").write_text(report.compact_table())
     return report
+
+
+def _environment_path(name: str) -> Path | None:
+    value = os.environ.get(name)
+    return None if value is None or value == "" else Path(value)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -350,11 +586,27 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--agent", required=True, help="C reference agent executable")
     parser.add_argument("--backend", default="cpu")
     parser.add_argument("--tokens", type=int, default=8192)
+    parser.add_argument("--instance-id", default=os.environ.get("DS4_BAKEOFF_INSTANCE_ID"))
+    parser.add_argument(
+        "--c-driver",
+        type=Path,
+        default=_environment_path("DS4_C_DRIVER"),
+    )
+    parser.add_argument("--cap-parity", action="store_true")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if not args.instance_id:
+        parser.error("--instance-id or DS4_BAKEOFF_INSTANCE_ID is required")
+    if args.c_driver is None:
+        parser.error("--c-driver or DS4_C_DRIVER is required")
+    if not args.c_driver.is_file():
+        parser.error(f"C driver does not exist: {args.c_driver}")
+    if args.results.exists():
+        parser.error(f"result root already exists: {args.results}")
     manifest = load_manifest(args.manifest)
     configs = [
         AgentConfig(
@@ -382,12 +634,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             tokens=args.tokens,
         ),
     ]
+    session = BakeoffSession.capture(
+        configs,
+        args.instance_id,
+        repo_root=args.repo_root,
+    )
     report = run_bakeoff(
         args.manifest,
         args.benchmark,
         args.repo_root,
         configs,
         args.results,
+        session=session,
+        c_driver=args.c_driver,
+        cap_parity=args.cap_parity,
     )
     print(report.compact_table(), end="")
     return 0 if report.passed else 1

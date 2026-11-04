@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, TypedDict, TypeIs
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Mapping
 
     from ds4py.engine.lifecycle import SessionEvent
     from ds4py.engine.logits import LogitsView
@@ -31,6 +31,7 @@ if __package__ in {None, ""}:
 from bench.comparison import TOP_K, StepCapture, TopLogit, compare_step
 from bench.models import AgentConfig, TaskRunResult
 from bench.provenance import TraceProvenance, validate_session_pair
+from bench.session import report_provenance_environment
 from ds4py._json import is_json_object
 from ds4py.engine.events import Stopped, Synced
 from ds4py.engine.replay import read_replay
@@ -626,6 +627,7 @@ def process_restore_runner(
     config: RestoreConfig,
     *,
     workspace: Path | None = None,
+    provenance_environment: Mapping[str, str] | None = None,
 ) -> RestoreRunner:
     """Return a runner that starts each restore from a disposable task-workspace copy."""
 
@@ -665,6 +667,8 @@ def process_restore_runner(
             str(trace_path),
         ]
         environment = os.environ.copy()
+        if provenance_environment is not None:
+            environment.update(provenance_environment)
         environment["DS4PY_HOME"] = str(home)
         with tempfile.TemporaryDirectory(prefix=f"ds4py-restore-case-{case}-") as temporary:
             restore_workspace = Path(temporary) / "workspace"
@@ -699,6 +703,8 @@ def check_result_saves(
     task_results: Sequence[TaskRunResult],
     config: RestoreConfig,
     results_root: str | Path,
+    *,
+    provenance_environment: Mapping[str, str] | None = None,
 ) -> tuple[RestoreResult, ...]:
     """Restore every ds4-py attempt save in a fresh process pair."""
     results: list[RestoreResult] = []
@@ -713,6 +719,7 @@ def check_result_saves(
                     runner=process_restore_runner(
                         config,
                         workspace=getattr(item, "workspace", None),
+                        provenance_environment=provenance_environment,
                     ),
                 )
             )
@@ -746,10 +753,12 @@ def check_command(argv: Sequence[str]) -> int:
         tokens=args.tokens,
         request_limit=args.request_limit,
     )
+    environment = report_provenance_environment(data)
     results = check_result_saves(
         tasks,
         config,
         args.results or args.report.parent / "restores",
+        **({"provenance_environment": environment} if environment else {}),
     )
     if not results:
         raise RestoreError("report contains no ds4-py attempt saves")

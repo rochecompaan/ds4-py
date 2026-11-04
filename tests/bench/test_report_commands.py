@@ -104,6 +104,44 @@ def test_restore_check_deserializes_tasks_and_complete_config(
     assert captured["config"].request_limit == request_limit
 
 
+def test_restore_recheck_inherits_schema_two_session_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = tmp_path / "bakeoff.json"
+    write_report(report, [task_record("task", "ds4py")])
+    data = json.loads(report.read_text())
+    identity = {
+        "bakeoff_session_id": "session-1",
+        "instance_id": "instance-1",
+        "gpu_model": "NVIDIA H100",
+        "gpu_driver_version": "580.00",
+        "ds4_revision": "ds4-revision",
+        "ds4py_revision": "ds4py-revision",
+        "libds4_sha256": "library-sha",
+        "model_sha256": "model-sha",
+    }
+    data.update(schema_version=2, **identity)
+    data["provenance"] = [{"c": identity}]
+    report.write_text(json.dumps(data))
+    captured: dict[str, Any] = {}
+
+    def check(tasks: Any, config: Any, results_root: Any, **kwargs: Any) -> tuple[RestoreResult, ...]:
+        captured.update(kwargs)
+        return (RestoreResult(tmp_path / "save", True),)
+
+    monkeypatch.setattr("bench.restore_check.check_result_saves", check)
+
+    status = check_command(["--report", str(report), "--model", "/model.gguf"])
+
+    assert status == 0
+    environment = captured["provenance_environment"]
+    assert environment["BAKEOFF_SESSION_ID"] == "session-1"
+    assert environment["DS4_BAKEOFF_INSTANCE_ID"] == "instance-1"
+    assert environment["DS4_BAKEOFF_MODEL_SHA256"] == "model-sha"
+    assert environment["DS4_BAKEOFF_LIBDS4_SHA256"] == "library-sha"
+
+
 def test_replay_command_deserializes_all_c_tasks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

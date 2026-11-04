@@ -4,11 +4,13 @@
 
 This run checks the current fixes without paying for all 12 tasks. It compares C
 and ds4-py on `scale-generator`, `affine-cipher`, `tree-building`, and `zipper`,
-then runs the restore, interruption, and C-replay probes for that subset. It also
-captures the standalone C-side Gate 6 diagnostic.
+then runs the restore, interruption, reference-driver, and ds4-py self-replay
+checks for that subset. It also retains a standalone C-side replay diagnostic.
 
-A targeted report is not full M3 acceptance. Gates 1 and 6 cover only this
-subset. Gate 3 is a fresh two-arm timing comparison on the sanitized inputs.
+A targeted report is marked `certification: "targeted"` and is not full M3
+acceptance. Gates 1 and 6 cover only this subset. Gate 3 compares paired
+reference-driver prefill/decode rates and cached-prefix fractions on identical
+inputs, not wall time.
 
 ## Fixed inputs
 
@@ -28,7 +30,7 @@ repository tasks.
 The commands below derive `RUN_ID=gate-repairs-<short-revision>` from the
 uploaded revision marker and retain these remote paths:
 
-- `/workspace/results/$RUN_ID/`: task, restore, interruption, replay, and gate evidence
+- `/workspace/results/$RUN_ID/`: task, restore, interruption, reference-driver, self-replay, and gate evidence
 - `/workspace/results/$RUN_ID-diagnostic/`: standalone C replay capture
 - `/workspace/results/$RUN_ID.config`: revisions and native build identity
 - `/workspace/results/$RUN_ID.runner.log`: complete runner output
@@ -77,9 +79,13 @@ export DS4_TEST_MODEL="$DS4_SRC/gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExp
 export DS4_BAKEOFF_BACKEND=cuda
 export CUDA_ARCH=native
 export DS4PY_REVISION="$(cat /workspace/ds4-py/.bakeoff-revision)"
+export DS4_BAKEOFF_INSTANCE_ID="${INSTANCE_ID:?set the approved instance ID}"
+export DS4_BAKEOFF_DS4_REVISION="$(git -C "$DS4_SRC" rev-parse HEAD)"
+export DS4_BAKEOFF_DS4PY_REVISION="$DS4PY_REVISION"
 export RUN_ID="gate-repairs-${DS4PY_REVISION:0:7}"
 export RESULTS="/workspace/results/$RUN_ID"
 export DIAG="/workspace/results/$RUN_ID-diagnostic"
+export DS4_C_DRIVER="$DIAG/c-replay-diagnostic"
 
 test "$(git -C "$DS4_SRC" rev-parse HEAD)" = \
   5379c1c9ac315f1540371b06a3db88491d4059ff
@@ -115,7 +121,7 @@ Record the exact native artifacts before opening the model:
 cat "/workspace/results/$RUN_ID.config"
 ```
 
-## 3. Capture the standalone Gate 6 C diagnostic
+## 3. Capture the standalone C replay diagnostic
 
 The retained case has 2,787 prompt tokens, an original cached prefix of 1,839,
 and 16 C token IDs. The first 16 IDs match the final full-bake-off C trace. The
@@ -186,6 +192,8 @@ uv run --extra agent python bench/run_bakeoff.py \
   --agent "$DS4_AGENT" \
   --backend "$DS4_BAKEOFF_BACKEND" \
   --tokens 8192 \
+  --instance-id "$DS4_BAKEOFF_INSTANCE_ID" \
+  --c-driver "$DS4_C_DRIVER" \
   2>&1 | tee "/workspace/results/$RUN_ID.runner.log"
 RUN_STATUS=${PIPESTATUS[0]}
 set -e
@@ -193,11 +201,11 @@ printf 'runner_exit=%s\n' "$RUN_STATUS" | tee -a "/workspace/results/$RUN_ID.con
 cat "$RESULTS/report.txt"
 ```
 
-For Gate 3, compare each task's C and ds4-py wall time, generated tokens,
-prefill reuse, and clean-attempt count. In particular, check whether
-`tree-building` avoids the old capped first attempt and whether the long
-canonical-test/grader-search rounds disappear. Do not infer a native throughput
-fix from wall time alone.
+For Gate 3, inspect each task's paired prefill/decode rates, cached-prefix
+fractions, and provenance. For Gate 6, inspect both reference-driver equivalence
+and ds4-py self-replay. Later agent traces need not match the C agent because
+tool calls and tool results change subsequent prompts. Do not infer a native
+throughput fix from wall time alone.
 
 ## 5. Collect the evidence
 

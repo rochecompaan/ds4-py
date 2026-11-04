@@ -121,13 +121,14 @@ def compare_driver_rounds(
     *,
     c_provenance: TraceProvenance,
     ds4py_provenance: TraceProvenance,
+    diagnostic_issues: Sequence[str] = (),
 ) -> DriverEquivalenceResult:
     """Compare every selected round and retain numeric and invalid failures."""
     c_by_key = {_key(round_): round_ for round_ in c_rounds}
     ds4py_by_key = {_key(round_): round_ for round_ in ds4py_rounds}
     c_duplicates = len(c_by_key) != len(c_rounds)
     ds4py_duplicates = len(ds4py_by_key) != len(ds4py_rounds)
-    shared_issues = validate_pair(c_provenance, ds4py_provenance)
+    shared_issues = (*validate_pair(c_provenance, ds4py_provenance), *diagnostic_issues)
     keys = list(c_by_key)
     keys.extend(key for key in ds4py_by_key if key not in c_by_key)
     results = []
@@ -161,12 +162,27 @@ def compare_driver_rounds(
     detail = f"{sum(round_.passed for round_ in results)}/{len(results)} rounds passed; {decode_steps} decode steps"
     if not results:
         detail = "no selected C rounds"
+        if shared_issues:
+            detail += "; " + "; ".join(shared_issues)
     elif decode_steps == 0:
         detail += "; complete set has no decode coverage"
     first_failure = next((round_.detail for round_ in results if not round_.passed), None)
     if first_failure is not None:
         detail += f"; first failure: {first_failure}"
     return DriverEquivalenceResult(tuple(results), decode_steps, passed, detail, valid)
+
+
+def combine_driver_results(results: Sequence[DriverEquivalenceResult]) -> DriverEquivalenceResult:
+    """Combine independent trace comparisons without dropping failed rounds."""
+    rounds = tuple(round_ for result in results for round_ in result.rounds)
+    decode_steps = sum(result.decode_steps for result in results)
+    valid = bool(results) and decode_steps > 0 and all(result.valid for result in results)
+    passed = valid and all(result.passed for result in results)
+    detail = f"{sum(round_.passed for round_ in rounds)}/{len(rounds)} rounds passed; {decode_steps} decode steps"
+    first_failure = next((result.detail for result in results if not result.passed), None)
+    if first_failure is not None:
+        detail += f"; first failure: {first_failure}"
+    return DriverEquivalenceResult(rounds, decode_steps, passed, detail, valid)
 
 
 def rates_by_task(rounds: Sequence[DriverRoundEvidence]) -> dict[str, RateEvidence]:

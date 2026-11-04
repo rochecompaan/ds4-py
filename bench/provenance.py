@@ -56,6 +56,18 @@ class TraceProvenance:
     rounds: tuple[RoundProvenance, ...]
 
 
+_IDENTITY_FIELDS = (
+    "bakeoff_session_id",
+    "instance_id",
+    "gpu_model",
+    "gpu_driver_version",
+    "ds4_revision",
+    "ds4py_revision",
+    "libds4_sha256",
+    "model_path",
+    "model_sha256",
+)
+
 _SESSION_FIELDS = (
     "bakeoff_session_id",
     "instance_id",
@@ -92,8 +104,14 @@ def _field_mismatches(c: object, ds4py: object, fields: tuple[str, ...], prefix:
 
 
 def validate_session_pair(c: TraceProvenance, ds4py: TraceProvenance) -> tuple[str, ...]:
-    """Return every host, model, library, and sampling mismatch."""
-    return tuple(_field_mismatches(c, ds4py, _SESSION_FIELDS))
+    """Return missing identity and every host, model, library, and sampling mismatch."""
+    issues = _field_mismatches(c, ds4py, _SESSION_FIELDS)
+    for field in _IDENTITY_FIELDS:
+        for label, provenance in (("C", c), ("ds4-py", ds4py)):
+            value = getattr(provenance, field)
+            if not value or value == "unknown":
+                issues.append(f"{label} {field} is missing")
+    return tuple(issues)
 
 
 def validate_pair(c: TraceProvenance, ds4py: TraceProvenance) -> tuple[str, ...]:

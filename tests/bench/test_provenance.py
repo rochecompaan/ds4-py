@@ -71,6 +71,12 @@ def test_provenance_rejects_different_instance_session_model_or_library() -> Non
         assert field in text
 
 
+def test_provenance_rejects_unknown_identity_even_when_both_sides_match() -> None:
+    c = replace(_provenance(), ds4_revision="unknown")
+
+    assert "ds4_revision" in "\n".join(validate_session_pair(c, c))
+
+
 def test_provenance_rejects_different_session_shape_or_missing_chunk_plan() -> None:
     c = _provenance()
     changed_round = replace(
