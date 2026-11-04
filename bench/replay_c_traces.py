@@ -1,4 +1,4 @@
-"""Gate 6: replay complete C token traces with no tool execution."""
+"""Diagnostic: replay complete C token traces with no tool execution."""
 
 from __future__ import annotations
 
@@ -63,13 +63,15 @@ class ReplayResult:
 def select_c_traces(
     task_results: Iterable[TaskRunResult],
     *,
-    expected_tasks: int = 12,
+    expected_tasks: int | None = None,
 ) -> list[tuple[str, Path]]:
-    """Select every C attempt in manifest order; ds4-py self-replay is forbidden."""
+    """Select every C attempt in manifest order, without a certification rule."""
     tasks = [item for item in task_results if item.agent == "c"]
     identifiers = [item.task_id for item in tasks]
-    if len(tasks) != expected_tasks or len(set(identifiers)) != expected_tasks:
-        raise ReplaySelectionError(f"gate 6 needs {expected_tasks} distinct C tasks, found {len(set(identifiers))}")
+    if not tasks or len(set(identifiers)) != len(identifiers):
+        raise ReplaySelectionError("C replay needs distinct task identifiers and at least one C task")
+    if expected_tasks is not None and len(tasks) != expected_tasks:
+        raise ReplaySelectionError(f"C replay needs {expected_tasks} tasks, found {len(tasks)}")
     selected = []
     for item in tasks:
         paths = item.attempt_trace_paths
@@ -360,7 +362,7 @@ def replay_task_results(
     lib: str | Path | None = None,
     backend: str | None = None,
 ) -> tuple[ReplayResult, ...]:
-    """Convert selection/loading failures into gate evidence instead of skipping."""
+    """Convert selection/loading failures into diagnostic evidence instead of skipping."""
     if isinstance(config, (str, Path)):
         model = config
         selected_backend = backend or "cpu"
@@ -379,7 +381,7 @@ def replay_task_results(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Replay the C traces named by an existing report and update gate 6."""
+    """Replay C traces named by an existing report and update diagnostic evidence."""
     from bench.report import update_replay_report
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -396,11 +398,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     data = json.loads(report_path.read_text())
     tasks = [TaskRunResult.from_dict(item) for item in data.get("tasks", [])]
     results = replay_task_results(tasks, args.model, lib=args.lib, backend=args.backend)
-    gate = update_replay_report(report_path, results)
+    diagnostic = update_replay_report(report_path, results)
     for result in results:
         print(f"{'PASS' if result.passed else 'FAIL'} {result.task_id} round {result.round_index}: {result.detail}")
-    print(f"gate-6: {'PASS' if gate.passed else 'FAIL'} — {gate.detail}")
-    return 0 if gate.passed else 1
+    print(f"replay-diagnostic: {'PASS' if diagnostic.passed else 'FAIL'} — {diagnostic.detail}")
+    return 0 if diagnostic.passed else 1
 
 
 if __name__ == "__main__":

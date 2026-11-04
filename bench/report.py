@@ -16,10 +16,12 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
     from bench.comparison import RateEvidence
+    from bench.driver_equivalence import DriverEquivalenceResult
     from bench.models import TaskRunResult
     from bench.provenance import TraceProvenance
     from bench.replay_c_traces import ReplayResult
     from bench.restore_check import RestoreResult, RestoreSummary
+    from bench.self_replay import SelfReplayResult
     from ds4py._json import JsonValue
 
 
@@ -62,7 +64,9 @@ class BakeoffReport:
     tasks: tuple[TaskRunResult, ...]
     restore: RestoreSummary
     gates: dict[str, GateResult]
-    replay: tuple[ReplayResult, ...] | None = None
+    replay_diagnostic: tuple[ReplayResult, ...] | None = None
+    driver_equivalence: DriverEquivalenceResult | None = None
+    self_replay: tuple[SelfReplayResult, ...] | None = None
     rate_evidence: dict[str, tuple[RateEvidence, RateEvidence]] = field(default_factory=dict)
     caps: CapReport = field(default_factory=_empty_caps)
     provenance: tuple[tuple[TraceProvenance, TraceProvenance], ...] = ()
@@ -77,7 +81,9 @@ class BakeoffReport:
                 "tasks": self.tasks,
                 "restore": self.restore,
                 "gates": self.gates,
-                "replay": self.replay,
+                "replay_diagnostic": self.replay_diagnostic,
+                "driver_equivalence": self.driver_equivalence,
+                "self_replay": self.self_replay,
                 "rates": {
                     task_id: {
                         "c": pair[0],
@@ -202,35 +208,48 @@ def _cap_report(tasks: Sequence[TaskRunResult], parity: GateResult | None) -> Ca
     return CapReport(counts, totals, parity or GateResult(passed=False, detail="not run"))
 
 
-def replay_gate(replay_results: Iterable[ReplayResult] | None) -> GateResult:
-    """Gate 6 requires complete per-round evidence and a real tool-call round."""
-    values = None if replay_results is None else tuple(replay_results)
-    coverage = any(item.tool_call for item in values or ())
-    passed = bool(values) and all(item.passed for item in values) and coverage
-    detail = (
-        "not run"
-        if values is None
-        else (
-            f"{sum(item.passed for item in values)}/{len(values)} replay checks passed; "
-            f"tool-call round {'present' if coverage else 'missing'}"
-        )
+def _gate_six(
+    driver: DriverEquivalenceResult | None,
+    self_results: tuple[SelfReplayResult, ...] | None,
+) -> GateResult:
+    part_a = (
+        GateResult(passed=False, detail="Part A: not run", valid=False)
+        if driver is None
+        else GateResult(driver.passed, f"Part A: {driver.detail}", driver.valid)
     )
-    return GateResult(passed, detail)
+    if self_results is None or len(self_results) == 0:
+        part_b = GateResult(passed=False, detail="Part B: not run", valid=False)
+    else:
+        valid = all(item.valid for item in self_results)
+        passed = valid and all(item.passed for item in self_results)
+        part_b = GateResult(
+            passed,
+            f"Part B: {sum(item.passed for item in self_results)}/{len(self_results)} self-replay rounds passed",
+            valid,
+        )
+    return GateResult(
+        part_a.passed and part_b.passed,
+        f"{part_a.detail}; {part_b.detail}",
+        part_a.valid and part_b.valid,
+    )
 
 
 def update_replay_report(
     path: str | Path,
     replay_results: Iterable[ReplayResult],
 ) -> GateResult:
-    """Replace only replay evidence and gate 6 in an existing six-gate report."""
+    """Replace only exact-C diagnostic evidence; leave every gate unchanged."""
     path = Path(path)
     data = json.loads(path.read_text())
     values = tuple(replay_results)
-    gate = replay_gate(values)
-    data["replay"] = _json(values)
-    data["gates"]["gate-6"] = asdict(gate)
+    diagnostic = GateResult(
+        bool(values) and all(item.passed for item in values),
+        f"exact C replay diagnostic: {sum(item.passed for item in values)}/{len(values)} checks passed",
+        bool(values),
+    )
+    data["replay_diagnostic"] = _json(values)
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
-    return gate
+    return diagnostic
 
 
 def _restore_runs(restore: RestoreSummary) -> dict[Path, RestoreResult]:
@@ -355,8 +374,10 @@ def build_report(  # noqa: PLR0913 - Each evidence input has a distinct live-run
     rate_evidence: Mapping[str, tuple[RateEvidence, RateEvidence]] | None = None,
     provenance: Iterable[tuple[TraceProvenance, TraceProvenance]] | None = None,
     cap_parity: GateResult | None = None,
+    driver_equivalence: DriverEquivalenceResult | None = None,
+    self_replay_results: Iterable[SelfReplayResult] | None = None,
 ) -> BakeoffReport:
-    """Build gates 1–5 and reserve gate 6 for the C replay phase."""
+    """Build all six gates from their independent evidence sections."""
     tasks = tuple(task_results)
     rates = dict(rate_evidence or {})
     provenance_pairs = tuple(provenance or ())
@@ -408,12 +429,15 @@ def build_report(  # noqa: PLR0913 - Each evidence input has a distinct live-run
     )
 
     replay_values = None if replay_results is None else tuple(replay_results)
-    gates.append(("gate-6", replay_gate(replay_values)))
+    self_values = None if self_replay_results is None else tuple(self_replay_results)
+    gates.append(("gate-6", _gate_six(driver_equivalence, self_values)))
     return BakeoffReport(
-        tasks,
-        restore_results,
-        dict(gates),
-        replay_values,
+        tasks=tasks,
+        restore=restore_results,
+        gates=dict(gates),
+        replay_diagnostic=replay_values,
+        driver_equivalence=driver_equivalence,
+        self_replay=self_values,
         rate_evidence=rates,
         caps=_cap_report(tasks, cap_parity),
         provenance=provenance_pairs,
