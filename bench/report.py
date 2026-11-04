@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from ds4py._json import JsonValue
 
 
+REPORT_SCHEMA_VERSION = 2
+
 METRICS = (
     "wall_seconds",
     "progress_events",
@@ -70,6 +72,16 @@ class BakeoffReport:
     rate_evidence: dict[str, tuple[RateEvidence, RateEvidence]] = field(default_factory=dict)
     caps: CapReport = field(default_factory=_empty_caps)
     provenance: tuple[tuple[TraceProvenance, TraceProvenance], ...] = ()
+    schema_version: int = REPORT_SCHEMA_VERSION
+    certification: str = "targeted"
+    bakeoff_session_id: str = ""
+    instance_id: str = ""
+
+    def __post_init__(self) -> None:
+        if self.schema_version != REPORT_SCHEMA_VERSION:
+            raise ValueError("benchmark report schema_version must be 2")
+        if self.certification not in {"targeted", "full-12-task"}:
+            raise ValueError("certification must be targeted or full-12-task")
 
     @property
     def passed(self) -> bool:
@@ -78,6 +90,10 @@ class BakeoffReport:
     def to_dict(self) -> dict[str, JsonValue]:
         value = _json(
             {
+                "schema_version": self.schema_version,
+                "certification": self.certification,
+                "bakeoff_session_id": self.bakeoff_session_id,
+                "instance_id": self.instance_id,
                 "tasks": self.tasks,
                 "restore": self.restore,
                 "gates": self.gates,
@@ -376,6 +392,9 @@ def build_report(  # noqa: PLR0913 - Each evidence input has a distinct live-run
     cap_parity: GateResult | None = None,
     driver_equivalence: DriverEquivalenceResult | None = None,
     self_replay_results: Iterable[SelfReplayResult] | None = None,
+    certification: str = "targeted",
+    bakeoff_session_id: str = "",
+    instance_id: str = "",
 ) -> BakeoffReport:
     """Build all six gates from their independent evidence sections."""
     tasks = tuple(task_results)
@@ -448,4 +467,7 @@ def build_report(  # noqa: PLR0913 - Each evidence input has a distinct live-run
         rate_evidence=rates,
         caps=_cap_report(tasks, cap_parity),
         provenance=provenance_pairs,
+        certification=certification,
+        bakeoff_session_id=bakeoff_session_id,
+        instance_id=instance_id,
     )

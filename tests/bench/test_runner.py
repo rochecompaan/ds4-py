@@ -6,16 +6,17 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bench.comparison import RateEvidence
+from bench.comparison import RateEvidence, StepCapture, TopLogit
+from bench.driver_cases import DriverCase, DriverRoundEvidence
+from bench.driver_equivalence import DriverEquivalenceResult, DriverRoundResult
 from bench.metrics import EventSummary, ToolAccounting
 from bench.provenance import ProgressChunk, RoundProvenance, SyncCall, TraceProvenance
-from bench.replay_c_traces import ReplayResult
 from bench.report import GateResult, build_report
 from bench.restore_check import CheckResult, RestoreResult, RestoreSummary
 from bench.run_bakeoff import (
@@ -23,9 +24,12 @@ from bench.run_bakeoff import (
     TaskRunResult,
     build_agent_command,
     run_bakeoff,
+    run_reference_equivalence,
     run_task,
     run_tasks_sequentially,
 )
+from bench.self_replay import SelfReplayResult
+from bench.session import BakeoffSession
 from bench.workspaces import prepare_exercise
 from ds4py._json import is_json_object
 
@@ -166,6 +170,25 @@ def provenance() -> TraceProvenance:
         trace_sha256="c-output-sha",
         source_trace_sha256="source-sha",
         rounds=(round_,),
+    )
+
+
+def bakeoff_session() -> BakeoffSession:
+    return BakeoffSession(
+        bakeoff_session_id="session-1",
+        instance_id="instance-1",
+        gpu_model="cpu",
+        gpu_driver_version="not-applicable",
+        ds4_revision="ds4-revision",
+        ds4py_revision="ds4py-revision",
+        libds4_sha256="library-sha",
+        model_path="/model.gguf",
+        model_sha256="model-sha",
+        backend="cpu",
+        ctx=100000,
+        temperature=0.0,
+        seed=1,
+        response_budget=256,
     )
 
 
@@ -437,6 +460,17 @@ def test_gate_two_enforces_explicit_cap_parity() -> None:
     assert "cap outcomes differ" in report.gates["gate-2"].detail
 
 
+def test_cap_parity_requires_paired_tasks_and_matching_cap_counts() -> None:
+    from bench.run_bakeoff import _cap_parity
+
+    c = with_summary(result(agent="c"), terminal_reasons=("max_tokens",))
+    python = with_summary(result(), terminal_reasons=("stop_token",))
+
+    assert not _cap_parity([c]).passed
+    assert not _cap_parity([c, python]).passed
+    assert _cap_parity([c, with_summary(python, terminal_reasons=("max_tokens",))]).passed
+
+
 def test_gate_two_rejects_unexpected_task_interruption() -> None:
     c = result(agent="c")
     python = with_summary(result(), terminal_reasons=("interrupted",))
@@ -658,6 +692,7 @@ def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkey
 
     order = []
     staged = [SimpleNamespace(task_id="repo-glm-close")]
+    session = bakeoff_session()
     monkeypatch.setattr(runner, "load_manifest", lambda _path: object())
     monkeypatch.setattr(runner, "prepare_manifest", lambda *args: staged)
     monkeypatch.setattr(
@@ -665,6 +700,7 @@ def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkey
         "run_tasks_sequentially",
         lambda *args, **kwargs: order.append("tasks") or (),
     )
+    monkeypatch.setattr(runner, "record_task_provenance", lambda *args: {})
     monkeypatch.setattr(
         runner,
         "check_result_saves",
@@ -676,11 +712,24 @@ def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkey
         "interruption_acceptance",
         lambda *args: order.append("interruption") or CheckResult(True, "ok"),
     )
-    replay = ReplayResult("task", 0, True, "tool replay", tool_call=True)
+    driver = DriverEquivalenceResult(
+        rounds=(DriverRoundResult("repo-glm-close", 1, 0, True, "reference logits match"),),
+        decode_steps=1,
+        passed=True,
+        detail="reference drivers match",
+    )
+    phase = SimpleNamespace(result=driver, rate_evidence={}, provenance=())
     monkeypatch.setattr(
         runner,
-        "replay_task_results",
-        lambda *args: order.append("replay") or (replay,),
+        "run_reference_equivalence",
+        lambda *args: order.append("reference") or phase,
+    )
+    monkeypatch.setattr(
+        runner,
+        "replay_ds4py_task_results",
+        lambda *args, **kwargs: (
+            order.append("self-replay") or (SelfReplayResult("repo-glm-close", 0, True, "self replay match"),)
+        ),
     )
 
     report = run_bakeoff(
@@ -689,9 +738,83 @@ def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkey
         tmp_path,
         (config(tmp_path),),
         tmp_path / "results",
+        session=session,
+        c_driver=tmp_path / "c-driver",
     )
 
-    assert order == ["tasks", "restores", "interruption", "replay"]
+    assert order == ["tasks", "restores", "interruption", "reference", "self-replay"]
     assert report.gates["gate-6"].passed
-    assert (tmp_path / "results/bakeoff.json").is_file()
+    assert report.schema_version == 2
+    assert report.certification == "targeted"
+    assert report.bakeoff_session_id == "session-1"
+    assert report.instance_id == "instance-1"
+    written = json.loads((tmp_path / "results/bakeoff.json").read_text())
+    assert written["schema_version"] == 2
+    assert written["certification"] == "targeted"
+    assert written["bakeoff_session_id"] == "session-1"
+    assert written["instance_id"] == "instance-1"
     assert "gate-6: PASS" in (tmp_path / "results/report.txt").read_text()
+
+
+def test_reference_phase_runs_sequentially_and_records_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bench.run_bakeoff as runner
+
+    session = bakeoff_session()
+    trace = tmp_path / "c.trace"
+    trace.write_text("raw C trace")
+    token_file = tmp_path / "case.tokens"
+    token_file.write_text("1\n2\n3\n4\n")
+    task = replace(result(agent="c"), attempt_trace_paths=(trace,))
+    capture = StepCapture(3, tuple(TopLogit(index, 12.0 - index) for index in range(12)), 0)
+    evidence = DriverRoundEvidence(
+        source_trace=trace,
+        case=DriverCase("task", 1, 0, token_file, 3, 1, 1, 2),
+        sync_calls=(SyncCall("prefix", 1, 0, 1, 1), SyncCall("full", 3, 1, 2, 3)),
+        progress_chunks=(ProgressChunk(1, 1), ProgressChunk(2, 2)),
+        steps=(capture,),
+        prefill_seconds=1.0,
+        decode_seconds=2.0,
+        terminal_reason="recorded_boundary",
+    )
+    calls = []
+    monkeypatch.setattr(
+        runner,
+        "read_replay",
+        lambda _path: SimpleNamespace(model=session.model_path, ctx=session.ctx, rounds=(object(),)),
+    )
+
+    def export(*args: Any, **kwargs: Any) -> Path:
+        destination = cast("Path", kwargs["destination"])
+        manifest = destination / "cases.tsv"
+        manifest.write_text("cases")
+        return manifest
+
+    def drive(command: list[str], output_path: Path, log_path: Path) -> Any:
+        label = "c" if command[0].endswith("c-driver") else "ds4py"
+        calls.append(label)
+        output_path.write_text("{}\n")
+        log_path.write_text("")
+        return (replace(evidence, terminal_reason="recorded_boundary" if label == "c" else "stop_token"),), ()
+
+    monkeypatch.setattr(runner, "export_trace_cases", export)
+    monkeypatch.setattr(runner, "_run_driver_command", drive)
+
+    phase = run_reference_equivalence(
+        [task],
+        config(tmp_path),
+        tmp_path / "c-driver",
+        session,
+        tmp_path / "reference",
+    )
+
+    assert calls == ["c", "ds4py"]
+    assert phase.result.passed, phase.result.detail
+    assert phase.result.valid
+    assert phase.result.decode_steps == 1
+    assert phase.rate_evidence["task"][0].decode_steps == 1
+    assert phase.rate_evidence["task"][1].decode_steps == 1
+    assert len(phase.provenance) == 1
+    assert len(list((tmp_path / "reference").rglob("*.provenance.json"))) == 2

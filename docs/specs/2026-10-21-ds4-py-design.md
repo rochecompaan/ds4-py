@@ -825,12 +825,14 @@ M3 is done when ds4-py passes the gates below on 12 tasks that both agents run, 
 
 Gates, all required:
 
-1. **Pass rate** at least `ds4-agent`'s on the same run, with one task of slack. This is a minimum bar for the harness tools and the generated tools prompt (decision 3), not a search for bugs: gate 6 catches bugs in the token loop.
-2. **No parser failures.** Zero `parser_error` stops across the 12 runs. Every tool call the model wrote was parsed, then executed, refused by workspace enforcement, or sent back to the model as a retry. Retries for bad arguments are the model's mistakes, not ds4-py's. The report counts them, and they do not fail the gate.
-3. **Speed and KV reuse.** Wall time at most 1.5× `ds4-agent`'s per task. In every round, ds4-py prefills only the tokens appended since the last sync; the run record shows an `extend` plan for each round, except rounds after compaction or a strategy move. This replaces the first draft's "prefilled tokens per round equal within 1% of `ds4-agent`", which cannot hold once the two runs see different process ids, timings and tools.
-4. **Interrupt and resume.** One run is interrupted with Ctrl+C during prefill and resumed from the next prompt.
-5. **Records and files.** Every run leaves a complete `events.jsonl`, the session's snapshots, and a saved KV file with its save record. A new ds4-py process `/switch`es into each save without a prefill (case 1 of section 17). For a fixed follow-up prompt, the first 256 tokens it generates at `--temp 0` equal those from a stripped copy of the same save, which rebuilds the KV by prefill (case 2).
-6. **Replay parity.** For every round of `ds4-agent`'s 12 runs, ds4-py produces the same tokens from the same prefix (section 20).
+1. **Pass rate** at least `ds4-agent`'s on the same run, with one task of slack. This is a minimum bar for the harness tools and the generated tools prompt (decision 3), not a search for bugs: gate 6 checks the token loop and state restoration independently.
+2. **Clean model lifecycle.** Zero parser failures and no unexpected interruption or context exhaustion. Every tool call is executed, refused by workspace enforcement, or sent back as a bad-argument retry. `max_tokens` is allowed when the budget is reached. An optional `--cap-parity` subcheck compares cap outcomes per task.
+3. **Paired speed and KV reuse.** C and ds4-py reference drivers replay identical token IDs on one host. Their prefill/decode rates must be within 25% and cached-prefix fractions within 0.15. Ordinary agent runs also need explained incremental prefills. Wall time is diagnostic only.
+4. **Interrupt and resume.** One run is interrupted with Ctrl+C during visible generation, resumed from the next prompt, and exits cleanly.
+5. **Records, files, and restore equivalence.** Every run leaves complete events, snapshots, and save evidence. Case 1 loads KV without a switch prefill and extends; case 2 rebuilds by prefill. For one fixed follow-up, their first pre-sample top-12 logits must match in position and order with the shared raw-logit tolerance. Later tokens and terminal reasons are diagnostics.
+6. **Reference equivalence and self-replay.** Part A runs identical retained C prompts through C and ds4-py reference drivers on one host and compares prefill plans and up to 16 pre-sample top-12 rankings per round. Part B replays every ds4-py attempt sequentially under its recorded session provenance, resetting between attempts but preserving rounds within an attempt. Both parts are required.
+
+All six gates require valid provenance: one bake-off session and instance, the same model and `libds4` hashes, matching source revisions and sampling inputs, and complete per-round evidence. Exact C trace replay remains available as a diagnostic, not an acceptance gate. A four-task run is marked `targeted`; only the complete 12-task manifest is `full-12-task` certification.
 
 Not tested here, on purpose: long-context behaviour (M4 adds a 150k-token session and the compaction and `RollingWindow` cases), multi-file repository tasks (M5, a 10-task SWE-bench Verified slice), and GLM, Qwen and DeepSeek V4.1 (M5).
 

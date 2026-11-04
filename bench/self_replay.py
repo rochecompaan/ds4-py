@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import ds4py
 from bench.replay_c_traces import ReplayMismatch, ReplayResult, ReplaySelectionError, _parse_c, replay_round
 from ds4py.engine.replay import read_replay
 from ds4py.engine.sampling import Rng, SamplingPolicy
@@ -16,7 +17,7 @@ from ds4py.errors import Ds4pyError
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
-    from bench.models import TaskRunResult
+    from bench.models import AgentConfig, TaskRunResult
     from bench.provenance import TraceProvenance
     from ds4py.engine.replay_types import ReplayTrace
     from ds4py.engine.session import Engine
@@ -172,3 +173,39 @@ def replay_ds4py_with_engine(
                 )
                 results.append(_from_replay(failed, path, valid=isinstance(error, ReplayMismatch)))
     return tuple(results)
+
+
+def replay_ds4py_task_results(
+    tasks: Sequence[TaskRunResult],
+    config: AgentConfig,
+    *,
+    provenance: Mapping[Path, TraceProvenance],
+    context: SelfReplayContext,
+    lib: str | Path | None = None,
+) -> tuple[SelfReplayResult, ...]:
+    """Load one engine and sequentially replay every selected ds4-py attempt."""
+    selected = select_ds4py_traces(tasks)
+    try:
+        with ds4py.open(
+            config.model,
+            ctx=config.ctx,
+            backend=config.backend,
+            lib=lib,
+            seed=config.seed,
+        ) as engine:
+            return replay_ds4py_with_engine(
+                engine,
+                selected,
+                provenance=provenance,
+                context=context,
+            )
+    except (Ds4pyError, OSError, ValueError) as error:
+        return (
+            SelfReplayResult(
+                "<engine>",
+                -1,
+                passed=False,
+                detail=f"ds4-py self replay could not open the engine: {error}",
+                valid=False,
+            ),
+        )

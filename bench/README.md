@@ -34,6 +34,8 @@ export DS4_TEST_MODEL=/absolute/path/ds4f-q2.gguf
 export DS4_AGENT=/absolute/path/ds4-agent
 export POLYGLOT_BENCHMARK=/absolute/path/polyglot-benchmark
 export DS4_BAKEOFF_BACKEND=cpu
+export DS4_BAKEOFF_INSTANCE_ID=your-instance-id
+export DS4_C_DRIVER=/absolute/path/c-replay-diagnostic
 ```
 
 ## Prepare
@@ -51,9 +53,11 @@ uv run --extra agent python bench/prepare_bakeoff.py \
 ## Run all six gates
 
 `bench/results` must not already exist. The runner refuses to replace an old
-report. Tasks run first, then the interruption/resume check, every attempt
-restore, and finally C replay. No later phase starts while an earlier engine is
-open.
+report. The runner generates and prints one `bakeoff_session_id`. Tasks run
+first, then every attempt restore, the interruption/resume check, sequential C
+and ds4-py reference drivers, and finally ds4-py self-replay. No later phase
+starts while an earlier engine is open. Every raw trace and sidecar inherits the
+same instance, model, library, revision, and sampling provenance.
 
 ```bash
 uv run --extra agent python bench/run_bakeoff.py \
@@ -63,16 +67,25 @@ uv run --extra agent python bench/run_bakeoff.py \
   --results bench/results \
   --model "$DS4_TEST_MODEL" \
   --agent "$DS4_AGENT" \
-  --backend "$DS4_BAKEOFF_BACKEND"
+  --backend "$DS4_BAKEOFF_BACKEND" \
+  --instance-id "$DS4_BAKEOFF_INSTANCE_ID" \
+  --c-driver "$DS4_C_DRIVER"
 ```
+
+A 12-task manifest writes `certification: "full-12-task"`. A targeted manifest
+uses the same gate logic but writes `certification: "targeted"`; it is not full
+M3 acceptance. Add `--cap-parity` only when equal `max_tokens` outcomes per task
+are an explicit extra requirement.
 
 The command exits nonzero if any gate fails. Outputs:
 
-- `bench/results/bakeoff.json`: per-task metrics, restore evidence, every C replay
-  round, and gates 1–6;
+- `bench/results/bakeoff.json`: schema version 2, certification and session
+  identity, per-task metrics, restore evidence, paired rates, provenance,
+  reference-driver equivalence, ds4-py self-replay, and gates 1–6;
 - `bench/results/report.txt`: compact gate and metric tables;
-- `bench/results/`: staged workspaces, per-attempt logs, traces, saves, restore
-  traces, and acceptance logs.
+- `bench/results/`: staged workspaces, per-attempt logs, traces and provenance
+  sidecars, saves, restore traces, reference NDJSON, and acceptance logs.
+  Exact C replay is absent unless it is run separately as a diagnostic.
 
 ## Run selected tasks three times
 
@@ -97,8 +110,10 @@ full bake-off until each selected task passes all three repetitions.
 
 ## Recheck restores
 
-This starts fresh processes for both restore paths of every ds4-py attempt. It
-writes `bench/results/restore-check.json` and does not replace the main report:
+This starts fresh processes for both restore paths of every ds4-py attempt. For
+a schema-2 report it inherits the original session, instance, model, and library
+identity from the report's provenance section. It writes
+`bench/results/restore-check.json` and does not replace the main report:
 
 ```bash
 uv run --extra agent python bench/restore_check.py check \
@@ -109,15 +124,18 @@ uv run --extra agent python bench/restore_check.py check \
 ```
 
 Case 1 loads KV and extends on follow-up. Case 2 uses a payload-stripped copy,
-renders fresh, and performs a full rebuild prefill on follow-up. Both compare
-up to the first 256 committed token IDs and the terminal boundary.
+renders fresh, and performs a full rebuild prefill on follow-up. Gate 5 checks
+the restore plans, prompt position, save/session provenance, and the first
+pre-sample top-12 logits. Later tokens and terminal reasons stay in the report
+as diagnostics; they are not required to match.
 
-## Replay C traces again
+## Diagnostic: exact C replay
 
-Gate 6 reads the original C `--trace` files directly. It does not translate
-traces or replay ds4-py against itself. It loads the GGUF once, replays every
-round from every C attempt at temperature 0, and compares complete committed
-IDs and terminal boundaries. Tool-call parsing never executes a tool.
+This manual check reads the original C `--trace` files directly. It does not
+translate traces or replay ds4-py against itself. It loads the GGUF once,
+replays every round from every C attempt at temperature 0, and compares complete
+committed IDs and terminal boundaries. Tool-call parsing never executes a tool.
+It is a diagnostic for historical mismatches, not an acceptance gate.
 
 ```bash
 uv run --extra agent python bench/replay_c_traces.py \
@@ -126,14 +144,16 @@ uv run --extra agent python bench/replay_c_traces.py \
   --backend "$DS4_BAKEOFF_BACKEND"
 ```
 
-This updates only `replay` and `gate-6` in `bench/results/bakeoff.json`. It fails if
-the 12-run C set has no tool-call round, a trace is malformed, a token differs,
-or a round does not reproduce its natural/recorded terminal boundary.
+This updates only `replay_diagnostic` in `bench/results/bakeoff.json`; it does
+not change any gate. It fails if a trace is malformed, a token differs, or a
+round does not reproduce its natural/recorded terminal boundary.
 
 ## Replay reference drivers
 
 The C and ds4-py diagnostics share a TSV case manifest and an NDJSON evidence
-contract. They replay raw token IDs without executing tools. Each driver loads
+contract. They replay raw token IDs without executing tools. The main runner
+invokes them for every selected C attempt, writes both provenance sidecars,
+and uses the same evidence for Gate 3 rates and Gate 6 Part A. Each driver loads
 one engine per manifest. C creates a fresh native session per case; ds4-py uses
 `ResetJob` between cases. Run the drivers sequentially and keep native logs on
 stderr. Stdout contains only NDJSON evidence.
@@ -224,21 +244,40 @@ inconsistent streams are rejected.
 ## Live pytest entry point
 
 The test below is another explicit way to invoke the complete runner. It skips
-unless all four opt-in variables are present. `-m live` alone cannot start it.
+unless its opt-in flag and all five inputs are present. `-m live` alone cannot
+start it.
 
 ```bash
 export DS4_RUN_BAKEOFF=1
 uv run --extra agent pytest tests/live/test_bakeoff.py -m live -vv -s
 ```
 
-The test reads `bench/results/bakeoff.json` and requires all six gates to pass.
+The test reads the final report and requires all six gates to be valid and pass.
+
+For one retained C trace, the following runs only reference-driver Part A and
+writes fresh provenance. It skips unless its separate flag and all four inputs
+are present:
+
+```bash
+export DS4_RUN_DRIVER_EQUIVALENCE=1
+export DS4_REPLAY_TRACE=/absolute/path/to/c.trace
+uv run --frozen --extra agent pytest tests/live/test_reference_driver.py -m live -vv -s
+```
+
+Set `DS4_BAKEOFF_DS4_REVISION` and `DS4_BAKEOFF_DS4PY_REVISION` when the
+reference binary is outside its source checkout. Unknown identity is invalid
+provenance. Full 12-task certification still requires the complete runner.
+To recheck both reference equivalence and ds4-py self-replay, rerun the targeted
+or full runner with a fresh `--results` root. That command runs Part A and Part B
+in order under one new session ID; it does not mix evidence across sessions.
 
 ## Non-live checks
 
 ```bash
 uv run --extra agent pytest tests/bench -m "not live and not build" -q
-env -u DS4_RUN_BAKEOFF -u DS4_TEST_MODEL -u DS4_AGENT -u POLYGLOT_BENCHMARK \
-  uv run --extra agent pytest tests/live/test_bakeoff.py -q
+env -u DS4_RUN_BAKEOFF -u DS4_RUN_DRIVER_EQUIVALENCE \
+  -u DS4_TEST_MODEL -u DS4_AGENT -u POLYGLOT_BENCHMARK \
+  uv run --extra agent pytest tests/live/test_bakeoff.py tests/live/test_reference_driver.py -q
 ```
 
 A guarded skip confirms only that the live suite did not start. It is not live

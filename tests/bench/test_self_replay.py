@@ -3,6 +3,7 @@
 import hashlib
 import json
 import sys
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,6 +22,8 @@ sys.path.insert(0, str(Path(__file__).parents[2]))
 from bench.provenance import RoundProvenance, TraceProvenance
 from bench.self_replay import (
     SelfReplayContext,
+    SelfReplayResult,
+    replay_ds4py_task_results,
     replay_ds4py_with_engine,
     select_ds4py_traces,
 )
@@ -33,6 +36,46 @@ CONTEXT = SelfReplayContext(
     model_sha256="model",
     libds4_sha256="library",
 )
+
+
+def test_self_replay_task_results_uses_one_engine_and_selected_traces(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bench.self_replay as replay
+
+    trace = tmp_path / "ds4py.trace"
+    trace.write_text("")
+    item = SimpleNamespace(agent="ds4py", task_id="task", attempts=1, attempt_trace_paths=(trace,))
+    provenance = {trace: cast("TraceProvenance", object())}
+    engine = SimpleNamespace()
+    opened = {}
+    delegated = {}
+
+    def open_engine(*args: Any, **kwargs: Any) -> Any:
+        opened.update(kwargs)
+        return nullcontext(engine)
+
+    def drive(engine_arg: Any, selected: Any, **kwargs: Any) -> Any:
+        delegated.update(selected=selected, provenance=kwargs["provenance"], context=kwargs["context"])
+        return (SelfReplayResult("task", 0, passed=True, detail="matched"),)
+
+    monkeypatch.setattr(ds4py, "open", open_engine)
+    monkeypatch.setattr(replay, "replay_ds4py_with_engine", drive)
+    config = SimpleNamespace(model=MODEL, backend="cpu", ctx=100000, seed=1)
+
+    results = replay_ds4py_task_results(
+        cast("Any", [item]),
+        cast("Any", config),
+        provenance=provenance,
+        context=CONTEXT,
+    )
+
+    assert results[0].passed
+    assert opened == {"ctx": 100000, "backend": "cpu", "lib": None, "seed": 1}
+    assert delegated["selected"] == [("task", trace)]
+    assert delegated["provenance"] is provenance
+    assert delegated["context"] is CONTEXT
 
 
 def write_ds4py_trace(path: Path, text: str, *, cached: int = 0) -> tuple[int, ...]:
