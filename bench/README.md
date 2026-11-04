@@ -130,6 +130,97 @@ This updates only `replay` and `gate-6` in `bench/results/bakeoff.json`. It fail
 the 12-run C set has no tool-call round, a trace is malformed, a token differs,
 or a round does not reproduce its natural/recorded terminal boundary.
 
+## Replay reference drivers
+
+The C and ds4-py diagnostics share a TSV case manifest and an NDJSON evidence
+contract. They replay raw token IDs without executing tools. Each driver loads
+one engine per manifest. C creates a fresh native session per case; ds4-py uses
+`ResetJob` between cases. Run the drivers sequentially and keep native logs on
+stderr. Stdout contains only NDJSON evidence.
+
+Build the C driver against the same native source and library used by ds4-py:
+
+```bash
+export DS4_SRC=/absolute/path/to/ds4
+export DS4PY_HOME=/absolute/path/to/native
+export DIAG="$PWD/bench/results/diagnostics"
+mkdir -p "$DIAG"
+cc -O2 -std=c11 -Wall -Wextra -Werror -I"$DS4_SRC" \
+  bench/c_replay_diagnostic.c \
+  -L"$DS4PY_HOME/lib" -Wl,-rpath,"$DS4PY_HOME/lib" -lds4 \
+  -o "$DIAG/c-replay-diagnostic"
+```
+
+The original single-case CLI remains available for the retained logits probes.
+The token file contains prompt IDs followed by sampled IDs. Set
+`PROMPT_TOKENS` and `SPLIT_AT` to the values recorded for the case:
+
+```bash
+"$DIAG/c-replay-diagnostic" \
+  --model "$DS4_TEST_MODEL" \
+  --tokens "$DIAG/case.tokens" \
+  --prompt-tokens "$PROMPT_TOKENS" \
+  --split-at "$SPLIT_AT" \
+  --steps 16 \
+  --think high \
+  --backend "$DS4_BAKEOFF_BACKEND" \
+  > "$DIAG/single-case.ndjson"
+```
+
+For a full retained C trace, export one manifest and one token file per round:
+
+```bash
+export TRACE=/absolute/path/to/c.trace
+export TASK_ID=scale-generator
+export ATTEMPT=1
+export CASE_DIR="$DIAG/cases"
+uv run --frozen --extra agent python - <<'PY'
+import os
+from pathlib import Path
+
+from bench.driver_cases import export_trace_cases
+from ds4py.engine.replay import read_replay
+
+manifest = export_trace_cases(
+    read_replay(Path(os.environ["TRACE"])),
+    task_id=os.environ["TASK_ID"],
+    attempt=int(os.environ["ATTEMPT"]),
+    destination=Path(os.environ["CASE_DIR"]),
+)
+print(manifest)
+PY
+export CASES="$CASE_DIR/cases.tsv"
+```
+
+The manifest limits each round to `min(16, len(round.sampled))` steps. Its token
+files contain the prompt followed by only those recorded sampled IDs. Run both
+drivers with the same manifest, model, backend, context, and source trace:
+
+```bash
+"$DIAG/c-replay-diagnostic" \
+  --model "$DS4_TEST_MODEL" \
+  --cases "$CASES" \
+  --source-trace "$TRACE" \
+  --backend "$DS4_BAKEOFF_BACKEND" \
+  --ctx 100000 \
+  > "$DIAG/c-rounds.ndjson"
+
+uv run --frozen --extra agent python bench/ds4py_replay_diagnostic.py \
+  --model "$DS4_TEST_MODEL" \
+  --cases "$CASES" \
+  --source-trace "$TRACE" \
+  --backend "$DS4_BAKEOFF_BACKEND" \
+  --ctx 100000 \
+  --lib "$DS4PY_HOME/lib/libds4.so" \
+  > "$DIAG/ds4py-rounds.ndjson"
+```
+
+Each manifest round emits `round_start`, split-prefill `sync` and `prefill`
+records, pre-sample top-12 `step` records, and `round_end`. Zero-token rounds
+emit sync evidence and no fabricated step. Use
+`bench.driver_cases.read_driver_ndjson` to validate either output; incomplete or
+inconsistent streams are rejected.
+
 ## Live pytest entry point
 
 The test below is another explicit way to invoke the complete runner. It skips
