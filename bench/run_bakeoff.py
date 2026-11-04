@@ -136,6 +136,7 @@ def _attempt_summary(
         wall_seconds=wall_seconds,
         progress_events=len(trace.rounds),
         tool_calls=_c_tool_calls(log_text),
+        response_budget=config.tokens,
     )
 
 
