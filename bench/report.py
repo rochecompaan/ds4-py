@@ -418,13 +418,20 @@ def build_report(  # noqa: PLR0913 - Each evidence input has a distinct live-run
         for item in python
         if len(item.attempt_save_dirs) != item.attempts
     )
+    restore_valid = (
+        bool(python)
+        and bool(expected)
+        and all(save in restored and restored[save].valid for save in expected)
+        and all(len(item.attempt_save_dirs) == item.attempts for item in python)
+    )
     gates.append(
         _gate(
             "gate-5",
-            bool(python) and bool(expected) and not missing,
-            f"case-1/case-2 restore passed for all {len(expected)} attempts"
+            restore_valid and not missing,
+            f"case-1/case-2 first-step logits passed for all {len(expected)} attempts"
             if not missing
             else "missing or failed restore evidence: " + ", ".join(missing),
+            valid=restore_valid,
         )
     )
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
+import heapq
 import json
 import os
 import shutil
@@ -14,18 +16,22 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, TypedDict
+from typing import TYPE_CHECKING, Protocol, TypedDict, TypeIs
 
 if TYPE_CHECKING:
     from collections.abc import Generator
 
     from ds4py.engine.lifecycle import SessionEvent
+    from ds4py.engine.logits import LogitsView
     from ds4py.runtime import AgentRuntime
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from bench.comparison import TOP_K, StepCapture, TopLogit, compare_step
 from bench.models import AgentConfig, TaskRunResult
+from bench.provenance import TraceProvenance, validate_session_pair
+from ds4py._json import is_json_object
 from ds4py.engine.events import Stopped, Synced
 from ds4py.engine.replay import read_replay
 from ds4py.errors import Ds4pyError
@@ -50,6 +56,9 @@ class RestoreRun:
     terminal_reason: str
     switch_prefill: int
     followup_plan: str
+    followup_position: int
+    first_step: StepCapture | None
+    provenance_path: Path | None
     followup_prefill: int = 0
 
 
@@ -69,6 +78,7 @@ class RestoreResult:
     case2: CheckResult = CheckResult(False, "not run")
     stripped_save_dir: Path | None = None
     trace_paths: tuple[Path, ...] = ()
+    valid: bool = True
 
 
 @dataclass(frozen=True)
@@ -187,38 +197,90 @@ def make_stripped_copy(save_dir: str | Path, home: str | Path) -> Path:
     return destination
 
 
-def _samples(trace_path: str | Path) -> tuple[int, ...]:
-    trace = read_replay(trace_path)
-    return tuple(token for round_ in trace.rounds for token in round_.sampled)
+@dataclass(frozen=True)
+class _RestoreMetadata:
+    provenance: TraceProvenance
+    save_record_sha256: str
+    followup_prompt_sha256: str
+
+
+def _restore_metadata(run: RestoreRun, label: str) -> _RestoreMetadata:
+    if run.provenance_path is None:
+        raise RestoreError(f"{label}: restore provenance is missing")
+    try:
+        value = json.loads(run.provenance_path.read_text())
+        provenance_value = value["provenance"]
+    except (KeyError, OSError, TypeError, ValueError) as error:
+        raise RestoreError(f"{label}: malformed restore provenance: {error}") from error
+    if not isinstance(provenance_value, dict):
+        raise RestoreError(f"{label}: malformed restore provenance")
+    try:
+        provenance_value["rounds"] = ()
+        return _RestoreMetadata(
+            TraceProvenance(**provenance_value),
+            value["save_record_sha256"],
+            value["followup_prompt_sha256"],
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise RestoreError(f"{label}: malformed restore provenance: {error}") from error
+
+
+def validate_restore_pair(case1: RestoreRun, case2: RestoreRun) -> tuple[str, ...]:
+    """Validate shared session, original save, and fixed follow-up evidence."""
+    first = _restore_metadata(case1, "case 1")
+    second = _restore_metadata(case2, "case 2")
+    issues = list(validate_session_pair(first.provenance, second.provenance))
+    if not first.save_record_sha256 or first.save_record_sha256 != second.save_record_sha256:
+        issues.append("save-record hash differs or is missing")
+    expected_followup = hashlib.sha256(FOLLOWUP.encode()).hexdigest()
+    for label, metadata in (("case 1", first), ("case 2", second)):
+        if metadata.followup_prompt_sha256 != expected_followup:
+            issues.append(f"{label} follow-up prompt hash differs")
+    return tuple(issues)
 
 
 def _compare_restore(
     case1: RestoreRun,
     case2: RestoreRun,
-) -> tuple[list[str], tuple[int, ...], tuple[int, ...]]:
+) -> tuple[list[str], tuple[int, ...], tuple[int, ...], bool]:
     problems: list[str] = []
-    if case1.switch_prefill != 0:
-        problems.append(f"case 1 prefilled {case1.switch_prefill} tokens during switch")
-    if case2.switch_prefill != 0:
-        problems.append(f"case 2 prefilled {case2.switch_prefill} tokens during switch")
-    if case2.followup_prefill <= 0:
-        problems.append("case 2 did not prefill during follow-up")
-    if case1.followup_plan != "extend":
-        problems.append(f"case 1 follow-up plan was {case1.followup_plan}, not extend")
-    if case2.followup_plan != "rebuild":
-        problems.append(f"case 2 follow-up plan was {case2.followup_plan}, not rebuild")
-    first = _samples(case1.trace_path)
-    second = _samples(case2.trace_path)
-    for index in range(min(len(first), len(second), 256)):
-        if first[index] != second[index]:
-            problems.append(f"token {index} differs: case 1={first[index]} case 2={second[index]}")
-            break
-    else:
-        if len(first) != len(second) and min(len(first), len(second)) < 256:
-            problems.append(f"token {min(len(first), len(second))} is missing from the shorter restore")
-        elif len(first) < 256 and len(second) < 256 and case1.terminal_reason != case2.terminal_reason:
-            problems.append(f"terminal reasons differ: {case1.terminal_reason} vs {case2.terminal_reason}")
-    return problems, first, second
+    valid = True
+    structural = [
+        (case1.switch_prefill != 0, f"case 1 prefilled {case1.switch_prefill} tokens during switch"),
+        (case2.switch_prefill != 0, f"case 2 prefilled {case2.switch_prefill} tokens during switch"),
+        (case2.followup_prefill <= 0, "case 2 did not prefill during follow-up"),
+        (case1.followup_plan != "extend", f"case 1 follow-up plan was {case1.followup_plan}, not extend"),
+        (case2.followup_plan != "rebuild", f"case 2 follow-up plan was {case2.followup_plan}, not rebuild"),
+    ]
+    for failed, detail in structural:
+        if failed:
+            problems.append(detail)
+            valid = False
+    provenance_issues = validate_restore_pair(case1, case2)
+    problems.extend(provenance_issues)
+    valid = valid and not provenance_issues
+
+    first_trace = read_replay(case1.trace_path)
+    second_trace = read_replay(case2.trace_path)
+    first = tuple(token for round_ in first_trace.rounds for token in round_.sampled)
+    second = tuple(token for round_ in second_trace.rounds for token in round_.sampled)
+    for label, run, trace in (("case 1", case1, first_trace), ("case 2", case2, second_trace)):
+        prompt_position = len(trace.rounds[-1].prompt)
+        if run.followup_position != prompt_position:
+            problems.append(f"{label} follow-up position {run.followup_position} != prompt length {prompt_position}")
+            valid = False
+        if run.first_step is None:
+            problems.append(f"{label} first-step evidence is missing")
+            valid = False
+        elif run.first_step.position != run.followup_position:
+            problems.append(f"{label} first-step position differs from Synced.pos")
+            valid = False
+    if case1.first_step is not None and case2.first_step is not None:
+        comparison = compare_step(case1.first_step, case2.first_step)
+        if not comparison.passed:
+            problems.append(f"first-step logits: {comparison.detail}")
+        valid = valid and comparison.valid
+    return problems, first, second, valid
 
 
 def check_restore(
@@ -246,14 +308,16 @@ def check_restore(
         case2_trace = work_dir / "case-2.jsonl"
         case2 = runner(stripped.parent.parent, evidence.record.session_id, 2, case2_trace)
         trace_paths.append(case2_trace)
-        problems, first, second = _compare_restore(case1, case2)
-        passed = not problems
+        problems, first, second, valid = _compare_restore(case1, case2)
+        passed = valid and not problems
         detail = (
             "; ".join(problems)
             if problems
             else (
-                f"256-token-capped deterministic match ({min(256, len(first), len(second))} tokens); "
-                "case 1 loaded KV and case 2 rebuilt"
+                f"first-step top-{TOP_K} raw-logit match at position {case1.followup_position}; "
+                "case 1 loaded KV and case 2 rebuilt; "
+                f"diagnostic tokens case 1={len(first)} case 2={len(second)}; "
+                f"terminal case 1={case1.terminal_reason} case 2={case2.terminal_reason}"
             )
         )
         return RestoreResult(
@@ -267,6 +331,7 @@ def check_restore(
             ),
             stripped,
             tuple(trace_paths),
+            valid=valid,
         )
     except (
         Ds4pyError,
@@ -281,6 +346,7 @@ def check_restore(
             str(error),
             stripped_save_dir=stripped,
             trace_paths=tuple(trace_paths),
+            valid=False,
         )
 
 
@@ -415,6 +481,8 @@ class _RestoreState(TypedDict):
     followup: bool
     switch_prefill: int
     followup_prefill: int
+    followup_position: int
+    first_step: StepCapture | None
     plan: str | None
     reason: str | None
 
@@ -427,6 +495,8 @@ async def _restore_operation(
         "followup": False,
         "switch_prefill": 0,
         "followup_prefill": 0,
+        "followup_position": -1,
+        "first_step": None,
         "plan": None,
         "reason": None,
     }
@@ -439,15 +509,24 @@ async def _restore_operation(
                 if state["plan"] is None:
                     state["plan"] = plan.kind
                     state["followup_prefill"] = plan.to_prefill
+                    state["followup_position"] = inner.pos
             else:
                 state["switch_prefill"] += plan.to_prefill
         elif event.kind == "Stopped" and state["followup"] and isinstance(inner, Stopped):
             state["reason"] = inner.reason
 
+    def capture_first_step(view: LogitsView) -> None:
+        if state["first_step"] is not None:
+            return
+        entries = heapq.nlargest(TOP_K, ((float(value), index) for index, value in enumerate(view.logits())))
+        top = tuple(TopLogit(token, logit) for logit, token in entries)
+        state["first_step"] = StepCapture(view.position, top, top[0].token)
+
     runtime.model.session.on_event(listener)
     await switch_via_command(runtime, session_id)
     _relocate_local_workspace(runtime)
     state["followup"] = True
+    runtime.model.session.add_logits_hook(capture_first_step)
     await runtime.run(FOLLOWUP)
     return state
 
@@ -465,19 +544,84 @@ def restore_command(argv: Sequence[str]) -> int:
     args.non_interactive = True
     with _runtime(args) as runtime, _trace(runtime, args):
         state = asyncio.run(_restore_operation(runtime, own.session_id))
+    if args.trace is None:
+        raise RestoreError("restore evidence requires --trace")
+    trace_path = Path(args.trace)
+    trace_sha256 = hashlib.sha256(trace_path.read_bytes()).hexdigest()
+    save_path = Path(os.environ.get("DS4PY_HOME", "")) / "sessions" / own.session_id / "save.json"
+    save_record_sha256 = hashlib.sha256(save_path.read_bytes()).hexdigest() if save_path.is_file() else ""
+    provenance = TraceProvenance(
+        bakeoff_session_id=os.environ.get("BAKEOFF_SESSION_ID", "standalone"),
+        instance_id=os.environ.get("DS4_BAKEOFF_INSTANCE_ID", "unknown"),
+        gpu_model=os.environ.get("DS4_BAKEOFF_GPU_MODEL", "unknown"),
+        gpu_driver_version=os.environ.get("DS4_BAKEOFF_GPU_DRIVER_VERSION", "unknown"),
+        ds4_revision=os.environ.get("DS4_BAKEOFF_DS4_REVISION", "unknown"),
+        ds4py_revision=os.environ.get("DS4_BAKEOFF_DS4PY_REVISION", "unknown"),
+        libds4_sha256=os.environ.get("DS4_BAKEOFF_LIBDS4_SHA256", "unknown"),
+        model_path=str(Path(args.model).expanduser().resolve()),
+        model_sha256=os.environ.get("DS4_BAKEOFF_MODEL_SHA256", "unknown"),
+        backend=args.backend,
+        ctx=args.ctx,
+        temperature=args.temp,
+        seed=args.seed,
+        response_budget=args.tokens,
+        reset_policy="restore-switch",
+        trace_sha256=trace_sha256,
+        source_trace_sha256=trace_sha256,
+        rounds=(),
+    )
     own.metadata.write_text(
         json.dumps(
             {
                 "switch_prefill": state["switch_prefill"],
                 "followup_plan": state["plan"],
                 "followup_prefill": state["followup_prefill"],
+                "followup_position": state["followup_position"],
+                "first_step": asdict(state["first_step"]) if state["first_step"] is not None else None,
                 "terminal_reason": state["reason"],
-                "trace_path": str(args.trace),
+                "trace_path": str(trace_path),
+                "provenance": asdict(provenance),
+                "save_record_sha256": save_record_sha256,
+                "followup_prompt_sha256": hashlib.sha256(FOLLOWUP.encode()).hexdigest(),
             }
         )
         + "\n"
     )
     return 0
+
+
+class _TopLogitEvidence(TypedDict):
+    token: int
+    logit: float
+
+
+class _StepEvidence(TypedDict):
+    position: int
+    top: list[_TopLogitEvidence]
+    selected_token: int
+
+
+def _is_step_evidence(value: object) -> TypeIs[_StepEvidence]:
+    if not is_json_object(value):
+        return False
+    if type(value.get("position")) is not int or type(value.get("selected_token")) is not int:
+        return False
+    top = value.get("top")
+    return isinstance(top, list) and all(
+        is_json_object(entry)
+        and type(entry.get("token")) is int
+        and type(entry.get("logit")) in {int, float}
+        for entry in top
+    )
+
+
+def _step_from_metadata(value: object) -> StepCapture | None:
+    if value is None:
+        return None
+    if not _is_step_evidence(value):
+        raise RestoreError("malformed first-step restore evidence")
+    top = tuple(TopLogit(entry["token"], float(entry["logit"])) for entry in value["top"])
+    return StepCapture(value["position"], top, value["selected_token"])
 
 
 def process_restore_runner(
@@ -544,6 +688,9 @@ def process_restore_runner(
             terminal_reason=value["terminal_reason"],
             switch_prefill=value["switch_prefill"],
             followup_plan=value["followup_plan"],
+            followup_position=value["followup_position"],
+            first_step=_step_from_metadata(value["first_step"]),
+            provenance_path=metadata,
             followup_prefill=value["followup_prefill"],
         )
 
