@@ -12,9 +12,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
+from bench.comparison import RateEvidence
 from bench.metrics import EventSummary, ToolAccounting
+from bench.provenance import ProgressChunk, RoundProvenance, SyncCall, TraceProvenance
 from bench.replay_c_traces import ReplayResult
-from bench.report import build_report
+from bench.report import GateResult, build_report
 from bench.restore_check import CheckResult, RestoreResult, RestoreSummary
 from bench.run_bakeoff import (
     AgentConfig,
@@ -54,6 +56,7 @@ def result(task_id: Any = "task", agent: Any = "ds4py", **changes: Any) -> Any:
         "tool_calls": 1,
         "avg_prefill_reuse": 0.8,
         "non_extend_rounds": 0,
+        "terminal_reasons": ("stop_token",) if agent == "ds4py" else ("recorded_boundary",),
         "tool_accounting": ToolAccounting(1, 1) if agent == "ds4py" else None,
     }
     for name in EventSummary.__dataclass_fields__:
@@ -86,6 +89,7 @@ def test_task_result_preserves_summary_evidence_and_derives_last_attempt_paths()
         non_extend_rounds=1,
         allowed_non_extend_rounds=1,
         non_extension_reasons=("compaction",),
+        terminal_reasons=("stop_token",),
         reuse_ratios=(0.5, 0.75),
     )
     first_save = Path("/saves/first")
@@ -118,6 +122,7 @@ def test_task_result_preserves_summary_evidence_and_derives_last_attempt_paths()
     if not is_json_object(summary):
         raise AssertionError("task summary must be an object")
     assert summary["non_extension_reasons"] == ["compaction"]
+    assert summary["terminal_reasons"] == ["stop_token"]
     assert summary["reuse_ratios"] == [0.5, 0.75]
 
 
@@ -132,6 +137,50 @@ def healthy_restore(results: Any) -> Any:
         runs=runs,
         interruption=CheckResult(True, "resumed"),
     )
+
+
+def provenance() -> TraceProvenance:
+    round_ = RoundProvenance(
+        round_index=0,
+        think=75,
+        prompt_sha256="prompt-sha",
+        sync_calls=(SyncCall("full", 12, 8, 4, 12),),
+        progress_chunks=(ProgressChunk(4, 4),),
+    )
+    return TraceProvenance(
+        bakeoff_session_id="session-1",
+        instance_id="instance-1",
+        gpu_model="NVIDIA H100",
+        gpu_driver_version="580.00",
+        ds4_revision="ds4-revision",
+        ds4py_revision="ds4py-revision",
+        libds4_sha256="library-sha",
+        model_path="/models/ds4.gguf",
+        model_sha256="model-sha",
+        backend="cuda",
+        ctx=100000,
+        temperature=0.0,
+        seed=1,
+        response_budget=8192,
+        reset_policy="fresh-per-round",
+        trace_sha256="c-output-sha",
+        source_trace_sha256="source-sha",
+        rounds=(round_,),
+    )
+
+
+def paired_evidence(results: Any) -> dict[str, Any]:
+    task_ids = sorted({item.task_id for item in results if item.agent == "c"})
+    rates = {
+        task_id: (
+            RateEvidence(task_id, 100, 2.0, 40, 4.0),
+            RateEvidence(task_id, 100, 2.0, 40, 4.0),
+        )
+        for task_id in task_ids
+    }
+    c_provenance = provenance()
+    ds4py_provenance = replace(c_provenance, trace_sha256="ds4py-output-sha")
+    return {"rate_evidence": rates, "provenance": ((c_provenance, ds4py_provenance),)}
 
 
 def test_agent_commands_share_model_sampling_and_task_prompt(tmp_path: Path) -> None:
@@ -305,7 +354,8 @@ def test_gates_one_to_five_pass_with_complete_evidence() -> None:
     c = result(agent="c", wall_seconds=10)
     python = result(wall_seconds=15, non_extend_rounds=2)
     python = with_summary(python, allowed_non_extend_rounds=2)
-    report = build_report([c, python], healthy_restore([c, python]))
+    results = [c, python]
+    report = build_report(results, healthy_restore(results), **paired_evidence(results))
 
     assert all(report.gates[f"gate-{number}"].passed for number in range(1, 6))
     assert not report.gates["gate-6"].passed
@@ -330,21 +380,134 @@ def test_gate_two_allows_bad_argument_retry_but_not_parser_error_or_missing_outc
     parser_error = with_summary(python, parser_errors=1)
     assert not build_report([c, parser_error], healthy_restore([c, parser_error])).gates["gate-2"].passed
     missing = with_summary(python, tool_accounting=ToolAccounting(2, 1, 0, 0))
-    assert not build_report([c, missing], healthy_restore([c, missing])).gates["gate-2"].passed
+    invalid = build_report([c, missing], healthy_restore([c, missing])).gates["gate-2"]
+    assert not invalid.passed
+    assert not invalid.valid
 
 
-def test_gate_three_enforces_time_and_only_unexplained_non_extensions() -> None:
-    c = result(agent="c", wall_seconds=10)
-    python = result(wall_seconds=15.01)
-    assert not build_report([c, python], healthy_restore([c, python])).gates["gate-3"].passed
+def test_gate_two_rejects_missing_unknown_and_inconsistent_terminal_evidence() -> None:
+    c = result(agent="c")
+    python = result()
+    results = [c, python]
+    evidence = healthy_restore(results)
 
-    on_time = with_summary(
+    for reasons in ((), ("mystery",)):
+        changed = with_summary(python, terminal_reasons=reasons)
+        gate = build_report([c, changed], evidence).gates["gate-2"]
+        assert not gate.passed
+        assert not gate.valid
+
+    inconsistent = with_summary(
         python,
-        wall_seconds=15,
-        invalid_non_extend_rounds=1,
-        non_extend_rounds=1,
+        terminal_reasons=("tool_call_complete",),
+        tool_accounting=ToolAccounting(),
     )
-    assert not build_report([c, on_time], healthy_restore([c, on_time])).gates["gate-3"].passed
+    gate = build_report([c, inconsistent], evidence).gates["gate-2"]
+    assert not gate.passed
+    assert not gate.valid
+
+
+def test_gate_two_accepts_max_tokens_and_reports_caps_without_parity() -> None:
+    c = result(agent="c")
+    python = with_summary(result(), terminal_reasons=("max_tokens", "max_tokens"))
+    results = [c, python]
+
+    report = build_report(results, healthy_restore(results))
+
+    gate = report.gates["gate-2"]
+    assert gate.passed and gate.valid
+    assert report.caps.tasks["task"].c == 0
+    assert report.caps.tasks["task"].ds4py == 2
+    assert report.caps.totals.ds4py == 2
+    assert report.caps.parity.detail == "not run"
+
+
+def test_gate_two_enforces_explicit_cap_parity() -> None:
+    c = result(agent="c")
+    python = result()
+    results = [c, python]
+
+    report = build_report(
+        results,
+        healthy_restore(results),
+        cap_parity=GateResult(False, "cap outcomes differ"),
+    )
+
+    assert not report.gates["gate-2"].passed
+    assert "cap outcomes differ" in report.gates["gate-2"].detail
+
+
+def test_gate_two_rejects_unexpected_task_interruption() -> None:
+    c = result(agent="c")
+    python = with_summary(result(), terminal_reasons=("interrupted",))
+
+    gate = build_report([c, python], healthy_restore([c, python])).gates["gate-2"]
+
+    assert not gate.passed
+    assert gate.valid
+
+
+def test_gate_three_ignores_wall_time_ratio_with_valid_paired_evidence() -> None:
+    c = result(agent="c", wall_seconds=10)
+    python = result(wall_seconds=100)
+    results = [c, python]
+
+    gate = build_report(results, healthy_restore(results), **paired_evidence(results)).gates["gate-3"]
+
+    assert gate.passed and gate.valid
+
+
+def test_gate_three_enforces_rate_and_cached_fraction_tolerances() -> None:
+    c = result(agent="c")
+    python = result()
+    results = [c, python]
+    evidence = paired_evidence(results)
+    c_rate, ds4py_rate = evidence["rate_evidence"]["task"]
+    evidence["rate_evidence"]["task"] = (c_rate, replace(ds4py_rate, prefill_seconds=2.70))
+
+    bad_rate = build_report(results, healthy_restore(results), **evidence).gates["gate-3"]
+    assert not bad_rate.passed
+    assert bad_rate.valid
+
+    cached_python = with_summary(python, avg_prefill_reuse=0.5)
+    cached_results = [c, cached_python]
+    bad_cache = build_report(
+        cached_results,
+        healthy_restore(cached_results),
+        **paired_evidence(cached_results),
+    ).gates["gate-3"]
+    assert not bad_cache.passed
+    assert bad_cache.valid
+
+
+def test_gate_three_rejects_unexplained_non_extensions() -> None:
+    c = result(agent="c")
+    python = with_summary(result(), invalid_non_extend_rounds=1, non_extend_rounds=1)
+    results = [c, python]
+
+    gate = build_report(results, healthy_restore(results), **paired_evidence(results)).gates["gate-3"]
+
+    assert not gate.passed
+    assert gate.valid
+
+
+def test_gate_three_missing_rates_or_bad_provenance_is_invalid() -> None:
+    c = result(agent="c")
+    python = result()
+    results = [c, python]
+    restore = healthy_restore(results)
+
+    missing = build_report(results, restore)
+    assert not missing.gates["gate-3"].passed
+    assert not missing.gates["gate-3"].valid
+    assert "gate-3: INVALID" in missing.compact_table()
+
+    evidence = paired_evidence(results)
+    c_provenance, ds4py_provenance = evidence["provenance"][0]
+    evidence["provenance"] = ((c_provenance, replace(ds4py_provenance, instance_id="other-instance")),)
+    mismatched = build_report(results, restore, **evidence).gates["gate-3"]
+    assert not mismatched.passed
+    assert not mismatched.valid
 
 
 def test_gate_four_requires_interrupt_resume() -> None:
@@ -379,13 +542,19 @@ def test_gate_five_rejects_an_attempt_with_no_save_directory() -> None:
     assert "attempt" in report.gates["gate-5"].detail
 
 
-def test_report_json_has_attempt_feedback_and_table_has_six_deltas_not_logs() -> None:
+def test_report_json_has_attempt_feedback_and_table_has_deltas_not_logs() -> None:
     c = result(agent="c", wall_seconds=10, progress_events=2, tokens=10)
     python = result(wall_seconds=12, progress_events=5, tokens=14)
-    report = build_report([c, python], healthy_restore([c, python]))
+    results = [c, python]
+    report = build_report(results, healthy_restore(results), **paired_evidence(results))
 
     data = report.to_dict()
     assert is_json_object(data)
+    assert "rates" in data and "caps" in data and "provenance" in data
+    rates = data["rates"]
+    assert is_json_object(rates) and "task" in rates
+    caps = data["caps"]
+    assert is_json_object(caps) and "totals" in caps
     tasks = data["tasks"]
     assert isinstance(tasks, list) and all(is_json_object(item) for item in tasks)
     python_data = next(item for item in tasks if is_json_object(item) and item["agent"] == "ds4py")
@@ -400,6 +569,8 @@ def test_report_json_has_attempt_feedback_and_table_has_six_deltas_not_logs() ->
         "tool_calls",
         "avg_prefill_reuse",
         "non_extend_rounds",
+        "max_tokens_exits",
+        "paired_rates",
     ):
         assert metric in table
     assert "delta" in table and "grader secret output" not in table

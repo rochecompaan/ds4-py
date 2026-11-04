@@ -32,6 +32,7 @@ def task_record(task_id: str, agent: str) -> dict[str, Any]:
             "allowed_non_extend_rounds": 0,
             "non_extension_reasons": [],
             "parser_errors": 0,
+            "terminal_reasons": ["stop_token" if agent == "ds4py" else "recorded_boundary"],
             "tool_accounting": {
                 "parsed": 0,
                 "executed": 0,
@@ -52,6 +53,15 @@ def task_record(task_id: str, agent: str) -> dict[str, Any]:
 
 def write_report(path: Path, tasks: list[dict[str, Any]]) -> None:
     path.write_text(json.dumps({"tasks": tasks, "gates": {}}))
+
+
+def test_task_deserialization_requires_terminal_evidence() -> None:
+    record = task_record("task", "ds4py")
+    summary = record["summary"]
+    del summary["terminal_reasons"]
+
+    with pytest.raises(ValueError, match="terminal_reasons"):
+        TaskRunResult.from_dict(record)
 
 
 @pytest.mark.parametrize(
