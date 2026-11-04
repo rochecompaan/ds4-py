@@ -88,8 +88,7 @@ class BakeoffReport:
                 },
                 "caps": self.caps,
                 "provenance": tuple(
-                    {"c": c, "ds4py": ds4py, "issues": validate_pair(c, ds4py)}
-                    for c, ds4py in self.provenance
+                    {"c": c, "ds4py": ds4py, "issues": validate_pair(c, ds4py)} for c, ds4py in self.provenance
                 ),
             }
         )
@@ -186,7 +185,11 @@ def _gate(name: str, passed: bool, detail: str, *, valid: bool = True) -> tuple[
 def _cap_report(tasks: Sequence[TaskRunResult], parity: GateResult | None) -> CapReport:
     counts = {
         task_id: CapCounts(
-            c=sum(item.terminal_reasons.count("max_tokens") for item in tasks if item.task_id == task_id and item.agent == "c"),
+            c=sum(
+                item.terminal_reasons.count("max_tokens")
+                for item in tasks
+                if item.task_id == task_id and item.agent == "c"
+            ),
             ds4py=sum(
                 item.terminal_reasons.count("max_tokens")
                 for item in tasks
