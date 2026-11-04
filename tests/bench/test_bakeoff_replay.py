@@ -133,6 +133,7 @@ def test_replay_preserves_c_cached_prefill_boundary(tmp_path: Path) -> None:
             [("cached-task", path)],
             require_full_set=False,
         )
+
         def session_calls(_engine: Any, session: Any) -> list[tuple[Any, ...]]:
             assert isinstance(session, FakeSession)
             return list(session.calls)

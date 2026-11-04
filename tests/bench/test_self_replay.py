@@ -87,9 +87,7 @@ def provenance_for(path: Path, **changes: object) -> TraceProvenance:
         "reset_policy": "sequential",
         "trace_sha256": digest,
         "source_trace_sha256": digest,
-        "rounds": tuple(
-            RoundProvenance(round_.number, round_.think, "prompt", (), ()) for round_ in trace.rounds
-        ),
+        "rounds": tuple(RoundProvenance(round_.number, round_.think, "prompt", (), ()) for round_ in trace.rounds),
     }
     values.update(changes)
     return TraceProvenance(**values)  # type: ignore[arg-type]
@@ -211,9 +209,7 @@ def test_selection_includes_every_ds4py_attempt_without_full_set_requirement(tmp
                 attempt_trace_paths=paths,
             )
         )
-    tasks.append(
-        SimpleNamespace(task_id="task-c", agent="c", attempts=1, attempt_trace_paths=(tmp_path / "c.trace",))
-    )
+    tasks.append(SimpleNamespace(task_id="task-c", agent="c", attempts=1, attempt_trace_paths=(tmp_path / "c.trace",)))
 
     selected = select_ds4py_traces(cast("Any", tasks))
 
