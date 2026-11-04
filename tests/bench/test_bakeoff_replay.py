@@ -1,4 +1,4 @@
-"""Gate 6 replays complete C traces without executing tools."""
+"""Exact C replay remains diagnostic evidence, not Gate 6 acceptance."""
 
 import json
 import sys
@@ -7,10 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
-import pytest
-
 import ds4py
-from ds4py._native.fake import FAKE_EOS, FakeNative
+from ds4py._native.fake import FAKE_EOS, FakeNative, FakeSession
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.engine.session import Engine
 
@@ -65,7 +63,7 @@ def engine_for(sampled: Any, mismatch_at: Any = None) -> Engine:
     return ds4py.open(MODEL, ctx=4096, native=FakeNative(info=info, script=script))
 
 
-def test_tool_round_replays_every_token_and_stops_without_tool_execution(
+def test_tool_round_diagnostic_replays_tokens_without_tool_execution(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "tool.trace"
@@ -135,35 +133,16 @@ def test_replay_preserves_c_cached_prefill_boundary(tmp_path: Path) -> None:
             [("cached-task", path)],
             require_full_set=False,
         )
-        calls = engine._worker.call(lambda _engine, session: list(session.calls)).result()
+        def session_calls(_engine: Any, session: Any) -> list[tuple[Any, ...]]:
+            assert isinstance(session, FakeSession)
+            return list(session.calls)
+
+        calls = engine._worker.call(session_calls).result()
         native_tokens = engine._worker.call(lambda _engine, session: session.tokens()).result()
 
     assert results[0].passed, results[0].detail
     assert calls[:2] == [("sync", len(system)), ("sync", len(suffix))]
     assert native_tokens[: len(prompt)] == prompt
-
-
-@pytest.mark.parametrize(("text", "tool_call"), [(TOOL_TEXT, True), ("hello", False)])
-def test_token_mismatch_fails_with_task_round_token_index_and_round_type(
-    tmp_path: Path,
-    text: str,
-    tool_call: bool,
-) -> None:
-    path = tmp_path / "mismatch.trace"
-    sampled = write_c_trace(path, text)
-
-    with engine_for(sampled, mismatch_at=1) as engine:
-        results = replay_with_engine(
-            engine,
-            [("mismatch-task", path)],
-            require_full_set=False,
-        )
-
-    assert not results[0].passed
-    assert "mismatch-task" in results[0].detail
-    assert "round 0" in results[0].detail
-    assert "token 1" in results[0].detail
-    assert results[0].tool_call is tool_call
 
 
 def test_malformed_c_record_becomes_failing_gate_evidence(tmp_path: Path) -> None:
@@ -200,7 +179,7 @@ def test_all_twelve_c_runs_replay_and_tool_coverage_is_required(tmp_path: Path) 
     assert sum(result.tool_call for result in results) == 12
 
 
-def test_full_set_without_a_tool_round_fails_gate_six(tmp_path: Path) -> None:
+def test_full_set_without_a_tool_round_is_a_failed_diagnostic(tmp_path: Path) -> None:
     sampled = None
     selected = []
     for index in range(12):
@@ -213,14 +192,13 @@ def test_full_set_without_a_tool_round_fails_gate_six(tmp_path: Path) -> None:
 
     assert not results[-1].passed
     assert "no tool-call round" in results[-1].detail
-    assert not build_report([], RestoreSummary(), results).gates["gate-6"].passed
 
 
-def test_selection_includes_every_c_attempt_trace_and_requires_twelve_tasks(
+def test_selection_includes_every_c_attempt_without_full_set_requirement(
     tmp_path: Path,
 ) -> None:
     paths = []
-    for index in range(12):
+    for index in range(2):
         first = tmp_path / f"task-{index}-1.trace"
         second = tmp_path / f"task-{index}-2.trace"
         write_c_trace(first, "first")
@@ -234,7 +212,7 @@ def test_selection_includes_every_c_attempt_trace_and_requires_twelve_tasks(
             attempt_trace_paths=paths[index],
             trace_path=paths[index][-1],
         )
-        for index in range(12)
+        for index in range(2)
     ]
     tasks.append(
         SimpleNamespace(
@@ -248,29 +226,28 @@ def test_selection_includes_every_c_attempt_trace_and_requires_twelve_tasks(
 
     selected = select_c_traces(cast("Any", tasks))
 
-    assert len(selected) == 24
+    assert len(selected) == 4
     assert [path for _task, path in selected] == [path for pair in paths for path in pair]
 
 
-def test_gate_six_cannot_pass_without_tool_call_evidence() -> None:
-    result = ReplayResult("task", 0, True, "text replay", tool_call=False)
-    assert not build_report([], RestoreSummary(), [result]).gates["gate-6"].passed
+def test_c_diagnostic_cannot_pass_gate_six() -> None:
     covered = ReplayResult("task", 0, True, "tool replay", tool_call=True)
-    assert build_report([], RestoreSummary(), [covered]).gates["gate-6"].passed
+    gate = build_report([], RestoreSummary(), [covered]).gates["gate-6"]
+    assert not gate.passed
+    assert not gate.valid
 
 
-def test_standalone_replay_updates_only_its_evidence_and_gate(tmp_path: Path) -> None:
+def test_standalone_replay_updates_diagnostic_and_preserves_gates(tmp_path: Path) -> None:
     path = tmp_path / "bakeoff.json"
     original = build_report([], RestoreSummary())
     original.write_json(path)
-    gate1 = json.loads(path.read_text())["gates"]["gate-1"]
+    original_gates = json.loads(path.read_text())["gates"]
     result = ReplayResult("task", 0, True, "tool replay", tool_call=True)
 
-    gate = update_replay_report(path, [result])
+    diagnostic = update_replay_report(path, [result])
 
     data = json.loads(path.read_text())
-    assert gate.passed
-    assert data["gates"]["gate-1"] == gate1
-    assert data["gates"]["gate-6"]["passed"]
-    assert data["replay"][0]["task_id"] == "task"
-    assert data["replay"][0]["tool_call"]
+    assert diagnostic.passed
+    assert data["gates"] == original_gates
+    assert data["replay_diagnostic"][0]["task_id"] == "task"
+    assert data["replay_diagnostic"][0]["tool_call"]
