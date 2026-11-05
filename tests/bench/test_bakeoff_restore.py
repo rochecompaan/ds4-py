@@ -473,8 +473,13 @@ def test_different_later_tokens_and_terminal_reasons_are_diagnostic(tmp_path: Pa
 
 
 @pytest.mark.parametrize("copy_workspace", [False, True], ids=["original", "copied"])
+@pytest.mark.parametrize(("response_budget", "expected_terminal"), [(256, "stop_token"), (1, "max_tokens")])
 def test_restore_driver_preserves_noninteractive_prompt_composition(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, copy_workspace: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    copy_workspace: bool,
+    response_budget: int,
+    expected_terminal: str,
 ) -> None:
     project = tmp_path / "project"
     project.mkdir()
@@ -527,7 +532,7 @@ def test_restore_driver_preserves_noninteractive_prompt_composition(
             "--seed",
             "1",
             "--tokens",
-            "256",
+            str(response_budget),
             "--trace",
             str(trace),
         ]
@@ -537,6 +542,7 @@ def test_restore_driver_preserves_noninteractive_prompt_composition(
     value = json.loads(metadata.read_text())
     assert value["followup_plan"] == "extend"
     assert value["followup_position"] == value["first_step"]["position"] > 0
+    assert value["terminal_reason"] == expected_terminal
     assert len(value["first_step"]["top"]) == 12
     assert "first_step" not in json.loads(trace.read_text())
 
