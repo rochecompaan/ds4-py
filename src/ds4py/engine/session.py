@@ -18,7 +18,7 @@ from ds4py._native.protocol import EngineConfig, Native, ThinkMode
 from ds4py.errors import EngineError
 
 from . import chat as chat_ops
-from .decode import GenerateJob
+from .decode import DecodeStep, GenerateJob
 from .events import (
     Checkpointed,
     Event,
@@ -186,6 +186,7 @@ class Session:
         self._rng = Rng(engine.sampling_defaults.seed)
         self._lock = threading.RLock()
         self._active_round = False
+        self._decode_step: DecodeStep | None = None
         self._logits_hooks: list[Callable[[LogitsView], None]] = []
         self._paused_stream: RoundStream | None = None
         self._paused_control: ControlSpan | None = None
@@ -314,12 +315,21 @@ class Session:
             ).result()
             self._engine.think = normalized
 
+    def set_decode_step(self, step: DecodeStep | None) -> None:
+        """Install the decode step between rounds; ``None`` restores the default."""
+        with self._lock:
+            self._require_idle()
+            if self._paused_stream is not None or self._paused_control is not None:
+                raise EngineError("cannot change decode step during a paused round")
+            self._decode_step = step
+
     def close(self) -> None:
         """End the live session and close all state; safe to call repeatedly."""
         with self._lock:
             if self._closed:
                 return
             self._closed = True
+            self._decode_step = None
             self._lifecycle.emit("session_end", old=self.id)
             self._lifecycle.close_states()
 
@@ -548,6 +558,7 @@ class Session:
                 control=control,
                 resume=resuming,
                 sampled_tokens=sampled_tokens,
+                decode_step=self._decode_step,
             )
             yield from self._job_events(job)
         finally:

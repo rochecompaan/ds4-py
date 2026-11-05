@@ -253,6 +253,7 @@ class EngineWorker:
                     finally:
                         item.events.queue.put(_END)
                         item.events.finished.set()
+                del item
 
     def _plan(self, session: SessionHandle, tokens: Sequence[int]) -> Plan:
         return plan_sync(
@@ -278,7 +279,14 @@ class EngineWorker:
         elif isinstance(job, ResetJob):
             self._reset(session)
         elif isinstance(job, GenerateJob):
-            reason = generate(engine, session, job, cancelled=self.cancel_event.is_set, emit=emit)
+            reason = generate(
+                engine,
+                session,
+                job,
+                cancelled=self.cancel_event.is_set,
+                emit=emit,
+                step=job.decode_step,
+            )
             if reason == "interrupted":
                 self.cancel_event.clear()
             emit(Stopped(reason))

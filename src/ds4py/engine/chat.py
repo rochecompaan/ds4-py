@@ -131,6 +131,7 @@ def run_round(
                     logits_hooks=tuple(session._logits_hooks),
                     control=control,
                     resume=resuming,
+                    decode_step=session._decode_step,
                 ),
                 pause_on_reserve=True,
             )
