@@ -329,6 +329,31 @@ def test_restore_cases_compare_first_step_and_allow_later_token_differences(tmp_
     assert SessionStore().read_kv_header(stripped / "session.kv") == 0
 
 
+def test_restore_position_uses_fixed_followup_round_not_later_tool_round(tmp_path: Path) -> None:
+    save = make_save(tmp_path)
+
+    def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
+        run = restore_run(case, trace_path)
+        first = json.loads(trace_path.read_text())
+        later = {
+            **first,
+            "step_index": 1,
+            "round_index": 1,
+            "prompt": [1, 2, 3],
+            "cached": 2,
+            "prefill_suffix": [3],
+            "sampled": [],
+        }
+        with trace_path.open("a") as stream:
+            stream.write(json.dumps(later) + "\n")
+        return run
+
+    result = check_restore(save, tmp_path / "work", runner=drive)
+
+    assert result.passed, result.detail
+    assert result.valid
+
+
 @pytest.mark.parametrize("second_step", [step_capture(reorder=True), step_capture(delta=1e-5)])
 def test_restore_first_step_ranking_and_tolerance_fail(tmp_path: Path, second_step: StepCapture) -> None:
     save = make_save(tmp_path)
