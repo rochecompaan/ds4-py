@@ -96,11 +96,16 @@ def write_ds4py_trace(path: Path, text: str, *, cached: int = 0) -> tuple[int, .
     return tuple(sampled)
 
 
-def engine_for(sampled: tuple[int, ...], mismatch_at: int | None = None) -> Engine:
+def engine_for(
+    sampled: tuple[int, ...],
+    mismatch_at: int | None = None,
+    *,
+    continue_after: bool = False,
+) -> Engine:
     def script(prompt: Any, generated: Any) -> Any:
         index = len(generated)
         if index >= len(sampled):
-            return FAKE_EOS
+            return sampled[-1] if continue_after else FAKE_EOS
         if index == mismatch_at:
             return sampled[index] + 1
         return sampled[index]
@@ -162,6 +167,28 @@ def test_tool_round_self_replays_every_token_without_tool_execution(tmp_path: Pa
     assert result.tokens == len(sampled)
     assert result.tool_call
     assert result.terminal_reason == "tool_call_complete"
+
+
+@pytest.mark.parametrize(
+    ("text", "terminal_reason"),
+    [("hello", "max_tokens"), (TOOL_TEXT, "tool_call_complete")],
+)
+def test_self_replay_honors_recorded_response_budget_at_boundary(
+    tmp_path: Path,
+    text: str,
+    terminal_reason: str,
+) -> None:
+    path = tmp_path / "capped.jsonl"
+    sampled = write_ds4py_trace(path, text)
+
+    with engine_for(sampled, continue_after=True) as engine:
+        results = replay(engine, "capped-task", path, response_budget=len(sampled))
+
+    assert len(results) == 1
+    result = results[0]
+    assert result.passed, result.detail
+    assert result.tokens == len(sampled)
+    assert result.terminal_reason == terminal_reason
 
 
 def test_self_replay_preserves_cached_sync_and_resets_between_attempts(tmp_path: Path) -> None:

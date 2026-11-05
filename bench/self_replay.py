@@ -158,7 +158,15 @@ def replay_ds4py_with_engine(
         rng = Rng(1)
         for ordinal, round_ in enumerate(trace.rounds):
             try:
-                result = replay_round(engine, policy, rng, task_id, ordinal, round_)
+                result = replay_round(
+                    engine,
+                    policy,
+                    rng,
+                    task_id,
+                    ordinal,
+                    round_,
+                    response_budget=recorded.response_budget,
+                )
                 results.append(_from_replay(result, path))
             except (Ds4pyError, ReplayMismatch) as error:
                 data = b"".join(engine.token_text(token) for token in round_.sampled)
