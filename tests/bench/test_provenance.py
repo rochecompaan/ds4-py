@@ -44,6 +44,7 @@ def _provenance() -> TraceProvenance:
         model_sha256="model-sha",
         backend="cuda",
         ctx=100000,
+        q8_f16_cache_mb=5120,
         temperature=0.0,
         seed=1,
         response_budget=8192,
@@ -75,6 +76,13 @@ def test_provenance_rejects_unknown_identity_even_when_both_sides_match() -> Non
     c = replace(_provenance(), ds4_revision="unknown")
 
     assert "ds4_revision" in "\n".join(validate_session_pair(c, c))
+
+
+def test_provenance_rejects_different_q8_f16_cache_budgets() -> None:
+    c = _provenance()
+    ds4py = replace(c, q8_f16_cache_mb=4096)
+
+    assert "q8_f16_cache_mb" in "\n".join(validate_session_pair(c, ds4py))
 
 
 def test_provenance_rejects_different_session_shape_or_missing_chunk_plan() -> None:
@@ -140,5 +148,6 @@ def test_trace_provenance_sidecar_round_trip(tmp_path: Path) -> None:
     data = json.loads(output.read_text())
     assert data["trace_sha256"] == "c-output-sha"
     assert data["source_trace_sha256"] == "source-sha"
+    assert data["q8_f16_cache_mb"] == 5120
     assert data["rounds"][0]["think"] == 75
     assert data["rounds"][0]["sync_calls"][1]["position"] == 12

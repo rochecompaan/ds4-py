@@ -10,6 +10,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+Q8_F16_CACHE_ENV = "DS4_CUDA_Q8_F16_CACHE_MB"
+Q8_F16_CACHE_MB = 5120
+
+
 @dataclass(frozen=True)
 class SyncCall:
     label: str
@@ -47,6 +51,7 @@ class TraceProvenance:
     model_sha256: str
     backend: str
     ctx: int
+    q8_f16_cache_mb: int
     temperature: float
     seed: int
     response_budget: int
@@ -80,6 +85,7 @@ _SESSION_FIELDS = (
     "model_sha256",
     "backend",
     "ctx",
+    "q8_f16_cache_mb",
     "temperature",
     "seed",
     "response_budget",

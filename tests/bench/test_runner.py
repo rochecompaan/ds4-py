@@ -163,6 +163,7 @@ def provenance() -> TraceProvenance:
         model_sha256="model-sha",
         backend="cuda",
         ctx=100000,
+        q8_f16_cache_mb=5120,
         temperature=0.0,
         seed=1,
         response_budget=8192,
@@ -189,6 +190,7 @@ def bakeoff_session() -> BakeoffSession:
         temperature=0.0,
         seed=1,
         response_budget=256,
+        q8_f16_cache_mb=5120,
     )
 
 

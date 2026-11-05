@@ -83,7 +83,7 @@ Every trace has a sibling `<trace>.provenance.json` record linked by the trace S
 - `ds4` source revision, ds4-py source revision, and `libds4` SHA-256;
 - model path and model SHA-256;
 - the output trace SHA-256 and, for a replay, the shared source-trace SHA-256;
-- backend, context, temperature, seed, and response budget;
+- backend, context, Q8/FP16 cache limit in MiB, temperature, seed, and response budget;
 - the session-reset policy;
 - each round's think mode, prompt SHA-256, input length, cached length, prefill length, sync-call sequence, and resulting position;
 - actual progress chunks when the driver exposes them.
@@ -99,6 +99,12 @@ The report repeats the session-level provenance and links every evidence set to 
 - `LOGIT_ABS_TOLERANCE = 1e-5`. The largest absolute difference must be strictly below this value.
 - A top-k ranking match means the same ordered token IDs at every compared step. It does not mean set equality.
 - The `1e-5` tolerance is 200 times the observed `5e-8` matched-driver difference. It is far below observed prefill-shape differences of `0.593376` and `1.511933`.
+
+Both reference drivers set `DS4_CUDA_Q8_F16_CACHE_MB=5120` before native engine open. The bake-off session exports the same value to its subprocesses. Every provenance sidecar records it as the required `q8_f16_cache_mb` field, and any cross-driver mismatch makes the comparison invalid. The 5 GiB limit is below the smallest observed automatic cutoff of 5.77 GiB, leaving more GPU memory headroom while retaining the cached path.
+
+At ds4 revision `5379c1c9ac315f1540371b06a3db88491d4059ff`, an unset limit means `UINT64_MAX` (`ds4_cuda.cu:1560-1563`). Native code then calls `cudaMemGetInfo` for each allocation and stops caching when the request exceeds free memory or would leave less than the reserve (`ds4_cuda.cu:1647-1675`). The printed `cached` value is the accumulated Q8-to-FP16 expansion allocation, not the KV cache size. The fixed limit makes the cutoff independent of small free-VRAM differences between process starts.
+
+This cache limit changes logits because it changes kernel selection. A cached projection uses FP16 weights and activations with `cublasGemmEx`; after the cutoff, the same projection falls back to native Q8 kernels (`ds4_cuda.cu:16470-16504`). These arithmetic paths can round and accumulate differently. The 2026-11-04 probe's `5e-8` agreements occurred under equal cache values; old/new disagreements later correlated with unequal values. The kernel-path difference is confirmed in source; no more specific accumulation-order cause is claimed.
 
 ## 4. Gate decisions
 

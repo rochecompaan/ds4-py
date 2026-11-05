@@ -28,6 +28,7 @@
 #include <time.h>
 
 #define TOP_COUNT 12
+#define Q8_F16_CACHE_MB "5120"
 
 typedef struct {
     const char *model;
@@ -542,6 +543,10 @@ cleanup:
 /* Retained single-case investigation path. */
 
 int main(int argc, char **argv) {
+    if (setenv("DS4_CUDA_Q8_F16_CACHE_MB", Q8_F16_CACHE_MB, 1) != 0) {
+        perror("failed to pin q8 fp16 cache budget");
+        return 1;
+    }
     replay_config cfg;
     if (!parse_options(argc, argv, &cfg)) {
         usage(stderr, argv[0]);
