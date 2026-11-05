@@ -530,7 +530,15 @@ async def _restore_operation(
     _relocate_local_workspace(runtime)
     state["followup"] = True
     runtime.model.session.add_logits_hook(capture_first_step)
-    await runtime.run(FOLLOWUP)
+    from ds4py.model import ResponseTerminalError
+
+    try:
+        await runtime.run(FOLLOWUP)
+    except ResponseTerminalError as error:
+        if error.reason != "max_tokens":
+            raise
+        # Gate 5 needs the first pre-sample call, not a complete continuation.
+        state["reason"] = error.reason
     return state
 
 
