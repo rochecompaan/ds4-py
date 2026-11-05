@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from bench.comparison import RateEvidence, StepCapture, TopLogit
-from bench.driver_cases import DriverCase, DriverRoundEvidence
+from bench.driver_cases import DriverCase, DriverRoundEvidence, read_case_manifest
 from bench.driver_equivalence import DriverEquivalenceResult, DriverRoundResult
 from bench.metrics import EventSummary, ToolAccounting
 from bench.provenance import ProgressChunk, RoundProvenance, SyncCall, TraceProvenance
@@ -32,6 +32,7 @@ from bench.self_replay import SelfReplayResult
 from bench.session import BakeoffSession
 from bench.workspaces import prepare_exercise
 from ds4py._json import is_json_object
+from ds4py.engine.replay_types import ReplayRound, ReplayTrace
 
 
 def config(tmp_path: Path, agent: Any = "ds4py") -> Any:
@@ -505,15 +506,81 @@ def test_gate_two_enforces_explicit_cap_parity() -> None:
     assert "cap outcomes differ" in report.gates["gate-2"].detail
 
 
-def test_cap_parity_requires_paired_tasks_and_matching_cap_counts() -> None:
-    from bench.run_bakeoff import _cap_parity
+def test_cap_phase_runs_both_drivers_for_each_arm_round_zero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bench.run_bakeoff as runner
 
-    c = with_summary(result(agent="c"), terminal_reasons=("max_tokens",))
-    python = with_summary(result(), terminal_reasons=("stop_token",))
+    c_trace = tmp_path / "c.trace"
+    ds4py_trace = tmp_path / "ds4py.trace"
+    c_trace.write_text("c")
+    ds4py_trace.write_text("ds4py")
+    monkeypatch.setattr(runner, "select_c_traces", lambda _results: [("task", c_trace)])
+    monkeypatch.setattr(runner, "select_ds4py_traces", lambda _results: [("task", ds4py_trace)])
+    trace = ReplayTrace(100000, None, (ReplayRound(0, (1, 2), (3,), 75, 0, False),))
+    monkeypatch.setattr(runner, "read_replay", lambda _path: trace)
+    calls = []
 
-    assert not _cap_parity([c]).passed
-    assert not _cap_parity([c, python]).passed
-    assert _cap_parity([c, with_summary(python, terminal_reasons=("max_tokens",))]).passed
+    def fake_driver(command: list[str], output_path: Path, log_path: Path) -> Any:
+        case = read_case_manifest(Path(command[command.index("--cases") + 1]))[0]
+        source_trace = Path(command[command.index("--source-trace") + 1])
+        output_path.write_text("{}")
+        log_path.write_text("")
+        calls.append((command[0], source_trace, case))
+        return (
+            (
+                DriverRoundEvidence(
+                    source_trace=source_trace,
+                    case=case,
+                    sync_calls=(SyncCall("full", 2, 0, 2, 2),),
+                    progress_chunks=(ProgressChunk(2, 2),),
+                    steps=(),
+                    prefill_seconds=0.0,
+                    decode_seconds=0.0,
+                    terminal_reason="stop_token",
+                ),
+            ),
+            (),
+        )
+
+    monkeypatch.setattr(runner, "_run_driver_command", fake_driver)
+    c_driver = tmp_path / "c-driver"
+
+    result = runner._run_cap_parity([], config(tmp_path), c_driver, bakeoff_session(), tmp_path / "results")
+
+    assert result.passed, result.detail
+    assert len(calls) == 4
+    assert {call[1] for call in calls} == {c_trace, ds4py_trace}
+    assert [call[0] for call in calls].count(str(c_driver)) == 2
+    assert [call[0] for call in calls].count(sys.executable) == 2
+    assert all(call[2].round_index == 0 and call[2].steps == 256 for call in calls)
+
+
+def test_reference_selection_failure_invalidates_explicit_cap_phase(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bench.run_bakeoff as runner
+    from bench.replay_c_traces import ReplaySelectionError
+
+    def fail_selection(_results: Any) -> Any:
+        raise ReplaySelectionError("missing C traces")
+
+    monkeypatch.setattr(runner, "select_c_traces", fail_selection)
+
+    phase = runner.run_reference_equivalence(
+        [],
+        config(tmp_path),
+        tmp_path / "c-driver",
+        bakeoff_session(),
+        tmp_path / "results",
+        cap_parity=True,
+    )
+
+    assert phase.cap_parity is not None
+    assert not phase.cap_parity.passed and not phase.cap_parity.valid
+    assert "missing C traces" in phase.cap_parity.detail
 
 
 def test_gate_two_rejects_unexpected_task_interruption() -> None:
@@ -763,12 +830,20 @@ def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkey
         passed=True,
         detail="reference drivers match",
     )
-    phase = SimpleNamespace(result=driver, rate_evidence={}, provenance=())
-    monkeypatch.setattr(
-        runner,
-        "run_reference_equivalence",
-        lambda *args: order.append("reference") or phase,
+    phase = SimpleNamespace(
+        result=driver,
+        rate_evidence={},
+        provenance=(),
+        cap_parity=GateResult(True, "round-0 cap outcomes match"),
     )
+    reference_options = {}
+
+    def fake_reference(*args: Any, **kwargs: Any) -> Any:
+        reference_options.update(kwargs)
+        order.append("reference")
+        return phase
+
+    monkeypatch.setattr(runner, "run_reference_equivalence", fake_reference)
     monkeypatch.setattr(
         runner,
         "replay_ds4py_task_results",
@@ -785,8 +860,12 @@ def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkey
         tmp_path / "results",
         session=session,
         c_driver=tmp_path / "c-driver",
+        cap_parity=True,
     )
 
+    assert reference_options["cap_parity"] is True
+    assert report.caps.parity.passed
+    assert report.caps.parity.detail == "round-0 cap outcomes match"
     assert order == ["tasks", "restores", "interruption", "reference", "self-replay"]
     assert report.gates["gate-6"].passed
     assert report.schema_version == 2

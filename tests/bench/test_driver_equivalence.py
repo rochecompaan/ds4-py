@@ -11,8 +11,15 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from bench import ds4py_replay_diagnostic
+from bench.cap_parity import compare_cap_parity
 from bench.comparison import StepCapture, TopLogit, compare_rate
-from bench.driver_cases import DriverCase, DriverRoundEvidence
+from bench.driver_cases import (
+    DriverCase,
+    DriverRoundEvidence,
+    export_round_zero_cap_case,
+    load_case_tokens,
+    read_case_manifest,
+)
 from bench.driver_equivalence import compare_driver_rounds, rates_by_task
 from bench.provenance import (
     Q8_F16_CACHE_ENV,
@@ -26,6 +33,7 @@ from bench.report import build_report
 from bench.restore_check import RestoreSummary
 from bench.self_replay import SelfReplayResult
 from ds4py._json import is_json_object
+from ds4py.engine.replay_types import ReplayRound, ReplayTrace
 
 
 def capture(*, logit_delta: float = 0.0, reorder: bool = False) -> StepCapture:
@@ -91,6 +99,68 @@ def provenance(round_: DriverRoundEvidence, **changes: object) -> TraceProvenanc
     }
     values.update(changes)
     return TraceProvenance(**values)  # ty: ignore[invalid-argument-type]
+
+
+def test_cap_parity_compares_round_zero_cap_outcomes_only() -> None:
+    capped = evidence(requested_steps=3, captures=(capture(), capture(), capture()))
+    other_tokens = evidence(requested_steps=3, captures=(capture(logit_delta=1e-3), capture(), capture()))
+    result = compare_cap_parity(
+        [(capped, other_tokens)],
+        provenance=[(provenance(capped), provenance(other_tokens))],
+        response_budget=3,
+    )
+    assert result.passed and result.valid
+
+    stopped = replace(capped, terminal_reason="stop_token", steps=(capture(),))
+    also_stopped = replace(other_tokens, terminal_reason="tool_call_complete", steps=(capture(), capture()))
+    stopped_result = compare_cap_parity(
+        [(stopped, also_stopped)],
+        provenance=[(provenance(stopped), provenance(also_stopped))],
+        response_budget=3,
+    )
+    assert stopped_result.passed and stopped_result.valid
+
+    mismatch = compare_cap_parity(
+        [(capped, also_stopped)],
+        provenance=[(provenance(capped), provenance(also_stopped))],
+        response_budget=3,
+    )
+    assert not mismatch.passed and mismatch.valid
+
+    later_round = evidence(round_index=1)
+    invalid = compare_cap_parity(
+        [(later_round, later_round)],
+        provenance=[(provenance(later_round), provenance(later_round))],
+        response_budget=1,
+    )
+    assert not invalid.passed and not invalid.valid
+
+
+def test_cap_case_export_pads_expected_tokens_and_excludes_later_rounds(tmp_path: Path) -> None:
+    trace = ReplayTrace(
+        ctx=100000,
+        model="/model.gguf",
+        rounds=(
+            ReplayRound(0, (1, 2, 3), (4, 5), 75, 1, False),
+            ReplayRound(1, (1, 2, 3, 4, 5), (6,), 75, 5, False),
+        ),
+    )
+
+    manifest = export_round_zero_cap_case(
+        trace,
+        task_id="task-a",
+        attempt=1,
+        destination=tmp_path,
+        response_budget=5,
+    )
+
+    cases = read_case_manifest(manifest)
+    assert len(cases) == 1
+    case = cases[0]
+    assert case.round_index == 0 and case.steps == 5
+    prompt, expected = load_case_tokens(case)
+    assert prompt == (1, 2, 3)
+    assert expected == (4, 5, 0, 0, 0)
 
 
 def test_every_selected_round_and_ordered_top_logits_are_required() -> None:
