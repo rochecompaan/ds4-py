@@ -139,6 +139,7 @@ def _check_round(  # noqa: PLR0913, PLR0917 - Replay comparison needs the comple
     round_: ReplayRound,
     events: Sequence[Event],
     transcript: Transcript,
+    response_budget: int | None = None,
 ) -> tuple[bool, str]:
     if not events or not isinstance(events[-1], Stopped):
         raise ReplayMismatch(f"{task_id} trace round {ordinal} did not drain to Stopped")
@@ -151,7 +152,11 @@ def _check_round(  # noqa: PLR0913, PLR0917 - Replay comparison needs the comple
     c_snapshot = _parse_c(engine, round_, [data])
     stopped = events[-1]
     if not round_.prefix_only and not round_.context_limited:
-        if stopped.reason not in ("stop_token", "tool_call_complete", "parser_error"):
+        at_response_budget = response_budget is not None and len(round_.sampled) == response_budget
+        terminal_reasons = ("stop_token", "tool_call_complete", "parser_error")
+        if at_response_budget:
+            terminal_reasons += ("max_tokens",)
+        if stopped.reason not in terminal_reasons:
             raise ReplayMismatch(
                 f"{task_id} trace round {ordinal} did not stop naturally at C's boundary: {stopped.reason}"
             )
@@ -187,9 +192,10 @@ def _reserve(engine: Engine, round_: ReplayRound) -> int:
     return reserve
 
 
-def generation_limit(engine: Engine, round_: ReplayRound) -> int:
-    """Natural rounds need one EOS/token slot; bounded rounds use the exact prefix."""
-    return len(round_.sampled) if round_.prefix_only or round_.context_limited else len(round_.sampled) + 1
+def generation_limit(engine: Engine, round_: ReplayRound, response_budget: int | None = None) -> int:
+    """Natural rounds need one EOS/token slot, bounded by the recorded response budget."""
+    limit = len(round_.sampled) if round_.prefix_only or round_.context_limited else len(round_.sampled) + 1
+    return min(limit, response_budget) if response_budget is not None else limit
 
 
 def replay_round(  # noqa: PLR0913, PLR0917 - Replay requires model, sampling, and trace context.
@@ -199,6 +205,7 @@ def replay_round(  # noqa: PLR0913, PLR0917 - Replay requires model, sampling, a
     task_id: str,
     ordinal: int,
     round_: ReplayRound,
+    response_budget: int | None = None,
 ) -> ReplayResult:
     """Replay one C-owned prompt without preflight, translation, or tool calls."""
     transcript = Transcript()
@@ -213,7 +220,7 @@ def replay_round(  # noqa: PLR0913, PLR0917 - Replay requires model, sampling, a
             GenerateJob(
                 policy,
                 rng,
-                generation_limit(engine, round_),
+                generation_limit(engine, round_, response_budget),
                 transcript,
                 reserve=_reserve(engine, round_),
                 think_mode=round_.think,
@@ -229,6 +236,7 @@ def replay_round(  # noqa: PLR0913, PLR0917 - Replay requires model, sampling, a
         round_,
         events,
         transcript,
+        response_budget,
     )
     return ReplayResult(
         task_id,
