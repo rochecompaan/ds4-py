@@ -209,6 +209,7 @@ def write_restore_metadata(
         "model_sha256": "model",
         "backend": "cpu",
         "ctx": 65536,
+        "q8_f16_cache_mb": 5120,
         "temperature": 0.0,
         "seed": 1,
         "response_budget": 8192,
@@ -347,6 +348,7 @@ def test_restore_first_step_ranking_and_tolerance_fail(tmp_path: Path, second_st
         {"instance_id": "other-instance"},
         {"bakeoff_session_id": "other-session"},
         {"libds4_sha256": "other-library"},
+        {"q8_f16_cache_mb": 4096},
     ],
 )
 def test_restore_provenance_mismatch_is_invalid(tmp_path: Path, changes: dict[str, object]) -> None:

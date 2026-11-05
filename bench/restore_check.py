@@ -30,7 +30,7 @@ if __package__ in {None, ""}:
 
 from bench.comparison import TOP_K, StepCapture, TopLogit, compare_step
 from bench.models import AgentConfig, TaskRunResult
-from bench.provenance import TraceProvenance, validate_session_pair
+from bench.provenance import Q8_F16_CACHE_ENV, Q8_F16_CACHE_MB, TraceProvenance, validate_session_pair
 from bench.session import report_provenance_environment
 from ds4py._json import is_json_object
 from ds4py.engine.events import Stopped, Synced
@@ -563,6 +563,7 @@ def restore_command(argv: Sequence[str]) -> int:
         model_sha256=os.environ.get("DS4_BAKEOFF_MODEL_SHA256", "unknown"),
         backend=args.backend,
         ctx=args.ctx,
+        q8_f16_cache_mb=int(os.environ.get(Q8_F16_CACHE_ENV, str(Q8_F16_CACHE_MB))),
         temperature=args.temp,
         seed=args.seed,
         response_budget=args.tokens,
@@ -782,6 +783,7 @@ def check_command(argv: Sequence[str]) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    os.environ[Q8_F16_CACHE_ENV] = str(Q8_F16_CACHE_MB)
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] not in {"attempt", "restore", "check"}:
         raise SystemExit("usage: restore_check.py attempt|restore|check [options]")

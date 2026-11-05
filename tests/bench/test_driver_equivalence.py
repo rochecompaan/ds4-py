@@ -1,17 +1,27 @@
 """Same-host reference-driver comparisons and Gate 6 composition."""
 
+import os
 import sys
 from dataclasses import replace
 from pathlib import Path
+from typing import Self
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
+from bench import ds4py_replay_diagnostic
 from bench.comparison import StepCapture, TopLogit, compare_rate
 from bench.driver_cases import DriverCase, DriverRoundEvidence
 from bench.driver_equivalence import compare_driver_rounds, rates_by_task
-from bench.provenance import ProgressChunk, RoundProvenance, SyncCall, TraceProvenance
+from bench.provenance import (
+    Q8_F16_CACHE_ENV,
+    Q8_F16_CACHE_MB,
+    ProgressChunk,
+    RoundProvenance,
+    SyncCall,
+    TraceProvenance,
+)
 from bench.report import build_report
 from bench.restore_check import RestoreSummary
 from bench.self_replay import SelfReplayResult
@@ -62,6 +72,7 @@ def provenance(round_: DriverRoundEvidence, **changes: object) -> TraceProvenanc
         "model_sha256": "model",
         "backend": "cpu",
         "ctx": 4096,
+        "q8_f16_cache_mb": 5120,
         "temperature": 0.0,
         "seed": 1,
         "response_budget": 8192,
@@ -131,6 +142,7 @@ def test_ranking_reorder_and_tolerance_boundary_are_numeric_failures() -> None:
         {"instance_id": "other-instance"},
         {"bakeoff_session_id": "other-session"},
         {"libds4_sha256": "other-library"},
+        {"q8_f16_cache_mb": 4096},
         {"reset_policy": "other-reset"},
     ],
 )
@@ -146,6 +158,41 @@ def test_session_provenance_mismatch_is_invalid(changes: dict[str, object]) -> N
 
     assert not result.passed
     assert not result.valid
+
+
+def test_python_reference_driver_pins_cache_before_engine_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    observed: dict[str, str | None] = {}
+
+    class FakeEngine:
+        def __enter__(self) -> Self:
+            observed["cache_mb"] = os.environ.get(Q8_F16_CACHE_ENV)
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            pass
+
+    def fake_open(*args: object, **kwargs: object) -> FakeEngine:
+        return FakeEngine()
+
+    monkeypatch.setenv(Q8_F16_CACHE_ENV, "4096")
+    monkeypatch.setattr(ds4py_replay_diagnostic.ds4py, "open", fake_open)
+    monkeypatch.setattr(ds4py_replay_diagnostic, "read_case_manifest", lambda _: ())
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ds4py_replay_diagnostic.py",
+            "--model",
+            "model.gguf",
+            "--cases",
+            "cases.jsonl",
+            "--source-trace",
+            "trace.jsonl",
+        ],
+    )
+
+    assert ds4py_replay_diagnostic.main() == 0
+    assert observed["cache_mb"] == str(Q8_F16_CACHE_MB)
 
 
 def test_prefill_boundary_mismatch_is_invalid() -> None:

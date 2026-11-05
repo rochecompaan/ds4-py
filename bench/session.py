@@ -13,7 +13,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from bench.driver_cases import load_case_tokens
-from bench.provenance import RoundProvenance, TraceProvenance, write_trace_provenance
+from bench.provenance import (
+    Q8_F16_CACHE_ENV,
+    Q8_F16_CACHE_MB,
+    RoundProvenance,
+    TraceProvenance,
+    write_trace_provenance,
+)
 from ds4py._native.loader import resolve_lib_path
 from ds4py.abi.manifest import file_sha256
 from ds4py.engine.replay import read_replay
@@ -90,6 +96,7 @@ class BakeoffSession:
     temperature: float
     seed: int
     response_budget: int
+    q8_f16_cache_mb: int
 
     def __post_init__(self) -> None:
         if not self.bakeoff_session_id or not self.instance_id:
@@ -128,6 +135,7 @@ class BakeoffSession:
             temperature=python.temperature,
             seed=python.seed,
             response_budget=python.tokens,
+            q8_f16_cache_mb=Q8_F16_CACHE_MB,
         )
 
     def environment(self) -> dict[str, str]:
@@ -141,6 +149,7 @@ class BakeoffSession:
             "DS4_BAKEOFF_DS4PY_REVISION": self.ds4py_revision,
             "DS4_BAKEOFF_LIBDS4_SHA256": self.libds4_sha256,
             "DS4_BAKEOFF_MODEL_SHA256": self.model_sha256,
+            Q8_F16_CACHE_ENV: str(self.q8_f16_cache_mb),
         }
 
     def provenance(
@@ -163,6 +172,7 @@ class BakeoffSession:
             model_sha256=self.model_sha256,
             backend=self.backend,
             ctx=self.ctx,
+            q8_f16_cache_mb=self.q8_f16_cache_mb,
             temperature=self.temperature,
             seed=self.seed,
             response_budget=self.response_budget,
@@ -220,11 +230,14 @@ def report_provenance_environment(data: Mapping[str, object]) -> dict[str, str]:
         "DS4_BAKEOFF_DS4PY_REVISION": "ds4py_revision",
         "DS4_BAKEOFF_LIBDS4_SHA256": "libds4_sha256",
         "DS4_BAKEOFF_MODEL_SHA256": "model_sha256",
+        Q8_F16_CACHE_ENV: "q8_f16_cache_mb",
     }
     environment: dict[str, str] = {}
     for env_name, field in names.items():
         value = data.get(field) if field in {"bakeoff_session_id", "instance_id"} else c.get(field)
-        if isinstance(value, str) and value:
+        if field == "q8_f16_cache_mb" and isinstance(value, int) and value > 0:
+            environment[env_name] = str(value)
+        elif isinstance(value, str) and value:
             environment[env_name] = value
     return environment
 

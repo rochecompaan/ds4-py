@@ -124,6 +124,7 @@ def provenance_for(path: Path, **changes: object) -> TraceProvenance:
         "model_sha256": CONTEXT.model_sha256,
         "backend": "cpu",
         "ctx": 4096,
+        "q8_f16_cache_mb": 5120,
         "temperature": 0.0,
         "seed": 1,
         "response_budget": 8192,

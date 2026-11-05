@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import heapq
 import json
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -17,7 +18,7 @@ if __package__ in {None, ""}:
 import ds4py
 from bench.comparison import TOP_K, StepCapture, TopLogit
 from bench.driver_cases import DriverCase, load_case_tokens, read_case_manifest
-from bench.provenance import ProgressChunk
+from bench.provenance import Q8_F16_CACHE_ENV, Q8_F16_CACHE_MB, ProgressChunk
 from ds4py._native.protocol import SyncStatus
 from ds4py.engine.decode import GenerateJob, generate
 from ds4py.engine.events import Token
@@ -239,6 +240,7 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _parser().parse_args()
     cases = read_case_manifest(args.cases)
+    os.environ[Q8_F16_CACHE_ENV] = str(Q8_F16_CACHE_MB)
     with ds4py.open(
         args.model,
         ctx=args.ctx,
