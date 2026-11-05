@@ -271,6 +271,34 @@ def test_request_limit_failure_is_named_in_task_errors(tmp_path: Path) -> None:
     assert "attempt 1 request_limit" in completed.errors
 
 
+def test_expected_max_tokens_exit_is_not_lifecycle_error(tmp_path: Path) -> None:
+    source = make_exercise(tmp_path)
+    workspace = prepare_exercise(source, tmp_path / "staged", max_attempts=1)
+    executable = tmp_path / "max-tokens.py"
+    executable.write_text(
+        FAKE_AGENT.replace('{"reason": "stop_token"}', '{"reason": "max_tokens"}')
+        + '\nimport sys\nsys.stderr.write("ds4py: model response ended with max_tokens\\n")\n'
+        + "raise SystemExit(1)\n"
+    )
+    agent = replace(
+        config(tmp_path),
+        executable=(sys.executable, str(executable)),
+    )
+
+    completed = run_task(
+        workspace,
+        agent,
+        tmp_path / "results",
+        grade_runner=lambda *args: subprocess.CompletedProcess([], 0, stdout="pass", stderr=""),
+    )
+
+    assert completed.terminal_reasons == ("max_tokens",)
+    assert completed.errors == ()
+    report = build_report([completed], healthy_restore([completed]))
+    assert report.gates["gate-2"].passed
+    assert report.caps.totals.ds4py == 1
+
+
 def test_failed_first_attempt_feeds_grader_output_to_exactly_one_retry(
     tmp_path: Path,
 ) -> None:

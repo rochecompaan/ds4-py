@@ -158,6 +158,37 @@ def _attempt_summary(
     )
 
 
+def _expected_max_tokens_exit(
+    config: AgentConfig,
+    returncode: int,
+    log_text: str,
+    summary: EventSummary,
+) -> bool:
+    """The CLI intentionally exits 1 after a complete max_tokens response."""
+    return (
+        config.agent == "ds4py"
+        and returncode == 1
+        and summary.terminal_reasons[-1:] == ("max_tokens",)
+        and log_text.rstrip().endswith("ds4py: model response ended with max_tokens")
+    )
+
+
+def _record_process_errors(
+    errors: list[str],
+    attempt: int,
+    config: AgentConfig,
+    completed: subprocess.CompletedProcess[str],
+    summary: EventSummary,
+) -> None:
+    if not completed.returncode:
+        return
+    log_text = (completed.stdout or "") + (completed.stderr or "")
+    if not _expected_max_tokens_exit(config, completed.returncode, log_text, summary):
+        errors.append(f"attempt {attempt} exited {completed.returncode}")
+    if "request_limit" in log_text:
+        errors.append(f"attempt {attempt} request_limit")
+
+
 def _save_dir(home: Path) -> Path:
     sessions = home / "sessions"
     saves = sorted(path.parent for path in sessions.glob("*/save.json")) if sessions.is_dir() else []
@@ -219,10 +250,6 @@ def run_task(
         wall_seconds = clock() - started
         log_text = (completed.stdout or "") + (completed.stderr or "")
         (attempt_root / "agent.log").write_text(log_text)
-        if completed.returncode:
-            errors.append(f"attempt {attempt} exited {completed.returncode}")
-            if "request_limit" in log_text:
-                errors.append(f"attempt {attempt} request_limit")
         if config.agent == "ds4py":
             try:
                 save_dir = _save_dir(home)
@@ -243,6 +270,7 @@ def run_task(
         except (MetricError, OSError, ValueError) as error:
             errors.append(f"attempt {attempt} metrics: {error}")
             summary = _empty_summary(wall_seconds)
+        _record_process_errors(errors, attempt, config, completed, summary)
         summaries.append(summary)
         grade = grade_workspace(workspace, runner=grade_runner)
         grades.append(grade)
