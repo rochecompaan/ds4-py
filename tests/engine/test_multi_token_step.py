@@ -107,7 +107,7 @@ def test_first_stop_token_has_no_eval_or_commit(workers: Any) -> None:
     assert not [call for call in worker.call(lambda e, s: s.calls).result() if call[0] == "eval"]
 
 
-def test_later_stop_rewinds_before_publishing_kept_tokens(workers: Any) -> None:
+def test_later_stop_publishes_kept_tokens_without_evaluating_tail(workers: Any) -> None:
     a, b, later = 98, 99, 100
     reason, events, transcript, worker, _step, positions, error = run_step(
         workers,
@@ -117,7 +117,8 @@ def test_later_stop_rewinds_before_publishing_kept_tokens(workers: Any) -> None:
     assert error is None and reason == "stop_token"
     assert token_ids(events) == [a, b] and transcript.tokens == (5, 6, a, b)
     assert worker.call(lambda e, s: s.pos()).result() == len(transcript) == 4
-    assert ("rewind", 4) in worker.call(lambda e, s: s.calls).result()
+    calls = worker.call(lambda e, s: s.calls).result()
+    assert [call for call in calls if call[0] == "eval"] == [("eval", a), ("eval", b)]
     assert all(pos == length for _, pos, length in positions)
 
 
@@ -235,7 +236,7 @@ def test_hook_changed_draft_cuts_block_and_hooks_see_each_committed_prefix(
     assert worker.call(lambda e, s: s.pos()).result() == len(transcript)
 
 
-def test_cancellation_mid_block_rewinds_the_uncommitted_tail(workers: Any) -> None:
+def test_cancellation_mid_block_publishes_only_the_evaluated_prefix(workers: Any) -> None:
     checks = iter([False, False, False, True])
     reason, events, transcript, worker, _, positions, error = run_step(
         workers,
@@ -246,5 +247,6 @@ def test_cancellation_mid_block_rewinds_the_uncommitted_tail(workers: Any) -> No
     assert error is None and reason == "interrupted"
     assert token_ids(events) == [98, 99] and transcript.tokens == (5, 6, 98, 99)
     assert worker.call(lambda e, s: s.pos()).result() == len(transcript)
-    assert ("rewind", 4) in worker.call(lambda e, s: s.calls).result()
+    calls = worker.call(lambda e, s: s.calls).result()
+    assert [call for call in calls if call[0] == "eval"] == [("eval", 98), ("eval", 99)]
     assert all(pos == length for _, pos, length in positions)

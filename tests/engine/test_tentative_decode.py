@@ -1,11 +1,15 @@
-from dataclasses import replace
-from typing import TYPE_CHECKING, cast
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import TYPE_CHECKING, cast, override
 
 import pytest
+from fake_steps import FakeMultiTokenStep
 
 from ds4py import ThinkMode
-from ds4py._native.fake import FakeNative
-from ds4py._native.protocol import EngineInfo
+from ds4py._native.fake import FAKE_EOS, FakeNative, FakeSession
+from ds4py._native.fake_chat import tokenize_rendered
+from ds4py._native.protocol import EngineConfig, EngineInfo
 from ds4py.engine.decode import DecodeContext, GenerateJob, Verdict, generate
 from ds4py.engine.events import Event, TextDelta, Token, ToolSyntax
 from ds4py.engine.logits import LogitsView
@@ -13,9 +17,12 @@ from ds4py.engine.pause import ControlSpan
 from ds4py.engine.sampling import Rng, SamplingPolicy
 from ds4py.engine.stream import RoundStream
 from ds4py.engine.transcript import Transcript
+from ds4py.engine.worker import EngineWorker, SyncJob
 from ds4py.errors import EngineError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ds4py._native.protocol import EngineHandle, SessionHandle
 
 BASE_INFO = FakeNative()._info
@@ -287,3 +294,353 @@ def test_generate_discards_an_abandoned_staging_block() -> None:
         )
     assert (job.transcript.tokens, job.transcript.segments, job.sampled_tokens, session.pos()) == before
     assert events == []
+
+
+@dataclass
+class EngineRun:
+    reason: str
+    events: list[Event]
+    transcript: Transcript
+    job: GenerateJob
+    native_position: int
+    native_tokens: list[int]
+    native_calls: list[tuple[object, ...]]
+    samples: list[tuple[float, int, float, float]]
+    token_positions: list[tuple[int, int, int]]
+    step: FakeMultiTokenStep | None
+
+
+def token_script(tokens: Sequence[int]) -> Callable[[Sequence[int], Sequence[int]], int]:
+    def script(prompt: Sequence[int], generated: Sequence[int]) -> int:
+        return tokens[len(generated)] if len(generated) < len(tokens) else FAKE_EOS
+
+    return script
+
+
+def draft_blocks(tokens: Sequence[int], size: int = 17) -> list[list[int]]:
+    return [list(tokens[start + 1 : start + size]) for start in range(0, len(tokens), size)]
+
+
+def run_engine_case(
+    tokens: Sequence[int],
+    *,
+    info: EngineInfo = BASE_INFO,
+    blocks: Sequence[Sequence[int]] | None = None,
+    hooked: bool = False,
+    hook: Callable[[LogitsView], None] | None = None,
+    stop_sequences: tuple[bytes, ...] = (),
+    think_mode: int = ThinkMode.NONE,
+    chat: bool = True,
+) -> EngineRun:
+    worker = EngineWorker(
+        FakeNative(script=token_script(tokens), info=info),
+        EngineConfig(Path("f"), ctx=1024),
+    )
+    try:
+        transcript = Transcript()
+        transcript.append([5, 6], "user")
+        list(worker.submit(SyncJob((5, 6))))
+        control = ControlSpan(stop_sequences)
+        stream = RoundStream(info, think_mode, control=control) if chat else None
+        hooks = (hook,) if hook is not None else (((lambda view: None),) if hooked else None)
+        job = GenerateJob(
+            SamplingPolicy(),
+            Rng(1),
+            1000,
+            transcript,
+            think_mode=think_mode if chat else None,
+            stream=stream,
+            control=control,
+            logits_hooks=() if hooks is None else hooks,
+        )
+        step = FakeMultiTokenStep(blocks or ()) if blocks is not None else None
+        events: list[Event] = []
+        token_positions: list[tuple[int, int, int]] = []
+
+        def execute(engine: EngineHandle, session: SessionHandle) -> str:
+            def emit(event: Event) -> None:
+                events.append(event)
+                if isinstance(event, Token):
+                    token_positions.append((event.id, session.pos(), len(transcript)))
+
+            return generate(engine, session, job, cancelled=lambda: False, emit=emit, step=step)
+
+        reason = worker.call(execute).result()
+        native_position, native_tokens, native_calls, samples = worker.call(
+            lambda engine, session: (
+                session.pos(),
+                session.tokens(),
+                list(cast("FakeSession", session).calls),
+                list(cast("FakeSession", session).samples),
+            )
+        ).result()
+        return EngineRun(
+            reason,
+            events,
+            transcript,
+            job,
+            native_position,
+            native_tokens,
+            native_calls,
+            samples,
+            token_positions,
+            step,
+        )
+    finally:
+        worker.close()
+
+
+def family_stanza(info: EngineInfo) -> str:
+    if info.is_glm_dsa:
+        return '<tool_call>echo<arg_key>value</arg_key><arg_value>{"nested":[1,true]}</arg_value></tool_call>'
+    if info.is_qwen4:
+        return '<tool_call><function=echo><parameter=value>{"nested":[1,true]}</parameter></function></tool_call>'
+    calls, invoke, parameter = (
+        (" calls", " invoke", " parameter") if info.is_deepseek41 else ("tool_calls", "invoke", "parameter")
+    )
+    return (
+        f'<｜DSML｜{calls}><｜DSML｜{invoke} name="echo">'
+        f'<｜DSML｜{parameter} name="value">{{"nested":[1,true]}}</｜DSML｜{parameter}>'
+        f"</｜DSML｜{invoke}></｜DSML｜{calls}>"
+    )
+
+
+FAMILY_INFOS = [
+    BASE_INFO,
+    replace(BASE_INFO, family="deepseek41", is_deepseek41=True),
+    replace(BASE_INFO, family="glm", is_glm_dsa=True),
+    replace(BASE_INFO, family="qwen", is_qwen4=True),
+]
+
+
+@pytest.mark.parametrize("info", FAMILY_INFOS, ids=lambda info: info.family)
+@pytest.mark.parametrize("scenario", ["chunks", "think", "stop", "malformed", "tool"])
+def test_hooked_serial_and_staged_family_parity(info: EngineInfo, scenario: str) -> None:
+    stanza = family_stanza(info)
+    stop_sequences: tuple[bytes, ...] = ()
+    if scenario == "chunks":
+        text = "prefix" + stanza + "tail"
+        block_size = 3
+    elif scenario == "think":
+        text = "<think>reason</think>answer"
+        block_size = 4
+    elif scenario == "stop":
+        text = "stop-tail"
+        stop_sequences = (b"stop",)
+        block_size = 3
+    elif scenario == "malformed":
+        text = "|DSML|" if not info.is_glm_dsa and not info.is_qwen4 else "<tool_call>bad"
+        block_size = 4
+    else:
+        text = stanza if not info.is_glm_dsa and not info.is_qwen4 else stanza + "!"
+        block_size = 5
+    tokens = tokenize_rendered(text)
+    blocks = draft_blocks(tokens, block_size)
+
+    think_mode = ThinkMode.HIGH if scenario == "think" else ThinkMode.NONE
+    reference = run_engine_case(tokens, info=info, hooked=True, stop_sequences=stop_sequences, think_mode=think_mode)
+    staged = run_engine_case(
+        tokens,
+        info=info,
+        blocks=blocks,
+        hooked=True,
+        stop_sequences=stop_sequences,
+        think_mode=think_mode,
+    )
+
+    assert staged.events == reference.events
+    assert staged.reason == reference.reason
+    assert staged.transcript.tokens == reference.transcript.tokens
+    assert staged.transcript.segments == reference.transcript.segments
+    assert staged.job.sampled_tokens == reference.job.sampled_tokens
+    staged_stream = staged.job.stream
+    reference_stream = reference.job.stream
+    assert staged_stream is not None and reference_stream is not None
+    assert staged_stream.sampled_tokens == reference_stream.sampled_tokens
+    assert staged.native_position == reference.native_position
+    assert staged.native_tokens == reference.native_tokens
+    assert staged.job.rng.state.value == reference.job.rng.state.value
+
+
+def test_qwen_staged_opener_makes_the_next_verify_row_greedy() -> None:
+    info = FAMILY_INFOS[-1]
+    tokens = tokenize_rendered(family_stanza(info))
+    run = run_engine_case(tokens, info=info, blocks=draft_blocks(tokens), hooked=True)
+    opener_length = len(b"<tool_call>")
+    assert run.samples[opener_length] == (0.0, 0, 1.0, 0.0)
+
+
+def test_staged_hook_metadata_matches_every_serial_verify_row() -> None:
+    info = FAMILY_INFOS[-1]
+    text = "<think>reason</think>" + family_stanza(info)
+    tokens = tokenize_rendered(text)
+    serial_seen: list[tuple[int, str | None, bool, int, tuple[int, ...]]] = []
+    staged_seen: list[tuple[int, str | None, bool, int, tuple[int, ...]]] = []
+
+    def record(seen: list[tuple[int, str | None, bool, int, tuple[int, ...]]]) -> Callable[[LogitsView], None]:
+        def hook(view: LogitsView) -> None:
+            seen.append((view.position, view.parser_state, view.in_think, view.think_tokens, view.sampled_tokens))
+
+        return hook
+
+    reference = run_engine_case(tokens, info=info, hook=record(serial_seen), think_mode=ThinkMode.HIGH)
+    staged = run_engine_case(
+        tokens,
+        info=info,
+        blocks=draft_blocks(tokens, 4),
+        hook=record(staged_seen),
+        think_mode=ThinkMode.HIGH,
+    )
+    assert staged_seen == serial_seen
+    assert [row[0] for row in staged_seen] == list(range(2, 2 + len(tokens) + 1))
+    assert [row[4] for row in staged_seen] == [tuple(tokens[:index]) for index in range(len(tokens) + 1)]
+    assert staged.reason == reference.reason
+
+
+def test_terminal_staged_block_has_no_later_native_rows_and_publishes_after_commit() -> None:
+    info = FAMILY_INFOS[-1]
+    tokens = tokenize_rendered(family_stanza(info) + "!TAIL")
+    kept = tokenize_rendered(family_stanza(info) + "!")
+    run = run_engine_case(tokens, info=info, blocks=draft_blocks(tokens))
+    assert run.reason == "tool_call_complete"
+    assert run.native_tokens == [5, 6, *kept]
+    assert [call for call in run.native_calls if call[0] == "eval"] == [("eval", token) for token in kept]
+    assert [event.id for event in run.events if isinstance(event, Token)] == kept
+    assert run.token_positions[-1] == (kept[-1], run.native_position, len(run.transcript))
+
+
+def splitmix_after(seed: int, count: int) -> int:
+    value = seed
+    mask = (1 << 64) - 1
+    for _ in range(count):
+        value = (value + 0x9E3779B97F4A7C15) & mask
+        value = ((value ^ (value >> 30)) * 0xBF58476D1CE4E5B9) & mask
+        value = ((value ^ (value >> 27)) * 0x94D049BB133111EB) & mask
+        value = value ^ (value >> 31)
+    return value
+
+
+def test_scripted_draft_blocks_advance_rng_only_for_anchors() -> None:
+    tokens = [98, 99, 100, 0]
+    run = run_engine_case(tokens, blocks=[[99, 100]], chat=False)
+    assert run.job.rng.state.value == splitmix_after(1, 2)
+    assert len(run.samples) == 2
+    assert [event.id for event in run.events if isinstance(event, Token)] == tokens[:-1]
+
+
+class FaultSession(TransactionSession):
+    def __init__(
+        self,
+        samples: Sequence[int],
+        *,
+        eval_failure: tuple[int, EngineError, bool] | None = None,
+        rewind_failure: EngineError | None = None,
+    ) -> None:
+        super().__init__()
+        self.samples_to_return = list(samples)
+        self.eval_failure = eval_failure
+        self.rewind_failure = rewind_failure
+
+    def sample(self, temperature: float, top_k: int, top_p: float, min_p: float, rng: object) -> int:
+        return self.samples_to_return.pop(0)
+
+    @override
+    def eval(self, token: int) -> None:
+        if self.eval_failure is not None and token == self.eval_failure[0]:
+            _, failure, partial = self.eval_failure
+            if partial:
+                self.tokens.append(token)
+            raise failure
+        super().eval(token)
+
+    @override
+    def rewind(self, position: int) -> None:
+        if self.rewind_failure is not None:
+            raise self.rewind_failure
+        super().rewind(position)
+
+
+def run_fault_step(
+    session: FaultSession,
+    *,
+    blocks: Sequence[Sequence[int]],
+    hook: Callable[[LogitsView], None] | None = None,
+    cancelled: Callable[[], bool] = lambda: False,
+    observed: list[tuple[GenerateJob, list[Event]]] | None = None,
+) -> tuple[GenerateJob, list[Event]]:
+    engine = TransactionEngine(BASE_INFO)
+    transcript = Transcript()
+    transcript.append([5, 6], "user")
+    job = GenerateJob(
+        SamplingPolicy(),
+        Rng(1),
+        20,
+        transcript,
+        logits_hooks=() if hook is None else (hook,),
+    )
+    events: list[Event] = []
+    if observed is not None:
+        observed.append((job, events))
+    generate(
+        cast("EngineHandle", engine),
+        cast("SessionHandle", session),
+        job,
+        cancelled=cancelled,
+        emit=events.append,
+        step=FakeMultiTokenStep(blocks),
+    )
+    return job, events
+
+
+@pytest.mark.parametrize("fail_call", [1, 2], ids=["before-native", "after-native-prefix"])
+def test_hook_failure_publishes_only_an_already_accepted_prefix(fail_call: int) -> None:
+    failure = EngineError("hook failed")
+    calls = 0
+
+    def hook(view: LogitsView) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == fail_call:
+            raise failure
+
+    session = FaultSession([98, 99, 0])
+    observed: list[tuple[GenerateJob, list[Event]]] = []
+    with pytest.raises(EngineError) as caught:
+        run_fault_step(session, blocks=[[99]], hook=hook, observed=observed)
+    assert caught.value is failure
+    expected = [] if fail_call == 1 else [98]
+    job, events = observed[0]
+    assert session.tokens == [5, 6, *expected]
+    assert job.transcript.tokens == (5, 6, *expected)
+    assert [event.id for event in events if isinstance(event, Token)] == expected
+    assert job.sampled_tokens == expected
+
+
+@pytest.mark.parametrize("partial", [False, True], ids=["before-side-effect", "after-side-effect"])
+def test_native_eval_failure_never_publishes_uncertain_tokens(partial: bool) -> None:
+    failure = EngineError("eval failed")
+    session = FaultSession([98, 99, 100], eval_failure=(99, failure, partial))
+    observed: list[tuple[GenerateJob, list[Event]]] = []
+    with pytest.raises(EngineError) as caught:
+        run_fault_step(session, blocks=[[99, 100]], observed=observed)
+    assert caught.value is failure
+    assert session.tokens == [5, 6, 98, *([99] if partial else [])]
+    job, events = observed[0]
+    assert job.transcript.tokens == (5, 6)
+    assert events == []
+    assert job.sampled_tokens == []
+
+
+def test_rewind_failure_does_not_publish_the_staged_prefix() -> None:
+    failure = EngineError("rewind failed")
+    session = FaultSession([98, 99, 100], rewind_failure=failure)
+    checks = iter([False, False, True])
+    observed: list[tuple[GenerateJob, list[Event]]] = []
+    with pytest.raises(EngineError) as caught:
+        run_fault_step(session, blocks=[[99, 100]], cancelled=lambda: next(checks, True), observed=observed)
+    assert caught.value is failure
+    assert session.tokens[:2] == [5, 6]
+    job, events = observed[0]
+    assert job.transcript.tokens == (5, 6)
+    assert events == []
+    assert job.sampled_tokens == []

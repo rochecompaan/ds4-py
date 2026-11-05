@@ -86,7 +86,6 @@ class DecodeContext:
             LogitsView(cast("SessionHandle", session), engine.info().vocab_size) if job.logits_hooks else None
         )
         self._verdict = Verdict.CONTINUE
-        self._event_buffer: list[Event] | None = None
         self._overlay: _DecodeOverlay | None = None
         self.finalized = False
         self._finish_parser: bool | None = None
@@ -133,21 +132,11 @@ class DecodeContext:
         self._verdict = overlay.verdict
         self._overlay = None
 
-    def buffer_events(self) -> None:
-        self._event_buffer = []
-
-    def flush_events(self) -> None:
-        events, self._event_buffer = self._event_buffer, None
-        for event in events or ():
-            self._emit(event)
-
     def _publish(self, event: Event) -> None:
         if self._overlay is not None:
             self._overlay.events.append(event)
-        elif self._event_buffer is None:
-            self._emit(event)
         else:
-            self._event_buffer.append(event)
+            self._emit(event)
 
     def before_sample(self) -> None:
         if self._logits_view is not None:
