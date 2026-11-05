@@ -165,6 +165,9 @@ class TUI:
             if run_task in done:
                 try:
                     run_task.result()
+                except asyncio.CancelledError:
+                    if self.runtime.status != "interrupted":
+                        raise
                 except Exception as error:
                     self.show_message(f"error: {error}")
                 return
@@ -180,6 +183,9 @@ class TUI:
                     self.runtime.cancel()
                     try:
                         await run_task
+                    except asyncio.CancelledError:
+                        if self.runtime.status != "interrupted":
+                            raise
                     except Exception as error:
                         self.show_message(f"error: {error}")
                     return

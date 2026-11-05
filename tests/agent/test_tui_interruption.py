@@ -114,5 +114,6 @@ def test_tui_ctrl_c_interrupts_generation_and_allows_follow_up(
     assert result == 0
     assert sum(isinstance(event, Stopped) and event.reason == "interrupted" for event in stopped) == 1
     assert len(run_ends) == 2
+    assert run_ends[0].payload["status"] == "interrupted"
     assert run_ends[-1].payload["status"] == "success"
     assert run_ends[-1].payload["run_id"] != run_ends[0].payload["run_id"]
