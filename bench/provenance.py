@@ -145,7 +145,7 @@ def validate_pair(c: TraceProvenance, ds4py: TraceProvenance) -> tuple[str, ...]
                     f"{prefix}sync_calls[{call_index}].",
                 )
             )
-        if not c_round.progress_chunks or not ds4py_round.progress_chunks:
+        if c_round.progress_chunks is None or ds4py_round.progress_chunks is None:
             issues.append(f"{prefix}progress_chunks are required for a reference-driver pair")
         elif c_round.progress_chunks != ds4py_round.progress_chunks:
             issues.append(

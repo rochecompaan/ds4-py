@@ -4,6 +4,7 @@ import json
 import sys
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
@@ -53,6 +54,44 @@ def _provenance() -> TraceProvenance:
         source_trace_sha256="source-sha",
         rounds=(_round(),),
     )
+
+
+def _no_split_provenance() -> TraceProvenance:
+    no_split_round = replace(
+        _round(),
+        sync_calls=(SyncCall(label="full", input_tokens=12, cached_tokens=0, prefill_tokens=12, position=12),),
+        progress_chunks=(),
+    )
+    return replace(_provenance(), rounds=(no_split_round,))
+
+
+def test_reference_pair_allows_matching_empty_progress_chunks() -> None:
+    c = _no_split_provenance()
+    ds4py = replace(c, trace_sha256="ds4py-output-sha")
+
+    assert validate_pair(c, ds4py) == ()
+
+
+def test_reference_pair_rejects_unequal_progress_chunks() -> None:
+    c = _no_split_provenance()
+    changed_round = replace(
+        c.rounds[0],
+        progress_chunks=(ProgressChunk(done=155, total=155), ProgressChunk(done=134, total=134)),
+    )
+    ds4py = replace(c, trace_sha256="ds4py-output-sha", rounds=(changed_round,))
+
+    issues = validate_pair(c, ds4py)
+
+    assert issues
+    assert "progress_chunks" in "\n".join(issues)
+
+
+def test_reference_pair_rejects_missing_progress_chunks() -> None:
+    c = _no_split_provenance()
+    missing: Any = None  # Simulate a malformed sidecar with a null/absent chunk field.
+    ds4py = replace(c, trace_sha256="ds4py-output-sha", rounds=(replace(c.rounds[0], progress_chunks=missing),))
+
+    assert "progress_chunks" in "\n".join(validate_pair(c, ds4py))
 
 
 def test_provenance_rejects_different_instance_session_model_or_library() -> None:
