@@ -13,6 +13,9 @@ MODEL=DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix-0731.g
 URL="https://huggingface.co/antirez/deepseek-v4-gguf/resolve/main/$MODEL"
 EXPECTED=ca22ae2f838e14077c22bc1c1417b71b45b5e5a3687bd96c2ac6e17fdb6261c0
 PREAMBLE=$PYROOT/docs/reports/evidence/2026-11-04-gate-2-early-write/task-preamble.md
+NATIVE_PATCH=bench/patches/cuda-no-copy-host-register-opt-out.patch
+export DS4_BAKEOFF_NATIVE_PATCHES=$NATIVE_PATCH
+export DS4_CUDA_DISABLE_HOST_REGISTER=1
 mkdir -p "$ROOT" "$ROOT/results"
 date -u > "$ROOT/setup-started-at.txt"
 df -B1 / > "$ROOT/disk-before.txt"
@@ -21,6 +24,8 @@ if [ ! -d "$SRC/.git" ]; then
   git clone https://github.com/antirez/ds4.git "$SRC" > "$ROOT/clone.log" 2>&1
 fi
 git -C "$SRC" checkout "$REVISION" >> "$ROOT/clone.log" 2>&1
+git -C "$SRC" apply --check "$PYROOT/$NATIVE_PATCH"
+git -C "$SRC" apply --whitespace=error "$PYROOT/$NATIVE_PATCH"
 if [ ! -d "$BENCHMARK/.git" ]; then
   git clone https://github.com/Aider-AI/polyglot-benchmark.git "$BENCHMARK" >> "$ROOT/clone.log" 2>&1
 fi
@@ -67,9 +72,11 @@ printf '%s  %s\n' "$EXPECTED" "$SRC/gguf/$MODEL" | sha256sum --check > "$ROOT/mo
   echo "ds4_revision=$(git -C "$SRC" rev-parse HEAD)"
   echo "benchmark_revision=$(git -C "$BENCHMARK" rev-parse HEAD)"
   echo "ds4py_base_revision=$BASE_REVISION"
+  echo "DS4_CUDA_DISABLE_HOST_REGISTER=$DS4_CUDA_DISABLE_HOST_REGISTER"
+  echo "DS4_BAKEOFF_NATIVE_PATCHES=$DS4_BAKEOFF_NATIVE_PATCHES"
   stat -c 'model_size=%s' "$SRC/gguf/$MODEL"
   sha256sum "$SRC/ds4-agent" "$ROOT/native/lib/libds4.so" "$SRC/gguf/$MODEL" \
-    "$PYROOT/bench/run_targeted.py" "$PREAMBLE"
+    "$PYROOT/$NATIVE_PATCH" "$PYROOT/bench/run_targeted.py" "$PREAMBLE"
 } > "$ROOT/provenance.txt"
 df -B1 / > "$ROOT/disk-after.txt"
 date -u > "$ROOT/setup-finished-at.txt"

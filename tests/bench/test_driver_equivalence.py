@@ -90,7 +90,7 @@ def provenance(round_: DriverRoundEvidence, **changes: object) -> TraceProvenanc
         ),
     }
     values.update(changes)
-    return TraceProvenance(**values)  # type: ignore[arg-type]
+    return TraceProvenance(**values)  # ty: ignore[invalid-argument-type]
 
 
 def test_every_selected_round_and_ordered_top_logits_are_required() -> None:
@@ -143,6 +143,8 @@ def test_ranking_reorder_and_tolerance_boundary_are_numeric_failures() -> None:
         {"bakeoff_session_id": "other-session"},
         {"libds4_sha256": "other-library"},
         {"q8_f16_cache_mb": 4096},
+        {"native_patches": ({"name": "other.patch", "sha256": "other-sha"},)},
+        {"cuda_disable_host_register": "1"},
         {"reset_policy": "other-reset"},
     ],
 )

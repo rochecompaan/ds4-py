@@ -134,7 +134,7 @@ def provenance_for(path: Path, **changes: object) -> TraceProvenance:
         "rounds": tuple(RoundProvenance(round_.number, round_.think, "prompt", (), ()) for round_ in trace.rounds),
     }
     values.update(changes)
-    return TraceProvenance(**values)  # type: ignore[arg-type]
+    return TraceProvenance(**values)  # ty: ignore[invalid-argument-type]
 
 
 def replay(engine: Engine, task_id: str, path: Path, **changes: object) -> tuple[Any, ...]:

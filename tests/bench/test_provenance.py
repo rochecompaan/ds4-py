@@ -124,6 +124,24 @@ def test_provenance_rejects_different_q8_f16_cache_budgets() -> None:
     assert "q8_f16_cache_mb" in "\n".join(validate_session_pair(c, ds4py))
 
 
+def test_provenance_rejects_different_native_patches_and_host_register_values() -> None:
+    c = replace(
+        _provenance(),
+        native_patches=({"name": "cuda-no-copy-host-register-opt-out.patch", "sha256": "patch-a"},),
+        cuda_disable_host_register="1",
+    )
+    ds4py = replace(
+        c,
+        native_patches=({"name": "cuda-no-copy-host-register-opt-out.patch", "sha256": "patch-b"},),
+        cuda_disable_host_register="true",
+    )
+
+    text = "\n".join(validate_session_pair(c, ds4py))
+
+    assert "native_patches" in text
+    assert "cuda_disable_host_register" in text
+
+
 def test_provenance_rejects_different_session_shape_or_missing_chunk_plan() -> None:
     c = _provenance()
     changed_round = replace(
@@ -190,3 +208,19 @@ def test_trace_provenance_sidecar_round_trip(tmp_path: Path) -> None:
     assert data["q8_f16_cache_mb"] == 5120
     assert data["rounds"][0]["think"] == 75
     assert data["rounds"][0]["sync_calls"][1]["position"] == 12
+
+
+def test_native_patch_provenance_sidecar_contains_names_hashes_and_env_value(tmp_path: Path) -> None:
+    trace = tmp_path / "trace.jsonl"
+    trace.write_text('{"kind":"Stopped"}\n')
+    provenance = replace(
+        _provenance(),
+        native_patches=({"name": "cuda-no-copy-host-register-opt-out.patch", "sha256": "patch-sha"},),
+        cuda_disable_host_register="1",
+    )
+
+    output = write_trace_provenance(trace, provenance)
+
+    data = json.loads(output.read_text())
+    assert data["native_patches"] == [{"name": "cuda-no-copy-host-register-opt-out.patch", "sha256": "patch-sha"}]
+    assert data["cuda_disable_host_register"] == "1"
