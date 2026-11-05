@@ -455,7 +455,8 @@ class Session:
         """Register a lazy pre-sample hook on the worker-thread decode path.
 
         Registration is allowed only between rounds. Each invocation receives
-        a reusable LogitsView; only committed tokens enter its sampled history.
+        a reusable LogitsView whose sampled history includes any accepted
+        staging prefix, before that prefix is published to the caller.
         The hook must not call engine, session, harness, cancellation, or
         blocking-I/O APIs; those calls can deadlock the native worker.
         """
