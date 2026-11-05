@@ -269,6 +269,17 @@ static int parse_manifest_case(char *line, driver_case *out) {
     return 1;
 }
 
+static int manifest_think_mode(const driver_case *item, ds4_think_mode *out) {
+    /* The TSV stores a native enum value, not the effort accepted by --think. */
+    ds4_think_mode mode = (ds4_think_mode)item->think;
+    if (mode == DS4_THINK_NONE || ds4_think_mode_enabled(mode) || ds4_think_mode_level(mode) >= 0) {
+        *out = mode;
+        return 1;
+    }
+    fprintf(stderr, "invalid native think mode: %d\n", item->think);
+    return 0;
+}
+
 static int load_case_tokens(const driver_case *item, int **prompt_out, int **expected_out) {
     FILE *file = fopen(item->token_file, "r");
     if (!file) {
@@ -404,12 +415,7 @@ static int run_manifest_case(ds4_engine *engine, const replay_config *cfg, const
     int ok = 0;
     if (!load_case_tokens(item, &prompt, &expected)) goto cleanup;
     ds4_think_mode think_mode;
-    char think_text[32];
-    snprintf(think_text, sizeof(think_text), "%d", item->think);
-    if (!ds4_think_mode_parse_level(think_text, &think_mode)) {
-        fprintf(stderr, "invalid numeric think level: %d\n", item->think);
-        goto cleanup;
-    }
+    if (!manifest_think_mode(item, &think_mode)) goto cleanup;
     if (ds4_session_create(&session, engine, cfg->ctx) != 0) {
         fprintf(stderr, "failed to create native session\n");
         goto cleanup;
