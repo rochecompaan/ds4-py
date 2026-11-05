@@ -266,7 +266,9 @@ def _compare_restore(
     first = tuple(token for round_ in first_trace.rounds for token in round_.sampled)
     second = tuple(token for round_ in second_trace.rounds for token in round_.sampled)
     for label, run, trace in (("case 1", case1, first_trace), ("case 2", case2, second_trace)):
-        prompt_position = len(trace.rounds[-1].prompt)
+        # Restore metadata captures the first fixed-follow-up sync. Later model
+        # rounds have new prompts and must not be compared with that position.
+        prompt_position = len(trace.rounds[0].prompt)
         if run.followup_position != prompt_position:
             problems.append(f"{label} follow-up position {run.followup_position} != prompt length {prompt_position}")
             valid = False
