@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -219,6 +219,34 @@ def export_trace_cases(
     manifest = destination / "cases.tsv"
     manifest.write_text("\t".join(_MANIFEST_FIELDS) + "\n" + "\n".join(rows) + "\n", encoding="utf-8")
     return manifest
+
+
+def export_round_zero_cap_case(
+    trace: ReplayTrace,
+    *,
+    task_id: str,
+    attempt: int,
+    destination: Path,
+    response_budget: int,
+) -> Path:
+    """Export round 0 with padding available only for unseen expected IDs."""
+    if response_budget < 1:
+        raise DriverEvidenceError("response budget must be positive")
+    if not trace.rounds or trace.rounds[0].number != 0:
+        raise DriverEvidenceError("cap parity requires a round-0 trace")
+    first = trace.rounds[0]
+    if len(first.sampled) > response_budget:
+        raise DriverEvidenceError("recorded round 0 exceeds the response budget")
+    padding = (0,) * (response_budget - len(first.sampled))
+    padded = replace(first, sampled=(*first.sampled, *padding))
+    cap_trace = replace(trace, rounds=(padded,))
+    return export_trace_cases(
+        cap_trace,
+        task_id=task_id,
+        attempt=attempt,
+        destination=destination,
+        max_steps=response_budget,
+    )
 
 
 def _start_round(record: dict[str, JsonValue]) -> _RoundBuilder:

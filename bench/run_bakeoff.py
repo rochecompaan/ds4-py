@@ -17,7 +17,13 @@ from typing import TYPE_CHECKING
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from bench.driver_cases import DriverEvidenceError, export_trace_cases, read_driver_ndjson
+from bench.cap_parity import compare_cap_parity
+from bench.driver_cases import (
+    DriverEvidenceError,
+    export_round_zero_cap_case,
+    export_trace_cases,
+    read_driver_ndjson,
+)
 from bench.driver_equivalence import (
     DriverEquivalenceResult,
     DriverRoundResult,
@@ -38,7 +44,7 @@ from bench.pty_driver import drive_interruption_pty, drive_pty  # noqa: F401 - C
 from bench.replay_c_traces import ReplaySelectionError, select_c_traces
 from bench.report import BakeoffReport, GateResult, build_report
 from bench.restore_check import CheckResult, RestoreSummary, check_result_saves
-from bench.self_replay import SelfReplayContext, replay_ds4py_task_results
+from bench.self_replay import SelfReplayContext, replay_ds4py_task_results, select_ds4py_traces
 from bench.session import BakeoffSession, record_task_provenance
 from bench.workspaces import (
     CommandRunner,
@@ -355,6 +361,7 @@ class ReferencePhase:
     result: DriverEquivalenceResult
     rate_evidence: dict[str, tuple[RateEvidence, RateEvidence]]
     provenance: tuple[tuple[TraceProvenance, TraceProvenance], ...]
+    cap_parity: GateResult | None = None
 
 
 def _reference_failure(task_id: str, attempt: int, detail: str) -> DriverEquivalenceResult:
@@ -383,6 +390,30 @@ def _run_driver_command(
     return rounds, tuple(issues)
 
 
+def _reference_commands(
+    config: AgentConfig,
+    c_driver: str | Path,
+    manifest: Path,
+    trace_path: Path,
+) -> tuple[list[str], list[str]]:
+    common = [
+        "--model",
+        config.model,
+        "--cases",
+        str(manifest),
+        "--source-trace",
+        str(trace_path),
+        "--backend",
+        config.backend,
+        "--ctx",
+        str(config.ctx),
+    ]
+    return (
+        [str(c_driver), *common],
+        [sys.executable, str(Path(__file__).with_name("ds4py_replay_diagnostic.py")), *common],
+    )
+
+
 def _validate_reference_trace(trace: ReplayTrace, config: AgentConfig) -> None:
     if (
         trace.model is not None
@@ -393,18 +424,89 @@ def _validate_reference_trace(trace: ReplayTrace, config: AgentConfig) -> None:
         raise DriverEvidenceError("C trace context differs from the reference context")
 
 
-def run_reference_equivalence(
+def _run_cap_parity(
     task_results: Sequence[TaskRunResult],
     config: AgentConfig,
     c_driver: str | Path,
     session: BakeoffSession,
     results_root: str | Path,
+) -> GateResult:
+    """Run both reference drivers on each arm's round-0 prompt."""
+    try:
+        selected = [
+            *(("c", task_id, path) for task_id, path in select_c_traces(task_results)),
+            *(("ds4py", task_id, path) for task_id, path in select_ds4py_traces(task_results)),
+        ]
+    except (ReplaySelectionError, OSError, ValueError) as error:
+        return GateResult(passed=False, detail=f"cap trace selection failed: {error}", valid=False)
+
+    pairs = []
+    provenance_pairs = []
+    issues = []
+    attempts: dict[tuple[str, str], int] = {}
+    for arm, task_id, trace_path in selected:
+        key = (arm, task_id)
+        attempts[key] = attempts.get(key, 0) + 1
+        attempt = attempts[key]
+        label = f"{arm} {task_id} attempt {attempt}"
+        destination = Path(results_root) / "cap-parity" / f"{arm}-{task_id}-attempt-{attempt}"
+        try:
+            trace = read_replay(trace_path)
+            _validate_reference_trace(trace, config)
+            manifest = export_round_zero_cap_case(
+                trace,
+                task_id=task_id,
+                attempt=attempt,
+                destination=destination,
+                response_budget=config.tokens,
+            )
+            c_output = destination / "c.ndjson"
+            ds4py_output = destination / "ds4py.ndjson"
+            c_command, ds4py_command = _reference_commands(config, c_driver, manifest, trace_path)
+            c_rounds, c_issues = _run_driver_command(c_command, c_output, destination / "c.log")
+            ds4py_rounds, ds4py_issues = _run_driver_command(
+                ds4py_command,
+                ds4py_output,
+                destination / "ds4py.log",
+            )
+            issues.extend(f"{label} C driver: {issue}" for issue in c_issues)
+            issues.extend(f"{label} ds4-py driver: {issue}" for issue in ds4py_issues)
+            if len(c_rounds) != 1 or len(ds4py_rounds) != 1:
+                issues.append(f"{label}: expected one round per driver")
+                continue
+            c_provenance = session.reference_provenance(c_output, trace_path, c_rounds)
+            ds4py_provenance = session.reference_provenance(ds4py_output, trace_path, ds4py_rounds)
+            write_trace_provenance(c_output, c_provenance)
+            write_trace_provenance(ds4py_output, ds4py_provenance)
+            pairs.append((c_rounds[0], ds4py_rounds[0]))
+            provenance_pairs.append((c_provenance, ds4py_provenance))
+        except (OSError, ValueError, DriverEvidenceError) as error:
+            issues.append(f"{label}: {error}")
+    return compare_cap_parity(
+        pairs,
+        provenance=provenance_pairs,
+        response_budget=config.tokens,
+        diagnostic_issues=issues,
+    )
+
+
+def run_reference_equivalence(  # noqa: PLR0913 - Task evidence, driver setup, and the optional phase are independent inputs.
+    task_results: Sequence[TaskRunResult],
+    config: AgentConfig,
+    c_driver: str | Path,
+    session: BakeoffSession,
+    results_root: str | Path,
+    *,
+    cap_parity: bool = False,
 ) -> ReferencePhase:
-    """Run both raw-token reference drivers sequentially for every C attempt."""
+    """Run reference drivers for every C attempt and optional cap prompts."""
     try:
         selected = select_c_traces(task_results)
     except ReplaySelectionError as error:
-        return ReferencePhase(_reference_failure("<selection>", 1, str(error)), {}, ())
+        cap_result = (
+            GateResult(passed=False, detail=f"cap trace selection failed: {error}", valid=False) if cap_parity else None
+        )
+        return ReferencePhase(_reference_failure("<selection>", 1, str(error)), {}, (), cap_result)
     comparisons: list[DriverEquivalenceResult] = []
     provenance_pairs: list[tuple[TraceProvenance, TraceProvenance]] = []
     c_evidence: list[DriverRoundEvidence] = []
@@ -426,38 +528,10 @@ def run_reference_equivalence(
             )
             c_output = destination / "c.ndjson"
             ds4py_output = destination / "ds4py.ndjson"
-            c_rounds, c_issues = _run_driver_command(
-                [
-                    str(c_driver),
-                    "--model",
-                    config.model,
-                    "--cases",
-                    str(manifest),
-                    "--source-trace",
-                    str(trace_path),
-                    "--backend",
-                    config.backend,
-                    "--ctx",
-                    str(config.ctx),
-                ],
-                c_output,
-                destination / "c.log",
-            )
+            c_command, ds4py_command = _reference_commands(config, c_driver, manifest, trace_path)
+            c_rounds, c_issues = _run_driver_command(c_command, c_output, destination / "c.log")
             ds4py_rounds, ds4py_issues = _run_driver_command(
-                [
-                    sys.executable,
-                    str(Path(__file__).with_name("ds4py_replay_diagnostic.py")),
-                    "--model",
-                    config.model,
-                    "--cases",
-                    str(manifest),
-                    "--source-trace",
-                    str(trace_path),
-                    "--backend",
-                    config.backend,
-                    "--ctx",
-                    str(config.ctx),
-                ],
+                ds4py_command,
                 ds4py_output,
                 destination / "ds4py.log",
             )
@@ -487,7 +561,8 @@ def run_reference_equivalence(
     rates = {
         task_id: (c_rates[task_id], ds4py_rates[task_id]) for task_id in sorted(c_rates.keys() & ds4py_rates.keys())
     }
-    return ReferencePhase(combine_driver_results(comparisons), rates, tuple(provenance_pairs))
+    cap_result = _run_cap_parity(task_results, config, c_driver, session, results_root) if cap_parity else None
+    return ReferencePhase(combine_driver_results(comparisons), rates, tuple(provenance_pairs), cap_result)
 
 
 @contextmanager
@@ -503,30 +578,6 @@ def _session_environment(session: BakeoffSession) -> Generator[None]:
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
-
-
-def _cap_parity(tasks: Sequence[TaskRunResult]) -> GateResult:
-    c_ids = {item.task_id for item in tasks if item.agent == "c"}
-    ds4py_ids = {item.task_id for item in tasks if item.agent == "ds4py"}
-    task_ids = sorted(c_ids & ds4py_ids)
-    if not task_ids:
-        return GateResult(passed=False, detail="no paired tasks for cap parity")
-    differences = []
-    for task_id in task_ids:
-        counts = {
-            agent: sum(
-                item.terminal_reasons.count("max_tokens")
-                for item in tasks
-                if item.task_id == task_id and item.agent == agent
-            )
-            for agent in ("c", "ds4py")
-        }
-        if counts["c"] != counts["ds4py"]:
-            differences.append(f"{task_id}: C={counts['c']} ds4-py={counts['ds4py']}")
-    return GateResult(
-        not differences,
-        "cap outcomes match per task" if not differences else "cap outcomes differ: " + ", ".join(differences),
-    )
 
 
 def run_bakeoff(  # noqa: PLR0913 - The manifest and output layout are independent required inputs.
@@ -569,6 +620,7 @@ def run_bakeoff(  # noqa: PLR0913 - The manifest and output layout are independe
             c_driver,
             session,
             results_root / "driver-equivalence",
+            cap_parity=cap_parity,
         )
         self_results = replay_ds4py_task_results(
             task_results,
@@ -586,7 +638,7 @@ def run_bakeoff(  # noqa: PLR0913 - The manifest and output layout are independe
         restore,
         rate_evidence=reference.rate_evidence,
         provenance=reference.provenance,
-        cap_parity=_cap_parity(task_results) if cap_parity else None,
+        cap_parity=reference.cap_parity,
         driver_equivalence=reference.result,
         self_replay_results=self_results,
         certification="full-12-task" if len(staged) == FULL_TASK_COUNT else "targeted",

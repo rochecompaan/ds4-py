@@ -97,8 +97,10 @@ uv run --extra agent python bench/run_bakeoff.py \
 
 A 12-task manifest writes `certification: "full-12-task"`. A targeted manifest
 uses the same gate logic but writes `certification: "targeted"`; it is not full
-M3 acceptance. Add `--cap-parity` only when equal `max_tokens` outcomes per task
-are an explicit extra requirement.
+M3 acceptance. Add `--cap-parity` only as an explicit extra requirement. It runs
+both reference drivers on each arm's round-0 prompt with the same sync shape and
+response budget, then compares cap versus stop outcomes without requiring token
+equality.
 
 The command exits nonzero if any gate fails. Outputs:
 
