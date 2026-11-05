@@ -14,8 +14,11 @@ from typing import TYPE_CHECKING
 
 from bench.driver_cases import load_case_tokens
 from bench.provenance import (
+    CUDA_DISABLE_HOST_REGISTER_ENV,
+    NATIVE_PATCHES_ENV,
     Q8_F16_CACHE_ENV,
     Q8_F16_CACHE_MB,
+    NativePatch,
     RoundProvenance,
     TraceProvenance,
     write_trace_provenance,
@@ -35,6 +38,19 @@ def token_sha256(tokens: Sequence[int]) -> str:
     """Hash canonical token IDs without token text or prompt rendering."""
     payload = json.dumps(list(tokens), separators=(",", ":")).encode()
     return hashlib.sha256(payload).hexdigest()
+
+
+def native_patch_provenance(repo_root: Path, specification: str) -> tuple[NativePatch, ...]:
+    """Hash repo-relative native patch paths in stable name order."""
+    patches = []
+    for name in specification.split(os.pathsep):
+        if not name:
+            continue
+        path = Path(name)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError("native patch paths must be relative to the ds4-py repository")
+        patches.append(NativePatch(name=path.as_posix(), sha256=file_sha256(repo_root / path)))
+    return tuple(sorted(patches, key=lambda patch: patch.name))
 
 
 def _git_revision(path: Path) -> str:
@@ -97,6 +113,8 @@ class BakeoffSession:
     seed: int
     response_budget: int
     q8_f16_cache_mb: int
+    native_patches: tuple[NativePatch, ...] = ()
+    cuda_disable_host_register: str = ""
 
     def __post_init__(self) -> None:
         if not self.bakeoff_session_id or not self.instance_id:
@@ -136,6 +154,8 @@ class BakeoffSession:
             seed=python.seed,
             response_budget=python.tokens,
             q8_f16_cache_mb=Q8_F16_CACHE_MB,
+            native_patches=native_patch_provenance(repo_root, os.environ.get(NATIVE_PATCHES_ENV, "")),
+            cuda_disable_host_register=os.environ.get(CUDA_DISABLE_HOST_REGISTER_ENV, ""),
         )
 
     def environment(self) -> dict[str, str]:
@@ -150,6 +170,8 @@ class BakeoffSession:
             "DS4_BAKEOFF_LIBDS4_SHA256": self.libds4_sha256,
             "DS4_BAKEOFF_MODEL_SHA256": self.model_sha256,
             Q8_F16_CACHE_ENV: str(self.q8_f16_cache_mb),
+            NATIVE_PATCHES_ENV: os.pathsep.join(patch.name for patch in self.native_patches),
+            CUDA_DISABLE_HOST_REGISTER_ENV: self.cuda_disable_host_register,
         }
 
     def provenance(
@@ -180,6 +202,8 @@ class BakeoffSession:
             trace_sha256=file_sha256(trace_path),
             source_trace_sha256=file_sha256(source_trace_path),
             rounds=tuple(rounds),
+            native_patches=self.native_patches,
+            cuda_disable_host_register=self.cuda_disable_host_register,
         )
 
     def task_provenance(self, trace_path: Path) -> TraceProvenance:
@@ -231,6 +255,7 @@ def report_provenance_environment(data: Mapping[str, object]) -> dict[str, str]:
         "DS4_BAKEOFF_LIBDS4_SHA256": "libds4_sha256",
         "DS4_BAKEOFF_MODEL_SHA256": "model_sha256",
         Q8_F16_CACHE_ENV: "q8_f16_cache_mb",
+        CUDA_DISABLE_HOST_REGISTER_ENV: "cuda_disable_host_register",
     }
     environment: dict[str, str] = {}
     for env_name, field in names.items():
@@ -239,6 +264,16 @@ def report_provenance_environment(data: Mapping[str, object]) -> dict[str, str]:
             environment[env_name] = str(value)
         elif isinstance(value, str) and value:
             environment[env_name] = value
+    patches = c.get("native_patches")
+    if isinstance(patches, list):
+        names: list[str] = []
+        for patch in patches:
+            if isinstance(patch, dict):
+                name = patch.get("name")
+                if isinstance(name, str) and name:
+                    names.append(name)
+        if len(names) == len(patches):
+            environment[NATIVE_PATCHES_ENV] = os.pathsep.join(names)
     return environment
 
 

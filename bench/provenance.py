@@ -12,6 +12,14 @@ if TYPE_CHECKING:
 
 Q8_F16_CACHE_ENV = "DS4_CUDA_Q8_F16_CACHE_MB"
 Q8_F16_CACHE_MB = 5120
+NATIVE_PATCHES_ENV = "DS4_BAKEOFF_NATIVE_PATCHES"
+CUDA_DISABLE_HOST_REGISTER_ENV = "DS4_CUDA_DISABLE_HOST_REGISTER"
+
+
+@dataclass(frozen=True)
+class NativePatch:
+    name: str
+    sha256: str
 
 
 @dataclass(frozen=True)
@@ -59,6 +67,8 @@ class TraceProvenance:
     trace_sha256: str
     source_trace_sha256: str
     rounds: tuple[RoundProvenance, ...]
+    native_patches: tuple[NativePatch, ...] = ()
+    cuda_disable_host_register: str = ""
 
 
 _IDENTITY_FIELDS = (
@@ -89,6 +99,8 @@ _SESSION_FIELDS = (
     "temperature",
     "seed",
     "response_budget",
+    "native_patches",
+    "cuda_disable_host_register",
 )
 
 

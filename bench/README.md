@@ -50,6 +50,29 @@ uv run --extra agent python bench/prepare_bakeoff.py \
   --check-only
 ```
 
+## CUDA host-registration opt-out
+
+For the ds4 `5379c1c` CUDA bake-off and sanity wrappers, apply the pinned native
+patch before building `ds4-agent`, `libds4.so`, and the C diagnostic. This opts
+out of zero-copy host registration and selects the existing device-cache path:
+
+```bash
+git -C /absolute/path/to/ds4 apply --check \
+  "$PWD/bench/patches/cuda-no-copy-host-register-opt-out.patch"
+git -C /absolute/path/to/ds4 apply --whitespace=error \
+  "$PWD/bench/patches/cuda-no-copy-host-register-opt-out.patch"
+
+export DS4_CUDA_Q8_F16_CACHE_MB=5120
+export DS4_CUDA_DISABLE_HOST_REGISTER=1
+export DS4_BAKEOFF_NATIVE_PATCHES=bench/patches/cuda-no-copy-host-register-opt-out.patch
+```
+
+Use the same three exports in the bake-off and sanity launch shells. The patch
+manifest is a colon-separated list of repo-relative paths. Each sidecar records
+its patch names and SHA-256 hashes and the raw host-register environment value.
+A paired comparison is invalid if either value differs. Do not set the opt-out
+without applying the patch; do not claim the patch in an unpatched run.
+
 ## Run all six gates
 
 `bench/results` must not already exist. The runner refuses to replace an old
