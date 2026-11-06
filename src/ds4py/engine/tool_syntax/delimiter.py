@@ -1,14 +1,26 @@
 """Shared lifecycle for GLM and Qwen delimiter-based tool calls."""
 
 from copy import deepcopy
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import override
 
-from .base import ToolParser
+from .base import ToolParser, freeze_argument, thaw_arguments
 from .model import ToolArgument, ToolCall
 
 _ASCII_SPACE = b" \t\r\n"
 _START = b"<tool_call>"
+
+
+@dataclass(frozen=True)
+class DelimiterParserState:
+    after_call: bool
+    call_start: int
+    current_name: str | None
+    args: tuple[tuple[str, ToolArgument], ...]
+    param_name: str | None
+    param_value_start: int
+    param_scan_pos: int
 
 
 class DelimiterParser(ToolParser):
@@ -31,6 +43,34 @@ class DelimiterParser(ToolParser):
     @override
     def _opening_forms(self) -> tuple[tuple[bytes, bool], ...]:
         return ((_START, False),)
+
+    @override
+    def _capture_family(self) -> DelimiterParserState:
+        return DelimiterParserState(
+            self._after_call,
+            self._call_start,
+            self._current_name,
+            tuple((name, freeze_argument(argument)) for name, argument in self._args.items()),
+            self._param_name,
+            self._param_value_start,
+            self._param_scan_pos,
+        )
+
+    @override
+    def _restore_family(self, state: object) -> None:
+        if not isinstance(state, DelimiterParserState):
+            raise TypeError("DelimiterParser requires DelimiterParserState")
+        self._after_call = state.after_call
+        self._call_start = state.call_start
+        self._current_name = state.current_name
+        self._args = thaw_arguments(state.args)
+        self._param_name = state.param_name
+        self._param_value_start = state.param_value_start
+        self._param_scan_pos = state.param_scan_pos
+
+    @override
+    def _new_fork(self) -> DelimiterParser:
+        return type(self)()
 
     @override
     def _start(self, implicit_invoke: bool) -> None:

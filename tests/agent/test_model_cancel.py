@@ -193,7 +193,7 @@ def test_cancel_during_prefill_leaves_transcript_intact(
     asyncio.run(scenario())
 
 
-def test_cancel_during_speculative_block_rewinds_uncommitted_drafts(
+def test_cancel_during_speculative_block_publishes_evaluated_prefix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tokens = tuple(tokenize_rendered("abcdefgh"))
@@ -208,8 +208,8 @@ def test_cancel_during_speculative_block_rewinds_uncommitted_drafts(
         return original_eval(self, token)
 
     monkeypatch.setattr(FakeSession, "eval", blocking_eval)
-    # First block commits "ab". The second block drafts "def"; cancellation is
-    # requested while its drafts are evaluated, so none of them may commit.
+    # First block commits "ab". Cancellation arrives while the second block's
+    # third token is evaluated, so exactly that accepted prefix is published.
     blocks = [tokens[1:2], tokens[3:6]]
     monkeypatch.setattr(
         decode_module,
@@ -242,15 +242,14 @@ def test_cancel_during_speculative_block_rewinds_uncommitted_drafts(
                 response = cast("Any", stream).get()
 
             assert response.state == "interrupted"
-            assert response_text(response) == "ab"
+            assert response_text(response) == "abcde"
             assert session.transcript.tokens == native_tokens(session)
-            assert session.transcript.tokens[-2:] == tokens[:2]
+            assert session.transcript.tokens[-5:] == tokens[:5]
             calls = native_calls(session)
-            evaluated = {token for kind, token in calls if kind == "eval"}
-            assert tokens[2] in evaluated and tokens[3] in evaluated
+            evaluated = [token for kind, token in calls if kind == "eval"]
+            assert evaluated == list(tokens[:5])
             prefix = max(segment.end for segment in session.transcript.segments if segment.kind == "assistant_prefix")
-            assert session.transcript.tokens[prefix:] == tokens[:2]
-            assert any(kind == "rewind" for kind, *_ in calls)
+            assert session.transcript.tokens[prefix:] == tokens[:5]
 
     asyncio.run(scenario())
 

@@ -198,12 +198,12 @@ def test_finish_guards_accepted_token_counters_and_later_commits() -> None:
     assert ctx._accepted == 1 and transcript.tokens == (1,)
 
 
-def test_multi_token_step_rewinds_unkept_tail_and_stops_at_sequence() -> None:
+def test_multi_token_step_stops_at_sequence_without_evaluating_tail() -> None:
     tokens = [ord("s"), ord("t"), ord("o"), ord("p"), 5, 0]
     step = FakeMultiTokenStep([[ord("t"), ord("o"), ord("p"), 5]])
     reason, session, transcript, _ = decode(tokens, [b"stop"], step=step)
     assert reason == "stop_sequence" and transcript.tokens == tuple(b"stop")
-    assert session.tokens == list(b"stop") and session.rewinds == [4]
+    assert session.tokens == list(b"stop") and session.rewinds == []
     assert session.sample_calls == 1
 
 

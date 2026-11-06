@@ -2,16 +2,28 @@
 
 import json
 from copy import deepcopy
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Never, override
 
-from .base import ToolParser
+from .base import ToolParser, freeze_argument, thaw_arguments
 from .model import ToolArgument, ToolCall
 from .text import unescape_tool_text
 
 _ASCII_SPACE = b" \t\r\n"
 _CLOSE_PREFIX = "</｜DSML｜".encode()
 _BAR = "｜".encode()
+
+
+@dataclass(frozen=True)
+class DsmlParserState:
+    call_start: int
+    current_name: str | None
+    args: tuple[tuple[str, ToolArgument], ...]
+    param_name: str | None
+    param_is_string: bool
+    param_value_start: int
+    param_scan_pos: int
 
 
 class Dsml(ToolParser):
@@ -45,6 +57,34 @@ class Dsml(ToolParser):
             (self._canonical_invoke, True),
             (invoke_missing_bar, True),
         )
+
+    @override
+    def _capture_family(self) -> DsmlParserState:
+        return DsmlParserState(
+            self._call_start,
+            self._current_name,
+            tuple((name, freeze_argument(argument)) for name, argument in self._args.items()),
+            self._param_name,
+            self._param_is_string,
+            self._param_value_start,
+            self._param_scan_pos,
+        )
+
+    @override
+    def _restore_family(self, state: object) -> None:
+        if not isinstance(state, DsmlParserState):
+            raise TypeError("Dsml requires DsmlParserState")
+        self._call_start = state.call_start
+        self._current_name = state.current_name
+        self._args = thaw_arguments(state.args)
+        self._param_name = state.param_name
+        self._param_is_string = state.param_is_string
+        self._param_value_start = state.param_value_start
+        self._param_scan_pos = state.param_scan_pos
+
+    @override
+    def _new_fork(self) -> Dsml:
+        return Dsml(v41=self.v41)
 
     @override
     def _start(self, implicit_invoke: bool) -> None:

@@ -1,5 +1,6 @@
 """Per-assistant-round parser, control matching, and display stream state."""
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ds4py._native.protocol import THINK_LEVEL_BASE
@@ -9,12 +10,28 @@ if TYPE_CHECKING:
 
     from ds4py._native.protocol import EngineInfo
 
-from .decoder import Decoder
+    from .tool_syntax.base import ToolParserState
+
+from .decoder import Decoder, DecoderState
 
 _MAX_CUSTOM_THINK_LEVEL = THINK_LEVEL_BASE + 100
 from .events import Event, TextDelta, Thinking, ToolCalls, ToolSyntax
-from .pause import ControlSpan
+from .pause import ControlSpan, ControlSpanState
 from .tool_syntax import make_parser
+
+
+@dataclass(frozen=True)
+class RoundStreamState:
+    parser: ToolParserState
+    decoder: DecoderState
+    control: ControlSpanState
+    sampled_tokens: tuple[int, ...]
+    think_tokens: int
+    finalized: bool
+    control_pending: bytes
+    last_state: str
+    last_thinking: bool
+    calls_emitted: bool
 
 
 class RoundStream:
@@ -38,6 +55,43 @@ class RoundStream:
         self._last_state = self.snapshot.state
         self._last_thinking = thinking
         self._calls_emitted = False
+
+    def capture(self) -> RoundStreamState:
+        return RoundStreamState(
+            self.parser.capture(),
+            self.decoder.capture(),
+            self.control.capture(),
+            tuple(self.sampled_tokens),
+            self.think_tokens,
+            self.finalized,
+            bytes(self._control_pending),
+            self._last_state,
+            self._last_thinking,
+            self._calls_emitted,
+        )
+
+    def restore(self, state: RoundStreamState) -> None:
+        self.parser.restore(state.parser)
+        self.decoder.restore(state.decoder)
+        self.control.restore(state.control)
+        self.snapshot = self.parser._snapshot()
+        self.sampled_tokens[:] = state.sampled_tokens
+        self.think_tokens = state.think_tokens
+        self.finalized = state.finalized
+        self._control_pending = bytearray(state.control_pending)
+        self._last_state = state.last_state
+        self._last_thinking = state.last_thinking
+        self._calls_emitted = state.calls_emitted
+
+    def fork(self) -> RoundStream:
+        stream = RoundStream.__new__(RoundStream)
+        stream.parser = self.parser.fork()
+        stream.decoder = self.decoder.fork()
+        stream.control = self.control.fork()
+        stream.sampled_tokens = []
+        stream._control_pending = bytearray()
+        stream.restore(self.capture())
+        return stream
 
     @property
     def active_stop_sequences(self) -> list[bytes]:
