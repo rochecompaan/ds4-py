@@ -14,7 +14,7 @@ from ds4py import ThinkMode
 from ds4py._native.fake import FakeEngine, FakeNative, FakeSession
 from ds4py._native.protocol import EngineConfig, EngineHandle, SessionHandle, Snapshot
 from ds4py.engine.decode import DecodeContext, GenerateJob
-from ds4py.engine.events import Event
+from ds4py.engine.events import Event, Stopped
 from ds4py.engine.sampling import Rng, SamplingPolicy
 from ds4py.engine.transcript import Transcript
 from ds4py.engine.worker import (
@@ -443,3 +443,77 @@ def test_session_lifecycle_operations_do_not_clear_poisoning() -> None:
         assert_rejected(later.value, original)
     finally:
         engine.close()
+
+
+def test_engine_close_after_poisoning_releases_owned_resources_exactly_once() -> None:
+    original = EngineError("native eval failed")
+    close_log: list[tuple[str, int]] = []
+
+    class TrackingNative(FaultNative):
+        @override
+        def open_engine(self, config: EngineConfig) -> FakeEngine:
+            engine = super().open_engine(config)
+            create_session = engine.create_session
+            close_engine = engine.close
+
+            def create(ctx: int) -> FakeSession:
+                session = create_session(ctx)
+                save_snapshot = session.save_snapshot
+                close_session = session.close
+
+                def save() -> Snapshot:
+                    snapshot = save_snapshot()
+                    close_snapshot = snapshot.close
+
+                    def close_owned_snapshot() -> None:
+                        close_log.append(("snapshot", threading.get_ident()))
+                        close_snapshot()
+
+                    cast("Any", snapshot).close = close_owned_snapshot
+                    return snapshot
+
+                def close_owned_session() -> None:
+                    close_log.append(("session", threading.get_ident()))
+                    close_session()
+
+                dynamic = cast("Any", session)
+                dynamic.save_snapshot = save
+                dynamic.close = close_owned_session
+                return session
+
+            def close_owned_engine() -> None:
+                close_log.append(("engine", threading.get_ident()))
+                close_engine()
+
+            cast("Any", engine).create_session = create
+            cast("Any", engine).close = close_owned_engine
+            return engine
+
+    native = TrackingNative(original)
+    engine = ds4py.open("f.gguf", ctx=64, think=ThinkMode.NONE, native=native)
+    session = engine.session()
+    session.append_tokens([5, 6], "user")
+    assert list(session.run_round(max_tokens=0))[-1] == Stopped("max_tokens")
+    session.checkpoint("before")
+    session.set_decode_step(UncertainMultiTokenStep())
+    with pytest.raises(EngineError) as caught:
+        list(session.run_round(max_tokens=10))
+    assert caught.value is original
+    worker = engine._worker
+    owner = worker._thread
+    faults_before = list(native.fault_calls)
+
+    with pytest.raises(WorkerPoisonedError):
+        worker.call(lambda engine_handle, native_session: native_session.pos()).result(timeout=1)
+    engine.close()
+    engine.close()
+    worker.close()
+
+    assert close_log == [
+        ("snapshot", owner.ident),
+        ("session", owner.ident),
+        ("engine", owner.ident),
+    ]
+    assert owner.ident != threading.get_ident()
+    assert not owner.is_alive()
+    assert native.fault_calls == faults_before
