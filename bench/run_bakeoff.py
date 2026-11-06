@@ -607,7 +607,12 @@ def run_bakeoff(  # noqa: PLR0913 - The manifest and output layout are independe
         )
         task_provenance = record_task_provenance(task_results, session)
         ds4_config = next(config for config in configs if config.agent == "ds4py")
-        restore_runs = check_result_saves(task_results, ds4_config, results_root / "restores")
+        restore_runs = check_result_saves(
+            task_results,
+            ds4_config,
+            results_root / "restores",
+            c_driver=c_driver,
+        )
         interruption_workspace = clone_workspace(
             staged[0],
             results_root / "acceptance" / "interruption",

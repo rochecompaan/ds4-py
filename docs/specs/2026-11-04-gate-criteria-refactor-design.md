@@ -186,28 +186,29 @@ One ds4-py run must be interrupted with Ctrl+C during prefill and resumed by the
 
 The criteria do not change. The repaired branch still needs a plain live re-run to certify Gate 4. A unit-test pass is not live certification.
 
-### Gate 5: records and restore — replace exact tokens with first-step logits
+### Gate 5: records and restore — hold KV construction history constant
+
+Gate 5 must prove that restore does not corrupt state and that the stripped-save rebuild renders the identical prompt. It must not compare logits from an extended KV history with logits from a freshly rebuilt KV history. Those histories can produce different ordered logits even when both save and restore are correct.
+
+The Phase A investigation established this distinction. Same-history continuation versus save/restore had identical ordered token IDs and maximum absolute raw-logit difference `0.0` in both ds4-py and C. Cross-history extend comparisons differed by about `0.30` to `1.13`, while stripped-save rebuild versus C differed by only `4.53e-08` and `4.89e-08`. Independent ds4-py and C saves of the same prefix also produced byte-identical native payloads. The old extend-versus-rebuild logit comparison was therefore a gate design error, not evidence of a ds4-py product defect.
 
 The following requirements stay:
 
 - Every ds4-py attempt leaves a complete save record, events, snapshots, and KV payload.
 - Each case starts in a new ds4-py process and uses the public `/switch` command.
 - Switch itself performs no prefill.
-- Case 1 loads the saved KV. Its fixed follow-up must use `Synced.plan.kind == "extend"`, not `rebuild`.
-- Case 2 uses the payload-stripped copy. Its follow-up must render fresh and use `rebuild` with a real prefill.
-
-Add position checks. The follow-up `Synced.pos` must equal the rendered follow-up prompt length in both cases. Case 1's resulting position must not be inferred from a plan label alone.
-
-Replace the 256-token and terminal-boundary equality check between cases with a first-step logits check:
-
-- Register the existing public `Session.add_logits_hook` after `/switch` and before the fixed follow-up.
-- Capture only the first pre-sample logits call. Later calls do not write evidence.
-- Store the capture in restore metadata or a sidecar, not in the normal trace event format.
-- Require equal pre-sample positions, identical ordered top-12 token IDs, and maximum absolute raw-logit difference below `1e-5`.
+- Register the existing public `Session.add_logits_hook` after `/switch` and before the fixed follow-up. Capture only the first pre-sample logits call and store it outside the normal trace event format.
 - Record each case's own terminal reason. Do not require the two continuations to have identical terminal reasons.
-- Require both cases to come from the same save, fixed follow-up, instance, and bake-off session. Their intentional `extend`/`rebuild` difference is part of the test, not a provenance mismatch.
+- Require all compared runs to come from the same save, fixed follow-up, instance, bake-off session, model, library, cache configuration, and sampling policy.
 
-Gate 5 passes only when file, switch, plan, position, provenance, and first-step logits checks all pass.
+Gate 5 has four checks:
+
+1. **5.1 plan.** Case 1 loads the original save and its fixed follow-up uses `Synced.plan.kind == "extend"` with only the suffix prefilled. Case 2 uses the payload-stripped copy and its follow-up uses `rebuild` with a real prefill.
+2. **5.2 position.** Both cases have equal first-step positions. In each case, the follow-up `Synced.pos` and first pre-sample logits position equal the rendered follow-up prompt length. A plan label alone is not position evidence.
+3. **5.3 restore fidelity.** Compare case 1 with a same-history reference, not with case 2. In one fresh ds4-py process, replay the original attempt's recorded sync and decode history, then prefill the fixed follow-up suffix and capture step-0 top-12 logits. The replay uses the retained original trace as the recorded history and validates its prompts, sampled IDs, sync positions, and token counts against the save's original-run events and saved token hash. It does not load the KV payload. Require equal positions, identical ordered top-12 token IDs, and maximum absolute raw-logit difference below `1e-5` between this reference and case 1. The full replay includes the original decode steps and therefore costs roughly the original attempt's generation time.
+4. **5.4 rebuild equivalence.** Run the C diagnostic with `split_at = 0` on the exact rebuilt prompt from case 2 and compare its step-0 top-12 logits with case 2. Use the same model, context, cache, sampling, and response-budget provenance; only step 0 is captured and compared. Require equal positions, identical ordered top-12 token IDs, and maximum absolute raw-logit difference below `1e-5` through the existing driver-equivalence comparator.
+
+Gate 5 passes only when file, switch, provenance, and all four checks pass. The extend-versus-rebuild logit comparison is removed.
 
 ### Gate 6: driver equivalence and self-replay — replace cross-host exact C replay
 

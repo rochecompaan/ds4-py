@@ -816,7 +816,7 @@ def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkey
     monkeypatch.setattr(
         runner,
         "check_result_saves",
-        lambda *args: order.append("restores") or (),
+        lambda *args, **kwargs: order.append("restores") or (),
     )
     monkeypatch.setattr(runner, "clone_workspace", lambda *args: object())
     monkeypatch.setattr(

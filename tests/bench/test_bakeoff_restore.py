@@ -73,7 +73,7 @@ def test_restore_check_script_loads_outside_repository(tmp_path: Path) -> None:
     )
 
     assert completed.returncode == 1, completed.stderr
-    assert completed.stderr.startswith("usage: restore_check.py attempt|restore|check [options]")
+    assert completed.stderr.startswith("usage: restore_check.py attempt|restore|same-history|check [options]")
 
 
 def restore_fake_engine(script: Any) -> Engine:
@@ -224,7 +224,7 @@ def write_restore_metadata(
         json.dumps(
             {
                 "switch_prefill": 0,
-                "followup_plan": "extend" if case == 1 else "rebuild",
+                "followup_plan": {1: "extend", 2: "rebuild", 3: "same-history", 4: "c-rebuild"}[case],
                 "followup_prefill": 2 if case == 1 else 12,
                 "followup_position": followup_position,
                 "first_step": {
@@ -243,6 +243,55 @@ def write_restore_metadata(
     return metadata
 
 
+def c_driver_stdout(command: list[str]) -> str:
+    """Emit one valid C manifest round with hand-derived top-12 logits."""
+    from bench.driver_cases import read_case_manifest
+
+    manifest = Path(command[command.index("--cases") + 1])
+    source_trace = command[command.index("--source-trace") + 1]
+    case = read_case_manifest(manifest)[0]
+    capture = step_capture(position=case.prompt_tokens)
+    records = [
+        {
+            "kind": "round_start",
+            "source_trace": source_trace,
+            "task_id": case.task_id,
+            "attempt": case.attempt,
+            "round": case.round_index,
+            "token_file": str(case.token_file),
+            "prompt_tokens": case.prompt_tokens,
+            "split_at": case.split_at,
+            "steps": case.steps,
+            "think": case.think,
+        },
+        {
+            "kind": "sync",
+            "label": "full",
+            "input_tokens": case.prompt_tokens,
+            "cached_tokens": 0,
+            "prefill_tokens": case.prompt_tokens,
+            "position": case.prompt_tokens,
+            "elapsed_seconds": 0.0,
+        },
+        {
+            "kind": "step",
+            "index": 0,
+            "position": capture.position,
+            "selected_token": capture.selected_token,
+            "top": [{"token": item.token, "logit": item.logit} for item in capture.top],
+        },
+        {
+            "kind": "round_end",
+            "prefill_tokens": case.prompt_tokens,
+            "decode_steps": 1,
+            "prefill_seconds": 0.0,
+            "decode_seconds": 0.0,
+            "terminal_reason": "stop_token",
+        },
+    ]
+    return "".join(json.dumps(record) + "\n" for record in records)
+
+
 def restore_run(case: int, trace_path: Path, **options: Any) -> RestoreRun:
     write_trace(trace_path, options.get("tokens", (1, 2, 3)))
     first_step = options.get("first_step", step_capture())
@@ -258,21 +307,15 @@ def restore_run(case: int, trace_path: Path, **options: Any) -> RestoreRun:
         trace_path=trace_path,
         terminal_reason=options.get("reason", "stop_token"),
         switch_prefill=options.get("switch_prefill", 0),
-        followup_plan=options.get("plan", "extend" if case == 1 else "rebuild"),
+        followup_plan=options.get(
+            "plan",
+            {1: "extend", 2: "rebuild", 3: "same-history", 4: "c-rebuild"}[case],
+        ),
         followup_position=options.get("followup_position", 2),
         first_step=first_step,
         provenance_path=metadata,
         followup_prefill=options.get("followup_prefill", 2 if case == 1 else 12),
     )
-
-
-def successful_driver(calls: Any, tokens: Any = (1, 2, 3), reason: Any = "stop_token") -> Any:
-    def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
-        calls.append((home, session_id, case))
-        later_tokens = tokens if case == 1 else tuple(reversed(tokens))
-        return restore_run(case, trace_path, tokens=later_tokens, reason=reason)
-
-    return drive
 
 
 def test_validate_save_accepts_complete_record_snapshot_events_and_kv(
@@ -314,19 +357,58 @@ def test_stripped_copy_has_zero_payload_and_preserves_snapshot_and_record(
     assert (stripped / "session.kv").stat().st_size == KV_HEADER.size
 
 
-def test_restore_cases_compare_first_step_and_allow_later_token_differences(tmp_path: Path) -> None:
+def test_restore_uses_same_history_and_c_rebuild_references(tmp_path: Path) -> None:
+    """Different KV histories may differ; each restore path must match its own reference."""
     save = make_save(tmp_path)
     calls = []
+    extended = step_capture()
+    rebuilt = step_capture(delta=0.25)
 
-    result = check_restore(save, tmp_path / "work", runner=successful_driver(calls))
+    def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
+        calls.append((home, session_id, case))
+        return restore_run(
+            case,
+            trace_path,
+            first_step=extended if case in (1, 3) else rebuilt,
+        )
+
+    result = check_restore(save, tmp_path / "work", runner=drive)
 
     assert result.passed, result.detail
     assert result.valid
-    assert [call[2] for call in calls] == [1, 2]
+    assert result.position.passed
+    assert result.restore_fidelity.passed
+    assert result.rebuild_equivalence.passed
+    assert [call[2] for call in calls] == [1, 2, 3, 4]
     assert all(call[1] == "session-1" for call in calls)
-    assert len(result.trace_paths) == 2
+    assert len(result.trace_paths) == 4
     stripped = cast("Any", result.stripped_save_dir)
     assert SessionStore().read_kv_header(stripped / "session.kv") == 0
+
+
+@pytest.mark.parametrize("reference_case", [3, 4])
+@pytest.mark.parametrize("bad_reference", [step_capture(reorder=True), step_capture(delta=1e-5)])
+def test_restore_reference_ranking_and_tolerance_fail(
+    tmp_path: Path,
+    reference_case: int,
+    bad_reference: StepCapture,
+) -> None:
+    """A reference mismatch must fail its own check, not the other restore path."""
+    save = make_save(tmp_path)
+
+    def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
+        return restore_run(
+            case,
+            trace_path,
+            first_step=bad_reference if case == reference_case else step_capture(),
+        )
+
+    result = check_restore(save, tmp_path / "work", runner=drive)
+
+    assert not result.passed
+    assert result.valid
+    assert result.restore_fidelity.passed == (reference_case != 3)
+    assert result.rebuild_equivalence.passed == (reference_case != 4)
 
 
 def test_restore_position_uses_fixed_followup_round_not_later_tool_round(tmp_path: Path) -> None:
@@ -351,19 +433,6 @@ def test_restore_position_uses_fixed_followup_round_not_later_tool_round(tmp_pat
     result = check_restore(save, tmp_path / "work", runner=drive)
 
     assert result.passed, result.detail
-    assert result.valid
-
-
-@pytest.mark.parametrize("second_step", [step_capture(reorder=True), step_capture(delta=1e-5)])
-def test_restore_first_step_ranking_and_tolerance_fail(tmp_path: Path, second_step: StepCapture) -> None:
-    save = make_save(tmp_path)
-
-    def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
-        return restore_run(case, trace_path, first_step=step_capture() if case == 1 else second_step)
-
-    result = check_restore(save, tmp_path / "work", runner=drive)
-
-    assert not result.passed
     assert result.valid
 
 
@@ -469,7 +538,7 @@ def test_different_later_tokens_and_terminal_reasons_are_diagnostic(tmp_path: Pa
 
     assert result.passed, result.detail
     assert "terminal" in result.detail
-    assert len(result.trace_paths) == 2
+    assert len(result.trace_paths) == 4
 
 
 @pytest.mark.parametrize("copy_workspace", [False, True], ids=["original", "copied"])
@@ -545,6 +614,96 @@ def test_restore_driver_preserves_noninteractive_prompt_composition(
     assert value["terminal_reason"] == expected_terminal
     assert len(value["first_step"]["top"]) == 12
     assert "first_step" not in json.loads(trace.read_text())
+
+
+def test_same_history_replays_saved_attempt_and_matches_restore(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same-history reference must reproduce the saved attempt without loading its KV."""
+    from bench.restore_check import same_history_command
+    from ds4py.engine.replay import read_replay
+    from ds4py.prefill_trace import PrefillTraceWriter
+
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "home")
+    original_trace = tmp_path / "trace.jsonl"
+    with restore_fake_engine(restore_script("saved answer")) as engine:
+        model = DS4Model(engine.session(), sampling=SamplingPolicy(seed=1))
+        runtime = AgentRuntime(model, project, store=store, interactive=False, read_only=False)
+        try:
+            with PrefillTraceWriter(model.session, original_trace, think=model.session.engine.think):
+                asyncio.run(runtime.run("question"))
+                record = asyncio.run(runtime.save())
+        finally:
+            asyncio.run(runtime.close())
+
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("DS4PY_HOME", str(store.root))
+    restore_trace = tmp_path / "case-1.jsonl"
+    restore_metadata = tmp_path / "case-1.json"
+    restore_engine = restore_fake_engine(restore_script("follow-up answer"))
+    replay_engine = restore_fake_engine(restore_script("saved answer", "follow-up answer"))
+    monkeypatch.setattr(ds4py, "open", lambda *args, **kwargs: restore_engine)
+    assert (
+        restore_command(
+            [
+                "--session-id",
+                record.session_id,
+                "--metadata",
+                str(restore_metadata),
+                "--model",
+                "f.gguf",
+                "--backend",
+                "cpu",
+                "--ctx",
+                "65536",
+                "--tokens",
+                "8192",
+                "--trace",
+                str(restore_trace),
+            ]
+        )
+        == 0
+    )
+
+    replay_trace = tmp_path / "case-3.jsonl"
+    replay_metadata = tmp_path / "case-3.json"
+    monkeypatch.setattr(ds4py, "open", lambda *args, **kwargs: replay_engine)
+    assert (
+        same_history_command(
+            [
+                "--session-id",
+                record.session_id,
+                "--metadata",
+                str(replay_metadata),
+                "--restore-trace",
+                str(restore_trace),
+                "--model",
+                "f.gguf",
+                "--backend",
+                "cpu",
+                "--ctx",
+                "65536",
+                "--tokens",
+                "8192",
+                "--trace",
+                str(replay_trace),
+            ]
+        )
+        == 0
+    )
+
+    restored = json.loads(restore_metadata.read_text())["first_step"]
+    replayed = json.loads(replay_metadata.read_text())["first_step"]
+    assert replayed == restored
+    replay_rounds = read_replay(replay_trace).rounds
+    restore_rounds = read_replay(restore_trace).rounds
+    assert len(replay_rounds) == len(read_replay(original_trace).rounds) + 1
+    assert replay_rounds[-1].prompt == restore_rounds[0].prompt
+    assert replay_rounds[-1].cached == record.tokens
+    assert replay_rounds[-1].sampled == ()
 
 
 def test_default_noninteractive_attempt_uses_its_existing_single_save(
@@ -671,6 +830,7 @@ def test_restore_processes_use_disposable_workspace_copies(
     working_directories: list[Path] = []
     copied_inputs: list[str] = []
     commands: list[list[str]] = []
+    c_cases = []
     config = SimpleNamespace(
         executable=(sys.executable, "restore-driver.py", "attempt"),
         model="model.gguf",
@@ -688,8 +848,13 @@ def test_restore_processes_use_disposable_workspace_copies(
         copied_inputs.append((working_directory / "input.txt").read_text())
         (working_directory / "restore-write.txt").write_text("isolated")
         commands.append(command)
+        if "--cases" in command:
+            from bench.driver_cases import read_case_manifest
+
+            c_cases.extend(read_case_manifest(Path(command[command.index("--cases") + 1])))
+            return SimpleNamespace(returncode=0, stdout=c_driver_stdout(command), stderr="")
         trace = Path(command[command.index("--trace") + 1])
-        case = 1 if trace.name == "case-1.jsonl" else 2
+        case = int(trace.stem.rsplit("-", 1)[1])
         write_trace(trace, (1,))
         write_restore_metadata(trace, case=case)
         return SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -702,16 +867,26 @@ def test_restore_processes_use_disposable_workspace_copies(
         workspace=workspace,
     )
 
-    results = check_result_saves(cast("Any", (item,)), cast("Any", config), tmp_path / "restores")
+    results = check_result_saves(
+        cast("Any", (item,)),
+        cast("Any", config),
+        tmp_path / "restores",
+        c_driver=tmp_path / "c-driver",
+    )
 
     assert results[0].passed, results[0].detail
-    assert len(working_directories) == 2
+    assert len(working_directories) == 4
     assert all(path != workspace for path in working_directories)
-    assert len(set(working_directories)) == 2
-    assert copied_inputs == ["original", "original"]
+    assert len(set(working_directories)) == 4
+    assert copied_inputs == ["original"] * 4
     assert not (workspace / "restore-write.txt").exists()
     assert all(not path.exists() for path in working_directories)
-    assert len(commands) == 2
-    for command in commands:
+    assert len(commands) == 4
+    for command in commands[:3]:
         assert command[command.index("--tokens") + 1] == "8192"
         assert command[command.index("--request-limit") + 1] == "100"
+    assert "same-history" in commands[2]
+    assert len(c_cases) == 1
+    assert c_cases[0].split_at == 0
+    assert c_cases[0].steps == 1
+    assert c_cases[0].prompt_tokens == 2

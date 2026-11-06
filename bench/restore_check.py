@@ -31,6 +31,8 @@ if __package__ in {None, ""}:
 from bench.comparison import TOP_K, StepCapture, TopLogit, compare_step
 from bench.models import AgentConfig, TaskRunResult
 from bench.provenance import Q8_F16_CACHE_ENV, Q8_F16_CACHE_MB, TraceProvenance, validate_session_pair
+from bench.restore_c_reference import prepare_c_rebuild, write_c_rebuild_metadata
+from bench.restore_history import same_history_command
 from bench.session import report_provenance_environment
 from ds4py._json import is_json_object
 from ds4py.engine.events import Stopped, Synced
@@ -77,6 +79,9 @@ class RestoreResult:
     detail: str = ""
     case1: CheckResult = CheckResult(False, "not run")
     case2: CheckResult = CheckResult(False, "not run")
+    position: CheckResult = CheckResult(False, "not run")
+    restore_fidelity: CheckResult = CheckResult(False, "not run")
+    rebuild_equivalence: CheckResult = CheckResult(False, "not run")
     stripped_save_dir: Path | None = None
     trace_paths: tuple[Path, ...] = ()
     valid: bool = True
@@ -217,6 +222,7 @@ def _restore_metadata(run: RestoreRun, label: str) -> _RestoreMetadata:
         raise RestoreError(f"{label}: malformed restore provenance")
     try:
         provenance_value["rounds"] = ()
+        provenance_value["native_patches"] = tuple(provenance_value.get("native_patches", ()))
         return _RestoreMetadata(
             TraceProvenance(**provenance_value),
             value["save_record_sha256"],
@@ -243,7 +249,7 @@ def validate_restore_pair(case1: RestoreRun, case2: RestoreRun) -> tuple[str, ..
 def _compare_restore(
     case1: RestoreRun,
     case2: RestoreRun,
-) -> tuple[list[str], tuple[int, ...], tuple[int, ...], bool]:
+) -> tuple[list[str], tuple[int, ...], tuple[int, ...], bool, CheckResult]:
     problems: list[str] = []
     valid = True
     structural = [
@@ -278,12 +284,56 @@ def _compare_restore(
         elif run.first_step.position != run.followup_position:
             problems.append(f"{label} first-step position differs from Synced.pos")
             valid = False
-    if case1.first_step is not None and case2.first_step is not None:
-        comparison = compare_step(case1.first_step, case2.first_step)
-        if not comparison.passed:
-            problems.append(f"first-step logits: {comparison.detail}")
-        valid = valid and comparison.valid
-    return problems, first, second, valid
+    positions_match = (
+        case1.first_step is not None
+        and case2.first_step is not None
+        and case1.first_step.position == case2.first_step.position
+    )
+    if not positions_match:
+        problems.append("5.2 position: case 1 and case 2 first-step positions differ or are missing")
+        valid = False
+    position = CheckResult(
+        valid and positions_match,
+        (
+            f"5.2 position: both cases captured step 0 at {case1.followup_position}"
+            if valid and positions_match
+            else "5.2 position: invalid or unequal positions"
+        ),
+    )
+    return problems, first, second, valid, position
+
+
+def _compare_reference(
+    run: RestoreRun,
+    reference: RestoreRun,
+    *,
+    label: str,
+    expected_plan: str,
+) -> tuple[CheckResult, list[str], bool]:
+    """Compare one restore path with a reference that holds its KV history constant."""
+    problems: list[str] = []
+    valid = True
+    provenance_issues = validate_restore_pair(run, reference)
+    if provenance_issues:
+        problems.extend(f"{label}: {issue}" for issue in provenance_issues)
+        valid = False
+    if reference.followup_plan != expected_plan:
+        problems.append(f"{label}: reference plan was {reference.followup_plan}, not {expected_plan}")
+        valid = False
+    if reference.followup_prefill <= 0:
+        problems.append(f"{label}: reference did not prefill the follow-up")
+        valid = False
+    if run.first_step is None or reference.first_step is None:
+        problems.append(f"{label}: first-step evidence is missing")
+        valid = False
+        return CheckResult(False, "; ".join(problems)), problems, valid
+    comparison = compare_step(run.first_step, reference.first_step)
+    if not comparison.passed:
+        problems.append(f"{label}: {comparison.detail}")
+    valid = valid and comparison.valid
+    detail = "; ".join(problems) if problems else f"{label}: {comparison.detail}"
+    result = CheckResult(valid and comparison.passed, detail)
+    return result, problems, valid
 
 
 def check_restore(
@@ -311,29 +361,53 @@ def check_restore(
         case2_trace = work_dir / "case-2.jsonl"
         case2 = runner(stripped.parent.parent, evidence.record.session_id, 2, case2_trace)
         trace_paths.append(case2_trace)
-        problems, first, second, valid = _compare_restore(case1, case2)
+        same_history_trace = work_dir / "case-3.jsonl"
+        same_history = runner(original_home, evidence.record.session_id, 3, same_history_trace)
+        trace_paths.append(same_history_trace)
+        c_rebuild_trace = work_dir / "case-4.ndjson"
+        c_rebuild = runner(stripped.parent.parent, evidence.record.session_id, 4, c_rebuild_trace)
+        trace_paths.append(c_rebuild_trace)
+        problems, first, second, valid, position = _compare_restore(case1, case2)
+        restore_fidelity, fidelity_problems, fidelity_valid = _compare_reference(
+            case1,
+            same_history,
+            label="5.3 restore fidelity",
+            expected_plan="same-history",
+        )
+        rebuild_equivalence, rebuild_problems, rebuild_valid = _compare_reference(
+            case2,
+            c_rebuild,
+            label="5.4 rebuild equivalence",
+            expected_plan="c-rebuild",
+        )
+        problems.extend(fidelity_problems)
+        problems.extend(rebuild_problems)
+        valid = valid and fidelity_valid and rebuild_valid
         passed = valid and not problems
         detail = (
             "; ".join(problems)
             if problems
             else (
-                f"first-step top-{TOP_K} raw-logit match at position {case1.followup_position}; "
+                f"{position.detail}; {restore_fidelity.detail}; {rebuild_equivalence.detail}; "
                 "case 1 loaded KV and case 2 rebuilt; "
                 f"diagnostic tokens case 1={len(first)} case 2={len(second)}; "
                 f"terminal case 1={case1.terminal_reason} case 2={case2.terminal_reason}"
             )
         )
         return RestoreResult(
-            save_dir,
-            passed,
-            detail,
-            CheckResult(case1.switch_prefill == 0 and case1.followup_plan == "extend", "case 1"),
-            CheckResult(
+            save_dir=save_dir,
+            passed=passed,
+            detail=detail,
+            case1=CheckResult(case1.switch_prefill == 0 and case1.followup_plan == "extend", "5.1 case 1"),
+            case2=CheckResult(
                 case2.switch_prefill == 0 and case2.followup_prefill > 0 and case2.followup_plan == "rebuild",
-                "case 2",
+                "5.1 case 2",
             ),
-            stripped,
-            tuple(trace_paths),
+            position=position,
+            restore_fidelity=restore_fidelity,
+            rebuild_equivalence=rebuild_equivalence,
+            stripped_save_dir=stripped,
+            trace_paths=tuple(trace_paths),
             valid=valid,
         )
     except (
@@ -639,6 +713,7 @@ def process_restore_runner(
     *,
     workspace: Path | None = None,
     provenance_environment: Mapping[str, str] | None = None,
+    c_driver: str | Path | None = None,
 ) -> RestoreRunner:
     """Return a runner that starts each restore from a disposable task-workspace copy."""
 
@@ -653,30 +728,38 @@ def process_restore_runner(
         metadata = trace_path.with_suffix(".json")
         source_workspace = (workspace if workspace is not None else Path.cwd()).resolve()
         executable = config.executable[:-1] if config.executable[-1] == "attempt" else config.executable
-        command = [
-            *executable,
-            "restore",
-            "--session-id",
-            session_id,
-            "--metadata",
-            str(metadata),
-            "--model",
-            config.model,
-            "--backend",
-            config.backend,
-            "--ctx",
-            str(config.ctx),
-            "--temp",
-            str(config.temperature),
-            "--seed",
-            str(config.seed),
-            "--request-limit",
-            str(config.request_limit),
-            "--tokens",
-            str(config.tokens),
-            "--trace",
-            str(trace_path),
-        ]
+        case2_trace = trace_path.with_name("case-2.jsonl")
+        if case == 4:
+            if c_driver is None:
+                raise RestoreError("Gate 5 rebuild equivalence requires the C replay driver")
+            command = prepare_c_rebuild(config, c_driver, case2_trace, trace_path)
+        else:
+            command = [
+                *executable,
+                "same-history" if case == 3 else "restore",
+                "--session-id",
+                session_id,
+                "--metadata",
+                str(metadata),
+                "--model",
+                config.model,
+                "--backend",
+                config.backend,
+                "--ctx",
+                str(config.ctx),
+                "--temp",
+                str(config.temperature),
+                "--seed",
+                str(config.seed),
+                "--request-limit",
+                str(config.request_limit),
+                "--tokens",
+                str(config.tokens),
+                "--trace",
+                str(trace_path),
+            ]
+            if case == 3:
+                command.extend(["--restore-trace", str(trace_path.with_name("case-1.jsonl"))])
         environment = os.environ.copy()
         if provenance_environment is not None:
             environment.update(provenance_environment)
@@ -695,6 +778,9 @@ def process_restore_runner(
         trace_path.with_suffix(".log").write_text((completed.stdout or "") + (completed.stderr or ""))
         if completed.returncode:
             raise RestoreError(f"restore case {case} exited {completed.returncode}")
+        if case == 4:
+            trace_path.write_text(completed.stdout or "")
+            write_c_rebuild_metadata(case2_trace, trace_path, metadata)
         value = json.loads(metadata.read_text())
         return RestoreRun(
             trace_path=trace_path,
@@ -716,8 +802,9 @@ def check_result_saves(
     results_root: str | Path,
     *,
     provenance_environment: Mapping[str, str] | None = None,
+    c_driver: str | Path | None = None,
 ) -> tuple[RestoreResult, ...]:
-    """Restore every ds4-py attempt save in a fresh process pair."""
+    """Restore every ds4-py attempt save with same-history and C references."""
     results: list[RestoreResult] = []
     for item in task_results:
         if item.agent != "ds4py":
@@ -731,6 +818,7 @@ def check_result_saves(
                         config,
                         workspace=getattr(item, "workspace", None),
                         provenance_environment=provenance_environment,
+                        c_driver=c_driver,
                     ),
                 )
             )
@@ -748,6 +836,7 @@ def check_command(argv: Sequence[str]) -> int:
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--tokens", type=int, default=8192)
     parser.add_argument("--request-limit", type=int, default=100)
+    parser.add_argument("--c-driver", default=os.environ.get("DS4_C_DRIVER"))
     parser.add_argument("--results", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
@@ -765,11 +854,14 @@ def check_command(argv: Sequence[str]) -> int:
         request_limit=args.request_limit,
     )
     environment = report_provenance_environment(data)
+    options = {"c_driver": args.c_driver} if args.c_driver is not None else {}
+    if environment:
+        options["provenance_environment"] = environment
     results = check_result_saves(
         tasks,
         config,
         args.results or args.report.parent / "restores",
-        **({"provenance_environment": environment} if environment else {}),
+        **options,
     )
     if not results:
         raise RestoreError("report contains no ds4-py attempt saves")
@@ -795,14 +887,16 @@ def check_command(argv: Sequence[str]) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     os.environ[Q8_F16_CACHE_ENV] = str(Q8_F16_CACHE_MB)
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv or argv[0] not in {"attempt", "restore", "check"}:
-        raise SystemExit("usage: restore_check.py attempt|restore|check [options]")
+    if not argv or argv[0] not in {"attempt", "restore", "same-history", "check"}:
+        raise SystemExit("usage: restore_check.py attempt|restore|same-history|check [options]")
     command, arguments = argv[0], argv[1:]
     try:
         if command == "attempt":
             return attempt_command(arguments)
         if command == "restore":
             return restore_command(arguments)
+        if command == "same-history":
+            return same_history_command(arguments)
         return check_command(arguments)
     except (RestoreError, OSError, ValueError) as error:
         print(f"Bakeoff driver: {error}", file=sys.stderr)
