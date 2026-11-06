@@ -1,0 +1,92 @@
+{
+  "captured_at": "2026-11-06T07:10:00Z",
+  "source": "Remote stdout and metadata summaries observed over SSH before the host outage; this is not a replacement for raw sidecars.",
+  "instance_id": "59357985",
+  "instance_status": "offline",
+  "raw_directory_present_locally": false,
+  "raw_file_count": 0,
+  "completed_pair_count": 5,
+  "pairs": [
+    {
+      "task_id": "scale-generator",
+      "attempt": 1,
+      "position": 14828,
+      "5.1_extend": "PASS",
+      "5.1_rebuild": "PASS",
+      "5.2_position": "PASS",
+      "5.3_restore_fidelity": {"result": "PASS", "max_abs_logit_delta": 0.0},
+      "5.4_rebuild_equivalence": {"result": "PASS", "max_abs_logit_delta": 4.83886708e-08},
+      "case_1_diagnostic_tokens": 19135,
+      "case_2_diagnostic_tokens": 8192,
+      "case_1_terminal": "stop_token",
+      "case_2_terminal": "max_tokens"
+    },
+    {
+      "task_id": "scale-generator",
+      "attempt": 2,
+      "position": 17114,
+      "5.1_extend": "PASS",
+      "5.1_rebuild": "PASS",
+      "5.2_position": "PASS",
+      "5.3_restore_fidelity": {"result": "PASS", "max_abs_logit_delta": 0.0},
+      "5.4_rebuild_equivalence": {"result": "PASS", "max_abs_logit_delta": 4.52636719e-08},
+      "case_1_diagnostic_tokens": 1636,
+      "case_2_diagnostic_tokens": 1626,
+      "case_1_terminal": "stop_token",
+      "case_2_terminal": "stop_token"
+    },
+    {
+      "task_id": "affine-cipher",
+      "attempt": 1,
+      "position": 10245,
+      "5.1_extend": "PASS",
+      "5.1_rebuild": "PASS",
+      "5.2_position": "PASS",
+      "5.3_restore_fidelity": {"result": "PASS", "max_abs_logit_delta": 0.0},
+      "5.4_rebuild_equivalence": {"result": "PASS", "max_abs_logit_delta": 4.89257808e-08},
+      "case_1_diagnostic_tokens": 198,
+      "case_2_diagnostic_tokens": 190,
+      "case_1_terminal": "stop_token",
+      "case_2_terminal": "stop_token"
+    },
+    {
+      "task_id": "tree-building",
+      "attempt": 1,
+      "position": 17366,
+      "5.1_extend": "PASS",
+      "5.1_rebuild": "PASS",
+      "5.2_position": "PASS",
+      "5.3_restore_fidelity": {"result": "PASS", "max_abs_logit_delta": 0.0},
+      "5.4_rebuild_equivalence": {"result": "PASS", "max_abs_logit_delta": 4.89990235e-08},
+      "case_1_diagnostic_tokens": 8192,
+      "case_2_diagnostic_tokens": 9335,
+      "case_1_terminal": "max_tokens",
+      "case_2_terminal": "stop_token"
+    },
+    {
+      "task_id": "tree-building",
+      "attempt": 2,
+      "position": 14709,
+      "5.1_extend": "PASS",
+      "5.1_rebuild": "PASS",
+      "5.2_position": "PASS",
+      "5.3_restore_fidelity": {"result": "PASS", "max_abs_logit_delta": 0.0},
+      "5.4_rebuild_equivalence": {"result": "PASS", "max_abs_logit_delta": 4.59960923e-08},
+      "case_1_diagnostic_tokens": 2607,
+      "case_2_diagnostic_tokens": 4757,
+      "case_1_terminal": "stop_token",
+      "case_2_terminal": "stop_token"
+    }
+  ],
+  "zipper": {
+    "task_id": "zipper",
+    "attempt": 1,
+    "last_observed_at": "2026-11-06T07:03:27Z",
+    "last_observed_state": "Gate 5 case 1 restore process active; GPU active",
+    "completed_result_known": false,
+    "local_log_count": 0,
+    "local_sidecar_count": 0
+  },
+  "phase_b_started": false,
+  "recovery_requirement": "When SSH returns, sync /workspace/results/2026-11-06-phase-only-b and /workspace/gate5-redesigned-* into raw/ and verify checksums before treating this inventory as superseded."
+}
