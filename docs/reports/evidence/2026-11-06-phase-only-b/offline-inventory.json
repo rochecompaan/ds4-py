@@ -14,8 +14,14 @@
       "5.1_extend": "PASS",
       "5.1_rebuild": "PASS",
       "5.2_position": "PASS",
-      "5.3_restore_fidelity": {"result": "PASS", "max_abs_logit_delta": 0.0},
-      "5.4_rebuild_equivalence": {"result": "PASS", "max_abs_logit_delta": 4.83886708e-08},
+      "5.3_restore_fidelity": {
+        "result": "PASS",
+        "max_abs_logit_delta": 0.0
+      },
+      "5.4_rebuild_equivalence": {
+        "result": "PASS",
+        "max_abs_logit_delta": 4.83886708e-08
+      },
       "case_1_diagnostic_tokens": 19135,
       "case_2_diagnostic_tokens": 8192,
       "case_1_terminal": "stop_token",
@@ -28,8 +34,14 @@
       "5.1_extend": "PASS",
       "5.1_rebuild": "PASS",
       "5.2_position": "PASS",
-      "5.3_restore_fidelity": {"result": "PASS", "max_abs_logit_delta": 0.0},
-      "5.4_rebuild_equivalence": {"result": "PASS", "max_abs_logit_delta": 4.52636719e-08},
+      "5.3_restore_fidelity": {
+        "result": "PASS",
+        "max_abs_logit_delta": 0.0
+      },
+      "5.4_rebuild_equivalence": {
+        "result": "PASS",
+        "max_abs_logit_delta": 4.52636719e-08
+      },
       "case_1_diagnostic_tokens": 1636,
       "case_2_diagnostic_tokens": 1626,
       "case_1_terminal": "stop_token",
@@ -42,8 +54,14 @@
       "5.1_extend": "PASS",
       "5.1_rebuild": "PASS",
       "5.2_position": "PASS",
-      "5.3_restore_fidelity": {"result": "PASS", "max_abs_logit_delta": 0.0},
-      "5.4_rebuild_equivalence": {"result": "PASS", "max_abs_logit_delta": 4.89257808e-08},
+      "5.3_restore_fidelity": {
+        "result": "PASS",
+        "max_abs_logit_delta": 0.0
+      },
+      "5.4_rebuild_equivalence": {
+        "result": "PASS",
+        "max_abs_logit_delta": 4.89257808e-08
+      },
       "case_1_diagnostic_tokens": 198,
       "case_2_diagnostic_tokens": 190,
       "case_1_terminal": "stop_token",
@@ -56,8 +74,14 @@
       "5.1_extend": "PASS",
       "5.1_rebuild": "PASS",
       "5.2_position": "PASS",
-      "5.3_restore_fidelity": {"result": "PASS", "max_abs_logit_delta": 0.0},
-      "5.4_rebuild_equivalence": {"result": "PASS", "max_abs_logit_delta": 4.89990235e-08},
+      "5.3_restore_fidelity": {
+        "result": "PASS",
+        "max_abs_logit_delta": 0.0
+      },
+      "5.4_rebuild_equivalence": {
+        "result": "PASS",
+        "max_abs_logit_delta": 4.89990235e-08
+      },
       "case_1_diagnostic_tokens": 8192,
       "case_2_diagnostic_tokens": 9335,
       "case_1_terminal": "max_tokens",
@@ -70,8 +94,14 @@
       "5.1_extend": "PASS",
       "5.1_rebuild": "PASS",
       "5.2_position": "PASS",
-      "5.3_restore_fidelity": {"result": "PASS", "max_abs_logit_delta": 0.0},
-      "5.4_rebuild_equivalence": {"result": "PASS", "max_abs_logit_delta": 4.59960923e-08},
+      "5.3_restore_fidelity": {
+        "result": "PASS",
+        "max_abs_logit_delta": 0.0
+      },
+      "5.4_rebuild_equivalence": {
+        "result": "PASS",
+        "max_abs_logit_delta": 4.59960923e-08
+      },
       "case_1_diagnostic_tokens": 2607,
       "case_2_diagnostic_tokens": 4757,
       "case_1_terminal": "stop_token",

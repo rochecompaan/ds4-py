@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, replace
-from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from bench.driver_cases import export_trace_cases, read_driver_ndjson
 from bench.provenance import TraceProvenance
 from ds4py.engine.replay import read_replay
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class CConfig(Protocol):
