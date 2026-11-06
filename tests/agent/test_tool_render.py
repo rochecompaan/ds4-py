@@ -466,6 +466,95 @@ def test_sampled_thinking_response_round_trips_native_tokens() -> None:
         assert list(session.transcript.tokens) == original
 
 
+def sampled_round_trip(
+    response: ModelResponse,
+    *,
+    generated: str,
+    think: ThinkMode = ThinkMode.NONE,
+    max_tokens: int = 4096,
+    reconcile_capped: bool = False,
+) -> tuple[list[int], list[int]]:
+    """Sample a response natively, then rebuild it into a fresh session."""
+    sequence = tuple(tokenize_rendered(generated))
+
+    def script(prompt: Any, sampled: Any) -> Any:
+        return sequence[len(sampled)] if len(sampled) < len(sequence) else FAKE_EOS
+
+    request = ModelRequest([UserPromptPart("round trip")])
+    with fake_engine("deepseek4", think=think, script=script) as engine:
+        session = engine.session()
+        binder = MessageBinder(session)
+        binder.prepare([request])
+        list(session.run_round(max_tokens=max_tokens))
+        if reconcile_capped:
+            # Capped response persistence rewinds the round's appended EOS.
+            assert session.transcript.tokens[-1] == FAKE_EOS
+            session.reconcile_round(len(session.transcript) - 1)
+        binder.bind_response(response)
+        original = list(session.transcript.tokens)
+
+    with fake_engine("deepseek4", think=think) as engine:
+        session = engine.session()
+        MessageBinder(session).prepare([request, response])
+        return original, list(session.transcript.tokens)
+
+
+def test_sampled_dsml_group_opener_round_trips_native_tokens() -> None:
+    invoke = (
+        '<｜DSML｜invoke name="find_files">\n'
+        '<｜DSML｜parameter name="pattern" string="true">*</｜DSML｜parameter>\n'
+        "</｜DSML｜invoke>"
+    )
+    response = ModelResponse(
+        [
+            TextPart("\n\n<｜DSML｜tool_calls>"),
+            ToolCallPart("find_files", {"pattern": "*"}, provider_details={"ds4py.raw": invoke}),
+        ],
+        metadata={"ds4.source": "sampled"},
+        finish_reason="tool_call",
+    )
+
+    original, rebuilt = sampled_round_trip(
+        response,
+        generated=f"\n\n<｜DSML｜tool_calls>\n{invoke}\n</｜DSML｜tool_calls>",
+    )
+
+    assert rebuilt == original
+
+
+def test_sampled_response_without_thinking_part_round_trips_close_think() -> None:
+    response = ModelResponse(
+        [TextPart("answer")],
+        metadata={"ds4.source": "sampled"},
+        finish_reason="stop",
+    )
+
+    original, rebuilt = sampled_round_trip(
+        response,
+        generated="</think>answer",
+        think=ThinkMode.LOW,
+    )
+
+    assert rebuilt == original
+
+
+def test_length_capped_response_round_trips_without_eos() -> None:
+    response = ModelResponse(
+        [TextPart("abc")],
+        metadata={"ds4.source": "sampled"},
+        finish_reason="length",
+    )
+
+    original, rebuilt = sampled_round_trip(
+        response,
+        generated="abcdef",
+        max_tokens=3,
+        reconcile_capped=True,
+    )
+
+    assert rebuilt == original
+
+
 def test_render_tool_call_rejects_unknown_family() -> None:
     with pytest.raises(ValueError, match="family"):
         render_tool_call("unknown", "read", {})

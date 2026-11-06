@@ -119,6 +119,55 @@ class MessageRenderer:
             stanzas.append("\n".join(markup.split("\n")[1:-1]))
         return f"<｜DSML｜{calls}>\n{'\n'.join(stanzas)}\n</｜DSML｜{calls}>"
 
+    def _response_text(self, parts: Sequence[object], index: int, sampled: bool) -> str:
+        """Keep a sampled DSML opener only in the tool-call group that owns it."""
+        text = cast("TextPart", parts[index]).content
+        family = self.engine.info.family
+        if (
+            not sampled
+            or family not in ("deepseek4", "deepseek41")
+            or index + 1 >= len(parts)
+            or not isinstance(parts[index + 1], ToolCallPart)
+        ):
+            return text
+        calls = " calls" if family == "deepseek41" else "tool_calls"
+        return text.removesuffix(f"<｜DSML｜{calls}>")
+
+    @staticmethod
+    def _assistant_prefix_state(
+        builder: PromptBuilder,
+        prefix: Sequence[int],
+        parts: Sequence[object],
+        sampled: bool,
+    ) -> tuple[list[int], bool]:
+        """Return the native assistant opener and whether it leaves thinking open."""
+        if not sampled:
+            return [], False
+        assistant_prefix = builder.assistant_prefix(prefix)
+        think_open = builder.engine.tokenize("<think>", rendered=True)
+        think_close = builder.engine.tokenize("</think>", rendered=True)
+
+        def last_marker(marker: Sequence[int]) -> int:
+            return max(
+                (
+                    index
+                    for index in range(len(assistant_prefix) - len(marker) + 1)
+                    if assistant_prefix[index : index + len(marker)] == marker
+                ),
+                default=-1,
+            )
+
+        opens_thinking = last_marker(think_open) > last_marker(think_close)
+        in_thinking = opens_thinking and bool(parts) and not isinstance(parts[0], ThinkingPart)
+        return assistant_prefix, in_thinking
+
+    @staticmethod
+    def _assistant_end(builder: PromptBuilder, message: ModelResponse, sampled: bool) -> list[int]:
+        """Reproduce the absent native EOS on a length-capped sampled response."""
+        if sampled and message.finish_reason == "length":
+            return []
+        return builder.append_assistant_end()
+
     def response_segments(  # noqa: PLR0915 - Response rendering handles every message-part family.
         self,
         builder: PromptBuilder,
@@ -129,7 +178,7 @@ class MessageRenderer:
         sampled = (message.metadata or {}).get("ds4.source") == "sampled"
         family = self.engine.info.family
         parts = [part for part in message.parts if not isinstance(part, (TextPart, ThinkingPart)) or part.content]
-        in_thinking = False
+        assistant_prefix, in_thinking = self._assistant_prefix_state(builder, prefix, parts, sampled)
 
         def close_thinking() -> None:
             nonlocal in_thinking
@@ -142,7 +191,7 @@ class MessageRenderer:
             part = parts[index]
             if isinstance(part, TextPart):
                 close_thinking()
-                spans.append((part.content, sampled))
+                spans.append((self._response_text(parts, index, sampled), sampled))
                 index += 1
             elif isinstance(part, ThinkingPart):
                 if sampled:
@@ -185,7 +234,7 @@ class MessageRenderer:
                 if text:
                     body.extend(builder.engine.tokenize(text, rendered=rendered))
             segments = [
-                RenderedSegment("assistant_prefix", builder.assistant_prefix(prefix)),
+                RenderedSegment("assistant_prefix", assistant_prefix),
                 RenderedSegment("assistant", body),
             ]
         else:
@@ -195,7 +244,7 @@ class MessageRenderer:
                     builder.restored_assistant(prefix, spans),
                 )
             ]
-        end = builder.append_assistant_end()
+        end = self._assistant_end(builder, message, sampled)
         if end:
             segments.append(RenderedSegment("eos", end))
         return segments
