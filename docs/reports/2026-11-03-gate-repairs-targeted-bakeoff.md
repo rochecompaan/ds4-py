@@ -87,7 +87,7 @@ The earlier `d163c2c` task results did not execute ds4-py and are not product ev
 
 ## Evidence
 
-The project evidence directory is `docs/reports/evidence/2026-11-03-gate-repairs-0ec1288/`. It contains the main report, configuration, agent logs, restore logs, interruption events, and C diagnostic.
+The project evidence directory is `bakeoff-evidence/2026-11-03-gate-repairs-0ec1288/` at the repository root. It contains the main report, configuration, agent logs, restore logs, interruption events, and C diagnostic.
 
 The full non-KV evidence archive is `/home/roche/projects/satyrn/ds4-py-evidence/gate-repairs-0ec1288-non-kv.tar.gz`. It also contains the raw runner and terminal logs. Its SHA-256 is `400c186e3dd5fd32e30f2c9f9e00fbdacb19a37d3c3f8eaff89688fe8849b4cd`.
 

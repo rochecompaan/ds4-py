@@ -23,7 +23,7 @@ This design replaces criteria that failed for reasons outside the ds4-py seam. I
 
 ## 2. Evidence and design choice
 
-The primary findings are in `docs/reports/evidence/2026-11-04-logits-probe/FINDINGS.md` in the `bakeoff-workspace-isolation` worktree. That file and its raw evidence belong to the user's uncommitted source-worktree changes. This Phase 1 branch does not copy or alter them.
+The primary findings are in `docs/reports/2026-11-04-logits-probe-findings.md`. The raw evidence is in `bakeoff-evidence/2026-11-04-logits-probe/` and `bakeoff-evidence/2026-11-04-gate6-crossfeed/` at the repository root.
 
 The evidence shows:
 
@@ -59,7 +59,7 @@ Use same-host, same-session logits equivalence for cross-driver checks. Use exac
 Two supported diagnostic drivers produce the same NDJSON evidence shape:
 
 1. `bench/c_replay_diagnostic.c` uses the native C API directly.
-2. `bench/ds4py_replay_diagnostic.py` is the supported form of `docs/reports/evidence/2026-11-04-logits-probe/raw/probe_ds4py.py` and uses the ds4-py worker.
+2. `bench/ds4py_replay_diagnostic.py` is the supported form of `bakeoff-evidence/2026-11-04-logits-probe/raw/probe_ds4py.py` and uses the ds4-py worker.
 
 The C file is already in `bench/`. Phase 2 promotes it from a standalone diagnostic to a documented built tool. It remains diagnostic code; it is not part of `libds4`.
 
@@ -161,7 +161,7 @@ relative_rate_difference  = abs(ds4py_rate - c_rate) / c_rate
 
 Both relative rate differences must be at most `0.25`. A zero denominator or missing paired interval is invalid. Process startup and model loading are excluded.
 
-The old evidence does not contain paired C and ds4-py prefill/decode durations, so `0.25` is a provisional initial tolerance, not a claim about a measured rate distribution. The old token-per-wall-second proxy has relative differences from `0.151` to `0.238` across `docs/reports/evidence/2026-11-01-bakeoff-8192-b28bb4d/bakeoff.json` and `docs/reports/evidence/2026-11-03-gate-repairs-0ec1288/gate-repairs-0ec1288/bakeoff.json`. A `0.25` tolerance covers that proxy while the new gate collects its first direct paired measurements. The report retains raw tokens and seconds so a later design can tighten this threshold from real rate data.
+The old evidence does not contain paired C and ds4-py prefill/decode durations, so `0.25` is a provisional initial tolerance, not a claim about a measured rate distribution. The old token-per-wall-second proxy has relative differences from `0.151` to `0.238` across `docs/reports/evidence/2026-11-01-bakeoff-8192-b28bb4d/bakeoff.json` and `bakeoff-evidence/2026-11-03-gate-repairs-0ec1288/gate-repairs-0ec1288/bakeoff.json`. A `0.25` tolerance covers that proxy while the new gate collects its first direct paired measurements. The report retains raw tokens and seconds so a later design can tighten this threshold from real rate data.
 
 #### Cached-prefix fraction
 

@@ -2,7 +2,7 @@
 
 Host: vast.ai instance 59116864, NVIDIA RTX PRO 6000 Blackwell Max-Q, 97887 MiB.
 ds4 revision 5379c1c9ac31, ds4-py be45b7c, model sha256 ca22ae2f...6261c0, backend cuda, ctx 100000.
-Raw outputs: `../2026-11-04-gate6-crossfeed/raw/` and `raw/` beside this file (git-excluded).
+Raw outputs: `bakeoff-evidence/2026-11-04-gate6-crossfeed/raw/` and `bakeoff-evidence/2026-11-04-logits-probe/raw/` at the repository root (git-excluded).
 
 ## Question
 
