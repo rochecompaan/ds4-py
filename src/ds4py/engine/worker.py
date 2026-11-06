@@ -20,7 +20,7 @@ from ds4py._native.protocol import (
     Snapshot,
     SyncStatus,
 )
-from ds4py.errors import CheckpointError, EmptyPromptError, EngineError
+from ds4py.errors import CheckpointError, EmptyPromptError, EngineError, WorkerPoisonedError
 
 from .decode import GenerateJob, generate
 from .events import (
@@ -175,6 +175,7 @@ class EngineWorker:
         self._queue: SimpleQueue[_Submission | _Call | _STOP] = SimpleQueue()
         self._lock = threading.Lock()
         self._closed = False
+        self._poisoned_by: BaseException | None = None
         ready: Future[EngineInfo] = Future()
         self._thread = threading.Thread(target=self._run, args=(config, ready), daemon=True)
         self._thread.start()
@@ -206,6 +207,13 @@ class EngineWorker:
     def plan(self, tokens: Sequence[int]) -> Plan:
         target = tuple(tokens)
         return self.call(lambda e, s: self._plan(s, target)).result()
+
+    def _poison(self, error: BaseException) -> None:
+        self._poisoned_by = error
+
+    def _reject_if_poisoned(self) -> None:
+        if self._poisoned_by is not None:
+            raise WorkerPoisonedError("engine worker is poisoned") from self._poisoned_by
 
     def close(self) -> None:
         with self._lock:
@@ -240,6 +248,7 @@ class EngineWorker:
                     if not item.future.set_running_or_notify_cancel():
                         continue
                     try:
+                        self._reject_if_poisoned()
                         result = item.fn(engine, session)
                     except BaseException as error:  # noqa: BLE001 - Transfer every call failure to its Future.
                         item.future.set_exception(error)
@@ -247,6 +256,7 @@ class EngineWorker:
                         item.future.set_result(result)
                 else:
                     try:
+                        self._reject_if_poisoned()
                         self._execute(engine, session, item.job, item.events.queue.put)
                     except BaseException as error:  # noqa: BLE001 - Publish every job failure on its event channel.
                         item.events.queue.put(error)
@@ -286,6 +296,7 @@ class EngineWorker:
                 cancelled=self.cancel_event.is_set,
                 emit=emit,
                 step=job.decode_step,
+                poison=self._poison,
             )
             if reason == "interrupted":
                 self.cancel_event.clear()

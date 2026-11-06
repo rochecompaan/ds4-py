@@ -37,6 +37,10 @@ class EngineError(Ds4pyError):
     """Engine failure."""
 
 
+class WorkerPoisonedError(EngineError):
+    """The worker cannot run native operations after a fatal decode failure."""
+
+
 class EmptyPromptError(EngineError):
     """The native session contract rejects an empty prompt."""
 
