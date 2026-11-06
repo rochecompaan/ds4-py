@@ -3,11 +3,14 @@
 import asyncio
 import json
 import shutil
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
+from io import StringIO
 from pathlib import Path
-from typing import Any, Never, cast
+from typing import Any, Never, cast, override
 
 import pytest
 from pydantic_ai.messages import (
@@ -25,6 +28,7 @@ from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.session import Engine
 from ds4py.errors import EngineError, StoreError
 from ds4py.model import DS4Model
+from ds4py.noninteractive import run_noninteractive
 from ds4py.runtime import AgentRuntime
 from ds4py.store import KV_HEADER, KV_MAGIC, KV_VERSION, SessionStore, token_digest
 
@@ -81,6 +85,37 @@ def make_model(engine: Any, **kwargs: Any) -> DS4Model:
     return DS4Model(engine.session(), sampling=SamplingPolicy(seed=1), **kwargs)
 
 
+class CappedRequestModel(DS4Model):
+    def __init__(self, *args: Any, cap_request: int | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.cap_request = cap_request
+        self.requests_seen = 0
+
+    @asynccontextmanager
+    @override
+    async def request_stream(
+        self,
+        messages: Any,
+        model_settings: Any,
+        model_request_parameters: Any,
+        run_context: Any = None,
+    ) -> AsyncGenerator[Any]:
+        self.requests_seen += 1
+        original = self.max_tokens
+        if self.requests_seen == self.cap_request:
+            self.max_tokens = 1
+        try:
+            async with super().request_stream(
+                messages,
+                model_settings,
+                model_request_parameters,
+                run_context,
+            ) as stream:
+                yield stream
+        finally:
+            self.max_tokens = original
+
+
 def dump(messages: Any) -> str:
     return ModelMessagesTypeAdapter.dump_json(list(messages)).decode()
 
@@ -124,6 +159,89 @@ def saved_session(tmp_path: Path, script: Any = (READ_CALL, "first answer"), *, 
         finally:
             asyncio.run(runtime.close())
     return project, store, record, state
+
+
+def assert_saved_sampled_record(response: Any, record: Any, tokens: list[int], expected_tokens: list[int]) -> None:
+    metadata = response.metadata or {}
+    sampled = metadata.get("ds4.sampled")
+    assert isinstance(sampled, dict)
+    native = [
+        segment
+        for segment in record.segments
+        if segment.key == metadata["ds4.key"] and segment.kind in {"assistant", "eos"}
+    ]
+    assert native
+    assert sampled["content_hash"] == native[0].content_hash
+    assert {segment.content_hash for segment in native} == {sampled["content_hash"]}
+    assert sampled["segments"] == [
+        {"kind": segment.kind, "tokens": list(tokens[segment.start : segment.end])} for segment in native
+    ]
+    assert [token for segment in sampled["segments"] for token in segment["tokens"]] == expected_tokens
+    assert [token for segment in native for token in tokens[segment.start : segment.end]] == expected_tokens
+
+
+@pytest.mark.parametrize(
+    ("script", "cap_request", "finish_reason", "expected_code", "expected_tokens"),
+    [
+        (("answer",), None, "stop", 0, [*tokenize_rendered("answer"), FAKE_EOS]),
+        ((READ_CALL, READ_CALL, "ab"), 3, "length", 1, tokenize_rendered("ab")[:1]),
+        ((READ_CALL, "answer"), None, "tool_call", 0, [*tokenize_rendered(READ_CALL), FAKE_EOS]),
+    ],
+    ids=["stop_token", "length", "tool_call_complete"],
+)
+def test_live_stop_paths_save_and_reload_exact_sampled_ids(
+    tmp_path: Path,
+    script: tuple[str, ...],
+    cap_request: int | None,
+    finish_reason: str,
+    expected_code: int,
+    expected_tokens: list[int],
+) -> None:
+    project = project_dir(tmp_path)
+    store = SessionStore(tmp_path / "home")
+    with fake_engine(script=scripted_rounds(*script)) as engine:
+        model = CappedRequestModel(
+            engine.session(),
+            sampling=SamplingPolicy(seed=1),
+            cap_request=cap_request,
+        )
+        runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
+        session_id = runtime.session_id
+        try:
+            code = asyncio.run(run_noninteractive(runtime, "read hello", out=StringIO(), err=StringIO()))
+            assert code == expected_code
+            tokens = list(model.session.transcript.tokens)
+            record = store.read_record(store.session_dir(session_id) / "save.json")
+            snapshot = asyncio.run(
+                _steps(store.session_dir(session_id)).latest_snapshot(
+                    run_id=record.run_id,
+                    include_interrupted=True,
+                )
+            )
+            assert snapshot is not None
+            response = next(
+                message
+                for message in snapshot.messages
+                if isinstance(message, ModelResponse) and message.finish_reason == finish_reason
+            )
+            assert_saved_sampled_record(response, record, tokens, expected_tokens)
+            response_key = response.metadata["ds4.key"]
+            sampled = deepcopy(response.metadata["ds4.sampled"])
+        finally:
+            asyncio.run(runtime.close())
+
+    with fake_engine() as engine:
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
+        try:
+            asyncio.run(runtime.switch(session_id))
+            restored = next(
+                message
+                for message in runtime.messages
+                if isinstance(message, ModelResponse) and (message.metadata or {}).get("ds4.key") == response_key
+            )
+            assert (restored.metadata or {}).get("ds4.sampled") == sampled
+        finally:
+            asyncio.run(runtime.close())
 
 
 def test_save_and_switch_with_skill_history_preserves_provenance(
