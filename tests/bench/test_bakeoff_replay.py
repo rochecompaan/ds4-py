@@ -10,10 +10,14 @@ from typing import Any, cast
 import ds4py
 from ds4py._native.fake import FAKE_EOS, FakeNative, FakeSession
 from ds4py._native.fake_chat import tokenize_rendered
+from ds4py.engine.events import Stopped, Token
 from ds4py.engine.session import Engine
+from ds4py.engine.tool_syntax.model import Snapshot, ToolCall
+from ds4py.engine.transcript import Transcript
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
+from bench import replay_c_traces
 from bench.replay_c_traces import (
     ReplayResult,
     generation_limit,
@@ -101,6 +105,60 @@ def test_tool_round_diagnostic_replays_tokens_without_tool_execution(
     assert result.tokens == len(sampled)
     assert result.tool_call
     assert result.terminal_reason == "tool_call_complete"
+
+
+def test_tool_round_parser_validation_is_linear_in_response_bytes(monkeypatch: Any) -> None:
+    data = TOOL_TEXT.replace("/tmp/x", "x" * 20_000).encode()
+    snapshot = Snapshot(
+        state="DONE",
+        raw=data,
+        calls=(ToolCall(name="read", args={"path": "x" * 20_000}, raw=data.decode()),),
+        error=None,
+        param_close_prefix=False,
+        in_think=False,
+        dsml_in_think=False,
+    )
+    created = 0
+    fed_bytes = 0
+
+    class FakeParser:
+        def __init__(self) -> None:
+            nonlocal created
+            created += 1
+            self.in_think = False
+
+        def feed(self, chunk: bytes) -> Snapshot:
+            nonlocal fed_bytes
+            fed_bytes += len(chunk)
+            return snapshot
+
+        def finish(self) -> Snapshot:
+            return snapshot
+
+    monkeypatch.setattr(replay_c_traces, "make_parser", lambda _info: FakeParser())
+    engine = SimpleNamespace(info=object(), token_text=lambda _token: data)
+    round_ = SimpleNamespace(
+        prompt=(),
+        sampled=(1,),
+        think=0,
+        prefix_only=False,
+        context_limited=False,
+    )
+    transcript = Transcript()
+    transcript.append((1,), "assistant")
+
+    result = replay_c_traces._check_round(
+        cast("Any", engine),
+        "large-tool",
+        0,
+        cast("Any", round_),
+        (Token(1, data), Stopped("tool_call_complete")),
+        transcript,
+    )
+
+    assert result == (True, "tool_call_complete")
+    assert created == 2
+    assert fed_bytes == 2 * len(data)
 
 
 def test_replay_preserves_c_cached_prefill_boundary(tmp_path: Path) -> None:

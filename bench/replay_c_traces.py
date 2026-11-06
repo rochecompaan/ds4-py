@@ -172,13 +172,11 @@ def _check_round(  # noqa: PLR0913, PLR0917 - Replay comparison needs the comple
             )
     tool_call = c_snapshot.state == "DONE" and bool(c_snapshot.calls)
     if tool_call:
+        # ToolParser.feed consumes every chunk byte by byte, so bytewise equivalence
+        # covers every two-chunk split without reparsing the full response per byte.
         bytewise = _parse_c(engine, round_, (data[index : index + 1] for index in range(len(data))))
         if bytewise != c_snapshot:
             raise ReplayMismatch(f"{task_id} trace round {ordinal}: bytewise parser mismatch")
-        for split in range(len(data) + 1):
-            observed = _parse_c(engine, round_, [data[:split], data[split:]])
-            if observed != c_snapshot:
-                raise ReplayMismatch(f"{task_id} trace round {ordinal}: tool stanza differs at byte split {split}")
     # Parsing a call is the terminal boundary; replay never executes it.
     return tool_call, stopped.reason
 
