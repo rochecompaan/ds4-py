@@ -175,6 +175,7 @@ class EngineWorker:
         self._queue: SimpleQueue[_Submission | _Call | _STOP] = SimpleQueue()
         self._lock = threading.Lock()
         self._closed = False
+        self._poisoned_by: BaseException | None = None
         ready: Future[EngineInfo] = Future()
         self._thread = threading.Thread(target=self._run, args=(config, ready), daemon=True)
         self._thread.start()
@@ -206,6 +207,9 @@ class EngineWorker:
     def plan(self, tokens: Sequence[int]) -> Plan:
         target = tuple(tokens)
         return self.call(lambda e, s: self._plan(s, target)).result()
+
+    def _poison(self, error: BaseException) -> None:
+        self._poisoned_by = error
 
     def close(self) -> None:
         with self._lock:
@@ -286,6 +290,7 @@ class EngineWorker:
                 cancelled=self.cancel_event.is_set,
                 emit=emit,
                 step=job.decode_step,
+                poison=self._poison,
             )
             if reason == "interrupted":
                 self.cancel_event.clear()

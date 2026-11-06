@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Never, Protocol, cast
 
 from ds4py.errors import EngineError
 
@@ -72,6 +72,7 @@ class DecodeContext:
         cancelled: Callable[[], bool],
         emit: Callable[[Event], None],
         session: SessionHandle | None = None,
+        poison: Callable[[BaseException], None] | None = None,
     ) -> None:
         self.rng = job.rng.state
         self.reason: str | None = None
@@ -79,6 +80,7 @@ class DecodeContext:
         self._limit, self._limit_reason = limit, limit_reason
         self._cancelled, self._emit = cancelled, emit
         self._session = session
+        self._poison = poison
         self._accepted = 0
         self._committed = False
         self._sampled_tokens = job.stream.sampled_tokens if job.stream is not None else job.sampled_tokens
@@ -89,6 +91,12 @@ class DecodeContext:
         self._overlay: _DecodeOverlay | None = None
         self.finalized = False
         self._finish_parser: bool | None = None
+
+    def poison(self, error: BaseException) -> Never:
+        """Mark native state as uncertain and re-raise the exact fatal error."""
+        if self._poison is not None:
+            self._poison(error)
+        raise error
 
     @property
     def staging(self) -> bool:
@@ -347,6 +355,7 @@ def generate(  # noqa: PLR0913 - Generation accepts the complete native round co
     cancelled: Callable[[], bool],
     emit: Callable[[Event], None],
     step: DecodeStep | None = None,
+    poison: Callable[[BaseException], None] | None = None,
 ) -> str:
     room = session.ctx() - session.pos()
     limit = min(job.max_tokens, max(room - job.reserve, 0))
@@ -362,6 +371,7 @@ def generate(  # noqa: PLR0913 - Generation accepts the complete native round co
         cancelled=cancelled,
         emit=emit,
         session=session,
+        poison=poison,
     )
     if job.resume:
         ctx.resume()
