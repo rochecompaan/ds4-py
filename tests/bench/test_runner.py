@@ -221,7 +221,12 @@ def paired_evidence(results: Any) -> dict[str, Any]:
     }
     c_provenance = provenance()
     ds4py_provenance = replace(c_provenance, trace_sha256="ds4py-output-sha")
-    return {"rate_evidence": rates, "provenance": ((c_provenance, ds4py_provenance),)}
+    cached_fractions = dict.fromkeys(task_ids, (1 / 3, 1 / 3))
+    return {
+        "rate_evidence": rates,
+        "cached_fractions": cached_fractions,
+        "provenance": ((c_provenance, ds4py_provenance),),
+    }
 
 
 def test_agent_commands_share_model_sampling_and_task_prompt(tmp_path: Path) -> None:
@@ -615,15 +620,21 @@ def test_gate_three_enforces_rate_and_cached_fraction_tolerances() -> None:
     assert not bad_rate.passed
     assert bad_rate.valid
 
-    cached_python = with_summary(python, avg_prefill_reuse=0.5)
-    cached_results = [c, cached_python]
-    bad_cache = build_report(
-        cached_results,
-        healthy_restore(cached_results),
-        **paired_evidence(cached_results),
-    ).gates["gate-3"]
+    evidence = paired_evidence(results)
+    evidence["cached_fractions"]["task"] = (0.9, 0.5)
+    bad_cache = build_report(results, healthy_restore(results), **evidence).gates["gate-3"]
     assert not bad_cache.passed
     assert bad_cache.valid
+
+
+def test_gate_three_cache_parity_ignores_unpaired_live_trajectories() -> None:
+    c = with_summary(result(agent="c"), avg_prefill_reuse=0.9)
+    python = with_summary(result(), avg_prefill_reuse=0.5)
+    results = [c, python]
+
+    gate = build_report(results, healthy_restore(results), **paired_evidence(results)).gates["gate-3"]
+
+    assert gate.passed and gate.valid
 
 
 def test_gate_three_rejects_unexplained_non_extensions() -> None:
@@ -865,6 +876,7 @@ def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkey
     phase = SimpleNamespace(
         result=driver,
         rate_evidence={},
+        cached_fractions={},
         provenance=(),
         cap_parity=GateResult(True, "round-0 cap outcomes match"),
     )
@@ -972,5 +984,6 @@ def test_reference_phase_runs_sequentially_and_records_provenance(
     assert phase.result.decode_steps == 1
     assert phase.rate_evidence["task"][0].decode_steps == 1
     assert phase.rate_evidence["task"][1].decode_steps == 1
+    assert phase.cached_fractions["task"] == pytest.approx((1 / 3, 1 / 3))
     assert len(phase.provenance) == 1
     assert len(list((tmp_path / "reference").rglob("*.provenance.json"))) == 2

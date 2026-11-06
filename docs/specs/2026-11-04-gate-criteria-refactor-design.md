@@ -165,16 +165,15 @@ The old evidence does not contain paired C and ds4-py prefill/decode durations, 
 
 #### Cached-prefix fraction
 
-For each common task, calculate the existing mean per-round cached-prefix fraction for each arm:
+For each common task, use the same paired C-trace driver rounds as the rate check. For each driver and round, calculate the full-prompt sync's cached-prefix fraction, then take the mean across that task's rounds:
 
 ```text
-C:      cached / prompt_length
-ds4-py: plan.reused / (plan.reused + plan.to_prefill)
+full_sync.cached_tokens / full_sync.input_tokens
 ```
 
-Zero denominators remain excluded. The absolute difference between arm means must be at most `0.15`.
+Exclude the deliberate prefix-reset sync from the mean: it always starts with an empty cache and is a prefill-shape control, not a cache-reuse observation. Exclude zero-input denominators. The absolute difference between driver means must be at most `0.15`.
 
-The retained full bake-off has a largest observed absolute difference of `0.1365`; the gate-repair run has `0.1348`. The `0.15` threshold therefore comes from existing data. It accommodates different tool histories without making exact prompt lengths a requirement.
+The independent live C and ds4-py task trajectories keep their existing per-arm fractions as diagnostics, but Gate 3 does not compare them. Their round counts, prompt lengths, and initial cache state can differ even when both drivers reuse KV identically on the same retained trace.
 
 #### Extension-only KV reuse
 

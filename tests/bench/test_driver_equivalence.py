@@ -20,7 +20,7 @@ from bench.driver_cases import (
     load_case_tokens,
     read_case_manifest,
 )
-from bench.driver_equivalence import compare_driver_rounds, rates_by_task
+from bench.driver_equivalence import cached_fractions_by_task, compare_driver_rounds, rates_by_task
 from bench.provenance import (
     Q8_F16_CACHE_ENV,
     Q8_F16_CACHE_MB,
@@ -315,16 +315,20 @@ def test_zero_token_rounds_are_sync_only_but_set_needs_decode_coverage() -> None
     assert mixed.decode_steps == 1
 
 
-def test_reference_driver_rates_feed_gate_three_without_another_run() -> None:
+def test_reference_driver_rates_and_cache_fractions_feed_gate_three_without_another_run() -> None:
     rounds = [evidence(), evidence(round_index=1, requested_steps=0)]
 
     rates = rates_by_task(rounds)
+    cached_fractions = cached_fractions_by_task(rounds)
 
     assert rates["task-a"].prefill_tokens == 6
     assert rates["task-a"].prefill_seconds == pytest.approx(0.5)
     assert rates["task-a"].decode_steps == 1
     assert rates["task-a"].decode_seconds == pytest.approx(1.0)
     assert compare_rate(rates["task-a"], rates["task-a"]).passed
+    # Each full sync reuses 1/3 of its prompt. The deliberate empty-cache
+    # prefix-reset syncs are not independent cache-reuse observations.
+    assert cached_fractions["task-a"] == pytest.approx(1 / 3)
 
 
 def test_gate_six_requires_both_new_parts_not_c_diagnostic_or_tool_coverage() -> None:

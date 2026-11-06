@@ -198,3 +198,13 @@ def rates_by_task(rounds: Sequence[DriverRoundEvidence]) -> dict[str, RateEviden
             decode_seconds + round_.decode_seconds,
         )
     return {task_id: RateEvidence(task_id, *values) for task_id, values in totals.items()}
+
+
+def cached_fractions_by_task(rounds: Sequence[DriverRoundEvidence]) -> dict[str, float]:
+    """Mean full-prompt cache reuse over paired rounds, excluding prefix resets."""
+    fractions: dict[str, list[float]] = {}
+    for round_ in rounds:
+        for call in round_.sync_calls:
+            if call.label == "full" and call.input_tokens:
+                fractions.setdefault(round_.case.task_id, []).append(call.cached_tokens / call.input_tokens)
+    return {task_id: sum(values) / len(values) for task_id, values in fractions.items()}

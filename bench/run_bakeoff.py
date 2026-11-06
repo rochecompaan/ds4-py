@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -27,6 +27,7 @@ from bench.driver_cases import (
 from bench.driver_equivalence import (
     DriverEquivalenceResult,
     DriverRoundResult,
+    cached_fractions_by_task,
     combine_driver_results,
     compare_driver_rounds,
     rates_by_task,
@@ -363,6 +364,7 @@ class ReferencePhase:
     rate_evidence: dict[str, tuple[RateEvidence, RateEvidence]]
     provenance: tuple[tuple[TraceProvenance, TraceProvenance], ...]
     cap_parity: GateResult | None = None
+    cached_fractions: dict[str, tuple[float, float]] = field(default_factory=dict)
 
 
 def _reference_failure(task_id: str, attempt: int, detail: str) -> DriverEquivalenceResult:
@@ -562,8 +564,19 @@ def run_reference_equivalence(  # noqa: PLR0913 - Task evidence, driver setup, a
     rates = {
         task_id: (c_rates[task_id], ds4py_rates[task_id]) for task_id in sorted(c_rates.keys() & ds4py_rates.keys())
     }
+    c_cached = cached_fractions_by_task(c_evidence)
+    ds4py_cached = cached_fractions_by_task(ds4py_evidence)
+    cached_fractions = {
+        task_id: (c_cached[task_id], ds4py_cached[task_id]) for task_id in sorted(c_cached.keys() & ds4py_cached.keys())
+    }
     cap_result = _run_cap_parity(task_results, config, c_driver, session, results_root) if cap_parity else None
-    return ReferencePhase(combine_driver_results(comparisons), rates, tuple(provenance_pairs), cap_result)
+    return ReferencePhase(
+        combine_driver_results(comparisons),
+        rates,
+        tuple(provenance_pairs),
+        cap_result,
+        cached_fractions,
+    )
 
 
 @contextmanager
@@ -673,6 +686,7 @@ def run_bakeoff(  # noqa: PLR0913 - The manifest and output layout are independe
         task_results,
         restore,
         rate_evidence=reference.rate_evidence,
+        cached_fractions=reference.cached_fractions,
         provenance=reference.provenance,
         cap_parity=reference.cap_parity,
         driver_equivalence=reference.result,
