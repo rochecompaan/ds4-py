@@ -15,6 +15,7 @@ from .errors import (
     MissingBinding,
     ModelFileError,
     TypeMapError,
+    WorkerPoisonedError,
 )
 
 __all__ = [
@@ -33,5 +34,6 @@ __all__ = [
     "Session",
     "ThinkMode",
     "TypeMapError",
+    "WorkerPoisonedError",
     "open",
 ]

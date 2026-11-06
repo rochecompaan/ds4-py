@@ -20,7 +20,7 @@ from ds4py._native.protocol import (
     Snapshot,
     SyncStatus,
 )
-from ds4py.errors import CheckpointError, EmptyPromptError, EngineError
+from ds4py.errors import CheckpointError, EmptyPromptError, EngineError, WorkerPoisonedError
 
 from .decode import GenerateJob, generate
 from .events import (
@@ -211,6 +211,10 @@ class EngineWorker:
     def _poison(self, error: BaseException) -> None:
         self._poisoned_by = error
 
+    def _reject_if_poisoned(self) -> None:
+        if self._poisoned_by is not None:
+            raise WorkerPoisonedError("engine worker is poisoned") from self._poisoned_by
+
     def close(self) -> None:
         with self._lock:
             if not self._closed:
@@ -244,6 +248,7 @@ class EngineWorker:
                     if not item.future.set_running_or_notify_cancel():
                         continue
                     try:
+                        self._reject_if_poisoned()
                         result = item.fn(engine, session)
                     except BaseException as error:  # noqa: BLE001 - Transfer every call failure to its Future.
                         item.future.set_exception(error)
@@ -251,6 +256,7 @@ class EngineWorker:
                         item.future.set_result(result)
                 else:
                     try:
+                        self._reject_if_poisoned()
                         self._execute(engine, session, item.job, item.events.queue.put)
                     except BaseException as error:  # noqa: BLE001 - Publish every job failure on its event channel.
                         item.events.queue.put(error)
