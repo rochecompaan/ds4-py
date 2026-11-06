@@ -799,12 +799,44 @@ with lock_path.open("w") as lock:
 """
 
 
+def test_complete_runner_rejects_missing_attempt_library_before_task_arms(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bench.run_bakeoff as runner
+
+    staged = [SimpleNamespace(task_id="repo-glm-close")]
+    monkeypatch.setattr(runner, "load_manifest", lambda _path: object())
+    monkeypatch.setattr(runner, "prepare_manifest", lambda *args: staged)
+    monkeypatch.setattr(
+        runner,
+        "run_tasks_sequentially",
+        lambda *args, **kwargs: pytest.fail("a task arm started without a resolvable attempt library"),
+    )
+    monkeypatch.delenv("DS4_LIB", raising=False)
+    monkeypatch.setenv("DS4PY_HOME", str(tmp_path / "native"))
+
+    with pytest.raises(RuntimeError, match="Set DS4_LIB"):
+        run_bakeoff(
+            tmp_path / "manifest",
+            tmp_path / "benchmark",
+            tmp_path,
+            (config(tmp_path),),
+            tmp_path / "results",
+            session=bakeoff_session(),
+            c_driver=tmp_path / "c-driver",
+        )
+
+
 def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import bench.run_bakeoff as runner
 
     order = []
     staged = [SimpleNamespace(task_id="repo-glm-close")]
     session = bakeoff_session()
+    library = tmp_path / "libds4.so"
+    library.write_bytes(b"native")
+    monkeypatch.setenv("DS4_LIB", str(library))
     monkeypatch.setattr(runner, "load_manifest", lambda _path: object())
     monkeypatch.setattr(runner, "prepare_manifest", lambda *args: staged)
     monkeypatch.setattr(
