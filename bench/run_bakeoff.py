@@ -56,6 +56,7 @@ from bench.workspaces import (
     prepare_manifest,
 )
 from ds4py._json import JsonValue, is_json_object
+from ds4py._native.loader import resolve_lib_path
 from ds4py.engine.replay import read_replay
 
 FULL_TASK_COUNT = 12
@@ -580,6 +581,35 @@ def _session_environment(session: BakeoffSession) -> Generator[None]:
                 os.environ[name] = value
 
 
+def _validate_ds4py_attempt_library(
+    configs: Sequence[AgentConfig],
+    staged: Sequence[Workspace],
+    results_root: Path,
+) -> None:
+    """Fail before task arms when their native library cannot be resolved."""
+    if not staged or not any(config.agent == "ds4py" for config in configs):
+        return
+    attempt_home = results_root / staged[0].task_id / "ds4py" / "attempt-1" / "home"
+    previous_home = os.environ.get("DS4PY_HOME")
+    os.environ["DS4PY_HOME"] = str(attempt_home)
+    try:
+        candidate = resolve_lib_path(None)
+    finally:
+        if previous_home is None:
+            os.environ.pop("DS4PY_HOME", None)
+        else:
+            os.environ["DS4PY_HOME"] = previous_home
+    try:
+        library = candidate.resolve(strict=True)
+        if not library.is_file():
+            raise FileNotFoundError(candidate)
+    except OSError as error:
+        raise RuntimeError(
+            f"ds4-py attempt library does not resolve: {candidate}. Set DS4_LIB to libds4.so before starting the bakeoff."
+        ) from error
+    print(f"[bakeoff] ds4-py attempt library {library}", flush=True)
+
+
 def run_bakeoff(  # noqa: PLR0913 - The manifest and output layout are independent required inputs.
     manifest_path: str | Path,
     benchmark: str | Path,
@@ -598,6 +628,7 @@ def run_bakeoff(  # noqa: PLR0913 - The manifest and output layout are independe
     print(f"[bakeoff] session {session.bakeoff_session_id}", flush=True)
     manifest = load_manifest(manifest_path)
     staged = prepare_manifest(manifest, results_root / "staged", benchmark, repo_root)
+    _validate_ds4py_attempt_library(configs, staged, results_root)
     with _session_environment(session):
         task_results = run_tasks_sequentially(
             staged,
