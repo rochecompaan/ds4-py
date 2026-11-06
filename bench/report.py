@@ -70,6 +70,7 @@ class BakeoffReport:
     driver_equivalence: DriverEquivalenceResult | None = None
     self_replay: tuple[SelfReplayResult, ...] | None = None
     rate_evidence: dict[str, tuple[RateEvidence, RateEvidence]] = field(default_factory=dict)
+    cached_fractions: dict[str, tuple[float, float]] = field(default_factory=dict)
     caps: CapReport = field(default_factory=_empty_caps)
     provenance: tuple[tuple[TraceProvenance, TraceProvenance], ...] = ()
     schema_version: int = REPORT_SCHEMA_VERSION
@@ -107,6 +108,14 @@ class BakeoffReport:
                         "result": compare_rate(pair[0], pair[1]),
                     }
                     for task_id, pair in self.rate_evidence.items()
+                },
+                "cached_prefix": {
+                    task_id: {
+                        "c": pair[0],
+                        "ds4py": pair[1],
+                        "result": compare_cached_fraction(pair[0], pair[1]),
+                    }
+                    for task_id, pair in self.cached_fractions.items()
                 },
                 "caps": self.caps,
                 "provenance": tuple(
@@ -150,6 +159,18 @@ class BakeoffReport:
             result = compare_rate(pair[0], pair[1])
             status = "INVALID" if not result.valid else "PASS" if result.passed else "FAIL"
             lines.append(f"{task_id} | paired_rates | {status} — {result.detail}")
+        lines.append("")
+        lines.append("PAIRED CACHED-PREFIX FRACTIONS")
+        for task_id in _common_tasks(self.tasks)[0]:
+            pair = self.cached_fractions.get(task_id)
+            if pair is None:
+                lines.append(f"{task_id} | cached_prefix | INVALID — missing paired cache evidence")
+                continue
+            result = compare_cached_fraction(pair[0], pair[1])
+            status = "INVALID" if not result.valid else "PASS" if result.passed else "FAIL"
+            lines.append(
+                f"{task_id} | cached_prefix | C={_number(pair[0])} ds4py={_number(pair[1])} {status} — {result.detail}"
+            )
         return "\n".join(lines) + "\n"
 
 
@@ -319,9 +340,9 @@ def _gate_two(python: Sequence[TaskRunResult], cap_parity: GateResult | None) ->
 
 def _task_rate_failures(
     task_id: str,
-    left: TaskRunResult,
     right: TaskRunResult,
     pair: tuple[RateEvidence, RateEvidence] | None,
+    cached_pair: tuple[float, float] | None,
 ) -> tuple[list[str], bool]:
     failures = []
     valid = True
@@ -334,11 +355,11 @@ def _task_rate_failures(
             valid = False
         if not rate_result.passed:
             failures.append(f"{task_id}: {rate_result.detail}")
-    if right.avg_prefill_reuse is None or left.avg_prefill_reuse is None:
+    if cached_pair is None:
         valid = False
-        failures.append(f"{task_id}: incomplete cached-prefix evidence")
+        failures.append(f"{task_id}: incomplete paired cached-prefix evidence")
     else:
-        cached_result = compare_cached_fraction(left.avg_prefill_reuse, right.avg_prefill_reuse)
+        cached_result = compare_cached_fraction(*cached_pair)
         if not cached_result.valid:
             valid = False
         if not cached_result.passed:
@@ -348,11 +369,12 @@ def _task_rate_failures(
     return failures, valid
 
 
-def _gate_three(
+def _gate_three(  # noqa: PLR0913, PLR0917 - Rate, cache, and provenance evidence have separate contracts.
     tasks: Sequence[TaskRunResult],
     common: Sequence[str],
     complete_pairs: bool,
     rates: Mapping[str, tuple[RateEvidence, RateEvidence]],
+    cached_fractions: Mapping[str, tuple[float, float]],
     provenance_pairs: tuple[tuple[TraceProvenance, TraceProvenance], ...],
 ) -> tuple[str, GateResult]:
     failures = []
@@ -368,8 +390,13 @@ def _gate_three(
             valid = False
             failures.extend(issues)
     for task_id in common:
-        left, right = _task(tasks, task_id, "c"), _task(tasks, task_id, "ds4py")
-        task_failures, task_valid = _task_rate_failures(task_id, left, right, rates.get(task_id))
+        right = _task(tasks, task_id, "ds4py")
+        task_failures, task_valid = _task_rate_failures(
+            task_id,
+            right,
+            rates.get(task_id),
+            cached_fractions.get(task_id),
+        )
         failures.extend(task_failures)
         valid = valid and task_valid
     return _gate(
@@ -388,6 +415,7 @@ def build_report(  # noqa: PLR0913 - Each evidence input has a distinct live-run
     replay_results: Iterable[ReplayResult] | None = None,
     *,
     rate_evidence: Mapping[str, tuple[RateEvidence, RateEvidence]] | None = None,
+    cached_fractions: Mapping[str, tuple[float, float]] | None = None,
     provenance: Iterable[tuple[TraceProvenance, TraceProvenance]] | None = None,
     cap_parity: GateResult | None = None,
     driver_equivalence: DriverEquivalenceResult | None = None,
@@ -399,6 +427,7 @@ def build_report(  # noqa: PLR0913 - Each evidence input has a distinct live-run
     """Build all six gates from their independent evidence sections."""
     tasks = tuple(task_results)
     rates = dict(rate_evidence or {})
+    cached = dict(cached_fractions or {})
     provenance_pairs = tuple(provenance or ())
     common, c_ids, python_ids = _common_tasks(tasks)
     c = [item for item in tasks if item.agent == "c"]
@@ -418,7 +447,7 @@ def build_report(  # noqa: PLR0913 - Each evidence input has a distinct live-run
     ]
 
     gates.append(_gate_two(python, cap_parity))
-    gates.append(_gate_three(tasks, common, complete_pairs, rates, provenance_pairs))
+    gates.append(_gate_three(tasks, common, complete_pairs, rates, cached, provenance_pairs))
 
     interruption = restore_results.interruption
     gates.append(
@@ -465,6 +494,7 @@ def build_report(  # noqa: PLR0913 - Each evidence input has a distinct live-run
         driver_equivalence=driver_equivalence,
         self_replay=self_values,
         rate_evidence=rates,
+        cached_fractions=cached,
         caps=_cap_report(tasks, cap_parity),
         provenance=provenance_pairs,
         certification=certification,
