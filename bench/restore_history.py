@@ -12,9 +12,11 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+import ds4py
 from bench.comparison import TOP_K, StepCapture, TopLogit
 from bench.provenance import Q8_F16_CACHE_ENV, Q8_F16_CACHE_MB, TraceProvenance
 from bench.replay_c_traces import replay_round
+from ds4py.agent_cli import _think_mode, parser
 from ds4py.engine.replay import read_replay
 from ds4py.engine.sampling import Rng, SamplingPolicy
 from ds4py.engine.worker import SyncJob
@@ -84,9 +86,7 @@ def _validate_event_history(events: Sequence[dict[str, JsonValue]], trace: Repla
         raise RestoreHistoryError(f"expected {len(trace.rounds) + 1} original syncs, found {len(syncs)}")
     if len(sampled) != len(trace.rounds):
         raise RestoreHistoryError(f"expected {len(trace.rounds)} original decode rounds, found {len(sampled)}")
-    for index, (round_, sync, tokens) in enumerate(
-        zip(trace.rounds, syncs[: len(trace.rounds)], sampled, strict=True)
-    ):
+    for index, (round_, sync, tokens) in enumerate(zip(trace.rounds, syncs[: len(trace.rounds)], sampled, strict=True)):
         plan = _json_object(sync.get("plan"), f"sync {index} plan")
         expected = (len(round_.prompt), round_.cached, len(round_.prompt) - round_.cached)
         observed = (sync.get("pos"), plan.get("reused"), plan.get("to_prefill"))
@@ -211,9 +211,6 @@ def replay_saved_history(
 
 def same_history_command(argv: Sequence[str]) -> int:
     """Run the fresh-process same-history reference used by ``restore check``."""
-    import ds4py
-    from ds4py.agent_cli import _think_mode, parser
-
     custom = argparse.ArgumentParser()
     custom.add_argument("--session-id", required=True)
     custom.add_argument("--metadata", type=Path, required=True)
