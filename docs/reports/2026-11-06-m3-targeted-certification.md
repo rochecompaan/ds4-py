@@ -45,6 +45,14 @@ host:                  NVIDIA RTX PRO 6000 Blackwell Workstation Edition, driver
 instance:              59386390
 ```
 
+## How we got here
+
+The 2026-11-03 four-task repair run isolated the cap, wall-time, interruption, and restore failures. Its direct-import and PTY findings were harness defects, not product evidence. The final gate results above supersede its failed or unevaluated gates.
+
+Follow-up trace analysis found repeated recall and deliberation loops, not a native decode-speed deficit: both arms decoded at about 50 tokens/s on that host. This evidence supported terminal and cap checks plus paired rate and cache comparisons, rather than larger response budgets or wall-time ratios.
+
+The two-phase Gate 6 redesign then separated same-host driver equivalence from ds4-py self-replay. Exact C trace replay remains diagnostic because prefill chunking and host changes can flip near-tie token choices. The design spec and retained logits-probe findings record that evidence.
+
 ## Repairs
 
 The original failure column comes from the 2026-11-01 checkpoint. The category names the main defect owner. Some harness repairs also supported Gate 5.
