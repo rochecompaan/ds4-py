@@ -208,6 +208,8 @@ Gate 5 has four checks:
 3. **5.3 restore fidelity.** Compare case 1 with a same-history reference, not with case 2. In one fresh ds4-py process, replay the original attempt's recorded sync and decode history, then prefill the fixed follow-up suffix and capture step-0 top-12 logits. The replay uses the retained original trace as the recorded history and validates its prompts, sampled IDs, sync positions, and token counts against the save's original-run events and saved token hash. It does not load the KV payload. Require equal positions, identical ordered top-12 token IDs, and maximum absolute raw-logit difference below `1e-5` between this reference and case 1. The full replay includes the original decode steps and therefore costs roughly the original attempt's generation time.
 4. **5.4 rebuild equivalence.** Run the C diagnostic with `split_at = 0` on the exact rebuilt prompt from case 2 and compare its step-0 top-12 logits with case 2. Use the same model, context, cache, sampling, and response-budget provenance; only step 0 is captured and compared. Require equal positions, identical ordered top-12 token IDs, and maximum absolute raw-logit difference below `1e-5` through the existing driver-equivalence comparator.
 
+The C rebuild sidecar comes from `BakeoffSession.reference_provenance`, the same C-arm path used by Gate 6 Part A. It must not copy ds4-py case-2 provenance.
+
 Gate 5 passes only when file, switch, provenance, and all four checks pass. The extend-versus-rebuild logit comparison is removed.
 
 ### Gate 6: driver equivalence and self-replay — replace cross-host exact C replay

@@ -19,7 +19,9 @@ import ds4py
 from bench.comparison import TOP_K, StepCapture, TopLogit
 from bench.driver_cases import DriverCase, load_case_tokens, read_case_manifest
 from bench.provenance import Q8_F16_CACHE_ENV, Q8_F16_CACHE_MB, ProgressChunk
+from ds4py._native.loader import resolve_lib_path
 from ds4py._native.protocol import SyncStatus
+from ds4py.abi.manifest import file_sha256
 from ds4py.engine.decode import GenerateJob, generate
 from ds4py.engine.events import Token
 from ds4py.engine.sampling import Rng, SamplingPolicy
@@ -55,6 +57,14 @@ class _DecodeResult:
     steps: tuple[_CapturedStep, ...]
     terminal_reason: str
     elapsed: float
+
+
+@dataclass(frozen=True)
+class _DriverIdentity:
+    libds4_sha256: str
+    model_path: str
+    backend: str
+    ctx: int
 
 
 def _emit(record: dict[str, JsonValue]) -> None:
@@ -148,7 +158,7 @@ def _decode(
     return _DecodeResult(tuple(captures), reason, elapsed)
 
 
-def _round_start(source_trace: Path, case: DriverCase) -> dict[str, JsonValue]:
+def _round_start(source_trace: Path, case: DriverCase, identity: _DriverIdentity) -> dict[str, JsonValue]:
     return {
         "kind": "round_start",
         "source_trace": str(source_trace),
@@ -160,6 +170,13 @@ def _round_start(source_trace: Path, case: DriverCase) -> dict[str, JsonValue]:
         "split_at": case.split_at,
         "steps": case.steps,
         "think": case.think,
+        "observed_libds4_sha256": identity.libds4_sha256,
+        "observed_model_path": identity.model_path,
+        "observed_backend": identity.backend,
+        "observed_ctx": identity.ctx,
+        "observed_seed": 1,
+        "observed_temperature": 0.0,
+        "observed_think": case.think,
     }
 
 
@@ -190,11 +207,11 @@ def _run_sync(tokens: tuple[int, ...], case: DriverCase, engine: ds4py.Engine) -
     return prefill_tokens, prefill_seconds
 
 
-def _run_case(engine: ds4py.Engine, source_trace: Path, case: DriverCase) -> None:
+def _run_case(engine: ds4py.Engine, source_trace: Path, case: DriverCase, identity: _DriverIdentity) -> None:
     prompt, expected = load_case_tokens(case)
     # Reset the one native session between cases.
     list(engine._worker.submit(ResetJob()))
-    _emit(_round_start(source_trace, case))
+    _emit(_round_start(source_trace, case, identity))
     prefill_tokens, prefill_seconds = _run_sync(prompt, case, engine)
     result = _decode(engine, case, prompt, expected)
     for index, step in enumerate(result.steps):
@@ -237,15 +254,23 @@ def main() -> int:
     args = _parser().parse_args()
     cases = read_case_manifest(args.cases)
     os.environ[Q8_F16_CACHE_ENV] = str(Q8_F16_CACHE_MB)
+    model_path = args.model.expanduser().resolve()
+    library = resolve_lib_path(args.lib).expanduser().resolve(strict=True) if cases else None
+    identity = _DriverIdentity(
+        libds4_sha256=file_sha256(library) if library is not None else "",
+        model_path=str(model_path),
+        backend=args.backend,
+        ctx=args.ctx,
+    )
     with ds4py.open(
-        args.model,
+        model_path,
         ctx=args.ctx,
         backend=args.backend,
-        lib=args.lib,
+        lib=library,
         seed=1,
     ) as engine:
         for case in cases:
-            _run_case(engine, args.source_trace, case)
+            _run_case(engine, args.source_trace, case, identity)
     return 0
 
 

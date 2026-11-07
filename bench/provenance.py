@@ -44,6 +44,7 @@ class RoundProvenance:
     prompt_sha256: str
     sync_calls: tuple[SyncCall, ...]
     progress_chunks: tuple[ProgressChunk, ...]
+    observed_think: int | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,12 @@ class TraceProvenance:
     trace_sha256: str
     source_trace_sha256: str
     rounds: tuple[RoundProvenance, ...]
+    observed_libds4_sha256: str | None = None
+    observed_model_path: str | None = None
+    observed_backend: str | None = None
+    observed_ctx: int | None = None
+    observed_seed: int | None = None
+    observed_temperature: float | None = None
     native_patches: tuple[NativePatch, ...] = ()
     cuda_disable_host_register: str = ""
     invalid_reason: str | None = None
@@ -104,6 +111,9 @@ _SESSION_FIELDS = (
     "cuda_disable_host_register",
 )
 
+_OBSERVED_FIELDS = ("libds4_sha256", "model_path", "backend", "ctx", "seed", "temperature")
+_OBSERVED_PROVENANCE_FIELDS = tuple(f"observed_{field}" for field in _OBSERVED_FIELDS)
+
 
 def write_trace_provenance(trace_path: Path, provenance: TraceProvenance) -> Path:
     """Write the sidecar associated with one raw trace."""
@@ -122,6 +132,26 @@ def _field_mismatches(c: object, ds4py: object, fields: tuple[str, ...], prefix:
     return issues
 
 
+def _has_observed_identity(provenance: TraceProvenance) -> bool:
+    return any(getattr(provenance, field) is not None for field in _OBSERVED_PROVENANCE_FIELDS)
+
+
+def _validate_observed_identity(label: str, provenance: TraceProvenance) -> list[str]:
+    if not _has_observed_identity(provenance):
+        return []
+    issues = []
+    for field in _OBSERVED_FIELDS:
+        observed = getattr(provenance, f"observed_{field}")
+        expected = getattr(provenance, field)
+        if observed is None:
+            issues.append(f"{label} observed_{field} is missing")
+        elif observed != expected:
+            issues.append(
+                f"{label} observed_{field} differs from expected: observed={observed!r}, expected={expected!r}"
+            )
+    return issues
+
+
 def validate_session_pair(c: TraceProvenance, ds4py: TraceProvenance) -> tuple[str, ...]:
     """Return missing identity and every host, model, library, and sampling mismatch."""
     issues = [
@@ -129,6 +159,10 @@ def validate_session_pair(c: TraceProvenance, ds4py: TraceProvenance) -> tuple[s
         for label, provenance in (("C", c), ("ds4-py", ds4py))
         if provenance.invalid_reason is not None
     ]
+    issues.extend(_validate_observed_identity("C", c))
+    issues.extend(_validate_observed_identity("ds4-py", ds4py))
+    if _has_observed_identity(c) and _has_observed_identity(ds4py):
+        issues.extend(_field_mismatches(c, ds4py, _OBSERVED_PROVENANCE_FIELDS))
     issues.extend(_field_mismatches(c, ds4py, _SESSION_FIELDS))
     for field in _IDENTITY_FIELDS:
         for label, provenance in (("C", c), ("ds4-py", ds4py)):
@@ -141,13 +175,26 @@ def validate_session_pair(c: TraceProvenance, ds4py: TraceProvenance) -> tuple[s
 def validate_pair(c: TraceProvenance, ds4py: TraceProvenance) -> tuple[str, ...]:
     """Return every provenance mismatch that invalidates a direct pair."""
     issues = list(validate_session_pair(c, ds4py))
+    for label, provenance in (("C", c), ("ds4-py", ds4py)):
+        if not _has_observed_identity(provenance):
+            issues.append(f"{label} observed identity is missing")
+        for round_ in provenance.rounds:
+            if round_.observed_think is None:
+                issues.append(f"{label} rounds[{round_.round_index}].observed_think is missing")
+            elif round_.observed_think != round_.think:
+                issues.append(
+                    f"{label} rounds[{round_.round_index}].observed_think differs from expected: "
+                    f"observed={round_.observed_think!r}, expected={round_.think!r}"
+                )
     issues.extend(_field_mismatches(c, ds4py, ("source_trace_sha256", "reset_policy")))
     if len(c.rounds) != len(ds4py.rounds):
         issues.append(f"rounds length differs: C={len(c.rounds)}, ds4-py={len(ds4py.rounds)}")
 
     for c_round, ds4py_round in zip(c.rounds, ds4py.rounds, strict=False):
         prefix = f"rounds[{c_round.round_index}]."
-        issues.extend(_field_mismatches(c_round, ds4py_round, ("round_index", "think", "prompt_sha256"), prefix))
+        issues.extend(
+            _field_mismatches(c_round, ds4py_round, ("round_index", "think", "observed_think", "prompt_sha256"), prefix)
+        )
         if len(c_round.sync_calls) != len(ds4py_round.sync_calls):
             issues.append(
                 f"{prefix}sync_calls length differs: C={len(c_round.sync_calls)}, ds4-py={len(ds4py_round.sync_calls)}"

@@ -41,7 +41,9 @@ from bench.restore_check import (
     run_attempt_with_save,
     validate_save,
 )
+from bench.restore_equivalence import RestoreProvenance
 from bench.run_bakeoff import drive_pty, interruption_acceptance
+from bench.session import BakeoffSession
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
@@ -262,6 +264,13 @@ def c_driver_stdout(command: list[str]) -> str:
             "split_at": case.split_at,
             "steps": case.steps,
             "think": case.think,
+            "observed_libds4_sha256": "library",
+            "observed_model_path": command[command.index("--model") + 1],
+            "observed_backend": command[command.index("--backend") + 1],
+            "observed_ctx": int(command[command.index("--ctx") + 1]),
+            "observed_seed": 1,
+            "observed_temperature": 0.0,
+            "observed_think": case.think,
         },
         {
             "kind": "sync",
@@ -908,6 +917,25 @@ def test_restore_processes_use_disposable_workspace_copies(
         cast("Any", (item,)),
         cast("Any", config),
         tmp_path / "restores",
+        provenance=RestoreProvenance(
+            session=BakeoffSession(
+                bakeoff_session_id="session-1",
+                instance_id="instance-1",
+                gpu_model="gpu",
+                gpu_driver_version="driver",
+                ds4_revision="ds4",
+                ds4py_revision="python",
+                libds4_sha256="library",
+                model_path="model.gguf",
+                model_sha256="model",
+                backend="cpu",
+                ctx=65536,
+                temperature=0.0,
+                seed=1,
+                response_budget=8192,
+                q8_f16_cache_mb=5120,
+            ),
+        ),
         c_driver=tmp_path / "c-driver",
     )
 

@@ -13,14 +13,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bench.models import AgentConfig, TaskRunResult
 from bench.provenance import Q8_F16_CACHE_ENV, Q8_F16_CACHE_MB
-from bench.restore_equivalence import process_restore_runner
+from bench.restore_equivalence import RestoreProvenance, process_restore_runner
 from bench.restore_fidelity import _compare_reference
 from bench.restore_history import same_history_command
 from bench.restore_plan import (
@@ -42,7 +42,7 @@ from bench.restore_plan import (
     validate_save,
 )
 from bench.restore_position import _compare_restore, validate_restore_pair
-from bench.session import report_provenance_environment
+from bench.session import report_bakeoff_session, report_provenance_environment
 from ds4py.errors import Ds4pyError
 
 __all__ = [
@@ -173,7 +173,7 @@ def check_result_saves(
     config: RestoreConfig,
     results_root: str | Path,
     *,
-    provenance_environment: Mapping[str, str] | None = None,
+    provenance: RestoreProvenance | None = None,
     c_driver: str | Path | None = None,
 ) -> tuple[RestoreResult, ...]:
     """Restore every ds4-py attempt save with same-history and C references."""
@@ -188,8 +188,9 @@ def check_result_saves(
                     Path(results_root) / item.task_id / f"attempt-{index}" / "restore",
                     operations=process_restore_runner(
                         config,
+                        session=provenance.session if provenance else None,
                         workspace=getattr(item, "workspace", None),
-                        provenance_environment=provenance_environment,
+                        provenance_environment=provenance.environment if provenance else None,
                         c_driver=c_driver,
                     ),
                 )
@@ -227,8 +228,9 @@ def check_command(argv: Sequence[str]) -> int:
     )
     environment = report_provenance_environment(data)
     options = {"c_driver": args.c_driver} if args.c_driver is not None else {}
-    if environment:
-        options["provenance_environment"] = environment
+    session = report_bakeoff_session(data)
+    if session is not None or environment:
+        options["provenance"] = RestoreProvenance(session=session, environment=environment or None)
     results = check_result_saves(
         tasks,
         config,

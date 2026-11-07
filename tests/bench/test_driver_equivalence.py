@@ -69,6 +69,13 @@ def evidence(
         prefill_seconds=0.25,
         decode_seconds=0.5,
         terminal_reason="max_tokens",
+        observed_libds4_sha256="library",
+        observed_model_path="/models/fake.gguf",
+        observed_backend="cpu",
+        observed_ctx=4096,
+        observed_seed=1,
+        observed_temperature=0.0,
+        observed_think=75,
     )
 
 
@@ -99,8 +106,15 @@ def provenance(round_: DriverRoundEvidence, **changes: object) -> TraceProvenanc
                 "prompt",
                 round_.sync_calls,
                 round_.progress_chunks,
+                observed_think=round_.observed_think,
             ),
         ),
+        "observed_libds4_sha256": "library",
+        "observed_model_path": "/models/fake.gguf",
+        "observed_backend": "cpu",
+        "observed_ctx": 4096,
+        "observed_seed": 1,
+        "observed_temperature": 0.0,
     }
     values.update(changes)
     return TraceProvenance(**values)  # ty: ignore[invalid-argument-type]
@@ -344,7 +358,14 @@ def test_zero_token_rounds_are_sync_only_but_set_needs_decode_coverage() -> None
     decode_python = evidence(round_index=1)
     c_provenance = provenance(zero_c)
     python_provenance = provenance(zero_python)
-    extra_round = RoundProvenance(1, 75, "prompt", decode_c.sync_calls, decode_c.progress_chunks)
+    extra_round = RoundProvenance(
+        1,
+        75,
+        "prompt",
+        decode_c.sync_calls,
+        decode_c.progress_chunks,
+        observed_think=decode_c.observed_think,
+    )
     c_provenance = replace(c_provenance, rounds=(*c_provenance.rounds, extra_round))
     python_provenance = replace(python_provenance, rounds=(*python_provenance.rounds, extra_round))
     mixed = compare_driver_rounds(

@@ -16,6 +16,8 @@ from bench.driver_cases import (
     read_case_manifest,
     read_driver_ndjson,
 )
+from bench.provenance import validate_session_pair
+from bench.session import BakeoffSession
 from ds4py.engine.replay_types import ReplayRound, ReplayTrace
 
 
@@ -66,6 +68,13 @@ def valid_records() -> list[dict[str, Any]]:
             "split_at": 1,
             "steps": 1,
             "think": 75,
+            "observed_libds4_sha256": "library-sha",
+            "observed_model_path": "/models/ds4.gguf",
+            "observed_backend": "cpu",
+            "observed_ctx": 100000,
+            "observed_seed": 1,
+            "observed_temperature": 0.0,
+            "observed_think": 75,
         },
         {
             "kind": "sync",
@@ -128,6 +137,50 @@ def test_read_driver_ndjson_returns_typed_ordered_evidence(tmp_path: Path) -> No
     assert evidence.prefill_seconds == pytest.approx(0.3)
     assert evidence.decode_seconds == pytest.approx(0.4)
     assert evidence.terminal_reason == "stop_token"
+    assert evidence.observed_libds4_sha256 == "library-sha"
+    assert evidence.observed_think == 75
+
+
+def test_c_observed_library_mismatch_fails_session_validation(tmp_path: Path) -> None:
+    records = valid_records()
+    token_file = tmp_path / "case.tokens"
+    token_file.write_text("1\n2\n3\n4\n")
+    records[0]["token_file"] = str(token_file)
+    records[0].update(
+        {
+            "observed_libds4_sha256": "wrong-library",
+            "observed_model_path": "/models/ds4.gguf",
+            "observed_backend": "cpu",
+            "observed_ctx": 100000,
+            "observed_seed": 1,
+            "observed_temperature": 0.0,
+            "observed_think": 75,
+        }
+    )
+    output = write_records(tmp_path / "c.ndjson", records)
+    source = tmp_path / "source.trace"
+    source.write_text("source")
+    session = BakeoffSession(
+        bakeoff_session_id="session-1",
+        instance_id="instance-1",
+        gpu_model="cpu",
+        gpu_driver_version="not-applicable",
+        ds4_revision="ds4-revision",
+        ds4py_revision="ds4py-revision",
+        libds4_sha256="library-sha",
+        model_path="/models/ds4.gguf",
+        model_sha256="model-sha",
+        backend="cpu",
+        ctx=100000,
+        temperature=0.0,
+        seed=1,
+        response_budget=1,
+        q8_f16_cache_mb=5120,
+    )
+
+    provenance = session.reference_provenance(output, source, read_driver_ndjson(output))
+
+    assert "observed_libds4_sha256" in "\n".join(validate_session_pair(provenance, provenance))
 
 
 @pytest.mark.parametrize("mutation", ["json", "duplicate_step", "short_top", "negative_time", "wrong_position"])
