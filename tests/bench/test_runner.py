@@ -738,13 +738,17 @@ def make_exercise(root: Any) -> Any:
     (source / ".docs").mkdir(parents=True)
     (source / ".meta").mkdir()
     (source / ".docs/instructions.md").write_text("Return good.\n")
-    (source / ".meta/config.json").write_text(json.dumps({
-        "files": {
-            "solution": ["solution.py"],
-            "test": ["tiny_test.py"],
-            "example": [".meta/example.py"],
-        }
-    }))
+    (source / ".meta/config.json").write_text(
+        json.dumps(
+            {
+                "files": {
+                    "solution": ["solution.py"],
+                    "test": ["tiny_test.py"],
+                    "example": [".meta/example.py"],
+                }
+            }
+        )
+    )
     (source / ".meta/example.py").write_text("def value():\n    return 'good'\n")
     (source / "solution.py").write_text("def value():\n    return 'good'\n")
     (source / "tiny_test.py").write_text("def test_value():\n    assert True\n")
