@@ -80,10 +80,18 @@ lint.per-file-ignores."bench/report.py" = [
   "RUF002", # Protocol examples require fullwidth vertical bars in docstrings.
 ]
 lint.per-file-ignores."bench/restore_check.py" = [
+  "FBT003", # Restore result constructors keep positional booleans.
+]
+lint.per-file-ignores."bench/restore_equivalence.py" = [
+  "PLR2004", # Gate 5 case numbers are part of the evidence protocol.
+  "S603",    # Restore commands use fixed argument lists without a shell.
+]
+lint.per-file-ignores."bench/restore_fidelity.py" = [
+  "FBT003", # Existing comparison helpers keep positional booleans.
+]
+lint.per-file-ignores."bench/restore_plan.py" = [
   "FBT003",  # Existing restore helpers keep positional booleans.
   "PLC0415", # Restore workers import isolation-specific modules lazily.
-  "PLR2004", # Protocol exit codes and token counts are intentional.
-  "S603",    # Restore commands use fixed argument lists without a shell.
 ]
 lint.per-file-ignores."bench/run_bakeoff.py" = [
   "S603", # Bakeoff commands use fixed argument lists without a shell.
