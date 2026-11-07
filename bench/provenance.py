@@ -69,6 +69,7 @@ class TraceProvenance:
     rounds: tuple[RoundProvenance, ...]
     native_patches: tuple[NativePatch, ...] = ()
     cuda_disable_host_register: str = ""
+    invalid_reason: str | None = None
 
 
 _IDENTITY_FIELDS = (
@@ -123,7 +124,12 @@ def _field_mismatches(c: object, ds4py: object, fields: tuple[str, ...], prefix:
 
 def validate_session_pair(c: TraceProvenance, ds4py: TraceProvenance) -> tuple[str, ...]:
     """Return missing identity and every host, model, library, and sampling mismatch."""
-    issues = _field_mismatches(c, ds4py, _SESSION_FIELDS)
+    issues = [
+        f"{label} {provenance.invalid_reason}"
+        for label, provenance in (("C", c), ("ds4-py", ds4py))
+        if provenance.invalid_reason is not None
+    ]
+    issues.extend(_field_mismatches(c, ds4py, _SESSION_FIELDS))
     for field in _IDENTITY_FIELDS:
         for label, provenance in (("C", c), ("ds4-py", ds4py)):
             value = getattr(provenance, field)

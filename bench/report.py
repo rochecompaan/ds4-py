@@ -259,11 +259,11 @@ def _gate_six(
     else:
         valid = all(item.valid for item in self_results)
         passed = valid and all(item.passed for item in self_results)
-        part_b = GateResult(
-            passed,
-            f"Part B: {sum(item.passed for item in self_results)}/{len(self_results)} self-replay rounds passed",
-            valid,
-        )
+        invalid_details = "; ".join(f"{item.task_id}: {item.detail}" for item in self_results if not item.valid)
+        detail = f"Part B: {sum(item.passed for item in self_results)}/{len(self_results)} self-replay rounds passed"
+        if invalid_details:
+            detail = f"{detail}: {invalid_details}"
+        part_b = GateResult(passed, detail, valid)
     return GateResult(
         part_a.passed and part_b.passed,
         f"{part_a.detail}; {part_b.detail}",

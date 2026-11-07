@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -841,6 +842,62 @@ def test_complete_runner_rejects_missing_attempt_library_before_task_arms(
             session=bakeoff_session(),
             c_driver=tmp_path / "c-driver",
         )
+
+
+def test_complete_runner_preserves_missing_attempt_trace_as_invalid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bench.run_bakeoff as runner
+    import bench.self_replay as replay_module
+
+    missing = tmp_path / "missing-attempt.jsonl"
+    task = result(
+        task_id="repo-glm-close",
+        passed=False,
+        attempt_save_dirs=(),
+        attempt_trace_paths=(missing,),
+        errors=("attempt trace is unavailable",),
+    )
+    staged = [SimpleNamespace(task_id="repo-glm-close")]
+    library = tmp_path / "libds4.so"
+    library.write_bytes(b"native")
+    monkeypatch.setenv("DS4_LIB", str(library))
+    monkeypatch.setattr(runner, "load_manifest", lambda _path: object())
+    monkeypatch.setattr(runner, "prepare_manifest", lambda *args: staged)
+    monkeypatch.setattr(runner, "run_tasks_sequentially", lambda *args, **kwargs: (task,))
+    monkeypatch.setattr(runner, "check_result_saves", lambda *args, **kwargs: ())
+    monkeypatch.setattr(runner, "clone_workspace", lambda *args: object())
+    monkeypatch.setattr(runner, "interruption_acceptance", lambda *args: CheckResult(True, "ok"))
+
+    @contextmanager
+    def fake_open(*args: Any, **kwargs: Any) -> Any:
+        yield object()
+
+    monkeypatch.setattr(replay_module.ds4py, "open", fake_open)
+
+    report = run_bakeoff(
+        tmp_path / "manifest",
+        tmp_path / "benchmark",
+        tmp_path,
+        (config(tmp_path),),
+        tmp_path / "results",
+        session=bakeoff_session(),
+        c_driver=tmp_path / "c-driver",
+    )
+
+    assert report.self_replay is not None and len(report.self_replay) == 1
+    evidence = report.self_replay[0]
+    assert not evidence.valid
+    assert str(missing) in evidence.detail
+    assert not report.gates["gate-6"].valid
+    assert evidence.detail in report.gates["gate-6"].detail
+    sidecar = json.loads(missing.with_name(f"{missing.name}.provenance.json").read_text())
+    assert sidecar["invalid_reason"] == evidence.detail
+    written = json.loads((tmp_path / "results/bakeoff.json").read_text())
+    assert written["gates"]["gate-6"]["valid"] is False
+    assert written["self_replay"][0]["detail"] == evidence.detail
+    assert "gate-6: INVALID" in (tmp_path / "results/report.txt").read_text()
 
 
 def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
