@@ -778,7 +778,7 @@ def test_interruption_acceptance_uses_structured_event_driver(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import bench.run_bakeoff as runner
+    import bench.phases as phase_runner
 
     task = tmp_path / "task"
     task.mkdir()
@@ -790,7 +790,7 @@ def test_interruption_acceptance_uses_structured_event_driver(
         observed.update(kwargs)
         return CheckResult(True, "interrupted and resumed")
 
-    monkeypatch.setattr(runner, "drive_interruption_pty", drive)
+    monkeypatch.setattr(phase_runner, "drive_interruption_pty", drive)
     config = SimpleNamespace(
         agent="ds4py",
         executable=(sys.executable, "driver.py"),

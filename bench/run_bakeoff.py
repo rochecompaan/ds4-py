@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from bench.driver_cases import export_round_zero_cap_case, export_trace_cases
 from bench.metrics import (
     EventSummary,
     MetricError,
@@ -27,9 +26,8 @@ from bench.metrics import (
 )
 from bench.models import AgentConfig, TaskRunResult
 from bench.phases import (
-    ReferenceOperations,
     ReferencePhase,
-    _run_driver_command,
+    build_agent_command,
     run_restore_phase,
     run_self_replay_phase,
 )
@@ -44,10 +42,9 @@ from bench.phases import (
 )
 from bench.pty_driver import drive_interruption_pty, drive_pty  # noqa: F401 - Compatibility re-export.
 from bench.report import BakeoffReport, GateResult, build_report
-from bench.restore_check import CheckResult, RestoreSummary, check_result_saves
-from bench.self_replay import SelfReplayContext, replay_ds4py_task_results, select_ds4py_traces
+from bench.restore_check import CheckResult, RestoreSummary
+from bench.self_replay import SelfReplayContext, replay_ds4py_task_results
 from bench.session import BakeoffSession, record_task_provenance
-from bench.trace_selection import select_c_traces
 from bench.workspaces import (
     CommandRunner,
     GradeResult,
@@ -67,42 +64,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence
 
     from ds4py.engine.replay_types import ReplayTrace
-
-
-def _option_number(value: float) -> str:
-    return str(int(value)) if isinstance(value, int) or value.is_integer() else str(value)
-
-
-def build_agent_command(
-    config: AgentConfig,
-    prompt: str,
-    trace_path: str | Path,
-) -> list[str]:
-    """Build equivalent C and ds4-py sampling/task invocations."""
-    command = [*config.executable, "--non-interactive"]
-    if config.agent == "ds4py":
-        command.extend(["--request-limit", str(config.request_limit)])
-    command.extend(
-        [
-            "--model",
-            config.model,
-            "--backend",
-            config.backend,
-            "--ctx",
-            str(config.ctx),
-            "--temp",
-            _option_number(config.temperature),
-            "--seed",
-            str(config.seed),
-            "--tokens",
-            str(config.tokens),
-            "--trace",
-            str(trace_path),
-            "--prompt",
-            prompt,
-        ]
-    )
-    return command
 
 
 def load_events(path: str | Path) -> list[dict[str, JsonValue]]:
@@ -334,24 +295,7 @@ def interruption_acceptance(
     results_root: str | Path,
 ) -> CheckResult:
     """Interrupt visible generation, submit a next prompt, then exit cleanly."""
-    return _phase_interruption_acceptance(
-        config,
-        workspace,
-        results_root,
-        build_command=build_agent_command,
-        drive=drive_interruption_pty,
-    )
-
-
-def _reference_operations() -> ReferenceOperations:
-    return ReferenceOperations(
-        select_c=select_c_traces,
-        select_ds4py=select_ds4py_traces,
-        read_trace=read_replay,
-        export_cases=export_trace_cases,
-        export_cap_case=export_round_zero_cap_case,
-        run_driver=_run_driver_command,
-    )
+    return _phase_interruption_acceptance(config, workspace, results_root)
 
 
 def _run_cap_parity(
@@ -362,14 +306,7 @@ def _run_cap_parity(
     results_root: str | Path,
 ) -> GateResult:
     """Run both reference drivers on each arm's round-0 prompt."""
-    return _phase_cap_parity(
-        task_results,
-        config,
-        c_driver,
-        session,
-        results_root,
-        operations=_reference_operations(),
-    )
+    return _phase_cap_parity(task_results, config, c_driver, session, results_root)
 
 
 def run_reference_equivalence(  # noqa: PLR0913 - Task evidence, driver setup, and the optional phase are independent inputs.
@@ -389,7 +326,6 @@ def run_reference_equivalence(  # noqa: PLR0913 - Task evidence, driver setup, a
         session,
         results_root,
         cap_parity=cap_parity,
-        operations=_reference_operations(),
     )
 
 
@@ -470,7 +406,6 @@ def run_bakeoff(  # noqa: PLR0913 - The manifest and output layout are independe
             ds4_config,
             results_root,
             c_driver,
-            check=check_result_saves,
         )
         interruption_workspace = clone_workspace(
             staged[0],
