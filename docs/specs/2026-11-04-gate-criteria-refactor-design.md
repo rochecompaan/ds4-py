@@ -199,6 +199,7 @@ The following requirements stay:
 - Register the existing public `Session.add_logits_hook` after `/switch` and before the fixed follow-up. Capture only the first pre-sample logits call and store it outside the normal trace event format.
 - Record each case's own terminal reason. Do not require the two continuations to have identical terminal reasons.
 - Require all compared runs to come from the same save, fixed follow-up, instance, bake-off session, model, library, cache configuration, and sampling policy.
+- Persist each sampled response's exact assistant and EOS token IDs with its content hash. Case 2 reuses those IDs when the hash still matches instead of retokenizing sampled text. An edited response no longer matches that hash and must be rendered afresh. This preserves non-canonical sampled tokenization and the absent EOS on a length-capped response without changing live token commits.
 
 Gate 5 has four checks:
 
