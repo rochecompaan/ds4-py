@@ -154,6 +154,8 @@ renders fresh, and performs a full rebuild prefill on follow-up. Gate 5 checks
 the restore plans, prompt position, save/session provenance, and the first
 pre-sample top-12 logits. Later tokens and terminal reasons stay in the report
 as diagnostics; they are not required to match.
+The C rebuild reference builds provenance through the session's C-arm reference
+path, not by copying the ds4-py case-2 metadata.
 
 ## Replay reference drivers
 

@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from bench.restore_plan import RestoreConfig, RestoreOperations
+    from bench.session import BakeoffSession
 
 
 def _restore_run(trace_path: Path) -> RestoreRun:
@@ -41,8 +42,17 @@ def _restore_run(trace_path: Path) -> RestoreRun:
 
 
 @dataclass(frozen=True)
+class RestoreProvenance:
+    """Session identity and its subprocess environment for one restore recheck."""
+
+    session: BakeoffSession | None = None
+    environment: Mapping[str, str] | None = None
+
+
+@dataclass(frozen=True)
 class ProcessRestoreOperations:
     config: RestoreConfig
+    session: BakeoffSession | None = None
     workspace: Path | None = None
     provenance_environment: Mapping[str, str] | None = None
     c_driver: str | Path | None = None
@@ -131,20 +141,29 @@ class ProcessRestoreOperations:
     def c_rebuild(self, home: Path, case2_trace: Path, trace_path: Path) -> CReferenceRun:
         if self.c_driver is None:
             raise RestoreError("Gate 5 rebuild equivalence requires the C replay driver")
+        if self.session is None:
+            raise RestoreError("Gate 5 rebuild equivalence requires bake-off session provenance")
         case2_trace = case2_trace.resolve()
         trace_path = trace_path.resolve()
         command = prepare_c_rebuild(self.config, self.c_driver, case2_trace, trace_path)
         completed = self._run(command, home=home, trace_path=trace_path, operation="c-rebuild")
         trace_path.write_text(completed.stdout or "")
-        return write_c_rebuild_metadata(case2_trace, trace_path, trace_path.with_suffix(".json"))
+        return write_c_rebuild_metadata(self.session, case2_trace, trace_path, trace_path.with_suffix(".json"))
 
 
 def process_restore_runner(
     config: RestoreConfig,
     *,
+    session: BakeoffSession | None = None,
     workspace: Path | None = None,
     provenance_environment: Mapping[str, str] | None = None,
     c_driver: str | Path | None = None,
 ) -> RestoreOperations:
     """Return explicit operations that run in disposable task-workspace copies."""
-    return ProcessRestoreOperations(config, workspace, provenance_environment, c_driver)
+    return ProcessRestoreOperations(
+        config=config,
+        session=session,
+        workspace=workspace,
+        provenance_environment=provenance_environment,
+        c_driver=c_driver,
+    )

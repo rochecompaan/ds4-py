@@ -29,6 +29,7 @@ def _round() -> RoundProvenance:
             SyncCall(label="full", input_tokens=12, cached_tokens=8, prefill_tokens=4, position=12),
         ),
         progress_chunks=(ProgressChunk(done=8, total=8), ProgressChunk(done=4, total=4)),
+        observed_think=75,
     )
 
 
@@ -53,6 +54,12 @@ def _provenance() -> TraceProvenance:
         trace_sha256="c-output-sha",
         source_trace_sha256="source-sha",
         rounds=(_round(),),
+        observed_libds4_sha256="library-sha",
+        observed_model_path="/models/ds4.gguf",
+        observed_backend="cuda",
+        observed_ctx=100000,
+        observed_seed=1,
+        observed_temperature=0.0,
     )
 
 

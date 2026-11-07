@@ -53,6 +53,13 @@ class DriverRoundEvidence:
     prefill_seconds: float
     decode_seconds: float
     terminal_reason: str | None
+    observed_libds4_sha256: str | None = None
+    observed_model_path: str | None = None
+    observed_backend: str | None = None
+    observed_ctx: int | None = None
+    observed_seed: int | None = None
+    observed_temperature: float | None = None
+    observed_think: int | None = None
 
 
 @dataclass
@@ -63,6 +70,13 @@ class _RoundBuilder:
     progress_chunks: list[ProgressChunk]
     steps: list[StepCapture]
     seen_steps: set[int]
+    observed_libds4_sha256: str
+    observed_model_path: str
+    observed_backend: str
+    observed_ctx: int
+    observed_seed: int
+    observed_temperature: float
+    observed_think: int
 
 
 def _text(value: object, field: str) -> str:
@@ -257,6 +271,13 @@ def _start_round(record: dict[str, JsonValue]) -> _RoundBuilder:
         progress_chunks=[],
         steps=[],
         seen_steps=set(),
+        observed_libds4_sha256=_text(_field(record, "observed_libds4_sha256"), "observed_libds4_sha256"),
+        observed_model_path=_text(_field(record, "observed_model_path"), "observed_model_path"),
+        observed_backend=_text(_field(record, "observed_backend"), "observed_backend"),
+        observed_ctx=_integer(_field(record, "observed_ctx"), "observed_ctx", minimum=1),
+        observed_seed=_integer(_field(record, "observed_seed"), "observed_seed"),
+        observed_temperature=_finite_number(_field(record, "observed_temperature"), "observed_temperature"),
+        observed_think=_integer(_field(record, "observed_think"), "observed_think"),
     )
 
 
@@ -357,6 +378,13 @@ def _finish_round(builder: _RoundBuilder, record: dict[str, JsonValue]) -> Drive
         prefill_seconds=_seconds(_field(record, "prefill_seconds"), "prefill_seconds"),
         decode_seconds=_seconds(_field(record, "decode_seconds"), "decode_seconds"),
         terminal_reason=terminal,
+        observed_libds4_sha256=builder.observed_libds4_sha256,
+        observed_model_path=builder.observed_model_path,
+        observed_backend=builder.observed_backend,
+        observed_ctx=builder.observed_ctx,
+        observed_seed=builder.observed_seed,
+        observed_temperature=builder.observed_temperature,
+        observed_think=builder.observed_think,
     )
 
 

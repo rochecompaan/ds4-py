@@ -113,7 +113,18 @@ def test_restore_recheck_inherits_schema_two_session_provenance(
         "ds4_revision": "ds4-revision",
         "ds4py_revision": "ds4py-revision",
         "libds4_sha256": "library-sha",
+        "model_path": "/model.gguf",
         "model_sha256": "model-sha",
+        "backend": "cpu",
+        "ctx": 100000,
+        "q8_f16_cache_mb": 5120,
+        "temperature": 0.0,
+        "seed": 1,
+        "response_budget": 8192,
+        "reset_policy": "fresh-per-round",
+        "trace_sha256": "trace-sha",
+        "source_trace_sha256": "source-sha",
+        "rounds": [],
     }
     data.update(schema_version=2, **identity)
     data["provenance"] = [{"c": identity}]
@@ -129,8 +140,10 @@ def test_restore_recheck_inherits_schema_two_session_provenance(
     status = check_command(["--report", str(report), "--model", "/model.gguf"])
 
     assert status == 0
-    environment = captured["provenance_environment"]
+    environment = captured["provenance"].environment
     assert environment["BAKEOFF_SESSION_ID"] == "session-1"
     assert environment["DS4_BAKEOFF_INSTANCE_ID"] == "instance-1"
     assert environment["DS4_BAKEOFF_MODEL_SHA256"] == "model-sha"
     assert environment["DS4_BAKEOFF_LIBDS4_SHA256"] == "library-sha"
+    assert captured["provenance"].session.libds4_sha256 == "library-sha"
+    assert captured["provenance"].session.model_path == "/model.gguf"

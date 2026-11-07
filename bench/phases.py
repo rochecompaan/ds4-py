@@ -43,6 +43,7 @@ from bench.provenance import write_trace_provenance
 from bench.pty_driver import drive_interruption_pty
 from bench.report import GateResult
 from bench.restore_check import check_result_saves
+from bench.restore_equivalence import RestoreProvenance
 from bench.self_replay import (
     SelfReplayContext,
     SelfReplayResult,
@@ -92,6 +93,7 @@ def build_agent_command(
 def run_restore_phase(
     task_results: Sequence[TaskRunResult],
     config: AgentConfig,
+    session: BakeoffSession,
     results_root: Path,
     c_driver: str | Path,
 ) -> tuple[RestoreResult, ...]:
@@ -100,6 +102,7 @@ def run_restore_phase(
         task_results,
         config,
         results_root / "restores",
+        provenance=RestoreProvenance(session=session),
         c_driver=c_driver,
     )
 

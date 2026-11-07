@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, Protocol
 
 from bench.driver_cases import export_trace_cases, read_driver_ndjson
-from bench.provenance import TraceProvenance
 from bench.restore_plan import CReferenceRun
 from ds4py.engine.replay import read_replay
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from bench.session import BakeoffSession
 
 
 class CConfig(Protocol):
@@ -65,7 +65,12 @@ def prepare_c_rebuild(
     ]
 
 
-def write_c_rebuild_metadata(case2_trace: Path, output_trace: Path, metadata: Path) -> CReferenceRun:
+def write_c_rebuild_metadata(
+    session: BakeoffSession,
+    case2_trace: Path,
+    output_trace: Path,
+    metadata: Path,
+) -> CReferenceRun:
     """Validate one C round and write the common restore-run metadata schema."""
     rounds = read_driver_ndjson(output_trace)
     if len(rounds) != 1 or len(rounds[0].steps) != 1:
@@ -74,13 +79,9 @@ def write_c_rebuild_metadata(case2_trace: Path, output_trace: Path, metadata: Pa
     if evidence.case.split_at != 0 or evidence.case.steps != 1:
         raise CRebuildError("C rebuild reference did not use split-at 0 with one step")
     case2_metadata = json.loads(case2_trace.with_suffix(".json").read_text())
-    provenance_value = case2_metadata["provenance"]
-    provenance_value["rounds"] = ()
     provenance = replace(
-        TraceProvenance(**provenance_value),
+        session.reference_provenance(output_trace, case2_trace, rounds),
         reset_policy="c-rebuild-split-0",
-        trace_sha256=hashlib.sha256(output_trace.read_bytes()).hexdigest(),
-        source_trace_sha256=hashlib.sha256(case2_trace.read_bytes()).hexdigest(),
     )
     capture = evidence.steps[0]
     metadata.write_text(

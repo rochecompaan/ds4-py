@@ -152,6 +152,7 @@ def provenance() -> TraceProvenance:
         prompt_sha256="prompt-sha",
         sync_calls=(SyncCall("full", 12, 8, 4, 12),),
         progress_chunks=(ProgressChunk(4, 4),),
+        observed_think=75,
     )
     return TraceProvenance(
         bakeoff_session_id="session-1",
@@ -173,6 +174,12 @@ def provenance() -> TraceProvenance:
         trace_sha256="c-output-sha",
         source_trace_sha256="source-sha",
         rounds=(round_,),
+        observed_libds4_sha256="library-sha",
+        observed_model_path="/models/ds4.gguf",
+        observed_backend="cuda",
+        observed_ctx=100000,
+        observed_seed=1,
+        observed_temperature=0.0,
     )
 
 
@@ -546,6 +553,13 @@ def test_cap_phase_runs_both_drivers_for_each_arm_round_zero(
                     prefill_seconds=0.0,
                     decode_seconds=0.0,
                     terminal_reason="stop_token",
+                    observed_libds4_sha256="library-sha",
+                    observed_model_path="/model.gguf",
+                    observed_backend="cpu",
+                    observed_ctx=100000,
+                    observed_seed=1,
+                    observed_temperature=0.0,
+                    observed_think=case.think,
                 ),
             ),
             (),
@@ -1011,6 +1025,13 @@ def test_reference_phase_runs_sequentially_and_records_provenance(
         prefill_seconds=1.0,
         decode_seconds=2.0,
         terminal_reason="recorded_boundary",
+        observed_libds4_sha256="library-sha",
+        observed_model_path="/model.gguf",
+        observed_backend="cpu",
+        observed_ctx=100000,
+        observed_seed=1,
+        observed_temperature=0.0,
+        observed_think=2,
     )
     calls = []
     monkeypatch.setattr(

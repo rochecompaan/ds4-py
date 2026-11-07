@@ -12,7 +12,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from bench.driver_cases import load_case_tokens
+from bench.driver_cases import DriverEvidenceError, load_case_tokens
 from bench.provenance import (
     CUDA_DISABLE_HOST_REGISTER_ENV,
     NATIVE_PATCHES_ENV,
@@ -38,6 +38,16 @@ def token_sha256(tokens: Sequence[int]) -> str:
     """Hash canonical token IDs without token text or prompt rendering."""
     payload = json.dumps(list(tokens), separators=(",", ":")).encode()
     return hashlib.sha256(payload).hexdigest()
+
+
+_OBSERVED_DRIVER_FIELDS = (
+    "observed_libds4_sha256",
+    "observed_model_path",
+    "observed_backend",
+    "observed_ctx",
+    "observed_seed",
+    "observed_temperature",
+)
 
 
 def native_patch_provenance(repo_root: Path, specification: str) -> tuple[NativePatch, ...]:
@@ -235,6 +245,11 @@ class BakeoffSession:
         source_trace_path: Path,
         evidence: Sequence[DriverRoundEvidence],
     ) -> TraceProvenance:
+        first = evidence[0] if evidence else None
+        if first is not None and any(
+            getattr(item, field) != getattr(first, field) for item in evidence[1:] for field in _OBSERVED_DRIVER_FIELDS
+        ):
+            raise DriverEvidenceError("observed driver identity differs between rounds")
         rounds = tuple(
             RoundProvenance(
                 round_index=item.case.round_index,
@@ -242,14 +257,23 @@ class BakeoffSession:
                 prompt_sha256=token_sha256(load_case_tokens(item.case)[0]),
                 sync_calls=item.sync_calls,
                 progress_chunks=item.progress_chunks,
+                observed_think=item.observed_think,
             )
             for item in evidence
         )
-        return self.provenance(
-            output_path,
-            source_trace_path,
-            rounds=rounds,
-            reset_policy="fresh-per-round",
+        return replace(
+            self.provenance(
+                output_path,
+                source_trace_path,
+                rounds=rounds,
+                reset_policy="fresh-per-round",
+            ),
+            observed_libds4_sha256=first.observed_libds4_sha256 if first else None,
+            observed_model_path=first.observed_model_path if first else None,
+            observed_backend=first.observed_backend if first else None,
+            observed_ctx=first.observed_ctx if first else None,
+            observed_seed=first.observed_seed if first else None,
+            observed_temperature=first.observed_temperature if first else None,
         )
 
 
@@ -291,6 +315,54 @@ def report_provenance_environment(data: Mapping[str, object]) -> dict[str, str]:
         if len(names) == len(patches):
             environment[NATIVE_PATCHES_ENV] = os.pathsep.join(names)
     return environment
+
+
+def report_bakeoff_session(data: Mapping[str, object]) -> BakeoffSession | None:
+    """Recover expected session identity from the first C-arm reference pair."""
+    pairs = data.get("provenance")
+    if not isinstance(pairs, list) or not pairs or not isinstance(pairs[0], dict):
+        return None
+    c = pairs[0].get("c")
+    if not isinstance(c, dict):
+        return None
+    value = dict(c)
+    value["rounds"] = ()
+    raw_patches = value.get("native_patches", ())
+    if not isinstance(raw_patches, (list, tuple)):
+        return None
+    patches = []
+    for item in raw_patches:
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("name"), str)
+            or not isinstance(item.get("sha256"), str)
+        ):
+            return None
+        patches.append(NativePatch(item["name"], item["sha256"]))
+    value["native_patches"] = tuple(patches)
+    try:
+        provenance = TraceProvenance(**value)
+        return BakeoffSession(
+            bakeoff_session_id=provenance.bakeoff_session_id,
+            instance_id=provenance.instance_id,
+            gpu_model=provenance.gpu_model,
+            gpu_driver_version=provenance.gpu_driver_version,
+            ds4_revision=provenance.ds4_revision,
+            ds4py_revision=provenance.ds4py_revision,
+            libds4_sha256=provenance.libds4_sha256,
+            model_path=provenance.model_path,
+            model_sha256=provenance.model_sha256,
+            backend=provenance.backend,
+            ctx=provenance.ctx,
+            temperature=provenance.temperature,
+            seed=provenance.seed,
+            response_budget=provenance.response_budget,
+            q8_f16_cache_mb=provenance.q8_f16_cache_mb,
+            native_patches=provenance.native_patches,
+            cuda_disable_host_register=provenance.cuda_disable_host_register,
+        )
+    except TypeError, ValueError:
+        return None
 
 
 def record_task_provenance(

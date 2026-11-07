@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 
 /* Replay the first tokens of a retained C case through a shared libds4.
@@ -19,7 +20,9 @@
  */
 
 #include "ds4.h"
+#include "c_sha256.h"
 
+#include <dlfcn.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -231,6 +234,17 @@ static void json_string(const char *value) {
     putchar('"');
 }
 
+static int loaded_library_sha256(char output[65]) {
+    Dl_info info;
+    if (!dladdr((void *)&ds4_engine_open, &info) || !info.dli_fname) return 0;
+    return reference_sha256_file(info.dli_fname, output);
+}
+
+static const char *observed_model_path(const replay_config *cfg, char resolved[4096]) {
+    const char *path = realpath(cfg->model, resolved);
+    return path ? path : cfg->model;
+}
+
 /* Parse and validate the shared TSV/NDJSON contract. */
 
 static int parse_manifest_case(char *line, driver_case *out) {
@@ -340,15 +354,25 @@ static void manifest_progress(void *ud, const char *event, int current, int tota
     buffer->items[buffer->count++] = (progress_chunk){.done = done, .total = buffer->prefilled};
 }
 
-static void emit_round_start(const replay_config *cfg, const driver_case *item) {
+static void emit_round_start(const replay_config *cfg, const driver_case *item, const char *library_sha256) {
+    char resolved_model[4096];
     printf("{\"kind\":\"round_start\",\"source_trace\":");
     json_string(cfg->source_trace);
     printf(",\"task_id\":");
     json_string(item->task_id);
     printf(",\"attempt\":%d,\"round\":%d,\"token_file\":", item->attempt, item->round_index);
     json_string(item->token_file);
-    printf(",\"prompt_tokens\":%d,\"split_at\":%d,\"steps\":%d,\"think\":%d}\n",
+    printf(",\"prompt_tokens\":%d,\"split_at\":%d,\"steps\":%d,\"think\":%d,"
+           "\"observed_libds4_sha256\":",
            item->prompt_tokens, item->split_at, item->steps, item->think);
+    json_string(library_sha256);
+    printf(",\"observed_model_path\":");
+    json_string(observed_model_path(cfg, resolved_model));
+    printf(",\"observed_backend\":");
+    json_string(cfg->backend_name);
+    printf(",\"observed_ctx\":%d,\"observed_seed\":1,\"observed_temperature\":0,"
+           "\"observed_think\":%d}\n",
+           cfg->ctx, item->think);
 }
 
 static int sync_case(
@@ -407,7 +431,11 @@ static void emit_step(const step_capture *step) {
 
 /* Execute one fresh native session per manifest case. */
 
-static int run_manifest_case(ds4_engine *engine, const replay_config *cfg, const driver_case *item) {
+static int run_manifest_case(
+        ds4_engine *engine,
+        const replay_config *cfg,
+        const driver_case *item,
+        const char *library_sha256) {
     int *prompt = NULL;
     int *expected = NULL;
     step_capture *steps = NULL;
@@ -425,7 +453,7 @@ static int run_manifest_case(ds4_engine *engine, const replay_config *cfg, const
     ds4_tokens full = {.v = prompt, .len = item->prompt_tokens, .cap = item->prompt_tokens};
     int prefill_tokens = 0;
     double prefill_seconds = 0.0;
-    emit_round_start(cfg, item);
+    emit_round_start(cfg, item, library_sha256);
     if (item->split_at > 0) {
         ds4_tokens prefix = {.v = prompt, .len = item->split_at, .cap = item->split_at};
         if (!sync_case(session, &prefix, "prefix", &progress, &prefill_tokens, &prefill_seconds)) goto cleanup;
@@ -486,7 +514,7 @@ cleanup:
     return ok;
 }
 
-static int run_cases(const replay_config *cfg) {
+static int run_cases(const replay_config *cfg, const char *library_sha256) {
     FILE *file = fopen(cfg->cases_file, "r");
     if (!file) {
         perror(cfg->cases_file);
@@ -524,7 +552,7 @@ static int run_cases(const replay_config *cfg) {
         if (length && line[length - 1] == '\n') line[length - 1] = '\0';
         driver_case item;
         if (!parse_manifest_case(line, &item)) goto cleanup;
-        if (!run_manifest_case(engine, cfg, &item)) goto cleanup;
+        if (!run_manifest_case(engine, cfg, &item, library_sha256)) goto cleanup;
         case_count++;
     }
     if (!case_count) {
@@ -552,7 +580,12 @@ int main(int argc, char **argv) {
         usage(stderr, argv[0]);
         return 2;
     }
-    if (cfg.cases_file) return run_cases(&cfg);
+    char library_sha256[65];
+    if (!loaded_library_sha256(library_sha256)) {
+        fprintf(stderr, "failed to identify or hash the loaded libds4\n");
+        return 1;
+    }
+    if (cfg.cases_file) return run_cases(&cfg, library_sha256);
     ds4_think_mode think_mode = DS4_THINK_HIGH;
     if (strcmp(cfg.think_name, "high") != 0 &&
         !ds4_think_mode_parse_level(cfg.think_name, &think_mode)) {
@@ -591,10 +624,19 @@ int main(int argc, char **argv) {
     }
     if (!sync_prompt(session, &full, "full")) goto cleanup;
 
+    char resolved_model[4096];
     printf("{\"kind\":\"config\",\"model\":\"%s\",\"backend\":\"%s\",\"ctx\":%d,"
            "\"prompt_tokens\":%d,\"split_at\":%d,\"steps\":%d,\"temperature\":0,"
-           "\"top_k\":0,\"top_p\":1,\"min_p\":0.05,\"seed\":1}\n",
-           cfg.model, cfg.backend_name, cfg.ctx, cfg.prompt_tokens, cfg.split_at, cfg.steps);
+           "\"top_k\":0,\"top_p\":1,\"min_p\":0.05,\"seed\":1,"
+           "\"observed_libds4_sha256\":\"%s\",\"observed_model_path\":",
+           cfg.model, cfg.backend_name, cfg.ctx, cfg.prompt_tokens, cfg.split_at, cfg.steps,
+           library_sha256);
+    json_string(observed_model_path(&cfg, resolved_model));
+    printf(",\"observed_backend\":");
+    json_string(cfg.backend_name);
+    printf(",\"observed_ctx\":%d,\"observed_seed\":1,\"observed_temperature\":0,"
+           "\"observed_think\":%d}\n",
+           cfg.ctx, (int)think_mode);
 
     uint64_t rng = 1;
     int first_divergence = -1;

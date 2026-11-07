@@ -404,6 +404,7 @@ def run_bakeoff(  # noqa: PLR0913 - The manifest and output layout are independe
         restore_runs = run_restore_phase(
             task_results,
             ds4_config,
+            session,
             results_root,
             c_driver,
         )
