@@ -141,7 +141,7 @@ Cap-exit frequency differences are a rendering/sampling product decision, not by
 
 #### Optional cap-parity check
 
-`--cap-parity` enables an additional same-host check. For each arm's round-0 prompt, both reference drivers receive the same prompt, sync shape, and response budget. Each prompt must have the same cap outcome in both drivers: both reach the cap or both stop before it. Token equality is not required.
+`--cap-parity` enables an additional same-host check. For each arm's round-0 prompt, both reference drivers receive the same prompt, sync shape, and response budget. Each prompt must have the same native-sampling cap outcome in both drivers: `max_tokens` is capped, while a native stop is not capped. Both drivers use the native think-mode stop-token policy or the step budget; completed or malformed tool syntax does not terminate the Python driver. Token equality is not required.
 
 This subcheck is off by default. When explicitly enabled, its result is required for Gate 2 and its provenance is validated.
 

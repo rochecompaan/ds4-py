@@ -2,11 +2,16 @@
 
 import os
 import sys
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Self
 
 import pytest
+
+import ds4py
+from ds4py._native.fake import FAKE_EOS, FakeNative
+from ds4py._native.fake_chat import tokenize_rendered
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
@@ -246,6 +251,27 @@ def test_session_provenance_mismatch_is_invalid(changes: dict[str, object]) -> N
 
     assert not result.passed
     assert not result.valid
+
+
+def test_python_reference_driver_ignores_tool_completion_until_native_budget() -> None:
+    tool_tokens = tuple(
+        tokenize_rendered("<tool_call><function=read><parameter=path>/tmp/x</parameter></function></tool_call>")
+    )
+    sampled = (*tool_tokens, *((121,) * 8))
+    assert len(sampled) == 70
+
+    def script(_prompt: Sequence[int], generated: Sequence[int]) -> int:
+        return sampled[len(generated)] if len(generated) < len(sampled) else FAKE_EOS
+
+    info = replace(FakeNative()._info, family="qwen", is_qwen4=True)
+    prompt = tuple(tokenize_rendered("SYS"))
+    case = DriverCase("task-a", 1, 0, Path("/cases/0.tokens"), len(prompt), 0, 70, 75)
+    with ds4py.open("/models/fake.gguf", ctx=4096, native=FakeNative(info=info, script=script)) as engine:
+        ds4py_reference_driver._sync(engine, prompt, "full")
+        result = ds4py_reference_driver._decode(engine, case, prompt, sampled)
+
+    assert len(result.steps) == 70
+    assert result.terminal_reason == "max_tokens"
 
 
 def test_python_reference_driver_pins_cache_before_engine_open(monkeypatch: pytest.MonkeyPatch) -> None:

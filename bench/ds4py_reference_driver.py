@@ -23,7 +23,6 @@ from ds4py._native.protocol import SyncStatus
 from ds4py.engine.decode import GenerateJob, generate
 from ds4py.engine.events import Token
 from ds4py.engine.sampling import Rng, SamplingPolicy
-from ds4py.engine.stream import RoundStream
 from ds4py.engine.transcript import Transcript
 from ds4py.engine.worker import ResetJob
 from ds4py.errors import EngineError
@@ -96,7 +95,6 @@ def _decode(
     policy = SamplingPolicy.for_engine(engine.info, temperature=0.0, seed=1)
     transcript = Transcript()
     transcript.append(prompt, "system")
-    stream = RoundStream(engine.info, case.think)
     captures: list[_CapturedStep] = []
 
     def hook(view: LogitsView) -> None:
@@ -122,8 +120,6 @@ def _decode(
         transcript,
         reserve=1,
         think_mode=case.think,
-        stream=stream,
-        control=stream.control,
         logits_hooks=(hook,),
     )
     events: list[Event] = []
