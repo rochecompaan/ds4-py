@@ -45,6 +45,8 @@ host:                  NVIDIA RTX PRO 6000 Blackwell Workstation Edition, driver
 instance:              59386390
 ```
 
+The merged agent code differs from `3ef9aa5` only by the readability-only refactor of `src/ds4py/message_rendering.py` in `6949978ad668c37e7d7709f8608bee5929d5f19d`, verified by the unchanged exact-token round-trip tests in `tests/agent/test_tool_render.py` and `tests/agent/test_restore.py`.
+
 ## How we got here
 
 The 2026-11-03 four-task repair run isolated the cap, wall-time, interruption, and restore failures. Its direct-import and PTY findings were harness defects, not product evidence. The final gate results above supersede its failed or unevaluated gates.
