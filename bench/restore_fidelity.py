@@ -10,20 +10,20 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bench.comparison import StepCapture, TopLogit, compare_step
-from bench.restore_plan import CheckResult, RestoreError
+from bench.restore_plan import CheckResult, RestoreError, RestoreRun
 from bench.restore_position import validate_restore_pair
 from ds4py._json import is_json_object
 
 if TYPE_CHECKING:
-    from bench.restore_plan import RestoreRun
+    from bench.restore_plan import RestoreReference
 
 
 def _compare_reference(
     run: RestoreRun,
-    reference: RestoreRun,
+    reference: RestoreReference,
     *,
     label: str,
-    expected_plan: str,
+    expected_plan: str | None,
 ) -> tuple[CheckResult, list[str], bool]:
     """Compare one restore path with a reference that holds its KV history constant."""
     problems: list[str] = []
@@ -32,9 +32,12 @@ def _compare_reference(
     if provenance_issues:
         problems.extend(f"{label}: {issue}" for issue in provenance_issues)
         valid = False
-    if reference.followup_plan != expected_plan:
-        problems.append(f"{label}: reference plan was {reference.followup_plan}, not {expected_plan}")
-        valid = False
+    if expected_plan is not None:
+        if not isinstance(reference, RestoreRun):
+            raise RestoreError(f"{label}: Python reference evidence is missing")
+        if reference.followup_plan != expected_plan:
+            problems.append(f"{label}: reference plan was {reference.followup_plan}, not {expected_plan}")
+            valid = False
     if reference.followup_prefill <= 0:
         problems.append(f"{label}: reference did not prefill the follow-up")
         valid = False

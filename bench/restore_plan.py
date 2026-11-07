@@ -10,14 +10,13 @@ import json
 import os
 import shutil
 import sys
-from collections.abc import Awaitable, Callable, Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, TypedDict
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Awaitable, Callable, Generator, Sequence
 
     from ds4py.engine.lifecycle import SessionEvent
     from ds4py.engine.logits import LogitsView
@@ -59,6 +58,31 @@ class RestoreRun:
 
 
 @dataclass(frozen=True)
+class CReferenceRun:
+    trace_path: Path
+    followup_prefill: int
+    first_step: StepCapture | None
+    provenance_path: Path
+
+
+type RestoreReference = RestoreRun | CReferenceRun
+
+
+class RestoreOperations(Protocol):
+    def restore(self, home: Path, session_id: str, trace_path: Path) -> RestoreRun: ...
+
+    def replay_same_history(
+        self,
+        home: Path,
+        session_id: str,
+        trace_path: Path,
+        restore_trace: Path,
+    ) -> RestoreRun: ...
+
+    def c_rebuild(self, home: Path, case2_trace: Path, trace_path: Path) -> CReferenceRun: ...
+
+
+@dataclass(frozen=True)
 class SaveEvidence:
     record: SaveRecord
     events_path: Path
@@ -84,9 +108,6 @@ class RestoreResult:
 class RestoreSummary:
     runs: tuple[RestoreResult, ...] = ()
     interruption: CheckResult = CheckResult(False, "not run")
-
-
-RestoreRunner = Callable[[Path, str, int, Path], RestoreRun]
 
 
 class RestoreConfig(Protocol):

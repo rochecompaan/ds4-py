@@ -17,7 +17,7 @@ from bench.restore_plan import FOLLOWUP, CheckResult, RestoreError
 from ds4py.engine.replay import read_replay
 
 if TYPE_CHECKING:
-    from bench.restore_plan import RestoreRun
+    from bench.restore_plan import RestoreReference, RestoreRun
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,7 @@ class _RestoreMetadata:
     followup_prompt_sha256: str
 
 
-def _restore_metadata(run: RestoreRun, label: str) -> _RestoreMetadata:
+def _restore_metadata(run: RestoreReference, label: str) -> _RestoreMetadata:
     if run.provenance_path is None:
         raise RestoreError(f"{label}: restore provenance is missing")
     try:
@@ -49,7 +49,7 @@ def _restore_metadata(run: RestoreRun, label: str) -> _RestoreMetadata:
         raise RestoreError(f"{label}: malformed restore provenance: {error}") from error
 
 
-def validate_restore_pair(case1: RestoreRun, case2: RestoreRun) -> tuple[str, ...]:
+def validate_restore_pair(case1: RestoreRun, case2: RestoreReference) -> tuple[str, ...]:
     """Validate shared session, original save, and fixed follow-up evidence."""
     first = _restore_metadata(case1, "case 1")
     second = _restore_metadata(case2, "case 2")
