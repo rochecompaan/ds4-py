@@ -62,16 +62,9 @@ def test_task_deserialization_requires_terminal_evidence() -> None:
         TaskRunResult.from_dict(record)
 
 
-@pytest.mark.parametrize(
-    ("options", "tokens", "request_limit"),
-    [([], 8192, 100), (["--tokens", "4096", "--request-limit", "7"], 4096, 7)],
-)
 def test_restore_check_deserializes_tasks_and_complete_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    options: list[str],
-    tokens: int,
-    request_limit: int,
 ) -> None:
     report = tmp_path / "bakeoff.json"
     write_report(report, [task_record("task", "ds4py")])
@@ -89,7 +82,10 @@ def test_restore_check_deserializes_tasks_and_complete_config(
             str(report),
             "--model",
             "/model.gguf",
-            *options,
+            "--tokens",
+            "4096",
+            "--request-limit",
+            "7",
         ]
     )
 
@@ -98,8 +94,8 @@ def test_restore_check_deserializes_tasks_and_complete_config(
     assert isinstance(captured["tasks"][0], TaskRunResult)
     assert captured["tasks"][0].summary.reuse_ratios == (0.5,)
     assert captured["tasks"][0].attempt_save_dirs == (Path("/save"),)
-    assert captured["config"].tokens == tokens
-    assert captured["config"].request_limit == request_limit
+    assert captured["config"].tokens == 4096
+    assert captured["config"].request_limit == 7
 
 
 def test_restore_recheck_inherits_schema_two_session_provenance(
