@@ -42,11 +42,11 @@ from bench.metrics import (
 from bench.models import AgentConfig, TaskRunResult
 from bench.provenance import TraceProvenance, write_trace_provenance
 from bench.pty_driver import drive_interruption_pty, drive_pty  # noqa: F401 - Compatibility re-export.
-from bench.replay_c_traces import ReplaySelectionError, select_c_traces
 from bench.report import BakeoffReport, GateResult, build_report
 from bench.restore_check import CheckResult, RestoreSummary, check_result_saves
 from bench.self_replay import SelfReplayContext, replay_ds4py_task_results, select_ds4py_traces
 from bench.session import BakeoffSession, record_task_provenance
+from bench.trace_selection import ReplaySelectionError, select_c_traces
 from bench.workspaces import (
     CommandRunner,
     GradeResult,

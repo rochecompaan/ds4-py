@@ -1,51 +1,38 @@
-"""Diagnostic: replay complete C token traces with no tool execution."""
+"""Select recorded traces and replay their rounds without tool execution."""
 
 from __future__ import annotations
 
-import argparse
-import os
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import ds4py
-from bench.models import TaskRunResult
 from ds4py.engine.decode import GenerateJob
 from ds4py.engine.events import Event, Stopped, Token
-from ds4py.engine.replay import read_replay
-from ds4py.engine.sampling import Rng, SamplingPolicy
 from ds4py.engine.stream import RoundStream
 from ds4py.engine.tool_syntax import make_parser
 from ds4py.engine.transcript import Transcript
 from ds4py.engine.worker import SyncJob
-from ds4py.errors import Ds4pyError
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
-    from ds4py.engine.replay_types import ReplayRound, ReplayTrace
+    from bench.models import TaskRunResult
+    from ds4py.engine.replay_types import ReplayRound
+    from ds4py.engine.sampling import Rng, SamplingPolicy
     from ds4py.engine.session import Engine
     from ds4py.engine.tool_syntax.model import Snapshot
 
 
 class ReplayMismatch(AssertionError):
-    """A generated token or terminal boundary differs from the C trace."""
+    """A generated token or terminal boundary differs from the recorded trace."""
 
 
 class ReplaySelectionError(ValueError):
     """The C trace set is incomplete or inconsistent with the selected model."""
-
-
-class ReplayConfig(Protocol):
-    @property
-    def model(self) -> str: ...
-
-    @property
-    def backend(self) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -205,7 +192,7 @@ def replay_round(  # noqa: PLR0913, PLR0917 - Replay requires model, sampling, a
     round_: ReplayRound,
     response_budget: int | None = None,
 ) -> ReplayResult:
-    """Replay one C-owned prompt without preflight, translation, or tool calls."""
+    """Replay one recorded prompt without preflight, translation, or tool calls."""
     transcript = Transcript()
     if round_.prompt:
         transcript.append(round_.prompt, "system")
@@ -245,171 +232,3 @@ def replay_round(  # noqa: PLR0913, PLR0917 - Replay requires model, sampling, a
         tool_call=tool_call,
         terminal_reason=terminal,
     )
-
-
-def replay_trace(
-    engine: Engine,
-    trace: ReplayTrace,
-    *,
-    task_id: str = "trace",
-) -> tuple[ReplayResult, ...]:
-    """Reuse one C-capture RNG across rounds, resetting it for each C attempt."""
-    policy = SamplingPolicy.for_engine(engine.info, temperature=0.0, seed=1)
-    rng = Rng(1)
-    return tuple(
-        replay_round(
-            engine,
-            policy,
-            rng,
-            task_id,
-            ordinal,
-            round_,
-        )
-        for ordinal, round_ in enumerate(trace.rounds)
-    )
-
-
-def _validate_selection(selected: Sequence[tuple[str, Path]]) -> None:
-    identifiers = {task_id for task_id, _path in selected}
-    if len(selected) == 0 or len(identifiers) != 12:
-        raise ReplaySelectionError(f"gate 6 needs 12 C tasks, found {len(identifiers)}")
-
-
-def replay_with_engine(
-    engine: Engine,
-    selected: Sequence[tuple[str, Path]],
-    *,
-    require_full_set: bool = True,
-) -> tuple[ReplayResult, ...]:
-    """Replay selected C files sequentially on one already-open engine."""
-    if require_full_set:
-        _validate_selection(selected)
-    model = Path(engine.config.model).expanduser().resolve()
-    results: list[ReplayResult] = []
-    for task_id, selected_path in selected:
-        path = Path(selected_path)
-        try:
-            trace = read_replay(path)
-            if trace.model is None or trace.ctx is None:
-                raise ReplaySelectionError(f"trace {path} is missing model or context metadata")
-            if Path(trace.model).expanduser().resolve() != model:
-                raise ReplaySelectionError(f"trace model {trace.model} does not match selected {model}")
-            if trace.ctx != engine.config.ctx:
-                raise ReplaySelectionError(f"trace ctx {trace.ctx} does not match engine ctx {engine.config.ctx}")
-        except (OSError, ValueError) as error:
-            results.append(
-                ReplayResult(
-                    task_id,
-                    -1,
-                    False,
-                    f"{task_id} round -1: malformed C trace {path}: {error}",
-                    trace_path=path,
-                )
-            )
-            continue
-        policy = SamplingPolicy.for_engine(engine.info, temperature=0.0, seed=1)
-        rng = Rng(1)
-        for ordinal, round_ in enumerate(trace.rounds):
-            try:
-                result = replay_round(
-                    engine,
-                    policy,
-                    rng,
-                    task_id,
-                    ordinal,
-                    round_,
-                )
-            except (Ds4pyError, ReplayMismatch) as error:
-                data = b"".join(engine.token_text(token) for token in round_.sampled)
-                c_snapshot = _parse_c(engine, round_, [data])
-                result = ReplayResult(
-                    task_id,
-                    ordinal,
-                    False,
-                    str(error),
-                    tool_call=c_snapshot.state == "DONE" and bool(c_snapshot.calls),
-                    trace_path=path,
-                )
-            results.append(replace(result, trace_path=path))
-    if require_full_set and not any(result.tool_call for result in results):
-        results.append(
-            ReplayResult(
-                "<selection>",
-                -1,
-                False,
-                "full 12-run C set contains no tool-call round to replay",
-            )
-        )
-    return tuple(results)
-
-
-def replay_c_traces(
-    task_results: Iterable[TaskRunResult],
-    model: str | Path,
-    *,
-    lib: str | Path | None = None,
-    backend: str = "cpu",
-) -> tuple[ReplayResult, ...]:
-    """Load the selected GGUF once and close it after the sequential C phase."""
-    selected = select_c_traces(task_results)
-    first = read_replay(selected[0][1])
-    if first.model is None or first.ctx is None:
-        raise ReplaySelectionError("C trace is missing model or context metadata")
-    if Path(first.model).expanduser().resolve() != Path(model).expanduser().resolve():
-        raise ReplaySelectionError(f"trace model {first.model} does not match selected {model}")
-    with ds4py.open(model, ctx=first.ctx, backend=backend, lib=lib, seed=1) as engine:
-        return replay_with_engine(engine, selected)
-
-
-def replay_task_results(
-    task_results: Iterable[TaskRunResult],
-    config: ReplayConfig | str | Path,
-    *,
-    lib: str | Path | None = None,
-    backend: str | None = None,
-) -> tuple[ReplayResult, ...]:
-    """Convert selection/loading failures into diagnostic evidence instead of skipping."""
-    if isinstance(config, (str, Path)):
-        model = config
-        selected_backend = backend or "cpu"
-    else:
-        model = config.model
-        selected_backend = config.backend if backend is None else backend
-    try:
-        return replay_c_traces(
-            task_results,
-            model,
-            lib=lib,
-            backend=selected_backend,
-        )
-    except (Ds4pyError, OSError, ValueError) as error:
-        return (ReplayResult("<selection>", -1, False, str(error)),)
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    """Replay C traces named by an existing report and update diagnostic evidence."""
-    from bench.report import update_replay_report
-
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--report", type=Path, required=True)
-    parser.add_argument("--model", type=Path, default=os.environ.get("DS4_TEST_MODEL"))
-    parser.add_argument("--backend", default=os.environ.get("DS4_BAKEOFF_BACKEND", "cpu"))
-    parser.add_argument("--lib")
-    args = parser.parse_args(argv)
-    if args.model is None:
-        parser.error("--model or DS4_TEST_MODEL is required")
-    report_path = args.report / "bakeoff.json" if args.report.is_dir() else args.report
-    import json
-
-    data = json.loads(report_path.read_text())
-    tasks = [TaskRunResult.from_dict(item) for item in data.get("tasks", [])]
-    results = replay_task_results(tasks, args.model, lib=args.lib, backend=args.backend)
-    diagnostic = update_replay_report(report_path, results)
-    for result in results:
-        print(f"{'PASS' if result.passed else 'FAIL'} {result.task_id} round {result.round_index}: {result.detail}")
-    print(f"replay-diagnostic: {'PASS' if diagnostic.passed else 'FAIL'} — {diagnostic.detail}")
-    return 0 if diagnostic.passed else 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

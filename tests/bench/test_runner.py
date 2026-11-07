@@ -567,7 +567,7 @@ def test_reference_selection_failure_invalidates_explicit_cap_phase(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import bench.run_bakeoff as runner
-    from bench.replay_c_traces import ReplaySelectionError
+    from bench.trace_selection import ReplaySelectionError
 
     def fail_selection(_results: Any) -> Any:
         raise ReplaySelectionError("missing C traces")

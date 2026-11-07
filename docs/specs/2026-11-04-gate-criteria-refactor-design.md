@@ -239,9 +239,9 @@ For every recorded ds4-py attempt trace:
 
 A self-replay mismatch is a valid Gate 6 failure. A provenance mismatch is invalid, not a token mismatch.
 
-#### Diagnostic retained
+#### Shared replay helpers
 
-`bench/replay_c_traces.py` remains runnable for exact C replay investigations. It no longer computes or updates Gate 6. Its standalone command writes diagnostic evidence only. Cross-host exact C replay is retired as an acceptance criterion.
+`bench/trace_selection.py` retains C attempt selection and the recorded-round primitives used by restore and ds4-py self-replay. The standalone exact-C replay command and report updater are retired. Cross-host exact C replay remains diagnostic history, not an acceptance criterion.
 
 ## 5. Report and result behavior
 
@@ -270,12 +270,12 @@ All six gates must be valid and passing for live certification. A targeted manif
 | `tests/bench/test_runner.py` | `test_gates_one_to_five_pass_with_complete_evidence`, `test_report_json_has_attempt_feedback_and_table_has_six_deltas_not_logs`, `test_complete_runner_writes_gate_six_after_acceptance` | Update fixtures and expected evidence for terminal counts, rates, provenance, self-replay, and the new Gate 6 sections. |
 | `tests/bench/test_bakeoff_replay.py` | `test_tool_round_replays_every_token_and_stops_without_tool_execution`, `test_token_mismatch_fails_with_task_round_token_index_and_round_type` | Move exact complete-token expectations to ds4-py self-replay. Cross-driver tests assert top-k/logits instead. |
 | `tests/bench/test_bakeoff_replay.py` | `test_all_twelve_c_runs_replay_and_tool_coverage_is_required`, `test_full_set_without_a_tool_round_fails_gate_six`, `test_gate_six_cannot_pass_without_tool_call_evidence`, `test_selection_includes_every_c_attempt_trace_and_requires_twelve_tasks` | Require every selected C round and nonzero decode coverage for Part A. Remove tool-call coverage as a Gate 6 condition. Full 12-task coverage belongs to certification, not the reusable selection function. |
-| `tests/bench/test_bakeoff_replay.py` | `test_standalone_replay_updates_only_its_evidence_and_gate` | Require exact C replay to update diagnostic evidence only and leave Gate 6 unchanged. |
+| `tests/bench/test_bakeoff_replay.py` | `test_standalone_replay_updates_only_its_evidence_and_gate` | Remove this test with the standalone diagnostic updater; Gate 6 remains driven only by Parts A and B. |
 | `tests/bench/test_bakeoff_restore.py` | `test_restore_cases_compare_tokens_and_enforce_prefill_paths`, `test_restore_token_mismatch_fails_with_index`, `test_short_restore_sequences_must_share_terminal_reason` | Replace token/terminal equality with plan, position, and first-step logits checks. Add ranking, tolerance, and provenance failures. |
 | `tests/bench/test_metrics.py` | `test_event_metrics_cover_six_comparison_values_and_tool_accounting` and summary fixtures | Add terminal reasons, cap counts, cached fractions, and timing fields. Preserve tool accounting. |
-| `tests/bench/test_report_commands.py` | Report deserialization and standalone replay command tests | Read the new schema and verify diagnostic-only replay output. |
+| `tests/bench/test_report_commands.py` | Report deserialization and standalone replay command tests | Read the new schema and remove standalone replay command coverage. |
 | `tests/live/test_bakeoff.py` | `len(written["replay"]) > 0` and live configuration | Assert both new Gate 6 evidence parts, provenance, and the C driver requirement. Keep the explicit opt-in guard. |
-| `tests/live/test_replay_parity.py` | Exact C token parity as a live acceptance test | Retire this acceptance test. Use `bench/replay_c_traces.py` as the manual diagnostic and add a guarded live driver-equivalence entry point. |
+| `tests/live/test_replay_parity.py` | Exact C token parity as a live acceptance test | Retire this acceptance test and its standalone replay command. Add a guarded live driver-equivalence entry point. |
 
 ### Tests whose behavior stays
 
