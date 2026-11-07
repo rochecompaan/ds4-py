@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, cast
 import ds4py
 from bench.comparison import TOP_K, StepCapture, TopLogit
 from bench.provenance import Q8_F16_CACHE_ENV, Q8_F16_CACHE_MB, TraceProvenance
-from bench.replay_c_traces import replay_round
+from bench.trace_selection import replay_round
 from ds4py.agent_cli import _think_mode, parser
 from ds4py.engine.replay import read_replay
 from ds4py.engine.sampling import Rng, SamplingPolicy

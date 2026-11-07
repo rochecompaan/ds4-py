@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import ds4py
-from bench.replay_c_traces import ReplayMismatch, ReplayResult, ReplaySelectionError, _parse_c, replay_round
+from bench.trace_selection import ReplayMismatch, ReplayResult, ReplaySelectionError, _parse_c, replay_round
 from ds4py.engine.replay import read_replay
 from ds4py.engine.sampling import Rng, SamplingPolicy
 from ds4py.engine.worker import ResetJob

@@ -19,9 +19,9 @@ if TYPE_CHECKING:
     from bench.driver_equivalence import DriverEquivalenceResult
     from bench.models import TaskRunResult
     from bench.provenance import TraceProvenance
-    from bench.replay_c_traces import ReplayResult
     from bench.restore_check import RestoreResult, RestoreSummary
     from bench.self_replay import SelfReplayResult
+    from bench.trace_selection import ReplayResult
     from ds4py._json import JsonValue
 
 
@@ -269,24 +269,6 @@ def _gate_six(
         f"{part_a.detail}; {part_b.detail}",
         part_a.valid and part_b.valid,
     )
-
-
-def update_replay_report(
-    path: str | Path,
-    replay_results: Iterable[ReplayResult],
-) -> GateResult:
-    """Replace only exact-C diagnostic evidence; leave every gate unchanged."""
-    path = Path(path)
-    data = json.loads(path.read_text())
-    values = tuple(replay_results)
-    diagnostic = GateResult(
-        bool(values) and all(item.passed for item in values),
-        f"exact C replay diagnostic: {sum(item.passed for item in values)}/{len(values)} checks passed",
-        bool(values),
-    )
-    data["replay_diagnostic"] = _json(values)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
-    return diagnostic
 
 
 def _restore_runs(restore: RestoreSummary) -> dict[Path, RestoreResult]:

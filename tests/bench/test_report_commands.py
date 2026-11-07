@@ -9,8 +9,6 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bench.replay_c_traces import main as replay_main
-from bench.report import GateResult
 from bench.restore_check import RestoreResult, check_command
 from bench.run_bakeoff import TaskRunResult
 
@@ -140,40 +138,3 @@ def test_restore_recheck_inherits_schema_two_session_provenance(
     assert environment["DS4_BAKEOFF_INSTANCE_ID"] == "instance-1"
     assert environment["DS4_BAKEOFF_MODEL_SHA256"] == "model-sha"
     assert environment["DS4_BAKEOFF_LIBDS4_SHA256"] == "library-sha"
-
-
-def test_replay_command_deserializes_all_c_tasks(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    report = tmp_path / "bakeoff.json"
-    write_report(report, [task_record(f"task-{index}", "c") for index in range(12)])
-    captured: dict[str, Any] = {}
-
-    def replay(tasks: Any, model: Any, *, lib: Any = None, backend: str = "cpu") -> tuple[Any, ...]:
-        captured.update(tasks=tasks, model=model, lib=lib, backend=backend)
-        return ()
-
-    monkeypatch.setattr("bench.replay_c_traces.replay_task_results", replay)
-    monkeypatch.setattr(
-        "bench.report.update_replay_report",
-        lambda *args: GateResult(True, "captured"),
-    )
-
-    status = replay_main(
-        [
-            "--report",
-            str(report),
-            "--model",
-            str(tmp_path / "model.gguf"),
-            "--backend",
-            "cuda",
-        ]
-    )
-
-    assert status == 0
-    assert len(captured["tasks"]) == 12
-    assert all(isinstance(task, TaskRunResult) for task in captured["tasks"])
-    assert captured["tasks"][0].attempt_trace_paths == (Path("/task-0.trace"),)
-    assert captured["model"] == tmp_path / "model.gguf"
-    assert captured["backend"] == "cuda"

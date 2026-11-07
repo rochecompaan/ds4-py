@@ -6,13 +6,13 @@ model or run the agents.
 
 See [Workspace isolation and hidden grading](isolation.md) for details on task
 isolation and grader visibility. See [Targeted gate-repair run](gate-repairs.md)
-for the prepared four-task GPU procedure and standalone C replay diagnostic.
+for the prepared four-task GPU procedure.
 
 ## Fixed inputs and machine requirements
 
-- Model: the same absolute `ds4f-q2` GGUF for C, ds4-py, restore checks, and C
-  replay. The Q2 artifact is approximately **81 GB**. Use a machine with at
-  least **96 GB RAM**, plus enough free memory for the engine and benchmark.
+- Model: the same absolute `ds4f-q2` GGUF for C, ds4-py, restore checks, and
+  reference drivers. The Q2 artifact is approximately **81 GB**. Use a machine
+  with at least **96 GB RAM**, plus enough free memory for the engine and benchmark.
 - Backend: use the same backend for every phase. The examples use `cpu`; set
   `DS4_BAKEOFF_BACKEND` consistently if you select another supported backend.
 - Benchmark checkout: `https://github.com/Aider-AI/polyglot-benchmark.git` at
@@ -110,7 +110,7 @@ The command exits nonzero if any gate fails. Outputs:
 - `bench/results/report.txt`: compact gate and metric tables;
 - `bench/results/`: staged workspaces, per-attempt logs, traces and provenance
   sidecars, saves, restore traces, reference NDJSON, and acceptance logs.
-  Exact C replay is absent unless it is run separately as a diagnostic.
+  Standalone exact-C replay is retired and is not run by this workflow.
 
 ## Run selected tasks three times
 
@@ -153,25 +153,6 @@ renders fresh, and performs a full rebuild prefill on follow-up. Gate 5 checks
 the restore plans, prompt position, save/session provenance, and the first
 pre-sample top-12 logits. Later tokens and terminal reasons stay in the report
 as diagnostics; they are not required to match.
-
-## Diagnostic: exact C replay
-
-This manual check reads the original C `--trace` files directly. It does not
-translate traces or replay ds4-py against itself. It loads the GGUF once,
-replays every round from every C attempt at temperature 0, and compares complete
-committed IDs and terminal boundaries. Tool-call parsing never executes a tool.
-It is a diagnostic for historical mismatches, not an acceptance gate.
-
-```bash
-uv run --extra agent python bench/replay_c_traces.py \
-  --report bench/results/bakeoff.json \
-  --model "$DS4_TEST_MODEL" \
-  --backend "$DS4_BAKEOFF_BACKEND"
-```
-
-This updates only `replay_diagnostic` in `bench/results/bakeoff.json`; it does
-not change any gate. It fails if a trace is malformed, a token differs, or a
-round does not reproduce its natural/recorded terminal boundary.
 
 ## Replay reference drivers
 
