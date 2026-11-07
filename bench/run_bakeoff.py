@@ -1,16 +1,15 @@
 """Sequential bakeoff agent runner and per-task evidence collection."""
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
-import pty
 import re
-import select
-import signal
 import subprocess
 import sys
 import time
-from contextlib import suppress
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -26,9 +25,26 @@ from bench.metrics import (
     summarize_events,
 )
 from bench.models import AgentConfig, TaskRunResult
-from bench.replay_c_traces import replay_task_results
-from bench.report import BakeoffReport, build_report
-from bench.restore_check import CheckResult, RestoreSummary, check_result_saves
+from bench.phases import (
+    ReferencePhase,
+    build_agent_command,
+    run_restore_phase,
+    run_self_replay_phase,
+)
+from bench.phases import (
+    _run_cap_parity as _phase_cap_parity,
+)
+from bench.phases import (
+    interruption_acceptance as _phase_interruption_acceptance,
+)
+from bench.phases import (
+    run_reference_equivalence as _phase_reference_equivalence,
+)
+from bench.pty_driver import drive_interruption_pty, drive_pty  # noqa: F401 - Compatibility re-export.
+from bench.report import BakeoffReport, GateResult, build_report
+from bench.restore_check import CheckResult, RestoreSummary
+from bench.self_replay import SelfReplayContext, replay_ds4py_task_results
+from bench.session import BakeoffSession, record_task_provenance
 from bench.workspaces import (
     CommandRunner,
     GradeResult,
@@ -39,134 +55,15 @@ from bench.workspaces import (
     prepare_manifest,
 )
 from ds4py._json import JsonValue, is_json_object
+from ds4py._native.loader import resolve_lib_path
 from ds4py.engine.replay import read_replay
 
+FULL_TASK_COUNT = 12
+
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping, Sequence
+    from collections.abc import Callable, Generator, Sequence
 
     from ds4py.engine.replay_types import ReplayTrace
-
-
-def _option_number(value: float) -> str:
-    return str(int(value)) if isinstance(value, int) or value.is_integer() else str(value)
-
-
-def build_agent_command(
-    config: AgentConfig,
-    prompt: str,
-    trace_path: str | Path,
-) -> list[str]:
-    """Build equivalent C and ds4-py sampling/task invocations."""
-    command = [*config.executable, "--non-interactive"]
-    if config.agent == "ds4py":
-        command.extend(["--request-limit", str(config.request_limit)])
-    command.extend(
-        [
-            "--model",
-            config.model,
-            "--backend",
-            config.backend,
-            "--ctx",
-            str(config.ctx),
-            "--temp",
-            _option_number(config.temperature),
-            "--seed",
-            str(config.seed),
-            "--tokens",
-            str(config.tokens),
-            "--trace",
-            str(trace_path),
-            "--prompt",
-            prompt,
-        ]
-    )
-    return command
-
-
-def drive_pty(  # noqa: C901, PLR0912, PLR0915 - A PTY session is one stateful lifecycle.
-    command: Sequence[str],
-    *,
-    steps: Iterable[tuple[str, str | None]],
-    cwd: str | Path | None = None,
-    env: Mapping[str, str] | None = None,
-    timeout: float = 30,
-) -> CheckResult:
-    """Drive timed expect/send steps through a controlling pseudo-terminal."""
-    deadline = time.monotonic() + timeout
-    output = bytearray()
-    pid, master = pty.fork()
-    if pid == 0:
-        try:
-            if cwd is not None:
-                os.chdir(cwd)
-            os.execvpe(command[0], list(command), os.environ.copy() if env is None else env)
-        except BaseException as error:  # noqa: BLE001 - The forked child must report and exit, never raise into the parent.
-            print(f"PTY exec failed: {error}", file=sys.stderr)
-            os._exit(127)
-    wait_status = None
-
-    def remaining() -> float:
-        left = deadline - time.monotonic()
-        if left <= 0:
-            raise TimeoutError("PTY timed out")
-        return left
-
-    def read_available(wait: float) -> bool:
-        ready, _, _ = select.select([master], [], [], min(wait, 0.1))
-        if not ready:
-            return True
-        try:
-            data = os.read(master, 8192)
-        except OSError:
-            return False
-        if not data:
-            return False
-        output.extend(data)
-        return True
-
-    try:
-        cursor = 0
-        for pattern, response in steps:
-            regex = re.compile(pattern, re.IGNORECASE)
-            while True:
-                text = output.decode("utf-8", errors="replace")
-                match = regex.search(text, cursor)
-                if match:
-                    cursor = match.end()
-                    break
-                done, status = os.waitpid(pid, os.WNOHANG)
-                if done:
-                    wait_status = status
-                    raise RuntimeError(f"process exited while waiting for {pattern!r}")  # noqa: TRY301
-                read_available(remaining())
-            if response is not None:
-                os.write(master, response.encode("utf-8"))
-        while wait_status is None:
-            done, status = os.waitpid(pid, os.WNOHANG)
-            if done:
-                wait_status = status
-                break
-            if not read_available(remaining()):
-                done, status = os.waitpid(pid, os.WNOHANG)
-                if done:
-                    wait_status = status
-        # Drain anything written between the final expectation and process exit.
-        while read_available(0):
-            pass
-        code = os.waitstatus_to_exitcode(wait_status)
-        passed = code == 0
-    except (OSError, RuntimeError, TimeoutError) as error:
-        output.extend(f"\nPTY driver: {error}".encode())
-        passed = False
-        if wait_status is None:
-            with suppress(ProcessLookupError):
-                os.kill(pid, signal.SIGKILL)
-            with suppress(ChildProcessError):
-                _, wait_status = os.waitpid(pid, 0)
-    finally:
-        os.close(master)
-    detail = output.decode("utf-8", errors="replace")[-8000:]
-    return CheckResult(passed, detail)
 
 
 def load_events(path: str | Path) -> list[dict[str, JsonValue]]:
@@ -225,7 +122,39 @@ def _attempt_summary(
         wall_seconds=wall_seconds,
         progress_events=len(trace.rounds),
         tool_calls=_c_tool_calls(log_text),
+        response_budget=config.tokens,
     )
+
+
+def _expected_max_tokens_exit(
+    config: AgentConfig,
+    returncode: int,
+    log_text: str,
+    summary: EventSummary,
+) -> bool:
+    """The CLI intentionally exits 1 after a complete max_tokens response."""
+    return (
+        config.agent == "ds4py"
+        and returncode == 1
+        and summary.terminal_reasons[-1:] == ("max_tokens",)
+        and log_text.rstrip().endswith("ds4py: model response ended with max_tokens")
+    )
+
+
+def _record_process_errors(
+    errors: list[str],
+    attempt: int,
+    config: AgentConfig,
+    completed: subprocess.CompletedProcess[str],
+    summary: EventSummary,
+) -> None:
+    if not completed.returncode:
+        return
+    log_text = (completed.stdout or "") + (completed.stderr or "")
+    if not _expected_max_tokens_exit(config, completed.returncode, log_text, summary):
+        errors.append(f"attempt {attempt} exited {completed.returncode}")
+    if "request_limit" in log_text:
+        errors.append(f"attempt {attempt} request_limit")
 
 
 def _save_dir(home: Path) -> Path:
@@ -289,10 +218,6 @@ def run_task(
         wall_seconds = clock() - started
         log_text = (completed.stdout or "") + (completed.stderr or "")
         (attempt_root / "agent.log").write_text(log_text)
-        if completed.returncode:
-            errors.append(f"attempt {attempt} exited {completed.returncode}")
-            if "request_limit" in log_text:
-                errors.append(f"attempt {attempt} request_limit")
         if config.agent == "ds4py":
             try:
                 save_dir = _save_dir(home)
@@ -313,6 +238,7 @@ def run_task(
         except (MetricError, OSError, ValueError) as error:
             errors.append(f"attempt {attempt} metrics: {error}")
             summary = _empty_summary(wall_seconds)
+        _record_process_errors(errors, attempt, config, completed, summary)
         summaries.append(summary)
         grade = grade_workspace(workspace, runner=grade_runner)
         grades.append(grade)
@@ -363,39 +289,88 @@ def run_tasks_sequentially(
     return results
 
 
-def _acceptance_environment(home: Path) -> dict[str, str]:
-    environment = os.environ.copy()
-    environment["DS4PY_HOME"] = str(home)
-    return environment
-
-
 def interruption_acceptance(
     config: AgentConfig,
     workspace: Workspace,
     results_root: str | Path,
 ) -> CheckResult:
     """Interrupt visible generation, submit a next prompt, then exit cleanly."""
-    root = Path(results_root) / "gate-4" / "interruption"
-    root.mkdir(parents=True, exist_ok=True)
-    prompt = (workspace.agent_dir / "TASK.md").read_text()
-    command = build_agent_command(config, prompt, root / "trace.jsonl")
-    command.remove("--non-interactive")
-    result = drive_pty(
-        command,
-        cwd=workspace.agent_dir,
-        env=_acceptance_environment(root / "home"),
-        steps=[
-            (r"\bstreaming\b", "\x03"),
-            (
-                r"\bidle\b",
-                "State the next concrete action in one sentence, then stop.\n",
-            ),
-            (r"\bidle\b", "/exit\n"),
-        ],
-        timeout=180,
+    return _phase_interruption_acceptance(config, workspace, results_root)
+
+
+def _run_cap_parity(
+    task_results: Sequence[TaskRunResult],
+    config: AgentConfig,
+    c_driver: str | Path,
+    session: BakeoffSession,
+    results_root: str | Path,
+) -> GateResult:
+    """Run both reference drivers on each arm's round-0 prompt."""
+    return _phase_cap_parity(task_results, config, c_driver, session, results_root)
+
+
+def run_reference_equivalence(  # noqa: PLR0913 - Task evidence, driver setup, and the optional phase are independent inputs.
+    task_results: Sequence[TaskRunResult],
+    config: AgentConfig,
+    c_driver: str | Path,
+    session: BakeoffSession,
+    results_root: str | Path,
+    *,
+    cap_parity: bool = False,
+) -> ReferencePhase:
+    """Run reference drivers for every C attempt and optional cap prompts."""
+    return _phase_reference_equivalence(
+        task_results,
+        config,
+        c_driver,
+        session,
+        results_root,
+        cap_parity=cap_parity,
     )
-    (root / "interactive.log").write_text(result.detail)
-    return result
+
+
+@contextmanager
+def _session_environment(session: BakeoffSession) -> Generator[None]:
+    values = session.environment()
+    previous = {name: os.environ.get(name) for name in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def _validate_ds4py_attempt_library(
+    configs: Sequence[AgentConfig],
+    staged: Sequence[Workspace],
+    results_root: Path,
+) -> None:
+    """Fail before task arms when their native library cannot be resolved."""
+    if not staged or not any(config.agent == "ds4py" for config in configs):
+        return
+    attempt_home = results_root / staged[0].task_id / "ds4py" / "attempt-1" / "home"
+    previous_home = os.environ.get("DS4PY_HOME")
+    os.environ["DS4PY_HOME"] = str(attempt_home)
+    try:
+        candidate = resolve_lib_path(None)
+    finally:
+        if previous_home is None:
+            os.environ.pop("DS4PY_HOME", None)
+        else:
+            os.environ["DS4PY_HOME"] = previous_home
+    try:
+        library = candidate.resolve(strict=True)
+        if not library.is_file():
+            raise FileNotFoundError(candidate)
+    except OSError as error:
+        raise RuntimeError(
+            f"ds4-py attempt library does not resolve: {candidate}. Set DS4_LIB to libds4.so before starting the bakeoff."
+        ) from error
+    print(f"[bakeoff] ds4-py attempt library {library}", flush=True)
 
 
 def run_bakeoff(  # noqa: PLR0913 - The manifest and output layout are independent required inputs.
@@ -405,32 +380,77 @@ def run_bakeoff(  # noqa: PLR0913 - The manifest and output layout are independe
     configs: Sequence[AgentConfig],
     results_root: str | Path,
     *,
+    session: BakeoffSession,
+    c_driver: str | Path,
     grade_runner: CommandRunner | None = None,
+    cap_parity: bool = False,
 ) -> BakeoffReport:
-    """Run all tasks and acceptance checks, then write all six gate results."""
+    """Run one-session tasks, acceptance checks, and both Gate 6 parts."""
     results_root = Path(results_root).resolve()
     results_root.mkdir(parents=True, exist_ok=False)
+    print(f"[bakeoff] session {session.bakeoff_session_id}", flush=True)
     manifest = load_manifest(manifest_path)
     staged = prepare_manifest(manifest, results_root / "staged", benchmark, repo_root)
-    task_results = run_tasks_sequentially(
-        staged,
-        configs,
-        results_root,
-        grade_runner=grade_runner,
+    _validate_ds4py_attempt_library(configs, staged, results_root)
+    with _session_environment(session):
+        task_results = run_tasks_sequentially(
+            staged,
+            configs,
+            results_root,
+            grade_runner=grade_runner,
+        )
+        task_provenance = record_task_provenance(task_results, session)
+        ds4_config = next(config for config in configs if config.agent == "ds4py")
+        restore_runs = run_restore_phase(
+            task_results,
+            ds4_config,
+            session,
+            results_root,
+            c_driver,
+        )
+        interruption_workspace = clone_workspace(
+            staged[0],
+            results_root / "acceptance" / "interruption",
+        )
+        interruption = interruption_acceptance(ds4_config, interruption_workspace, results_root)
+        restore = RestoreSummary(restore_runs, interruption)
+        reference = run_reference_equivalence(
+            task_results,
+            ds4_config,
+            c_driver,
+            session,
+            results_root / "driver-equivalence",
+            cap_parity=cap_parity,
+        )
+        self_results = run_self_replay_phase(
+            task_results,
+            ds4_config,
+            provenance=task_provenance,
+            session=session,
+            replay=replay_ds4py_task_results,
+            context=SelfReplayContext,
+        )
+    report = build_report(
+        task_results,
+        restore,
+        rate_evidence=reference.rate_evidence,
+        cached_fractions=reference.cached_fractions,
+        provenance=reference.provenance,
+        cap_parity=reference.cap_parity,
+        driver_equivalence=reference.result,
+        self_replay_results=self_results,
+        certification="full-12-task" if len(staged) == FULL_TASK_COUNT else "targeted",
+        bakeoff_session_id=session.bakeoff_session_id,
+        instance_id=session.instance_id,
     )
-    ds4_config = next(config for config in configs if config.agent == "ds4py")
-    restore_runs = check_result_saves(task_results, ds4_config, results_root / "restores")
-    interruption_workspace = clone_workspace(
-        staged[0],
-        results_root / "acceptance" / "interruption",
-    )
-    interruption = interruption_acceptance(ds4_config, interruption_workspace, results_root)
-    restore = RestoreSummary(restore_runs, interruption)
-    replay = replay_task_results(task_results, ds4_config)
-    report = build_report(task_results, restore, replay)
     report.write_json(results_root / "bakeoff.json")
     (results_root / "report.txt").write_text(report.compact_table())
     return report
+
+
+def _environment_path(name: str) -> Path | None:
+    value = os.environ.get(name)
+    return None if value is None or value == "" else Path(value)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -444,11 +464,27 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--agent", required=True, help="C reference agent executable")
     parser.add_argument("--backend", default="cpu")
     parser.add_argument("--tokens", type=int, default=8192)
+    parser.add_argument("--instance-id", default=os.environ.get("DS4_BAKEOFF_INSTANCE_ID"))
+    parser.add_argument(
+        "--c-driver",
+        type=Path,
+        default=_environment_path("DS4_C_DRIVER"),
+    )
+    parser.add_argument("--cap-parity", action="store_true")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if not args.instance_id:
+        parser.error("--instance-id or DS4_BAKEOFF_INSTANCE_ID is required")
+    if args.c_driver is None:
+        parser.error("--c-driver or DS4_C_DRIVER is required")
+    if not args.c_driver.is_file():
+        parser.error(f"C driver does not exist: {args.c_driver}")
+    if args.results.exists():
+        parser.error(f"result root already exists: {args.results}")
     manifest = load_manifest(args.manifest)
     configs = [
         AgentConfig(
@@ -476,12 +512,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             tokens=args.tokens,
         ),
     ]
+    session = BakeoffSession.capture(
+        configs,
+        args.instance_id,
+        repo_root=args.repo_root,
+    )
     report = run_bakeoff(
         args.manifest,
         args.benchmark,
         args.repo_root,
         configs,
         args.results,
+        session=session,
+        c_driver=args.c_driver,
+        cap_parity=args.cap_parity,
     )
     print(report.compact_table(), end="")
     return 0 if report.passed else 1

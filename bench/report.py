@@ -3,20 +3,29 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from bench.comparison import compare_cached_fraction, compare_rate
+from bench.provenance import validate_pair
 from ds4py._json import is_json_object
+from ds4py.engine.events import STOP_REASONS
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
+    from bench.comparison import RateEvidence
+    from bench.driver_equivalence import DriverEquivalenceResult
     from bench.models import TaskRunResult
-    from bench.replay_c_traces import ReplayResult
+    from bench.provenance import TraceProvenance
     from bench.restore_check import RestoreResult, RestoreSummary
+    from bench.self_replay import SelfReplayResult
+    from bench.trace_selection import ReplayResult
     from ds4py._json import JsonValue
 
+
+REPORT_SCHEMA_VERSION = 2
 
 METRICS = (
     "wall_seconds",
@@ -32,6 +41,24 @@ METRICS = (
 class GateResult:
     passed: bool
     detail: str
+    valid: bool = True
+
+
+@dataclass(frozen=True)
+class CapCounts:
+    c: int
+    ds4py: int
+
+
+@dataclass(frozen=True)
+class CapReport:
+    tasks: dict[str, CapCounts]
+    totals: CapCounts
+    parity: GateResult
+
+
+def _empty_caps() -> CapReport:
+    return CapReport({}, CapCounts(0, 0), GateResult(passed=False, detail="not run"))
 
 
 @dataclass(frozen=True)
@@ -39,7 +66,23 @@ class BakeoffReport:
     tasks: tuple[TaskRunResult, ...]
     restore: RestoreSummary
     gates: dict[str, GateResult]
-    replay: tuple[ReplayResult, ...] | None = None
+    replay_diagnostic: tuple[ReplayResult, ...] | None = None
+    driver_equivalence: DriverEquivalenceResult | None = None
+    self_replay: tuple[SelfReplayResult, ...] | None = None
+    rate_evidence: dict[str, tuple[RateEvidence, RateEvidence]] = field(default_factory=dict)
+    cached_fractions: dict[str, tuple[float, float]] = field(default_factory=dict)
+    caps: CapReport = field(default_factory=_empty_caps)
+    provenance: tuple[tuple[TraceProvenance, TraceProvenance], ...] = ()
+    schema_version: int = REPORT_SCHEMA_VERSION
+    certification: str = "targeted"
+    bakeoff_session_id: str = ""
+    instance_id: str = ""
+
+    def __post_init__(self) -> None:
+        if self.schema_version != REPORT_SCHEMA_VERSION:
+            raise ValueError("benchmark report schema_version must be 2")
+        if self.certification not in {"targeted", "full-12-task"}:
+            raise ValueError("certification must be targeted or full-12-task")
 
     @property
     def passed(self) -> bool:
@@ -48,10 +91,36 @@ class BakeoffReport:
     def to_dict(self) -> dict[str, JsonValue]:
         value = _json(
             {
+                "schema_version": self.schema_version,
+                "certification": self.certification,
+                "bakeoff_session_id": self.bakeoff_session_id,
+                "instance_id": self.instance_id,
                 "tasks": self.tasks,
                 "restore": self.restore,
                 "gates": self.gates,
-                "replay": self.replay,
+                "replay_diagnostic": self.replay_diagnostic,
+                "driver_equivalence": self.driver_equivalence,
+                "self_replay": self.self_replay,
+                "rates": {
+                    task_id: {
+                        "c": pair[0],
+                        "ds4py": pair[1],
+                        "result": compare_rate(pair[0], pair[1]),
+                    }
+                    for task_id, pair in self.rate_evidence.items()
+                },
+                "cached_prefix": {
+                    task_id: {
+                        "c": pair[0],
+                        "ds4py": pair[1],
+                        "result": compare_cached_fraction(pair[0], pair[1]),
+                    }
+                    for task_id, pair in self.cached_fractions.items()
+                },
+                "caps": self.caps,
+                "provenance": tuple(
+                    {"c": c, "ds4py": ds4py, "issues": validate_pair(c, ds4py)} for c, ds4py in self.provenance
+                ),
             }
         )
         if not is_json_object(value):
@@ -66,9 +135,8 @@ class BakeoffReport:
 
     def compact_table(self) -> str:
         lines = ["GATES"]
-        lines.extend(
-            f"{name}: {'PASS' if gate.passed else 'FAIL'} — {gate.detail}" for name, gate in self.gates.items()
-        )
+        lines.extend(f"{name}: {_gate_status(gate)} — {gate.detail}" for name, gate in self.gates.items())
+        lines.append(f"cap_parity: {self.caps.parity.detail}")
         lines.append("")
         lines.append("task | metric | C | ds4py | delta")
         lines.append("--- | --- | ---: | ---: | ---:")
@@ -79,10 +147,40 @@ class BakeoffReport:
                 left, right = getattr(c, metric), getattr(python, metric)
                 delta = right - left if left is not None and right is not None else None
                 lines.append(f"{task_id} | {metric} | {_number(left)} | {_number(right)} | {_number(delta)}")
+            caps = self.caps.tasks.get(task_id, CapCounts(0, 0))
+            lines.append(f"{task_id} | max_tokens_exits | {caps.c} | {caps.ds4py} | {caps.ds4py - caps.c}")
+        lines.append("")
+        lines.append("PAIRED RATES")
+        for task_id in _common_tasks(self.tasks)[0]:
+            pair = self.rate_evidence.get(task_id)
+            if pair is None:
+                lines.append(f"{task_id} | paired_rates | INVALID — missing paired rate evidence")
+                continue
+            result = compare_rate(pair[0], pair[1])
+            status = "INVALID" if not result.valid else "PASS" if result.passed else "FAIL"
+            lines.append(f"{task_id} | paired_rates | {status} — {result.detail}")
+        lines.append("")
+        lines.append("PAIRED CACHED-PREFIX FRACTIONS")
+        for task_id in _common_tasks(self.tasks)[0]:
+            pair = self.cached_fractions.get(task_id)
+            if pair is None:
+                lines.append(f"{task_id} | cached_prefix | INVALID — missing paired cache evidence")
+                continue
+            result = compare_cached_fraction(pair[0], pair[1])
+            status = "INVALID" if not result.valid else "PASS" if result.passed else "FAIL"
+            lines.append(
+                f"{task_id} | cached_prefix | C={_number(pair[0])} ds4py={_number(pair[1])} {status} — {result.detail}"
+            )
         return "\n".join(lines) + "\n"
 
 
 RunReport = BakeoffReport
+
+
+def _gate_status(gate: GateResult) -> str:
+    if not gate.valid:
+        return "INVALID"
+    return "PASS" if gate.passed else "FAIL"
 
 
 def _json(value: object) -> JsonValue:
@@ -123,52 +221,196 @@ def _common_tasks(
     return sorted(c_ids & python_ids), c_ids, python_ids
 
 
-def _gate(name: str, passed: bool, detail: str) -> tuple[str, GateResult]:
-    return name, GateResult(bool(passed), detail)
+def _gate(name: str, passed: bool, detail: str, *, valid: bool = True) -> tuple[str, GateResult]:
+    return name, GateResult(bool(passed) and valid, detail, valid)
 
 
-def replay_gate(replay_results: Iterable[ReplayResult] | None) -> GateResult:
-    """Gate 6 requires complete per-round evidence and a real tool-call round."""
-    values = None if replay_results is None else tuple(replay_results)
-    coverage = any(item.tool_call for item in values or ())
-    passed = bool(values) and all(item.passed for item in values) and coverage
-    detail = (
-        "not run"
-        if values is None
-        else (
-            f"{sum(item.passed for item in values)}/{len(values)} replay checks passed; "
-            f"tool-call round {'present' if coverage else 'missing'}"
+def _cap_report(tasks: Sequence[TaskRunResult], parity: GateResult | None) -> CapReport:
+    counts = {
+        task_id: CapCounts(
+            c=sum(
+                item.terminal_reasons.count("max_tokens")
+                for item in tasks
+                if item.task_id == task_id and item.agent == "c"
+            ),
+            ds4py=sum(
+                item.terminal_reasons.count("max_tokens")
+                for item in tasks
+                if item.task_id == task_id and item.agent == "ds4py"
+            ),
         )
-    )
-    return GateResult(passed, detail)
+        for task_id in sorted({item.task_id for item in tasks})
+    }
+    totals = CapCounts(sum(count.c for count in counts.values()), sum(count.ds4py for count in counts.values()))
+    return CapReport(counts, totals, parity or GateResult(passed=False, detail="not run"))
 
 
-def update_replay_report(
-    path: str | Path,
-    replay_results: Iterable[ReplayResult],
+def _gate_six(
+    driver: DriverEquivalenceResult | None,
+    self_results: tuple[SelfReplayResult, ...] | None,
 ) -> GateResult:
-    """Replace only replay evidence and gate 6 in an existing six-gate report."""
-    path = Path(path)
-    data = json.loads(path.read_text())
-    values = tuple(replay_results)
-    gate = replay_gate(values)
-    data["replay"] = _json(values)
-    data["gates"]["gate-6"] = asdict(gate)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
-    return gate
+    part_a = (
+        GateResult(passed=False, detail="Part A: not run", valid=False)
+        if driver is None
+        else GateResult(driver.passed, f"Part A: {driver.detail}", driver.valid)
+    )
+    if self_results is None or len(self_results) == 0:
+        part_b = GateResult(passed=False, detail="Part B: not run", valid=False)
+    else:
+        valid = all(item.valid for item in self_results)
+        passed = valid and all(item.passed for item in self_results)
+        invalid_details = "; ".join(f"{item.task_id}: {item.detail}" for item in self_results if not item.valid)
+        detail = f"Part B: {sum(item.passed for item in self_results)}/{len(self_results)} self-replay rounds passed"
+        if invalid_details:
+            detail = f"{detail}: {invalid_details}"
+        part_b = GateResult(passed, detail, valid)
+    return GateResult(
+        part_a.passed and part_b.passed,
+        f"{part_a.detail}; {part_b.detail}",
+        part_a.valid and part_b.valid,
+    )
 
 
 def _restore_runs(restore: RestoreSummary) -> dict[Path, RestoreResult]:
     return {Path(item.save_dir): item for item in restore.runs}
 
 
-def build_report(
+def _gate_two(python: Sequence[TaskRunResult], cap_parity: GateResult | None) -> tuple[str, GateResult]:
+    tool_failures = []
+    lifecycle_valid = True
+    for item in python:
+        accounting = item.tool_accounting
+        reasons = []
+        if not item.terminal_reasons:
+            lifecycle_valid = False
+            reasons.append("terminal evidence missing")
+        unknown = set(item.terminal_reasons) - set(STOP_REASONS)
+        if unknown:
+            lifecycle_valid = False
+            reasons.append(f"unknown terminal reasons={sorted(unknown)}")
+        parser_stops = item.terminal_reasons.count("parser_error")
+        if item.parser_errors or parser_stops:
+            reasons.append(f"parser_error stops={max(item.parser_errors, parser_stops)}")
+        if "interrupted" in item.terminal_reasons:
+            reasons.append("unexpected interrupted model round")
+        tool_terminals = item.terminal_reasons.count("tool_call_complete")
+        if tool_terminals and (accounting is None or accounting.parsed < tool_terminals):
+            lifecycle_valid = False
+            reasons.append("tool_call_complete without a parsed call")
+        if accounting is None:
+            lifecycle_valid = False
+            reasons.append("tool outcome accounting unavailable")
+        elif not accounting.complete:
+            lifecycle_valid = False
+            reasons.append(f"tool outcomes {accounting.accounted}/{accounting.parsed} accounted")
+        if item.errors:
+            reasons.extend(item.errors)
+        if reasons:
+            tool_failures.append(f"{item.task_id}: {'; '.join(reasons)}")
+    if cap_parity is not None and not cap_parity.passed:
+        tool_failures.append(f"cap parity: {cap_parity.detail}")
+    valid = lifecycle_valid and (cap_parity is None or cap_parity.valid)
+    return _gate(
+        "gate-2",
+        bool(python) and not tool_failures,
+        "all parsed calls have terminal outcomes; bad-argument retries and max_tokens are allowed"
+        if not tool_failures
+        else " | ".join(tool_failures),
+        valid=valid,
+    )
+
+
+def _task_rate_failures(
+    task_id: str,
+    right: TaskRunResult,
+    pair: tuple[RateEvidence, RateEvidence] | None,
+    cached_pair: tuple[float, float] | None,
+) -> tuple[list[str], bool]:
+    failures = []
+    valid = True
+    if pair is None:
+        valid = False
+        failures.append(f"{task_id}: missing paired rate evidence")
+    else:
+        rate_result = compare_rate(pair[0], pair[1])
+        if not rate_result.valid:
+            valid = False
+        if not rate_result.passed:
+            failures.append(f"{task_id}: {rate_result.detail}")
+    if cached_pair is None:
+        valid = False
+        failures.append(f"{task_id}: incomplete paired cached-prefix evidence")
+    else:
+        cached_result = compare_cached_fraction(*cached_pair)
+        if not cached_result.valid:
+            valid = False
+        if not cached_result.passed:
+            failures.append(f"{task_id}: {cached_result.detail}")
+    if right.invalid_non_extend_rounds:
+        failures.append(f"{task_id}: {right.invalid_non_extend_rounds} unexplained non-extension rounds")
+    return failures, valid
+
+
+def _gate_three(  # noqa: PLR0913, PLR0917 - Rate, cache, and provenance evidence have separate contracts.
+    tasks: Sequence[TaskRunResult],
+    common: Sequence[str],
+    complete_pairs: bool,
+    rates: Mapping[str, tuple[RateEvidence, RateEvidence]],
+    cached_fractions: Mapping[str, tuple[float, float]],
+    provenance_pairs: tuple[tuple[TraceProvenance, TraceProvenance], ...],
+) -> tuple[str, GateResult]:
+    failures = []
+    valid = complete_pairs
+    if not complete_pairs:
+        failures.append("incomplete C/ds4-py task pairs")
+    if not provenance_pairs:
+        valid = False
+        failures.append("missing paired driver provenance")
+    for c_provenance, ds4py_provenance in provenance_pairs:
+        issues = validate_pair(c_provenance, ds4py_provenance)
+        if issues:
+            valid = False
+            failures.extend(issues)
+    for task_id in common:
+        right = _task(tasks, task_id, "ds4py")
+        task_failures, task_valid = _task_rate_failures(
+            task_id,
+            right,
+            rates.get(task_id),
+            cached_fractions.get(task_id),
+        )
+        failures.extend(task_failures)
+        valid = valid and task_valid
+    return _gate(
+        "gate-3",
+        complete_pairs and not failures,
+        "paired rates are within 0.25, cached-prefix fractions within 0.15, and later syncs extend KV"
+        if not failures
+        else " | ".join(failures),
+        valid=valid,
+    )
+
+
+def build_report(  # noqa: PLR0913 - Each evidence input has a distinct live-run contract.
     task_results: Iterable[TaskRunResult],
     restore_results: RestoreSummary,
     replay_results: Iterable[ReplayResult] | None = None,
+    *,
+    rate_evidence: Mapping[str, tuple[RateEvidence, RateEvidence]] | None = None,
+    cached_fractions: Mapping[str, tuple[float, float]] | None = None,
+    provenance: Iterable[tuple[TraceProvenance, TraceProvenance]] | None = None,
+    cap_parity: GateResult | None = None,
+    driver_equivalence: DriverEquivalenceResult | None = None,
+    self_replay_results: Iterable[SelfReplayResult] | None = None,
+    certification: str = "targeted",
+    bakeoff_session_id: str = "",
+    instance_id: str = "",
 ) -> BakeoffReport:
-    """Build gates 1–5 and reserve gate 6 for the C replay phase."""
+    """Build all six gates from their independent evidence sections."""
     tasks = tuple(task_results)
+    rates = dict(rate_evidence or {})
+    cached = dict(cached_fractions or {})
+    provenance_pairs = tuple(provenance or ())
     common, c_ids, python_ids = _common_tasks(tasks)
     c = [item for item in tasks if item.agent == "c"]
     python = [item for item in tasks if item.agent == "ds4py"]
@@ -186,50 +428,8 @@ def build_report(
         )
     ]
 
-    tool_failures = []
-    for item in python:
-        accounting = item.tool_accounting
-        reasons = []
-        if item.parser_errors:
-            reasons.append(f"parser_error stops={item.parser_errors}")
-        if accounting is None:
-            reasons.append("tool outcome accounting unavailable")
-        elif not accounting.complete:
-            reasons.append(f"tool outcomes {accounting.accounted}/{accounting.parsed} accounted")
-        if item.errors:
-            reasons.extend(item.errors)
-        if reasons:
-            tool_failures.append(f"{item.task_id}: {'; '.join(reasons)}")
-    gates.append(
-        _gate(
-            "gate-2",
-            bool(python) and not tool_failures,
-            "all parsed calls have terminal outcomes; bad-argument retries are allowed"
-            if not tool_failures
-            else " | ".join(tool_failures),
-        )
-    )
-
-    timing_failures = []
-    for task_id in common:
-        left, right = _task(tasks, task_id, "c"), _task(tasks, task_id, "ds4py")
-        if left.wall_seconds <= 0 or right.avg_prefill_reuse is None or left.avg_prefill_reuse is None:
-            timing_failures.append(f"{task_id}: incomplete timing/reuse evidence")
-        elif right.wall_seconds > 1.5 * left.wall_seconds:
-            timing_failures.append(
-                f"{task_id}: ds4py {right.wall_seconds:.3f}s exceeds 1.5x C {left.wall_seconds:.3f}s"
-            )
-        if right.invalid_non_extend_rounds:
-            timing_failures.append(f"{task_id}: {right.invalid_non_extend_rounds} unexplained non-extension rounds")
-    gates.append(
-        _gate(
-            "gate-3",
-            complete_pairs and not timing_failures,
-            "per-task time is within 1.5x and later syncs extend KV or name an exception"
-            if not timing_failures
-            else " | ".join(timing_failures),
-        )
-    )
+    gates.append(_gate_two(python, cap_parity))
+    gates.append(_gate_three(tasks, common, complete_pairs, rates, cached, provenance_pairs))
 
     interruption = restore_results.interruption
     gates.append(
@@ -248,16 +448,38 @@ def build_report(
         for item in python
         if len(item.attempt_save_dirs) != item.attempts
     )
+    restore_valid = (
+        bool(python)
+        and bool(expected)
+        and all(save in restored and restored[save].valid for save in expected)
+        and all(len(item.attempt_save_dirs) == item.attempts for item in python)
+    )
     gates.append(
         _gate(
             "gate-5",
-            bool(python) and bool(expected) and not missing,
-            f"case-1/case-2 restore passed for all {len(expected)} attempts"
+            restore_valid and not missing,
+            f"case-1/case-2 first-step logits passed for all {len(expected)} attempts"
             if not missing
             else "missing or failed restore evidence: " + ", ".join(missing),
+            valid=restore_valid,
         )
     )
 
     replay_values = None if replay_results is None else tuple(replay_results)
-    gates.append(("gate-6", replay_gate(replay_values)))
-    return BakeoffReport(tasks, restore_results, dict(gates), replay_values)
+    self_values = None if self_replay_results is None else tuple(self_replay_results)
+    gates.append(("gate-6", _gate_six(driver_equivalence, self_values)))
+    return BakeoffReport(
+        tasks=tasks,
+        restore=restore_results,
+        gates=dict(gates),
+        replay_diagnostic=replay_values,
+        driver_equivalence=driver_equivalence,
+        self_replay=self_values,
+        rate_evidence=rates,
+        cached_fractions=cached,
+        caps=_cap_report(tasks, cap_parity),
+        provenance=provenance_pairs,
+        certification=certification,
+        bakeoff_session_id=bakeoff_session_id,
+        instance_id=instance_id,
+    )

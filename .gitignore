@@ -19,3 +19,4 @@ dist/
 
 # Agent bake-off outputs
 bench/results/
+bakeoff-evidence/

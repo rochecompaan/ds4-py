@@ -1,3 +1,5 @@
+> Superseded by the [2026-11-06 M3 targeted certification](2026-11-06-m3-targeted-certification.md).
+
 # M3 functional checkpoint: full bake-off after prompt alignment
 
 **Status:** Functional implementation checkpoint. **M3 is not live-verified and is not complete.** Gate 1 passed; Gates 2–6 failed. Whole-branch review and integration are intentionally left to a separate session.

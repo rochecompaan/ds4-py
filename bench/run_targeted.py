@@ -1,4 +1,4 @@
-"""Run selected ds4-py bakeoff tasks in independent repetitions."""
+"""Run selected bakeoff tasks in independent repetitions."""
 
 import argparse
 import json
@@ -37,6 +37,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--request-limit", type=_positive_int, default=100)
     parser.add_argument("--task", action="append", required=True)
     parser.add_argument("--repetitions", type=_positive_int, default=3)
+    parser.add_argument("--task-preamble", type=Path)
+    parser.add_argument("--c-agent", type=Path, help="Run the C reference agent instead of ds4-py")
     return parser
 
 
@@ -50,10 +52,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     missing = sorted(set(args.task) - workspaces.keys())
     if missing:
         raise ValueError(f"unknown bakeoff tasks: {', '.join(missing)}")
+    if args.task_preamble is not None:
+        preamble = args.task_preamble.read_text().rstrip()
+        for task_id in args.task:
+            task_path = workspaces[task_id].agent_dir / "TASK.md"
+            task_path.write_text(f"{preamble}\n\n{task_path.read_text()}")
 
+    agent = "c" if args.c_agent is not None else "ds4py"
+    executable = (
+        (str(args.c_agent),)
+        if args.c_agent is not None
+        else (sys.executable, str(Path(__file__).with_name("restore_check.py")), "attempt")
+    )
     config = AgentConfig(
-        "ds4py",
-        (sys.executable, str(Path(__file__).with_name("restore_check.py")), "attempt"),
+        agent,
+        executable,
         model=args.model,
         backend=args.backend,
         ctx=manifest.ctx,

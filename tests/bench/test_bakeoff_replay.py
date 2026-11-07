@@ -1,27 +1,21 @@
-"""Gate 6 replays complete C traces without executing tools."""
+"""Trace selection and shared replay checks do not reintroduce exact C Gate 6."""
 
-import json
 import sys
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
-import ds4py
-from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
-from ds4py.engine.session import Engine
+from ds4py.engine.events import Stopped, Token
+from ds4py.engine.tool_syntax.model import Snapshot, ToolCall
+from ds4py.engine.transcript import Transcript
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bench.replay_c_traces import (
-    ReplayResult,
-    generation_limit,
-    replay_with_engine,
-    select_c_traces,
-)
-from bench.report import build_report, update_replay_report
+from bench import trace_selection
+from bench.report import build_report
 from bench.restore_check import RestoreSummary
+from bench.trace_selection import ReplayResult, select_c_traces
 
 MODEL = "/models/fake.gguf"
 STAMP = "2026-10-21 09:05:07.042 "
@@ -50,131 +44,65 @@ def write_c_trace(path: Any, text: Any) -> Any:
     return sampled
 
 
-def engine_for(sampled: Any, mismatch_at: Any = None) -> Engine:
-    def script(prompt: Any, generated: Any) -> Any:
-        index = len(generated)
-        if index >= len(sampled):
-            return FAKE_EOS
-        if index == mismatch_at:
-            return sampled[index] + 1
-        return sampled[index]
+def test_tool_round_parser_validation_is_linear_in_response_bytes(monkeypatch: Any) -> None:
+    data = TOOL_TEXT.replace("/tmp/x", "x" * 20_000).encode()
+    snapshot = Snapshot(
+        state="DONE",
+        raw=data,
+        calls=(ToolCall(name="read", args={"path": "x" * 20_000}, raw=data.decode()),),
+        error=None,
+        param_close_prefix=False,
+        in_think=False,
+        dsml_in_think=False,
+    )
+    created = 0
+    fed_bytes = 0
 
-    info = replace(FakeNative()._info, family="qwen", is_qwen4=True)
-    return ds4py.open(MODEL, ctx=4096, native=FakeNative(info=info, script=script))
+    class FakeParser:
+        def __init__(self) -> None:
+            nonlocal created
+            created += 1
+            self.in_think = False
 
+        def feed(self, chunk: bytes) -> Snapshot:
+            nonlocal fed_bytes
+            fed_bytes += len(chunk)
+            return snapshot
 
-def test_tool_round_replays_every_token_and_stops_without_tool_execution(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "tool.trace"
-    sampled = write_c_trace(path, TOOL_TEXT)
-    assert len(sampled) > 16
-    with engine_for(sampled) as engine:
-        assert (
-            generation_limit(
-                engine,
-                cast(
-                    "Any",
-                    type(
-                        "Round",
-                        (),
-                        {
-                            "sampled": sampled,
-                            "prefix_only": False,
-                            "context_limited": False,
-                            "prompt": (1, 2),
-                        },
-                    ),
-                )(),
-            )
-            == len(sampled) + 1
-        )
-        results = replay_with_engine(
-            engine,
-            [("tool-task", path)],
-            require_full_set=False,
-        )
+        def finish(self) -> Snapshot:
+            return snapshot
 
-    assert len(results) == 1
-    result = results[0]
-    assert result.passed, result.detail
-    assert result.tokens == len(sampled)
-    assert result.tool_call
-    assert result.terminal_reason == "tool_call_complete"
+    monkeypatch.setattr(trace_selection, "make_parser", lambda _info: FakeParser())
+    engine = SimpleNamespace(info=object(), token_text=lambda _token: data)
+    round_ = SimpleNamespace(
+        prompt=(),
+        sampled=(1,),
+        think=0,
+        prefix_only=False,
+        context_limited=False,
+    )
+    transcript = Transcript()
+    transcript.append((1,), "assistant")
 
+    result = trace_selection._check_round(
+        cast("Any", engine),
+        "large-tool",
+        0,
+        cast("Any", round_),
+        (Token(1, data), Stopped("tool_call_complete")),
+        transcript,
+    )
 
-def test_token_mismatch_fails_with_task_round_and_token_index(tmp_path: Path) -> None:
-    path = tmp_path / "mismatch.trace"
-    sampled = write_c_trace(path, TOOL_TEXT)
-
-    with engine_for(sampled, mismatch_at=1) as engine:
-        results = replay_with_engine(
-            engine,
-            [("mismatch-task", path)],
-            require_full_set=False,
-        )
-
-    assert not results[0].passed
-    assert "mismatch-task" in results[0].detail
-    assert "round 0" in results[0].detail
-    assert "token 1" in results[0].detail
+    assert result == (True, "tool_call_complete")
+    assert created == 2
+    assert fed_bytes == 2 * len(data)
 
 
-def test_malformed_c_record_becomes_failing_gate_evidence(tmp_path: Path) -> None:
-    path = tmp_path / "malformed.trace"
-    write_c_trace(path, "hello")
-    path.write_text("\n".join(path.read_text().splitlines()[:-1]) + "\n")
-
-    with engine_for(tokenize_rendered("hello")) as engine:
-        results = replay_with_engine(
-            engine,
-            [("broken-task", path)],
-            require_full_set=False,
-        )
-
-    assert not results[0].passed
-    assert "broken-task" in results[0].detail
-    assert "round -1" in results[0].detail
-    assert str(path) in results[0].detail
-
-
-def test_all_twelve_c_runs_replay_and_tool_coverage_is_required(tmp_path: Path) -> None:
-    sampled = None
-    selected = []
-    for index in range(12):
-        path = tmp_path / f"task-{index}.trace"
-        sampled = write_c_trace(path, TOOL_TEXT)
-        selected.append((f"task-{index}", path))
-
-    with engine_for(sampled) as engine:
-        results = replay_with_engine(engine, selected)
-
-    assert len(results) == 12
-    assert all(result.passed for result in results)
-    assert sum(result.tool_call for result in results) == 12
-
-
-def test_full_set_without_a_tool_round_fails_gate_six(tmp_path: Path) -> None:
-    sampled = None
-    selected = []
-    for index in range(12):
-        path = tmp_path / f"text-{index}.trace"
-        sampled = write_c_trace(path, "hello")
-        selected.append((f"task-{index}", path))
-
-    with engine_for(sampled) as engine:
-        results = replay_with_engine(engine, selected)
-
-    assert not results[-1].passed
-    assert "no tool-call round" in results[-1].detail
-    assert not build_report([], RestoreSummary(), results).gates["gate-6"].passed
-
-
-def test_selection_includes_every_c_attempt_trace_and_requires_twelve_tasks(
+def test_selection_includes_every_c_attempt_without_full_set_requirement(
     tmp_path: Path,
 ) -> None:
     paths = []
-    for index in range(12):
+    for index in range(2):
         first = tmp_path / f"task-{index}-1.trace"
         second = tmp_path / f"task-{index}-2.trace"
         write_c_trace(first, "first")
@@ -188,7 +116,7 @@ def test_selection_includes_every_c_attempt_trace_and_requires_twelve_tasks(
             attempt_trace_paths=paths[index],
             trace_path=paths[index][-1],
         )
-        for index in range(12)
+        for index in range(2)
     ]
     tasks.append(
         SimpleNamespace(
@@ -202,29 +130,12 @@ def test_selection_includes_every_c_attempt_trace_and_requires_twelve_tasks(
 
     selected = select_c_traces(cast("Any", tasks))
 
-    assert len(selected) == 24
+    assert len(selected) == 4
     assert [path for _task, path in selected] == [path for pair in paths for path in pair]
 
 
-def test_gate_six_cannot_pass_without_tool_call_evidence() -> None:
-    result = ReplayResult("task", 0, True, "text replay", tool_call=False)
-    assert not build_report([], RestoreSummary(), [result]).gates["gate-6"].passed
+def test_c_diagnostic_cannot_pass_gate_six() -> None:
     covered = ReplayResult("task", 0, True, "tool replay", tool_call=True)
-    assert build_report([], RestoreSummary(), [covered]).gates["gate-6"].passed
-
-
-def test_standalone_replay_updates_only_its_evidence_and_gate(tmp_path: Path) -> None:
-    path = tmp_path / "bakeoff.json"
-    original = build_report([], RestoreSummary())
-    original.write_json(path)
-    gate1 = json.loads(path.read_text())["gates"]["gate-1"]
-    result = ReplayResult("task", 0, True, "tool replay", tool_call=True)
-
-    gate = update_replay_report(path, [result])
-
-    data = json.loads(path.read_text())
-    assert gate.passed
-    assert data["gates"]["gate-1"] == gate1
-    assert data["gates"]["gate-6"]["passed"]
-    assert data["replay"][0]["task_id"] == "task"
-    assert data["replay"][0]["tool_call"]
+    gate = build_report([], RestoreSummary(), [covered]).gates["gate-6"]
+    assert not gate.passed
+    assert not gate.valid

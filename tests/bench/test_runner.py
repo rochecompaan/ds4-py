@@ -3,29 +3,37 @@
 import json
 import subprocess
 import sys
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
+from bench.comparison import RateEvidence, StepCapture, TopLogit
+from bench.driver_cases import DriverCase, DriverRoundEvidence, read_case_manifest
+from bench.driver_equivalence import DriverEquivalenceResult, DriverRoundResult
 from bench.metrics import EventSummary, ToolAccounting
-from bench.replay_c_traces import ReplayResult
-from bench.report import build_report
+from bench.provenance import ProgressChunk, RoundProvenance, SyncCall, TraceProvenance
+from bench.report import GateResult, build_report
 from bench.restore_check import CheckResult, RestoreResult, RestoreSummary
 from bench.run_bakeoff import (
     AgentConfig,
     TaskRunResult,
     build_agent_command,
     run_bakeoff,
+    run_reference_equivalence,
     run_task,
     run_tasks_sequentially,
 )
+from bench.self_replay import SelfReplayResult
+from bench.session import BakeoffSession
 from bench.workspaces import prepare_exercise
 from ds4py._json import is_json_object
+from ds4py.engine.replay_types import ReplayRound, ReplayTrace
 
 
 def config(tmp_path: Path, agent: Any = "ds4py") -> Any:
@@ -54,6 +62,7 @@ def result(task_id: Any = "task", agent: Any = "ds4py", **changes: Any) -> Any:
         "tool_calls": 1,
         "avg_prefill_reuse": 0.8,
         "non_extend_rounds": 0,
+        "terminal_reasons": ("stop_token",) if agent == "ds4py" else ("recorded_boundary",),
         "tool_accounting": ToolAccounting(1, 1) if agent == "ds4py" else None,
     }
     for name in EventSummary.__dataclass_fields__:
@@ -86,6 +95,7 @@ def test_task_result_preserves_summary_evidence_and_derives_last_attempt_paths()
         non_extend_rounds=1,
         allowed_non_extend_rounds=1,
         non_extension_reasons=("compaction",),
+        terminal_reasons=("stop_token",),
         reuse_ratios=(0.5, 0.75),
     )
     first_save = Path("/saves/first")
@@ -118,6 +128,7 @@ def test_task_result_preserves_summary_evidence_and_derives_last_attempt_paths()
     if not is_json_object(summary):
         raise AssertionError("task summary must be an object")
     assert summary["non_extension_reasons"] == ["compaction"]
+    assert summary["terminal_reasons"] == ["stop_token"]
     assert summary["reuse_ratios"] == [0.5, 0.75]
 
 
@@ -132,6 +143,98 @@ def healthy_restore(results: Any) -> Any:
         runs=runs,
         interruption=CheckResult(True, "resumed"),
     )
+
+
+def provenance() -> TraceProvenance:
+    round_ = RoundProvenance(
+        round_index=0,
+        think=75,
+        prompt_sha256="prompt-sha",
+        sync_calls=(SyncCall("full", 12, 8, 4, 12),),
+        progress_chunks=(ProgressChunk(4, 4),),
+        observed_think=75,
+    )
+    return TraceProvenance(
+        bakeoff_session_id="session-1",
+        instance_id="instance-1",
+        gpu_model="NVIDIA H100",
+        gpu_driver_version="580.00",
+        ds4_revision="ds4-revision",
+        ds4py_revision="ds4py-revision",
+        libds4_sha256="library-sha",
+        model_path="/models/ds4.gguf",
+        model_sha256="model-sha",
+        backend="cuda",
+        ctx=100000,
+        q8_f16_cache_mb=5120,
+        temperature=0.0,
+        seed=1,
+        response_budget=8192,
+        reset_policy="fresh-per-round",
+        trace_sha256="c-output-sha",
+        source_trace_sha256="source-sha",
+        rounds=(round_,),
+        observed_libds4_sha256="library-sha",
+        observed_model_path="/models/ds4.gguf",
+        observed_backend="cuda",
+        observed_ctx=100000,
+        observed_seed=1,
+        observed_temperature=0.0,
+    )
+
+
+def bakeoff_session() -> BakeoffSession:
+    return BakeoffSession(
+        bakeoff_session_id="session-1",
+        instance_id="instance-1",
+        gpu_model="cpu",
+        gpu_driver_version="not-applicable",
+        ds4_revision="ds4-revision",
+        ds4py_revision="ds4py-revision",
+        libds4_sha256="library-sha",
+        model_path="/model.gguf",
+        model_sha256="model-sha",
+        backend="cpu",
+        ctx=100000,
+        temperature=0.0,
+        seed=1,
+        response_budget=256,
+        q8_f16_cache_mb=5120,
+    )
+
+
+def test_session_environment_inherits_native_patch_set_and_host_register_value() -> None:
+    session = replace(
+        bakeoff_session(),
+        native_patches=(
+            SimpleNamespace(name="docs/patches/cuda-no-copy-host-register-opt-out.patch", sha256="patch-sha"),
+        ),
+        cuda_disable_host_register="1",
+    )
+
+    environment = session.environment()
+
+    assert environment["DS4_BAKEOFF_NATIVE_PATCHES"] == "docs/patches/cuda-no-copy-host-register-opt-out.patch"
+    assert environment["DS4_CUDA_DISABLE_HOST_REGISTER"] == "1"
+
+
+def paired_evidence(results: Any) -> dict[str, Any]:
+    task_ids = sorted({item.task_id for item in results if item.agent == "c"})
+    rates = {
+        task_id: (
+            RateEvidence(task_id, 100, 2.0, 40, 4.0),
+            RateEvidence(task_id, 100, 2.0, 40, 4.0),
+        )
+        for task_id in task_ids
+    }
+    c_provenance = provenance()
+    ds4py_provenance = replace(c_provenance, trace_sha256="ds4py-output-sha")
+    cached_fractions = dict.fromkeys(task_ids, (1 / 3, 1 / 3))
+    return {
+        "rate_evidence": rates,
+        "cached_fractions": cached_fractions,
+        "provenance": ((c_provenance, ds4py_provenance),),
+    }
 
 
 def test_agent_commands_share_model_sampling_and_task_prompt(tmp_path: Path) -> None:
@@ -180,6 +283,34 @@ def test_request_limit_failure_is_named_in_task_errors(tmp_path: Path) -> None:
     )
 
     assert "attempt 1 request_limit" in completed.errors
+
+
+def test_expected_max_tokens_exit_is_not_lifecycle_error(tmp_path: Path) -> None:
+    source = make_exercise(tmp_path)
+    workspace = prepare_exercise(source, tmp_path / "staged", max_attempts=1)
+    executable = tmp_path / "max-tokens.py"
+    executable.write_text(
+        FAKE_AGENT.replace('{"reason": "stop_token"}', '{"reason": "max_tokens"}')
+        + '\nimport sys\nsys.stderr.write("ds4py: model response ended with max_tokens\\n")\n'
+        + "raise SystemExit(1)\n"
+    )
+    agent = replace(
+        config(tmp_path),
+        executable=(sys.executable, str(executable)),
+    )
+
+    completed = run_task(
+        workspace,
+        agent,
+        tmp_path / "results",
+        grade_runner=lambda *args: subprocess.CompletedProcess([], 0, stdout="pass", stderr=""),
+    )
+
+    assert completed.terminal_reasons == ("max_tokens",)
+    assert completed.errors == ()
+    report = build_report([completed], healthy_restore([completed]))
+    assert report.gates["gate-2"].passed
+    assert report.caps.totals.ds4py == 1
 
 
 def test_failed_first_attempt_feeds_grader_output_to_exactly_one_retry(
@@ -305,7 +436,8 @@ def test_gates_one_to_five_pass_with_complete_evidence() -> None:
     c = result(agent="c", wall_seconds=10)
     python = result(wall_seconds=15, non_extend_rounds=2)
     python = with_summary(python, allowed_non_extend_rounds=2)
-    report = build_report([c, python], healthy_restore([c, python]))
+    results = [c, python]
+    report = build_report(results, healthy_restore(results), **paired_evidence(results))
 
     assert all(report.gates[f"gate-{number}"].passed for number in range(1, 6))
     assert not report.gates["gate-6"].passed
@@ -330,21 +462,226 @@ def test_gate_two_allows_bad_argument_retry_but_not_parser_error_or_missing_outc
     parser_error = with_summary(python, parser_errors=1)
     assert not build_report([c, parser_error], healthy_restore([c, parser_error])).gates["gate-2"].passed
     missing = with_summary(python, tool_accounting=ToolAccounting(2, 1, 0, 0))
-    assert not build_report([c, missing], healthy_restore([c, missing])).gates["gate-2"].passed
+    invalid = build_report([c, missing], healthy_restore([c, missing])).gates["gate-2"]
+    assert not invalid.passed
+    assert not invalid.valid
 
 
-def test_gate_three_enforces_time_and_only_unexplained_non_extensions() -> None:
-    c = result(agent="c", wall_seconds=10)
-    python = result(wall_seconds=15.01)
-    assert not build_report([c, python], healthy_restore([c, python])).gates["gate-3"].passed
+def test_gate_two_rejects_missing_unknown_and_inconsistent_terminal_evidence() -> None:
+    c = result(agent="c")
+    python = result()
+    results = [c, python]
+    evidence = healthy_restore(results)
 
-    on_time = with_summary(
+    for reasons in ((), ("mystery",)):
+        changed = with_summary(python, terminal_reasons=reasons)
+        gate = build_report([c, changed], evidence).gates["gate-2"]
+        assert not gate.passed
+        assert not gate.valid
+
+    inconsistent = with_summary(
         python,
-        wall_seconds=15,
-        invalid_non_extend_rounds=1,
-        non_extend_rounds=1,
+        terminal_reasons=("tool_call_complete",),
+        tool_accounting=ToolAccounting(),
     )
-    assert not build_report([c, on_time], healthy_restore([c, on_time])).gates["gate-3"].passed
+    gate = build_report([c, inconsistent], evidence).gates["gate-2"]
+    assert not gate.passed
+    assert not gate.valid
+
+
+def test_gate_two_accepts_max_tokens_and_reports_caps_without_parity() -> None:
+    c = result(agent="c")
+    python = with_summary(result(), terminal_reasons=("max_tokens", "max_tokens"))
+    results = [c, python]
+
+    report = build_report(results, healthy_restore(results))
+
+    gate = report.gates["gate-2"]
+    assert gate.passed and gate.valid
+    assert report.caps.tasks["task"].c == 0
+    assert report.caps.tasks["task"].ds4py == 2
+    assert report.caps.totals.ds4py == 2
+    assert report.caps.parity.detail == "not run"
+
+
+def test_gate_two_enforces_explicit_cap_parity() -> None:
+    c = result(agent="c")
+    python = result()
+    results = [c, python]
+
+    report = build_report(
+        results,
+        healthy_restore(results),
+        cap_parity=GateResult(False, "cap outcomes differ"),
+    )
+
+    assert not report.gates["gate-2"].passed
+    assert "cap outcomes differ" in report.gates["gate-2"].detail
+
+
+def test_cap_phase_runs_both_drivers_for_each_arm_round_zero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bench.phases as phase_runner
+    import bench.run_bakeoff as runner
+
+    c_trace = tmp_path / "c.trace"
+    ds4py_trace = tmp_path / "ds4py.trace"
+    c_trace.write_text("c")
+    ds4py_trace.write_text("ds4py")
+    monkeypatch.setattr(phase_runner, "select_c_traces", lambda _results: [("task", c_trace)])
+    monkeypatch.setattr(phase_runner, "select_ds4py_traces", lambda _results: [("task", ds4py_trace)])
+    trace = ReplayTrace(100000, None, (ReplayRound(0, (1, 2), (3,), 75, 0, False),))
+    monkeypatch.setattr(phase_runner, "read_replay", lambda _path: trace)
+    calls = []
+
+    def fake_driver(command: list[str], output_path: Path, log_path: Path) -> Any:
+        case = read_case_manifest(Path(command[command.index("--cases") + 1]))[0]
+        source_trace = Path(command[command.index("--source-trace") + 1])
+        output_path.write_text("{}")
+        log_path.write_text("")
+        calls.append((command[0], source_trace, case))
+        return (
+            (
+                DriverRoundEvidence(
+                    source_trace=source_trace,
+                    case=case,
+                    sync_calls=(SyncCall("full", 2, 0, 2, 2),),
+                    progress_chunks=(ProgressChunk(2, 2),),
+                    steps=(),
+                    prefill_seconds=0.0,
+                    decode_seconds=0.0,
+                    terminal_reason="stop_token",
+                    observed_libds4_sha256="library-sha",
+                    observed_model_path="/model.gguf",
+                    observed_backend="cpu",
+                    observed_ctx=100000,
+                    observed_seed=1,
+                    observed_temperature=0.0,
+                    observed_think=case.think,
+                ),
+            ),
+            (),
+        )
+
+    monkeypatch.setattr(phase_runner, "_run_driver_command", fake_driver)
+    c_driver = tmp_path / "c-driver"
+
+    result = runner._run_cap_parity([], config(tmp_path), c_driver, bakeoff_session(), tmp_path / "results")
+
+    assert result.passed, result.detail
+    assert len(calls) == 4
+    assert {call[1] for call in calls} == {c_trace, ds4py_trace}
+    assert [call[0] for call in calls].count(str(c_driver)) == 2
+    assert [call[0] for call in calls].count(sys.executable) == 2
+    assert all(call[2].round_index == 0 and call[2].steps == 256 for call in calls)
+
+
+def test_reference_selection_failure_invalidates_explicit_cap_phase(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bench.phases as phase_runner
+    import bench.run_bakeoff as runner
+    from bench.trace_selection import ReplaySelectionError
+
+    def fail_selection(_results: Any) -> Any:
+        raise ReplaySelectionError("missing C traces")
+
+    monkeypatch.setattr(phase_runner, "select_c_traces", fail_selection)
+
+    phase = runner.run_reference_equivalence(
+        [],
+        config(tmp_path),
+        tmp_path / "c-driver",
+        bakeoff_session(),
+        tmp_path / "results",
+        cap_parity=True,
+    )
+
+    assert phase.cap_parity is not None
+    assert not phase.cap_parity.passed and not phase.cap_parity.valid
+    assert "missing C traces" in phase.cap_parity.detail
+
+
+def test_gate_two_rejects_unexpected_task_interruption() -> None:
+    c = result(agent="c")
+    python = with_summary(result(), terminal_reasons=("interrupted",))
+
+    gate = build_report([c, python], healthy_restore([c, python])).gates["gate-2"]
+
+    assert not gate.passed
+    assert gate.valid
+
+
+def test_gate_three_ignores_wall_time_ratio_with_valid_paired_evidence() -> None:
+    c = result(agent="c", wall_seconds=10)
+    python = result(wall_seconds=100)
+    results = [c, python]
+
+    gate = build_report(results, healthy_restore(results), **paired_evidence(results)).gates["gate-3"]
+
+    assert gate.passed and gate.valid
+
+
+def test_gate_three_enforces_rate_and_cached_fraction_tolerances() -> None:
+    c = result(agent="c")
+    python = result()
+    results = [c, python]
+    evidence = paired_evidence(results)
+    c_rate, ds4py_rate = evidence["rate_evidence"]["task"]
+    evidence["rate_evidence"]["task"] = (c_rate, replace(ds4py_rate, prefill_seconds=2.70))
+
+    bad_rate = build_report(results, healthy_restore(results), **evidence).gates["gate-3"]
+    assert not bad_rate.passed
+    assert bad_rate.valid
+
+    evidence = paired_evidence(results)
+    evidence["cached_fractions"]["task"] = (0.9, 0.5)
+    bad_cache = build_report(results, healthy_restore(results), **evidence).gates["gate-3"]
+    assert not bad_cache.passed
+    assert bad_cache.valid
+
+
+def test_gate_three_cache_parity_ignores_unpaired_live_trajectories() -> None:
+    c = with_summary(result(agent="c"), avg_prefill_reuse=0.9)
+    python = with_summary(result(), avg_prefill_reuse=0.5)
+    results = [c, python]
+
+    gate = build_report(results, healthy_restore(results), **paired_evidence(results)).gates["gate-3"]
+
+    assert gate.passed and gate.valid
+
+
+def test_gate_three_rejects_unexplained_non_extensions() -> None:
+    c = result(agent="c")
+    python = with_summary(result(), invalid_non_extend_rounds=1, non_extend_rounds=1)
+    results = [c, python]
+
+    gate = build_report(results, healthy_restore(results), **paired_evidence(results)).gates["gate-3"]
+
+    assert not gate.passed
+    assert gate.valid
+
+
+def test_gate_three_missing_rates_or_bad_provenance_is_invalid() -> None:
+    c = result(agent="c")
+    python = result()
+    results = [c, python]
+    restore = healthy_restore(results)
+
+    missing = build_report(results, restore)
+    assert not missing.gates["gate-3"].passed
+    assert not missing.gates["gate-3"].valid
+    assert "gate-3: INVALID" in missing.compact_table()
+
+    evidence = paired_evidence(results)
+    c_provenance, ds4py_provenance = evidence["provenance"][0]
+    evidence["provenance"] = ((c_provenance, replace(ds4py_provenance, instance_id="other-instance")),)
+    mismatched = build_report(results, restore, **evidence).gates["gate-3"]
+    assert not mismatched.passed
+    assert not mismatched.valid
 
 
 def test_gate_four_requires_interrupt_resume() -> None:
@@ -379,13 +716,19 @@ def test_gate_five_rejects_an_attempt_with_no_save_directory() -> None:
     assert "attempt" in report.gates["gate-5"].detail
 
 
-def test_report_json_has_attempt_feedback_and_table_has_six_deltas_not_logs() -> None:
+def test_report_json_has_attempt_feedback_and_table_has_deltas_not_logs() -> None:
     c = result(agent="c", wall_seconds=10, progress_events=2, tokens=10)
     python = result(wall_seconds=12, progress_events=5, tokens=14)
-    report = build_report([c, python], healthy_restore([c, python]))
+    results = [c, python]
+    report = build_report(results, healthy_restore(results), **paired_evidence(results))
 
     data = report.to_dict()
     assert is_json_object(data)
+    assert "rates" in data and "caps" in data and "provenance" in data
+    rates = data["rates"]
+    assert is_json_object(rates) and "task" in rates
+    caps = data["caps"]
+    assert is_json_object(caps) and "totals" in caps
     tasks = data["tasks"]
     assert isinstance(tasks, list) and all(is_json_object(item) for item in tasks)
     python_data = next(item for item in tasks if is_json_object(item) and item["agent"] == "ds4py")
@@ -400,6 +743,8 @@ def test_report_json_has_attempt_feedback_and_table_has_six_deltas_not_logs() ->
         "tool_calls",
         "avg_prefill_reuse",
         "non_extend_rounds",
+        "max_tokens_exits",
+        "paired_rates",
     ):
         assert metric in table
     assert "delta" in table and "grader secret output" not in table
@@ -408,7 +753,20 @@ def test_report_json_has_attempt_feedback_and_table_has_six_deltas_not_logs() ->
 def make_exercise(root: Any) -> Any:
     source = root / "benchmark/python/exercises/practice/tiny"
     (source / ".docs").mkdir(parents=True)
+    (source / ".meta").mkdir()
     (source / ".docs/instructions.md").write_text("Return good.\n")
+    (source / ".meta/config.json").write_text(
+        json.dumps(
+            {
+                "files": {
+                    "solution": ["solution.py"],
+                    "test": ["tiny_test.py"],
+                    "example": [".meta/example.py"],
+                }
+            }
+        )
+    )
+    (source / ".meta/example.py").write_text("def value():\n    return 'good'\n")
     (source / "solution.py").write_text("def value():\n    return 'good'\n")
     (source / "tiny_test.py").write_text("def test_value():\n    assert True\n")
     return source
@@ -473,11 +831,102 @@ with lock_path.open("w") as lock:
 """
 
 
+def test_complete_runner_rejects_missing_attempt_library_before_task_arms(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bench.run_bakeoff as runner
+
+    staged = [SimpleNamespace(task_id="repo-glm-close")]
+    monkeypatch.setattr(runner, "load_manifest", lambda _path: object())
+    monkeypatch.setattr(runner, "prepare_manifest", lambda *args: staged)
+    monkeypatch.setattr(
+        runner,
+        "run_tasks_sequentially",
+        lambda *args, **kwargs: pytest.fail("a task arm started without a resolvable attempt library"),
+    )
+    monkeypatch.delenv("DS4_LIB", raising=False)
+    monkeypatch.setenv("DS4PY_HOME", str(tmp_path / "native"))
+
+    with pytest.raises(RuntimeError, match="Set DS4_LIB"):
+        run_bakeoff(
+            tmp_path / "manifest",
+            tmp_path / "benchmark",
+            tmp_path,
+            (config(tmp_path),),
+            tmp_path / "results",
+            session=bakeoff_session(),
+            c_driver=tmp_path / "c-driver",
+        )
+
+
+def test_complete_runner_preserves_missing_attempt_trace_as_invalid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bench.phases as phase_runner
+    import bench.run_bakeoff as runner
+    import bench.self_replay as replay_module
+
+    missing = tmp_path / "missing-attempt.jsonl"
+    task = result(
+        task_id="repo-glm-close",
+        passed=False,
+        attempt_save_dirs=(),
+        attempt_trace_paths=(missing,),
+        errors=("attempt trace is unavailable",),
+    )
+    staged = [SimpleNamespace(task_id="repo-glm-close")]
+    library = tmp_path / "libds4.so"
+    library.write_bytes(b"native")
+    monkeypatch.setenv("DS4_LIB", str(library))
+    monkeypatch.setattr(runner, "load_manifest", lambda _path: object())
+    monkeypatch.setattr(runner, "prepare_manifest", lambda *args: staged)
+    monkeypatch.setattr(runner, "run_tasks_sequentially", lambda *args, **kwargs: (task,))
+    monkeypatch.setattr(phase_runner, "check_result_saves", lambda *args, **kwargs: ())
+    monkeypatch.setattr(runner, "clone_workspace", lambda *args: object())
+    monkeypatch.setattr(runner, "interruption_acceptance", lambda *args: CheckResult(True, "ok"))
+
+    @contextmanager
+    def fake_open(*args: Any, **kwargs: Any) -> Any:
+        yield object()
+
+    monkeypatch.setattr(replay_module.ds4py, "open", fake_open)
+
+    report = run_bakeoff(
+        tmp_path / "manifest",
+        tmp_path / "benchmark",
+        tmp_path,
+        (config(tmp_path),),
+        tmp_path / "results",
+        session=bakeoff_session(),
+        c_driver=tmp_path / "c-driver",
+    )
+
+    assert report.self_replay is not None and len(report.self_replay) == 1
+    evidence = report.self_replay[0]
+    assert not evidence.valid
+    assert str(missing) in evidence.detail
+    assert not report.gates["gate-6"].valid
+    assert evidence.detail in report.gates["gate-6"].detail
+    sidecar = json.loads(missing.with_name(f"{missing.name}.provenance.json").read_text())
+    assert sidecar["invalid_reason"] == evidence.detail
+    written = json.loads((tmp_path / "results/bakeoff.json").read_text())
+    assert written["gates"]["gate-6"]["valid"] is False
+    assert written["self_replay"][0]["detail"] == evidence.detail
+    assert "gate-6: INVALID" in (tmp_path / "results/report.txt").read_text()
+
+
 def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import bench.phases as phase_runner
     import bench.run_bakeoff as runner
 
     order = []
     staged = [SimpleNamespace(task_id="repo-glm-close")]
+    session = bakeoff_session()
+    library = tmp_path / "libds4.so"
+    library.write_bytes(b"native")
+    monkeypatch.setenv("DS4_LIB", str(library))
     monkeypatch.setattr(runner, "load_manifest", lambda _path: object())
     monkeypatch.setattr(runner, "prepare_manifest", lambda *args: staged)
     monkeypatch.setattr(
@@ -485,10 +934,11 @@ def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkey
         "run_tasks_sequentially",
         lambda *args, **kwargs: order.append("tasks") or (),
     )
+    monkeypatch.setattr(runner, "record_task_provenance", lambda *args: {})
     monkeypatch.setattr(
-        runner,
+        phase_runner,
         "check_result_saves",
-        lambda *args: order.append("restores") or (),
+        lambda *args, **kwargs: order.append("restores") or (),
     )
     monkeypatch.setattr(runner, "clone_workspace", lambda *args: object())
     monkeypatch.setattr(
@@ -496,11 +946,33 @@ def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkey
         "interruption_acceptance",
         lambda *args: order.append("interruption") or CheckResult(True, "ok"),
     )
-    replay = ReplayResult("task", 0, True, "tool replay", tool_call=True)
+    driver = DriverEquivalenceResult(
+        rounds=(DriverRoundResult("repo-glm-close", 1, 0, True, "reference logits match"),),
+        decode_steps=1,
+        passed=True,
+        detail="reference drivers match",
+    )
+    phase = SimpleNamespace(
+        result=driver,
+        rate_evidence={},
+        cached_fractions={},
+        provenance=(),
+        cap_parity=GateResult(True, "round-0 cap outcomes match"),
+    )
+    reference_options = {}
+
+    def fake_reference(*args: Any, **kwargs: Any) -> Any:
+        reference_options.update(kwargs)
+        order.append("reference")
+        return phase
+
+    monkeypatch.setattr(runner, "run_reference_equivalence", fake_reference)
     monkeypatch.setattr(
         runner,
-        "replay_task_results",
-        lambda *args: order.append("replay") or (replay,),
+        "replay_ds4py_task_results",
+        lambda *args, **kwargs: (
+            order.append("self-replay") or (SelfReplayResult("repo-glm-close", 0, True, "self replay match"),)
+        ),
     )
 
     report = run_bakeoff(
@@ -509,9 +981,95 @@ def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkey
         tmp_path,
         (config(tmp_path),),
         tmp_path / "results",
+        session=session,
+        c_driver=tmp_path / "c-driver",
+        cap_parity=True,
     )
 
-    assert order == ["tasks", "restores", "interruption", "replay"]
+    assert reference_options["cap_parity"] is True
+    assert report.caps.parity.passed
+    assert report.caps.parity.detail == "round-0 cap outcomes match"
+    assert order == ["tasks", "restores", "interruption", "reference", "self-replay"]
     assert report.gates["gate-6"].passed
-    assert (tmp_path / "results/bakeoff.json").is_file()
+    assert report.schema_version == 2
+    assert report.certification == "targeted"
+    assert report.bakeoff_session_id == "session-1"
+    assert report.instance_id == "instance-1"
+    written = json.loads((tmp_path / "results/bakeoff.json").read_text())
+    assert written["schema_version"] == 2
+    assert written["certification"] == "targeted"
+    assert written["bakeoff_session_id"] == "session-1"
+    assert written["instance_id"] == "instance-1"
     assert "gate-6: PASS" in (tmp_path / "results/report.txt").read_text()
+
+
+def test_reference_phase_runs_sequentially_and_records_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bench.phases as phase_runner
+
+    session = bakeoff_session()
+    trace = tmp_path / "c.trace"
+    trace.write_text("raw C trace")
+    token_file = tmp_path / "case.tokens"
+    token_file.write_text("1\n2\n3\n4\n")
+    task = replace(result(agent="c"), attempt_trace_paths=(trace,))
+    capture = StepCapture(3, tuple(TopLogit(index, 12.0 - index) for index in range(12)), 0)
+    evidence = DriverRoundEvidence(
+        source_trace=trace,
+        case=DriverCase("task", 1, 0, token_file, 3, 1, 1, 2),
+        sync_calls=(SyncCall("prefix", 1, 0, 1, 1), SyncCall("full", 3, 1, 2, 3)),
+        progress_chunks=(ProgressChunk(1, 1), ProgressChunk(2, 2)),
+        steps=(capture,),
+        prefill_seconds=1.0,
+        decode_seconds=2.0,
+        terminal_reason="recorded_boundary",
+        observed_libds4_sha256="library-sha",
+        observed_model_path="/model.gguf",
+        observed_backend="cpu",
+        observed_ctx=100000,
+        observed_seed=1,
+        observed_temperature=0.0,
+        observed_think=2,
+    )
+    calls = []
+    monkeypatch.setattr(
+        phase_runner,
+        "read_replay",
+        lambda _path: SimpleNamespace(model=session.model_path, ctx=session.ctx, rounds=(object(),)),
+    )
+
+    def export(*args: Any, **kwargs: Any) -> Path:
+        destination = cast("Path", kwargs["destination"])
+        manifest = destination / "cases.tsv"
+        manifest.write_text("cases")
+        return manifest
+
+    def drive(command: list[str], output_path: Path, log_path: Path) -> Any:
+        label = "c" if command[0].endswith("c-driver") else "ds4py"
+        calls.append(label)
+        output_path.write_text("{}\n")
+        log_path.write_text("")
+        return (replace(evidence, terminal_reason="recorded_boundary" if label == "c" else "stop_token"),), ()
+
+    monkeypatch.setattr(phase_runner, "export_trace_cases", export)
+    monkeypatch.setattr(phase_runner, "_run_driver_command", drive)
+
+    phase = run_reference_equivalence(
+        [task],
+        config(tmp_path),
+        tmp_path / "c-driver",
+        session,
+        tmp_path / "reference",
+    )
+
+    assert calls == ["c", "ds4py"]
+    assert phase.result.passed, phase.result.detail
+    assert phase.result.valid
+    assert phase.result.decode_steps == 1
+    assert phase.rate_evidence["task"][0].decode_steps == 1
+    assert phase.rate_evidence["task"][1].decode_steps == 1
+    assert phase.cached_fractions["task"] == pytest.approx((1 / 3, 1 / 3))
+    assert len(phase.provenance) == 1
+    assert len(list((tmp_path / "reference").rglob("*.provenance.json"))) == 2
