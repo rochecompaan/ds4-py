@@ -155,7 +155,7 @@ as diagnostics; they are not required to match.
 
 ## Replay reference drivers
 
-The C and ds4-py diagnostics share a TSV case manifest and an NDJSON evidence
+The C and ds4-py reference drivers share a TSV case manifest and an NDJSON evidence
 contract. They replay raw token IDs without executing tools. The main runner
 invokes them for every selected C attempt, writes both provenance sidecars,
 and uses the same evidence for Gate 3 rates and Gate 6 Part A. Each driver loads
@@ -171,7 +171,7 @@ export DS4PY_HOME=/absolute/path/to/native
 export DIAG="$PWD/bench/results/diagnostics"
 mkdir -p "$DIAG"
 cc -O2 -std=c11 -Wall -Wextra -Werror -I"$DS4_SRC" \
-  bench/c_replay_diagnostic.c \
+  bench/c_reference_driver.c \
   -L"$DS4PY_HOME/lib" -Wl,-rpath,"$DS4PY_HOME/lib" -lds4 \
   -o "$DIAG/c-replay-diagnostic"
 ```
@@ -230,7 +230,7 @@ drivers with the same manifest, model, backend, context, and source trace:
   --ctx 100000 \
   > "$DIAG/c-rounds.ndjson"
 
-uv run --frozen --extra agent python bench/ds4py_replay_diagnostic.py \
+uv run --frozen --extra agent python bench/ds4py_reference_driver.py \
   --model "$DS4_TEST_MODEL" \
   --cases "$CASES" \
   --source-trace "$TRACE" \

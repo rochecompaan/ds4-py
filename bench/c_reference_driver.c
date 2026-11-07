@@ -10,7 +10,7 @@
  *
  * Build against the same native source and shared library used by ds4-py:
  *
- *   cc -O2 -I/workspace/ds4 bench/c_replay_diagnostic.c \
+ *   cc -O2 -I/workspace/ds4 bench/c_reference_driver.c \
  *     -L/workspace/native -Wl,-rpath,/workspace/native -lds4 \
  *     -o /tmp/c-replay-diagnostic
  *

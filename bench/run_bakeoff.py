@@ -413,7 +413,7 @@ def _reference_commands(
     ]
     return (
         [str(c_driver), *common],
-        [sys.executable, str(Path(__file__).with_name("ds4py_replay_diagnostic.py")), *common],
+        [sys.executable, str(Path(__file__).with_name("ds4py_reference_driver.py")), *common],
     )
 
 

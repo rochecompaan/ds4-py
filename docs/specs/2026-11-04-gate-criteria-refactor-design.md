@@ -56,18 +56,18 @@ Use same-host, same-session logits equivalence for cross-driver checks. Use exac
 
 ### 3.2 Reference drivers
 
-Two supported diagnostic drivers produce the same NDJSON evidence shape:
+Two supported reference drivers produce the same NDJSON evidence shape:
 
-1. `bench/c_replay_diagnostic.c` uses the native C API directly.
-2. `bench/ds4py_replay_diagnostic.py` is the supported form of `bakeoff-evidence/2026-11-04-logits-probe/raw/probe_ds4py.py` and uses the ds4-py worker.
+1. `bench/c_reference_driver.c` uses the native C API directly.
+2. `bench/ds4py_reference_driver.py` is the supported form of `bakeoff-evidence/2026-11-04-logits-probe/raw/probe_ds4py.py` and uses the ds4-py worker.
 
-The C file is already in `bench/`. Phase 2 promotes it from a standalone diagnostic to a documented built tool. It remains diagnostic code; it is not part of `libds4`.
+The C reference driver lives in `bench/`. It is a documented built tool for Gate 6 Part A and remains outside `libds4`.
 
 Build it with the tested command shape:
 
 ```bash
 cc -O2 -std=c11 -Wall -Wextra -Werror -I"$DS4_SRC" \
-  bench/c_replay_diagnostic.c \
+  bench/c_reference_driver.c \
   -L"$DS4PY_HOME/lib" -Wl,-rpath,"$DS4PY_HOME/lib" -lds4 \
   -o "$DIAG/c-replay-diagnostic"
 ```
