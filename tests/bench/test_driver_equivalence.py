@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bench import ds4py_replay_diagnostic
+from bench import ds4py_reference_driver
 from bench.cap_parity import compare_cap_parity
 from bench.comparison import StepCapture, TopLogit, compare_rate
 from bench.driver_cases import (
@@ -247,13 +247,13 @@ def test_python_reference_driver_pins_cache_before_engine_open(monkeypatch: pyte
         return FakeEngine()
 
     monkeypatch.setenv(Q8_F16_CACHE_ENV, "4096")
-    monkeypatch.setattr(ds4py_replay_diagnostic.ds4py, "open", fake_open)
-    monkeypatch.setattr(ds4py_replay_diagnostic, "read_case_manifest", lambda _: ())
+    monkeypatch.setattr(ds4py_reference_driver.ds4py, "open", fake_open)
+    monkeypatch.setattr(ds4py_reference_driver, "read_case_manifest", lambda _: ())
     monkeypatch.setattr(
         sys,
         "argv",
         [
-            "ds4py_replay_diagnostic.py",
+            "ds4py_reference_driver.py",
             "--model",
             "model.gguf",
             "--cases",
@@ -263,7 +263,7 @@ def test_python_reference_driver_pins_cache_before_engine_open(monkeypatch: pyte
         ],
     )
 
-    assert ds4py_replay_diagnostic.main() == 0
+    assert ds4py_reference_driver.main() == 0
     assert observed["cache_mb"] == str(Q8_F16_CACHE_MB)
 
 
