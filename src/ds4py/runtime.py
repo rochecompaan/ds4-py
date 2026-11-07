@@ -143,7 +143,7 @@ class AgentRuntime:
     An instance is confined to the event-loop thread that creates it. ``run``
     rejects an overlapping prompt. ``save``, ``switch``, ``new``, ``fork``, and
     ``close`` cancel and await an active run before changing state. ``cancel``
-    requests native cancellation without waiting for the run to finish.
+    requests agent and native cancellation without waiting for the run to finish.
     """
 
     def __init__(  # noqa: PLR0913 - Runtime composition mirrors the agent feature set.
@@ -415,9 +415,11 @@ class AgentRuntime:
             self._running = False
 
     def cancel(self) -> None:
-        """Cancel the active run's engine work; a no-op while idle."""
+        """Cancel the active agent run and its engine work; a no-op while idle."""
         if self._status == "running":
             self._session.cancel()
+            if self._run_task is not None:
+                self._run_task.cancel()
 
     def set_hints(self, enabled: bool) -> None:
         """Change the system-note setting used by the next request."""

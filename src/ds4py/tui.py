@@ -129,10 +129,15 @@ class TUI:
         if self._prompt_task is None:
 
             async def prompt() -> str:
-                line = await self.session.prompt_async("ds4py> ")
-                if not isinstance(line, str):
-                    raise TypeError("prompt did not return text")
-                return line
+                while True:
+                    try:
+                        line = await self.session.prompt_async("ds4py> ")
+                    except KeyboardInterrupt:
+                        self.runtime.cancel()
+                        continue
+                    if not isinstance(line, str):
+                        raise TypeError("prompt did not return text")
+                    return line
 
             self._prompt_task = asyncio.create_task(prompt())
         return self._prompt_task
@@ -160,6 +165,9 @@ class TUI:
             if run_task in done:
                 try:
                     run_task.result()
+                except asyncio.CancelledError:
+                    if self.runtime.status != "interrupted":
+                        raise
                 except Exception as error:
                     self.show_message(f"error: {error}")
                 return
@@ -175,6 +183,9 @@ class TUI:
                     self.runtime.cancel()
                     try:
                         await run_task
+                    except asyncio.CancelledError:
+                        if self.runtime.status != "interrupted":
+                            raise
                     except Exception as error:
                         self.show_message(f"error: {error}")
                     return

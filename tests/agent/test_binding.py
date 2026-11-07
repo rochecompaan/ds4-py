@@ -1,3 +1,4 @@
+from copy import deepcopy
 from dataclasses import replace
 from typing import Any, cast
 
@@ -5,11 +6,13 @@ import pytest
 from pydantic_ai.messages import (
     BinaryImage,
     InstructionPart,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -18,7 +21,7 @@ from pydantic_ai.tools import ToolDefinition
 import ds4py
 from ds4py import ThinkMode
 from ds4py._native.fake import FakeNative
-from ds4py.binding import MessageBinder
+from ds4py.binding import MessageBinder, _BoundMessage, _content_hash
 from ds4py.engine.session import Engine
 from ds4py.errors import EngineError
 
@@ -53,6 +56,45 @@ def tool(name: Any = "read_file") -> ToolDefinition:
 
 def decode(engine: Any, tokens: Any) -> str:
     return b"".join(engine.token_text(token) for token in tokens).decode()
+
+
+@pytest.mark.parametrize(
+    ("native_reason", "finish_reason"),
+    [("max_tokens", "length"), ("stop_token", "stop"), ("tool_call_complete", "tool_call")],
+)
+def test_adopt_preserves_sampled_record_in_serialized_snapshot(native_reason: str, finish_reason: Any) -> None:
+    parts = (
+        [ToolCallPart(tool_name="read_file", args={"path": "hello.txt"}, tool_call_id="call-1")]
+        if native_reason == "tool_call_complete"
+        else [TextPart("same")]
+    )
+    candidate = ModelResponse(
+        parts,
+        finish_reason=finish_reason,
+        metadata={"ds4.key": "response", "ds4.source": "sampled"},
+    )
+    bound = deepcopy(candidate)
+    content_hash = _content_hash(bound)
+    sampled: dict[str, Any] = {
+        "content_hash": content_hash,
+        "segments": [{"kind": "assistant", "tokens": [17, 68]}],
+    }
+    if native_reason != "max_tokens":
+        sampled["segments"].append({"kind": "eos", "tokens": [99]})
+    bound.metadata = dict(bound.metadata or {})
+    bound.metadata["ds4.sampled"] = sampled
+    binder = MessageBinder.__new__(MessageBinder)
+    binder._records = [_BoundMessage("response", content_hash, 0, 3)]
+    binder._bound_messages = [bound]
+
+    adopted = cast("ModelResponse", binder.adopt([candidate])[0])
+
+    assert adopted is candidate
+    assert (adopted.metadata or {}).get("ds4.sampled") == sampled
+    assert (adopted.metadata or {})["ds4.sampled"] is not sampled
+    restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([adopted]))[0]
+    assert isinstance(restored, ModelResponse)
+    assert (restored.metadata or {}).get("ds4.sampled") == sampled
 
 
 def test_first_request_renders_tools_and_binds_each_message() -> None:
