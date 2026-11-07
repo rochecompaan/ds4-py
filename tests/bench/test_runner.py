@@ -199,14 +199,14 @@ def test_session_environment_inherits_native_patch_set_and_host_register_value()
     session = replace(
         bakeoff_session(),
         native_patches=(
-            SimpleNamespace(name="bench/patches/cuda-no-copy-host-register-opt-out.patch", sha256="patch-sha"),
+            SimpleNamespace(name="docs/patches/cuda-no-copy-host-register-opt-out.patch", sha256="patch-sha"),
         ),
         cuda_disable_host_register="1",
     )
 
     environment = session.environment()
 
-    assert environment["DS4_BAKEOFF_NATIVE_PATCHES"] == "bench/patches/cuda-no-copy-host-register-opt-out.patch"
+    assert environment["DS4_BAKEOFF_NATIVE_PATCHES"] == "docs/patches/cuda-no-copy-host-register-opt-out.patch"
     assert environment["DS4_CUDA_DISABLE_HOST_REGISTER"] == "1"
 
 

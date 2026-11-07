@@ -58,13 +58,13 @@ out of zero-copy host registration and selects the existing device-cache path:
 
 ```bash
 git -C /absolute/path/to/ds4 apply --check \
-  "$PWD/bench/patches/cuda-no-copy-host-register-opt-out.patch"
+  "$PWD/docs/patches/cuda-no-copy-host-register-opt-out.patch"
 git -C /absolute/path/to/ds4 apply --whitespace=error \
-  "$PWD/bench/patches/cuda-no-copy-host-register-opt-out.patch"
+  "$PWD/docs/patches/cuda-no-copy-host-register-opt-out.patch"
 
 export DS4_CUDA_Q8_F16_CACHE_MB=5120
 export DS4_CUDA_DISABLE_HOST_REGISTER=1
-export DS4_BAKEOFF_NATIVE_PATCHES=bench/patches/cuda-no-copy-host-register-opt-out.patch
+export DS4_BAKEOFF_NATIVE_PATCHES=docs/patches/cuda-no-copy-host-register-opt-out.patch
 ```
 
 Use the same three exports in the bake-off and sanity launch shells. The patch
