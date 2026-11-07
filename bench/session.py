@@ -8,7 +8,7 @@ import os
 import shutil
 import subprocess
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -174,14 +174,7 @@ class BakeoffSession:
             CUDA_DISABLE_HOST_REGISTER_ENV: self.cuda_disable_host_register,
         }
 
-    def provenance(
-        self,
-        trace_path: Path,
-        source_trace_path: Path,
-        *,
-        rounds: Sequence[RoundProvenance],
-        reset_policy: str,
-    ) -> TraceProvenance:
+    def _provenance_template(self) -> TraceProvenance:
         return TraceProvenance(
             bakeoff_session_id=self.bakeoff_session_id,
             instance_id=self.instance_id,
@@ -198,16 +191,39 @@ class BakeoffSession:
             temperature=self.temperature,
             seed=self.seed,
             response_budget=self.response_budget,
-            reset_policy=reset_policy,
-            trace_sha256=file_sha256(trace_path),
-            source_trace_sha256=file_sha256(source_trace_path),
-            rounds=tuple(rounds),
+            reset_policy="",
+            trace_sha256="",
+            source_trace_sha256="",
+            rounds=(),
             native_patches=self.native_patches,
             cuda_disable_host_register=self.cuda_disable_host_register,
         )
 
+    def provenance(
+        self,
+        trace_path: Path,
+        source_trace_path: Path,
+        *,
+        rounds: Sequence[RoundProvenance],
+        reset_policy: str,
+    ) -> TraceProvenance:
+        return replace(
+            self._provenance_template(),
+            reset_policy=reset_policy,
+            trace_sha256=file_sha256(trace_path),
+            source_trace_sha256=file_sha256(source_trace_path),
+            rounds=tuple(rounds),
+        )
+
     def task_provenance(self, trace_path: Path) -> TraceProvenance:
-        trace = read_replay(trace_path)
+        try:
+            trace = read_replay(trace_path)
+        except (OSError, ValueError) as error:
+            return replace(
+                self._provenance_template(),
+                reset_policy="sequential",
+                invalid_reason=f"invalid attempt trace {trace_path}: {error}",
+            )
         rounds = tuple(
             RoundProvenance(round_.number, round_.think, token_sha256(round_.prompt), (), ()) for round_ in trace.rounds
         )

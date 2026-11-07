@@ -140,6 +140,9 @@ def replay_ds4py_with_engine(
         if recorded is None:
             results.append(_invalid(task_id, path, "missing ds4-py trace provenance"))
             continue
+        if recorded.invalid_reason is not None:
+            results.append(_invalid(task_id, path, recorded.invalid_reason))
+            continue
         try:
             trace = read_replay(path)
             issues = _provenance_issues(engine, path, trace, recorded, context)
