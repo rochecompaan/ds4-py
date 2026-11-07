@@ -31,6 +31,7 @@ from bench.comparison import StepCapture, TopLogit
 from bench.restore_check import (
     FOLLOWUP,
     CheckResult,
+    CReferenceRun,
     RestoreError,
     RestoreRun,
     check_restore,
@@ -220,26 +221,24 @@ def write_restore_metadata(
     }
     provenance.update(provenance_changes or {})
     metadata = trace_path.with_suffix(".json")
-    metadata.write_text(
-        json.dumps(
-            {
-                "switch_prefill": 0,
-                "followup_plan": {1: "extend", 2: "rebuild", 3: "same-history", 4: "c-rebuild"}[case],
-                "followup_prefill": 2 if case == 1 else 12,
-                "followup_position": followup_position,
-                "first_step": {
-                    "position": first_step.position,
-                    "selected_token": first_step.selected_token,
-                    "top": [{"token": item.token, "logit": item.logit} for item in first_step.top],
-                },
-                "terminal_reason": "stop_token",
-                "trace_path": str(trace_path),
-                "provenance": provenance,
-                "save_record_sha256": save_record_hash,
-                "followup_prompt_sha256": hashlib.sha256(FOLLOWUP.encode()).hexdigest(),
-            }
-        )
-    )
+    value = {
+        "followup_prefill": 2 if case == 1 else 12,
+        "followup_position": followup_position,
+        "first_step": {
+            "position": first_step.position,
+            "selected_token": first_step.selected_token,
+            "top": [{"token": item.token, "logit": item.logit} for item in first_step.top],
+        },
+        "terminal_reason": "stop_token",
+        "trace_path": str(trace_path),
+        "provenance": provenance,
+        "save_record_sha256": save_record_hash,
+        "followup_prompt_sha256": hashlib.sha256(FOLLOWUP.encode()).hexdigest(),
+    }
+    if case != 4:
+        value["switch_prefill"] = 0
+        value["followup_plan"] = {1: "extend", 2: "rebuild", 3: "same-history"}[case]
+    metadata.write_text(json.dumps(value))
     return metadata
 
 
@@ -292,7 +291,7 @@ def c_driver_stdout(command: list[str]) -> str:
     return "".join(json.dumps(record) + "\n" for record in records)
 
 
-def restore_run(case: int, trace_path: Path, **options: Any) -> RestoreRun:
+def restore_run(case: int, trace_path: Path, **options: Any) -> RestoreRun | CReferenceRun:
     write_trace(trace_path, options.get("tokens", (1, 2, 3)))
     first_step = options.get("first_step", step_capture())
     metadata = write_restore_metadata(
@@ -303,19 +302,54 @@ def restore_run(case: int, trace_path: Path, **options: Any) -> RestoreRun:
         provenance_changes=options.get("provenance_changes"),
         save_record_hash=options.get("save_record_hash", "save"),
     )
+    if case == 4:
+        return CReferenceRun(
+            trace_path=trace_path,
+            followup_prefill=options.get("followup_prefill", 12),
+            first_step=first_step,
+            provenance_path=metadata,
+        )
     return RestoreRun(
         trace_path=trace_path,
         terminal_reason=options.get("reason", "stop_token"),
         switch_prefill=options.get("switch_prefill", 0),
         followup_plan=options.get(
             "plan",
-            {1: "extend", 2: "rebuild", 3: "same-history", 4: "c-rebuild"}[case],
+            {1: "extend", 2: "rebuild", 3: "same-history"}[case],
         ),
         followup_position=options.get("followup_position", 2),
         first_step=first_step,
         provenance_path=metadata,
         followup_prefill=options.get("followup_prefill", 2 if case == 1 else 12),
     )
+
+
+class FakeRestoreOperations:
+    def __init__(self, drive: Any) -> None:
+        self.drive = drive
+        self.restore_count = 0
+        self.session_id = ""
+        self.replay_restore_trace: Path | None = None
+        self.c_case2_trace: Path | None = None
+
+    def restore(self, home: Path, session_id: str, trace_path: Path) -> RestoreRun:
+        self.restore_count += 1
+        self.session_id = session_id
+        return cast("RestoreRun", self.drive(home, session_id, self.restore_count, trace_path))
+
+    def replay_same_history(
+        self,
+        home: Path,
+        session_id: str,
+        trace_path: Path,
+        restore_trace: Path,
+    ) -> RestoreRun:
+        self.replay_restore_trace = restore_trace
+        return cast("RestoreRun", self.drive(home, session_id, 3, trace_path))
+
+    def c_rebuild(self, home: Path, case2_trace: Path, trace_path: Path) -> CReferenceRun:
+        self.c_case2_trace = case2_trace
+        return cast("CReferenceRun", self.drive(home, self.session_id, 4, trace_path))
 
 
 def test_validate_save_accepts_complete_record_snapshot_events_and_kv(
@@ -372,7 +406,8 @@ def test_restore_uses_same_history_and_c_rebuild_references(tmp_path: Path) -> N
             first_step=extended if case in (1, 3) else rebuilt,
         )
 
-    result = check_restore(save, tmp_path / "work", runner=drive)
+    operations = FakeRestoreOperations(drive)
+    result = check_restore(save, tmp_path / "work", operations=operations)
 
     assert result.passed, result.detail
     assert result.valid
@@ -381,6 +416,8 @@ def test_restore_uses_same_history_and_c_rebuild_references(tmp_path: Path) -> N
     assert result.rebuild_equivalence.passed
     assert [call[2] for call in calls] == [1, 2, 3, 4]
     assert all(call[1] == "session-1" for call in calls)
+    assert operations.replay_restore_trace == tmp_path / "work/case-1.jsonl"
+    assert operations.c_case2_trace == tmp_path / "work/case-2.jsonl"
     assert len(result.trace_paths) == 4
     stripped = cast("Any", result.stripped_save_dir)
     assert SessionStore().read_kv_header(stripped / "session.kv") == 0
@@ -403,7 +440,7 @@ def test_restore_reference_ranking_and_tolerance_fail(
             first_step=bad_reference if case == reference_case else step_capture(),
         )
 
-    result = check_restore(save, tmp_path / "work", runner=drive)
+    result = check_restore(save, tmp_path / "work", operations=FakeRestoreOperations(drive))
 
     assert not result.passed
     assert result.valid
@@ -430,7 +467,7 @@ def test_restore_position_uses_fixed_followup_round_not_later_tool_round(tmp_pat
             stream.write(json.dumps(later) + "\n")
         return run
 
-    result = check_restore(save, tmp_path / "work", runner=drive)
+    result = check_restore(save, tmp_path / "work", operations=FakeRestoreOperations(drive))
 
     assert result.passed, result.detail
     assert result.valid
@@ -451,7 +488,7 @@ def test_restore_provenance_mismatch_is_invalid(tmp_path: Path, changes: dict[st
     def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
         return restore_run(case, trace_path, provenance_changes=changes if case == 2 else None)
 
-    result = check_restore(save, tmp_path / "work", runner=drive)
+    result = check_restore(save, tmp_path / "work", operations=FakeRestoreOperations(drive))
 
     assert not result.passed
     assert not result.valid
@@ -463,7 +500,7 @@ def test_restore_requires_matching_save_and_fixed_followup_hashes(tmp_path: Path
     def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
         return restore_run(case, trace_path, save_record_hash="save" if case == 1 else "other-save")
 
-    result = check_restore(save, tmp_path / "work", runner=drive)
+    result = check_restore(save, tmp_path / "work", operations=FakeRestoreOperations(drive))
 
     assert not result.passed
     assert not result.valid
@@ -486,7 +523,7 @@ def test_restore_requires_no_case1_prefill_and_real_case2_prefill(
             followup_prefill=2 if case == 1 else case2_prefill,
         )
 
-    result = check_restore(save, tmp_path / "work", runner=drive)
+    result = check_restore(save, tmp_path / "work", operations=FakeRestoreOperations(drive))
     assert not result.passed
     assert not result.valid
 
@@ -503,7 +540,7 @@ def test_restore_requires_extend_rebuild_and_first_step_position(tmp_path: Path)
             first_step=step_capture(position=3) if case == 2 else step_capture(),
         )
 
-    result = check_restore(save, tmp_path / "work", runner=drive)
+    result = check_restore(save, tmp_path / "work", operations=FakeRestoreOperations(drive))
 
     assert not result.passed
     assert not result.valid
@@ -516,7 +553,7 @@ def test_restore_requires_first_step_evidence(tmp_path: Path) -> None:
     def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
         return restore_run(case, trace_path, first_step=None if case == 2 else step_capture())
 
-    result = check_restore(save, tmp_path / "work", runner=drive)
+    result = check_restore(save, tmp_path / "work", operations=FakeRestoreOperations(drive))
 
     assert not result.passed
     assert not result.valid
@@ -534,7 +571,7 @@ def test_different_later_tokens_and_terminal_reasons_are_diagnostic(tmp_path: Pa
             reason="stop_token" if case == 1 else "max_tokens",
         )
 
-    result = check_restore(save, tmp_path / "work", runner=drive)
+    result = check_restore(save, tmp_path / "work", operations=FakeRestoreOperations(drive))
 
     assert result.passed, result.detail
     assert "terminal" in result.detail

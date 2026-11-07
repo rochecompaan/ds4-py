@@ -26,11 +26,12 @@ from bench.restore_history import same_history_command
 from bench.restore_plan import (
     FOLLOWUP,
     CheckResult,
+    CReferenceRun,
     RestoreConfig,
     RestoreError,
+    RestoreOperations,
     RestoreResult,
     RestoreRun,
-    RestoreRunner,
     RestoreSummary,
     SaveEvidence,
     attempt_command,
@@ -46,12 +47,13 @@ from ds4py.errors import Ds4pyError
 
 __all__ = [
     "FOLLOWUP",
+    "CReferenceRun",
     "CheckResult",
     "RestoreConfig",
     "RestoreError",
+    "RestoreOperations",
     "RestoreResult",
     "RestoreRun",
-    "RestoreRunner",
     "RestoreSummary",
     "SaveEvidence",
     "attempt_command",
@@ -74,7 +76,7 @@ def check_restore(
     save_dir: str | Path,
     work_dir: str | Path,
     *,
-    runner: RestoreRunner,
+    operations: RestoreOperations,
 ) -> RestoreResult:
     """Run original and stripped saves through two new driver processes/calls."""
     save_dir = Path(save_dir)
@@ -90,16 +92,21 @@ def check_restore(
         original_home = save_dir.parent.parent
         stripped = make_stripped_copy(save_dir, work_dir / "stripped-home")
         case1_trace = work_dir / "case-1.jsonl"
-        case1 = runner(original_home, evidence.record.session_id, 1, case1_trace)
+        case1 = operations.restore(original_home, evidence.record.session_id, case1_trace)
         trace_paths.append(case1_trace)
         case2_trace = work_dir / "case-2.jsonl"
-        case2 = runner(stripped.parent.parent, evidence.record.session_id, 2, case2_trace)
+        case2 = operations.restore(stripped.parent.parent, evidence.record.session_id, case2_trace)
         trace_paths.append(case2_trace)
         same_history_trace = work_dir / "case-3.jsonl"
-        same_history = runner(original_home, evidence.record.session_id, 3, same_history_trace)
+        same_history = operations.replay_same_history(
+            original_home,
+            evidence.record.session_id,
+            same_history_trace,
+            case1.trace_path,
+        )
         trace_paths.append(same_history_trace)
         c_rebuild_trace = work_dir / "case-4.ndjson"
-        c_rebuild = runner(stripped.parent.parent, evidence.record.session_id, 4, c_rebuild_trace)
+        c_rebuild = operations.c_rebuild(stripped.parent.parent, case2.trace_path, c_rebuild_trace)
         trace_paths.append(c_rebuild_trace)
         problems, first, second, valid, position = _compare_restore(case1, case2)
         restore_fidelity, fidelity_problems, fidelity_valid = _compare_reference(
@@ -112,7 +119,7 @@ def check_restore(
             case2,
             c_rebuild,
             label="5.4 rebuild equivalence",
-            expected_plan="c-rebuild",
+            expected_plan=None,
         )
         problems.extend(fidelity_problems)
         problems.extend(rebuild_problems)
@@ -179,7 +186,7 @@ def check_result_saves(
                 check_restore(
                     save_dir,
                     Path(results_root) / item.task_id / f"attempt-{index}" / "restore",
-                    runner=process_restore_runner(
+                    operations=process_restore_runner(
                         config,
                         workspace=getattr(item, "workspace", None),
                         provenance_environment=provenance_environment,

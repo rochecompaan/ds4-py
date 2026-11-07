@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from bench.driver_cases import export_trace_cases, read_driver_ndjson
 from bench.provenance import TraceProvenance
+from bench.restore_plan import CReferenceRun
 from ds4py.engine.replay import read_replay
 
 if TYPE_CHECKING:
@@ -64,7 +65,7 @@ def prepare_c_rebuild(
     ]
 
 
-def write_c_rebuild_metadata(case2_trace: Path, output_trace: Path, metadata: Path) -> None:
+def write_c_rebuild_metadata(case2_trace: Path, output_trace: Path, metadata: Path) -> CReferenceRun:
     """Validate one C round and write the common restore-run metadata schema."""
     rounds = read_driver_ndjson(output_trace)
     if len(rounds) != 1 or len(rounds[0].steps) != 1:
@@ -85,8 +86,6 @@ def write_c_rebuild_metadata(case2_trace: Path, output_trace: Path, metadata: Pa
     metadata.write_text(
         json.dumps(
             {
-                "switch_prefill": 0,
-                "followup_plan": "c-rebuild",
                 "followup_prefill": sum(call.prefill_tokens for call in evidence.sync_calls),
                 "followup_position": capture.position,
                 "first_step": asdict(capture),
@@ -98,4 +97,10 @@ def write_c_rebuild_metadata(case2_trace: Path, output_trace: Path, metadata: Pa
             }
         )
         + "\n"
+    )
+    return CReferenceRun(
+        trace_path=output_trace,
+        followup_prefill=sum(call.prefill_tokens for call in evidence.sync_calls),
+        first_step=capture,
+        provenance_path=metadata,
     )
