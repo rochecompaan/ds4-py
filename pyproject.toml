@@ -75,6 +75,9 @@ lint.per-file-ignores."bench/graders/test_ctx_command.py" = [
   "S101",   # Grader assertions are intentional.
   "TID251", # Grader doubles can import Any; TypeGuard has a separate ban.
 ]
+lint.per-file-ignores."bench/phases.py" = [
+  "S603", # Reference drivers use fixed argument lists without a shell.
+]
 lint.per-file-ignores."bench/report.py" = [
   "FBT001", # Existing report helpers keep positional booleans for API compatibility.
   "RUF002", # Protocol examples require fullwidth vertical bars in docstrings.

@@ -10,28 +10,14 @@ import subprocess
 import sys
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from bench.cap_parity import compare_cap_parity
-from bench.driver_cases import (
-    DriverEvidenceError,
-    export_round_zero_cap_case,
-    export_trace_cases,
-    read_driver_ndjson,
-)
-from bench.driver_equivalence import (
-    DriverEquivalenceResult,
-    DriverRoundResult,
-    cached_fractions_by_task,
-    combine_driver_results,
-    compare_driver_rounds,
-    rates_by_task,
-)
+from bench.driver_cases import export_round_zero_cap_case, export_trace_cases
 from bench.metrics import (
     EventSummary,
     MetricError,
@@ -40,13 +26,28 @@ from bench.metrics import (
     summarize_events,
 )
 from bench.models import AgentConfig, TaskRunResult
-from bench.provenance import TraceProvenance, write_trace_provenance
+from bench.phases import (
+    ReferenceOperations,
+    ReferencePhase,
+    _run_driver_command,
+    run_restore_phase,
+    run_self_replay_phase,
+)
+from bench.phases import (
+    _run_cap_parity as _phase_cap_parity,
+)
+from bench.phases import (
+    interruption_acceptance as _phase_interruption_acceptance,
+)
+from bench.phases import (
+    run_reference_equivalence as _phase_reference_equivalence,
+)
 from bench.pty_driver import drive_interruption_pty, drive_pty  # noqa: F401 - Compatibility re-export.
 from bench.report import BakeoffReport, GateResult, build_report
 from bench.restore_check import CheckResult, RestoreSummary, check_result_saves
 from bench.self_replay import SelfReplayContext, replay_ds4py_task_results, select_ds4py_traces
 from bench.session import BakeoffSession, record_task_provenance
-from bench.trace_selection import ReplaySelectionError, select_c_traces
+from bench.trace_selection import select_c_traces
 from bench.workspaces import (
     CommandRunner,
     GradeResult,
@@ -65,8 +66,6 @@ FULL_TASK_COUNT = 12
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence
 
-    from bench.comparison import RateEvidence
-    from bench.driver_cases import DriverRoundEvidence
     from ds4py.engine.replay_types import ReplayTrace
 
 
@@ -329,102 +328,30 @@ def run_tasks_sequentially(
     return results
 
 
-def _acceptance_environment(home: Path) -> dict[str, str]:
-    environment = os.environ.copy()
-    environment["DS4PY_HOME"] = str(home)
-    return environment
-
-
 def interruption_acceptance(
     config: AgentConfig,
     workspace: Workspace,
     results_root: str | Path,
 ) -> CheckResult:
     """Interrupt visible generation, submit a next prompt, then exit cleanly."""
-    root = Path(results_root) / "gate-4" / "interruption"
-    root.mkdir(parents=True, exist_ok=True)
-    prompt = (workspace.agent_dir / "TASK.md").read_text()
-    command = build_agent_command(config, prompt, root / "trace.jsonl")
-    command.remove("--non-interactive")
-    result = drive_interruption_pty(
-        command,
-        home=root / "home",
-        follow_up="State the next concrete action in one sentence, then stop.",
-        cwd=workspace.agent_dir,
-        env=_acceptance_environment(root / "home"),
-        timeout=180,
-    )
-    (root / "interactive.log").write_text(result.detail)
-    return result
-
-
-@dataclass(frozen=True)
-class ReferencePhase:
-    result: DriverEquivalenceResult
-    rate_evidence: dict[str, tuple[RateEvidence, RateEvidence]]
-    provenance: tuple[tuple[TraceProvenance, TraceProvenance], ...]
-    cap_parity: GateResult | None = None
-    cached_fractions: dict[str, tuple[float, float]] = field(default_factory=dict)
-
-
-def _reference_failure(task_id: str, attempt: int, detail: str) -> DriverEquivalenceResult:
-    return DriverEquivalenceResult(
-        rounds=(DriverRoundResult(task_id, attempt, -1, passed=False, detail=detail, valid=False),),
-        decode_steps=0,
-        passed=False,
-        detail=detail,
-        valid=False,
+    return _phase_interruption_acceptance(
+        config,
+        workspace,
+        results_root,
+        build_command=build_agent_command,
+        drive=drive_interruption_pty,
     )
 
 
-def _run_driver_command(
-    command: list[str],
-    output_path: Path,
-    log_path: Path,
-) -> tuple[tuple[DriverRoundEvidence, ...], tuple[str, ...]]:
-    completed = subprocess.run(command, capture_output=True, text=True, check=False)
-    output_path.write_text(completed.stdout)
-    log_path.write_text(completed.stderr)
-    issues = [f"driver exited {completed.returncode}"] if completed.returncode else []
-    try:
-        rounds = read_driver_ndjson(output_path)
-    except (OSError, DriverEvidenceError) as error:
-        return (), (*issues, f"invalid NDJSON evidence: {error}")
-    return rounds, tuple(issues)
-
-
-def _reference_commands(
-    config: AgentConfig,
-    c_driver: str | Path,
-    manifest: Path,
-    trace_path: Path,
-) -> tuple[list[str], list[str]]:
-    common = [
-        "--model",
-        config.model,
-        "--cases",
-        str(manifest),
-        "--source-trace",
-        str(trace_path),
-        "--backend",
-        config.backend,
-        "--ctx",
-        str(config.ctx),
-    ]
-    return (
-        [str(c_driver), *common],
-        [sys.executable, str(Path(__file__).with_name("ds4py_reference_driver.py")), *common],
+def _reference_operations() -> ReferenceOperations:
+    return ReferenceOperations(
+        select_c=select_c_traces,
+        select_ds4py=select_ds4py_traces,
+        read_trace=read_replay,
+        export_cases=export_trace_cases,
+        export_cap_case=export_round_zero_cap_case,
+        run_driver=_run_driver_command,
     )
-
-
-def _validate_reference_trace(trace: ReplayTrace, config: AgentConfig) -> None:
-    if (
-        trace.model is not None
-        and Path(trace.model).expanduser().resolve() != Path(config.model).expanduser().resolve()
-    ):
-        raise DriverEvidenceError("C trace model differs from the reference model")
-    if trace.ctx is not None and trace.ctx != config.ctx:
-        raise DriverEvidenceError("C trace context differs from the reference context")
 
 
 def _run_cap_parity(
@@ -435,61 +362,13 @@ def _run_cap_parity(
     results_root: str | Path,
 ) -> GateResult:
     """Run both reference drivers on each arm's round-0 prompt."""
-    try:
-        selected = [
-            *(("c", task_id, path) for task_id, path in select_c_traces(task_results)),
-            *(("ds4py", task_id, path) for task_id, path in select_ds4py_traces(task_results)),
-        ]
-    except (ReplaySelectionError, OSError, ValueError) as error:
-        return GateResult(passed=False, detail=f"cap trace selection failed: {error}", valid=False)
-
-    pairs = []
-    provenance_pairs = []
-    issues = []
-    attempts: dict[tuple[str, str], int] = {}
-    for arm, task_id, trace_path in selected:
-        key = (arm, task_id)
-        attempts[key] = attempts.get(key, 0) + 1
-        attempt = attempts[key]
-        label = f"{arm} {task_id} attempt {attempt}"
-        destination = Path(results_root) / "cap-parity" / f"{arm}-{task_id}-attempt-{attempt}"
-        try:
-            trace = read_replay(trace_path)
-            _validate_reference_trace(trace, config)
-            manifest = export_round_zero_cap_case(
-                trace,
-                task_id=task_id,
-                attempt=attempt,
-                destination=destination,
-                response_budget=config.tokens,
-            )
-            c_output = destination / "c.ndjson"
-            ds4py_output = destination / "ds4py.ndjson"
-            c_command, ds4py_command = _reference_commands(config, c_driver, manifest, trace_path)
-            c_rounds, c_issues = _run_driver_command(c_command, c_output, destination / "c.log")
-            ds4py_rounds, ds4py_issues = _run_driver_command(
-                ds4py_command,
-                ds4py_output,
-                destination / "ds4py.log",
-            )
-            issues.extend(f"{label} C driver: {issue}" for issue in c_issues)
-            issues.extend(f"{label} ds4-py driver: {issue}" for issue in ds4py_issues)
-            if len(c_rounds) != 1 or len(ds4py_rounds) != 1:
-                issues.append(f"{label}: expected one round per driver")
-                continue
-            c_provenance = session.reference_provenance(c_output, trace_path, c_rounds)
-            ds4py_provenance = session.reference_provenance(ds4py_output, trace_path, ds4py_rounds)
-            write_trace_provenance(c_output, c_provenance)
-            write_trace_provenance(ds4py_output, ds4py_provenance)
-            pairs.append((c_rounds[0], ds4py_rounds[0]))
-            provenance_pairs.append((c_provenance, ds4py_provenance))
-        except (OSError, ValueError, DriverEvidenceError) as error:
-            issues.append(f"{label}: {error}")
-    return compare_cap_parity(
-        pairs,
-        provenance=provenance_pairs,
-        response_budget=config.tokens,
-        diagnostic_issues=issues,
+    return _phase_cap_parity(
+        task_results,
+        config,
+        c_driver,
+        session,
+        results_root,
+        operations=_reference_operations(),
     )
 
 
@@ -503,79 +382,14 @@ def run_reference_equivalence(  # noqa: PLR0913 - Task evidence, driver setup, a
     cap_parity: bool = False,
 ) -> ReferencePhase:
     """Run reference drivers for every C attempt and optional cap prompts."""
-    try:
-        selected = select_c_traces(task_results)
-    except ReplaySelectionError as error:
-        cap_result = (
-            GateResult(passed=False, detail=f"cap trace selection failed: {error}", valid=False) if cap_parity else None
-        )
-        return ReferencePhase(_reference_failure("<selection>", 1, str(error)), {}, (), cap_result)
-    comparisons: list[DriverEquivalenceResult] = []
-    provenance_pairs: list[tuple[TraceProvenance, TraceProvenance]] = []
-    c_evidence: list[DriverRoundEvidence] = []
-    ds4py_evidence: list[DriverRoundEvidence] = []
-    attempts: dict[str, int] = {}
-    for task_id, trace_path in selected:
-        attempts[task_id] = attempts.get(task_id, 0) + 1
-        attempt = attempts[task_id]
-        destination = Path(results_root) / f"{len(comparisons):03d}-{task_id}-attempt-{attempt}"
-        try:
-            trace = read_replay(trace_path)
-            _validate_reference_trace(trace, config)
-            destination.mkdir(parents=True, exist_ok=True)
-            manifest = export_trace_cases(
-                trace,
-                task_id=task_id,
-                attempt=attempt,
-                destination=destination,
-            )
-            c_output = destination / "c.ndjson"
-            ds4py_output = destination / "ds4py.ndjson"
-            c_command, ds4py_command = _reference_commands(config, c_driver, manifest, trace_path)
-            c_rounds, c_issues = _run_driver_command(c_command, c_output, destination / "c.log")
-            ds4py_rounds, ds4py_issues = _run_driver_command(
-                ds4py_command,
-                ds4py_output,
-                destination / "ds4py.log",
-            )
-            c_provenance = session.reference_provenance(c_output, trace_path, c_rounds)
-            ds4py_provenance = session.reference_provenance(ds4py_output, trace_path, ds4py_rounds)
-            write_trace_provenance(c_output, c_provenance)
-            write_trace_provenance(ds4py_output, ds4py_provenance)
-            comparisons.append(
-                compare_driver_rounds(
-                    c_rounds,
-                    ds4py_rounds,
-                    c_provenance=c_provenance,
-                    ds4py_provenance=ds4py_provenance,
-                    diagnostic_issues=(
-                        *(f"C driver: {issue}" for issue in c_issues),
-                        *(f"ds4-py driver: {issue}" for issue in ds4py_issues),
-                    ),
-                )
-            )
-            c_evidence.extend(c_rounds)
-            ds4py_evidence.extend(ds4py_rounds)
-            provenance_pairs.append((c_provenance, ds4py_provenance))
-        except (OSError, ValueError, DriverEvidenceError) as error:
-            comparisons.append(_reference_failure(task_id, attempt, str(error)))
-    c_rates = rates_by_task(c_evidence)
-    ds4py_rates = rates_by_task(ds4py_evidence)
-    rates = {
-        task_id: (c_rates[task_id], ds4py_rates[task_id]) for task_id in sorted(c_rates.keys() & ds4py_rates.keys())
-    }
-    c_cached = cached_fractions_by_task(c_evidence)
-    ds4py_cached = cached_fractions_by_task(ds4py_evidence)
-    cached_fractions = {
-        task_id: (c_cached[task_id], ds4py_cached[task_id]) for task_id in sorted(c_cached.keys() & ds4py_cached.keys())
-    }
-    cap_result = _run_cap_parity(task_results, config, c_driver, session, results_root) if cap_parity else None
-    return ReferencePhase(
-        combine_driver_results(comparisons),
-        rates,
-        tuple(provenance_pairs),
-        cap_result,
-        cached_fractions,
+    return _phase_reference_equivalence(
+        task_results,
+        config,
+        c_driver,
+        session,
+        results_root,
+        cap_parity=cap_parity,
+        operations=_reference_operations(),
     )
 
 
@@ -651,11 +465,12 @@ def run_bakeoff(  # noqa: PLR0913 - The manifest and output layout are independe
         )
         task_provenance = record_task_provenance(task_results, session)
         ds4_config = next(config for config in configs if config.agent == "ds4py")
-        restore_runs = check_result_saves(
+        restore_runs = run_restore_phase(
             task_results,
             ds4_config,
-            results_root / "restores",
-            c_driver=c_driver,
+            results_root,
+            c_driver,
+            check=check_result_saves,
         )
         interruption_workspace = clone_workspace(
             staged[0],
@@ -671,16 +486,13 @@ def run_bakeoff(  # noqa: PLR0913 - The manifest and output layout are independe
             results_root / "driver-equivalence",
             cap_parity=cap_parity,
         )
-        self_results = replay_ds4py_task_results(
+        self_results = run_self_replay_phase(
             task_results,
             ds4_config,
             provenance=task_provenance,
-            context=SelfReplayContext(
-                bakeoff_session_id=session.bakeoff_session_id,
-                instance_id=session.instance_id,
-                model_sha256=session.model_sha256,
-                libds4_sha256=session.libds4_sha256,
-            ),
+            session=session,
+            replay=replay_ds4py_task_results,
+            context=SelfReplayContext,
         )
     report = build_report(
         task_results,
