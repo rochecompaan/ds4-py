@@ -71,8 +71,8 @@ def compare_cap_parity(
         if key in keys:
             issues.append(f"duplicate cap prompt: {case.task_id} attempt {case.attempt}")
         keys.add(key)
-        c_capped = len(c_round.steps) == response_budget
-        ds4py_capped = len(ds4py_round.steps) == response_budget
+        c_capped = c_round.terminal_reason == "max_tokens"
+        ds4py_capped = ds4py_round.terminal_reason == "max_tokens"
         if c_capped != ds4py_capped:
             differences.append(
                 f"{case.task_id} attempt {case.attempt}: "

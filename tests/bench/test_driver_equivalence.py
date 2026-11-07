@@ -136,6 +136,22 @@ def test_cap_parity_compares_round_zero_cap_outcomes_only() -> None:
     assert not invalid.passed and not invalid.valid
 
 
+def test_cap_parity_uses_terminal_reason_for_budget_sized_stop() -> None:
+    captures = (capture(), capture(), capture())
+    capped = evidence(requested_steps=3, captures=captures)
+    stopped = replace(capped, terminal_reason="stop_token")
+
+    result = compare_cap_parity(
+        [(capped, stopped)],
+        provenance=[(provenance(capped), provenance(stopped))],
+        response_budget=3,
+    )
+
+    assert not result.passed
+    assert result.valid
+    assert "C=cap, ds4-py=stop" in result.detail
+
+
 def test_cap_case_export_pads_expected_tokens_and_excludes_later_rounds(tmp_path: Path) -> None:
     trace = ReplayTrace(
         ctx=100000,
