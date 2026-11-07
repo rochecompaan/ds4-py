@@ -5,8 +5,7 @@ The normal test suite uses fakes. Only the explicit commands below load the live
 model or run the agents.
 
 See [Workspace isolation and hidden grading](isolation.md) for details on task
-isolation and grader visibility. See [Targeted gate-repair run](gate-repairs.md)
-for the prepared four-task GPU procedure.
+isolation and grader visibility.
 
 ## Fixed inputs and machine requirements
 
