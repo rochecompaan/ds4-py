@@ -20,7 +20,7 @@ Prefill processes input tokens. Decode produces new tokens. The key-value (KV) c
 
 Certification: `targeted`. Result: PASS. Targeted-9 exited `0` in `1h 35m 30s`. It tested revision `3ef9aa5600887e8f9c3e125a6a75e18a04ba310a`. Later commits do not change agent or harness behavior.
 
-An offline re-evaluation of the retained 10 cap-parity pairs using `terminal_reason == "max_tokens"` as the cap criterion also passed `10/10`; no native run was repeated.
+An offline re-evaluation of the retained 10 cap-parity pairs using `terminal_reason == "max_tokens"` as the cap criterion also passed `10/10`; no native run was repeated. All 10 retained ds4-py cap rounds ended with `tool_call_complete`, one step before the C arm's `stop_token`, so they exercise the old tool-syntax policy difference. Both reasons are non-capped and the offline decision is unchanged, but the raw traces cannot show what additional native decoding the new policy would produce.
 
 The full raw evidence is outside git in `bakeoff-evidence/2026-11-06-gate-refactor-targeted-9/raw/bakeoff/` at the repository root. This directory contains the `bakeoff.json` and `report.txt` summaries. Use these SHA-256 values to make sure that the files on disk match the certified run:
 

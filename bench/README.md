@@ -98,8 +98,10 @@ A 12-task manifest writes `certification: "full-12-task"`. A targeted manifest
 uses the same gate logic but writes `certification: "targeted"`; it is not full
 M3 acceptance. Add `--cap-parity` only as an explicit extra requirement. It runs
 both reference drivers on each arm's round-0 prompt with the same sync shape and
-response budget, then compares cap versus stop outcomes without requiring token
-equality.
+response budget, then compares native-sampling cap versus stop outcomes without
+requiring token equality. A cap is `max_tokens`; a native stop is not capped. Both
+drivers use the native think-mode stop-token policy or the step budget, and the
+Python driver does not stop for completed or malformed tool syntax.
 
 The command exits nonzero if any gate fails. Outputs:
 
