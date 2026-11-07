@@ -20,14 +20,14 @@ Prefill processes input tokens. Decode produces new tokens. The key-value (KV) c
 
 Certification: `targeted`. Result: PASS. Targeted-9 exited `0` in `1h 35m 30s`. It tested revision `3ef9aa5600887e8f9c3e125a6a75e18a04ba310a`. Later commits do not change agent or harness behavior.
 
-The committed summaries are [bakeoff.json](evidence/2026-11-06-gate-refactor-targeted-9/bakeoff.json) and [report.txt](evidence/2026-11-06-gate-refactor-targeted-9/report.txt). Their SHA-256 values are:
+The full raw evidence is outside git in `bakeoff-evidence/2026-11-06-gate-refactor-targeted-9/raw/bakeoff/` at the repository root. This directory contains the `bakeoff.json` and `report.txt` summaries. Use these SHA-256 values to make sure that the files on disk match the certified run:
 
 ```text
 bakeoff.json  0269be1841f3f552f01f555445238617a4edd5e97c5b36db348870140379e31d
 report.txt    ac3a0b87a1e502b0ed72d22a70e56f854467dd51697be82ea3ddb3ad7a9bbfcd
 ```
 
-The full raw evidence is outside git in `bakeoff-evidence/2026-11-06-gate-refactor-targeted-9/` at the repository root. The [gate criteria design](../specs/2026-11-04-gate-criteria-refactor-design.md) defines the revised checks.
+The [gate criteria design](../specs/2026-11-04-gate-criteria-refactor-design.md) defines the revised checks.
 
 Provenance:
 
