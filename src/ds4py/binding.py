@@ -689,6 +689,16 @@ class MessageBinder:
             if segment.kind in ("assistant", "eos")
         ]
         sampled_start = trailing[0].start if trailing else len(self.session.transcript)
+        response.metadata["ds4.sampled"] = {
+            "content_hash": content_hash,
+            "segments": [
+                {
+                    "kind": segment.kind,
+                    "tokens": list(self.session.transcript.tokens[segment.start : segment.end]),
+                }
+                for segment in trailing
+            ],
+        }
         self.session._transcript.annotate(
             sampled_start,
             kinds=("assistant", "eos"),

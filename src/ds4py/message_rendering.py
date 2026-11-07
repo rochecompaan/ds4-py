@@ -50,6 +50,40 @@ def stable_text(value: object) -> str:
     return str(value)
 
 
+def _recorded_sampled_segments(
+    message: ModelResponse,
+    content_hash: str,
+) -> list[RenderedSegment] | None:
+    """Return exact sampled IDs when they still belong to this response content."""
+    record = (message.metadata or {}).get("ds4.sampled")
+    if record is None:
+        return None
+    if not isinstance(record, Mapping):
+        raise ValueError("sampled response record must be a mapping")
+    if record.get("content_hash") != content_hash:
+        return None
+    raw_segments = record.get("segments")
+    if not isinstance(raw_segments, Sequence) or isinstance(raw_segments, (str, bytes, bytearray)):
+        raise ValueError("sampled response segments must be a sequence")
+    segments = []
+    for raw_segment in raw_segments:
+        if not isinstance(raw_segment, Mapping):
+            raise ValueError("sampled response segment must be a mapping")
+        kind = raw_segment.get("kind")
+        raw_tokens = raw_segment.get("tokens")
+        if kind not in {"assistant", "eos"}:
+            raise ValueError("sampled response segment kind must be assistant or eos")
+        if not isinstance(raw_tokens, Sequence) or isinstance(raw_tokens, (str, bytes, bytearray)):
+            raise ValueError("sampled response segment tokens must be a sequence")
+        tokens = [
+            token for token in raw_tokens if isinstance(token, int) and not isinstance(token, bool) and token >= 0
+        ]
+        if len(tokens) != len(raw_tokens):
+            raise ValueError("sampled response token IDs must be non-negative integers")
+        segments.append(RenderedSegment(kind, tokens))
+    return segments
+
+
 def _retry_text(part: RetryPromptPart) -> str:
     text = stable_text(part.content)
     return text if text.startswith("Tool error:") else "Tool error: " + text
@@ -168,6 +202,22 @@ class MessageRenderer:
             return []
         return builder.append_assistant_end()
 
+    def _recorded_response_segments(
+        self,
+        builder: PromptBuilder,
+        prefix: Sequence[int],
+        message: ModelResponse,
+        content_hash: str,
+    ) -> list[RenderedSegment] | None:
+        if (message.metadata or {}).get("ds4.source") != "sampled":
+            return None
+        recorded = _recorded_sampled_segments(message, content_hash)
+        if recorded is None:
+            return None
+        parts = [part for part in message.parts if not isinstance(part, (TextPart, ThinkingPart)) or part.content]
+        assistant_prefix, _ = self._assistant_prefix_state(builder, prefix, parts, sampled=True)
+        return [RenderedSegment("assistant_prefix", assistant_prefix), *recorded]
+
     def response_segments(  # noqa: PLR0915 - Response rendering handles every message-part family.
         self,
         builder: PromptBuilder,
@@ -262,7 +312,10 @@ class MessageRenderer:
         if isinstance(message, ModelRequest):
             segments = self.request_segments(builder, target.transcript.tokens, message)
         else:
-            segments = self.response_segments(builder, target.transcript.tokens, message)
+            recorded = self._recorded_response_segments(builder, target.transcript.tokens, message, content_hash)
+            segments = (
+                recorded if recorded is not None else self.response_segments(builder, target.transcript.tokens, message)
+            )
         meta = {"key": key, "content_hash": content_hash, "source": "rendered"}
         sampled = isinstance(message, ModelResponse) and ((message.metadata or {}).get("ds4.source") == "sampled")
         for segment in segments:

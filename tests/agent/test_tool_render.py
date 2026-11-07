@@ -3,6 +3,7 @@ from typing import Any, cast
 
 import pytest
 from pydantic_ai.messages import (
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     TextPart,
@@ -553,6 +554,62 @@ def test_length_capped_response_round_trips_without_eos() -> None:
     )
 
     assert rebuilt == original
+
+
+@pytest.mark.parametrize(
+    ("sampled_ids", "text"),
+    [
+        ((17, 68), "/b"),
+        ((582, 1613), ' "...'),
+    ],
+)
+def test_length_capped_sampled_ids_round_trip_through_serialized_history(
+    sampled_ids: tuple[int, ...],
+    text: str,
+) -> None:
+    request = ModelRequest([UserPromptPart("round trip")])
+    response = ModelResponse([TextPart(text)], finish_reason="length")
+    with fake_engine("deepseek4") as engine:
+        session = engine.session()
+        binder = MessageBinder(session)
+        binder.prepare([request])
+        before = list(session.transcript.tokens)
+        session.append_tokens(sampled_ids, "assistant")
+
+        binder.bind_response(response)
+
+        # Persisting exact replay evidence must not change live token commits.
+        assert list(session.transcript.tokens) == [*before, *sampled_ids]
+
+    messages = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([request, response]))
+    with fake_engine("deepseek4") as engine:
+        session = engine.session()
+        MessageBinder(session).prepare(messages)
+        assistant = next(segment for segment in session.transcript.segments if segment.kind == "assistant")
+
+        assert session.transcript.tokens[assistant.start : assistant.end] == sampled_ids
+
+
+def test_recorded_sampled_ids_are_not_reused_after_response_edit() -> None:
+    request = ModelRequest([UserPromptPart("round trip")])
+    response = ModelResponse([TextPart("/b")], finish_reason="length")
+    with fake_engine("deepseek4") as engine:
+        session = engine.session()
+        binder = MessageBinder(session)
+        binder.prepare([request])
+        session.append_tokens([17, 68], "assistant")
+        binder.bind_response(response)
+
+    cast("TextPart", response.parts[0]).content = "edited"
+    messages = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([request, response]))
+    with fake_engine("deepseek4") as engine:
+        session = engine.session()
+        MessageBinder(session).prepare(messages)
+        assistant = next(segment for segment in session.transcript.segments if segment.kind == "assistant")
+        rebuilt = session.transcript.tokens[assistant.start : assistant.end]
+
+        assert rebuilt != (17, 68)
+        assert decode(engine, rebuilt).endswith(b"edited")
 
 
 def test_render_tool_call_rejects_unknown_family() -> None:
