@@ -516,16 +516,17 @@ def test_cap_phase_runs_both_drivers_for_each_arm_round_zero(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import bench.phases as phase_runner
     import bench.run_bakeoff as runner
 
     c_trace = tmp_path / "c.trace"
     ds4py_trace = tmp_path / "ds4py.trace"
     c_trace.write_text("c")
     ds4py_trace.write_text("ds4py")
-    monkeypatch.setattr(runner, "select_c_traces", lambda _results: [("task", c_trace)])
-    monkeypatch.setattr(runner, "select_ds4py_traces", lambda _results: [("task", ds4py_trace)])
+    monkeypatch.setattr(phase_runner, "select_c_traces", lambda _results: [("task", c_trace)])
+    monkeypatch.setattr(phase_runner, "select_ds4py_traces", lambda _results: [("task", ds4py_trace)])
     trace = ReplayTrace(100000, None, (ReplayRound(0, (1, 2), (3,), 75, 0, False),))
-    monkeypatch.setattr(runner, "read_replay", lambda _path: trace)
+    monkeypatch.setattr(phase_runner, "read_replay", lambda _path: trace)
     calls = []
 
     def fake_driver(command: list[str], output_path: Path, log_path: Path) -> Any:
@@ -550,7 +551,7 @@ def test_cap_phase_runs_both_drivers_for_each_arm_round_zero(
             (),
         )
 
-    monkeypatch.setattr(runner, "_run_driver_command", fake_driver)
+    monkeypatch.setattr(phase_runner, "_run_driver_command", fake_driver)
     c_driver = tmp_path / "c-driver"
 
     result = runner._run_cap_parity([], config(tmp_path), c_driver, bakeoff_session(), tmp_path / "results")
@@ -567,13 +568,14 @@ def test_reference_selection_failure_invalidates_explicit_cap_phase(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import bench.phases as phase_runner
     import bench.run_bakeoff as runner
     from bench.trace_selection import ReplaySelectionError
 
     def fail_selection(_results: Any) -> Any:
         raise ReplaySelectionError("missing C traces")
 
-    monkeypatch.setattr(runner, "select_c_traces", fail_selection)
+    monkeypatch.setattr(phase_runner, "select_c_traces", fail_selection)
 
     phase = runner.run_reference_equivalence(
         [],
@@ -848,6 +850,7 @@ def test_complete_runner_preserves_missing_attempt_trace_as_invalid(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import bench.phases as phase_runner
     import bench.run_bakeoff as runner
     import bench.self_replay as replay_module
 
@@ -866,7 +869,7 @@ def test_complete_runner_preserves_missing_attempt_trace_as_invalid(
     monkeypatch.setattr(runner, "load_manifest", lambda _path: object())
     monkeypatch.setattr(runner, "prepare_manifest", lambda *args: staged)
     monkeypatch.setattr(runner, "run_tasks_sequentially", lambda *args, **kwargs: (task,))
-    monkeypatch.setattr(runner, "check_result_saves", lambda *args, **kwargs: ())
+    monkeypatch.setattr(phase_runner, "check_result_saves", lambda *args, **kwargs: ())
     monkeypatch.setattr(runner, "clone_workspace", lambda *args: object())
     monkeypatch.setattr(runner, "interruption_acceptance", lambda *args: CheckResult(True, "ok"))
 
@@ -901,6 +904,7 @@ def test_complete_runner_preserves_missing_attempt_trace_as_invalid(
 
 
 def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import bench.phases as phase_runner
     import bench.run_bakeoff as runner
 
     order = []
@@ -918,7 +922,7 @@ def test_complete_runner_writes_gate_six_after_acceptance(tmp_path: Path, monkey
     )
     monkeypatch.setattr(runner, "record_task_provenance", lambda *args: {})
     monkeypatch.setattr(
-        runner,
+        phase_runner,
         "check_result_saves",
         lambda *args, **kwargs: order.append("restores") or (),
     )
@@ -989,7 +993,7 @@ def test_reference_phase_runs_sequentially_and_records_provenance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import bench.run_bakeoff as runner
+    import bench.phases as phase_runner
 
     session = bakeoff_session()
     trace = tmp_path / "c.trace"
@@ -1010,7 +1014,7 @@ def test_reference_phase_runs_sequentially_and_records_provenance(
     )
     calls = []
     monkeypatch.setattr(
-        runner,
+        phase_runner,
         "read_replay",
         lambda _path: SimpleNamespace(model=session.model_path, ctx=session.ctx, rounds=(object(),)),
     )
@@ -1028,8 +1032,8 @@ def test_reference_phase_runs_sequentially_and_records_provenance(
         log_path.write_text("")
         return (replace(evidence, terminal_reason="recorded_boundary" if label == "c" else "stop_token"),), ()
 
-    monkeypatch.setattr(runner, "export_trace_cases", export)
-    monkeypatch.setattr(runner, "_run_driver_command", drive)
+    monkeypatch.setattr(phase_runner, "export_trace_cases", export)
+    monkeypatch.setattr(phase_runner, "_run_driver_command", drive)
 
     phase = run_reference_equivalence(
         [task],
