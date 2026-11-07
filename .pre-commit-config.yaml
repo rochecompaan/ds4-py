@@ -5,7 +5,6 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-added-large-files
-        exclude: ^docs/reports/evidence/2026-11-06-gate-refactor-targeted-9/
       - id: check-case-conflict
       - id: check-json
       - id: check-merge-conflict
@@ -13,15 +12,11 @@ repos:
       - id: check-yaml
       - id: detect-private-key
       - id: end-of-file-fixer
-        exclude: ^docs/reports/evidence/2026-11-06-gate-refactor-targeted-9/
       - id: mixed-line-ending
-        exclude: ^docs/reports/evidence/2026-11-06-gate-refactor-targeted-9/
         args: [--fix=lf]
       - id: pretty-format-json
-        exclude: ^docs/reports/evidence/2026-11-06-gate-refactor-targeted-9/
         args: [--autofix, --no-sort-keys, --no-ensure-ascii]
       - id: trailing-whitespace
-        exclude: ^docs/reports/evidence/2026-11-06-gate-refactor-targeted-9/
 
   - repo: https://github.com/tox-dev/pyproject-fmt
     rev: v2.30.3
