@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import Iterable, Mapping, Sequence
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Protocol, TypeIs, cast
 
 from pydantic_ai.messages import (
     InstructionBaselinePart,
@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     from ds4py.engine.session import Engine
     from ds4py.engine.transcript import Segment, TranscriptView
 
+DSML_FAMILIES = ("deepseek4", "deepseek41")
+
 
 class RenderTarget(Protocol):
     @property
@@ -50,6 +52,33 @@ def stable_text(value: object) -> str:
     return str(value)
 
 
+def _is_sampled(message: ModelResponse) -> bool:
+    return bool((message.metadata or {}).get("ds4.source") == "sampled")
+
+
+def _content_parts(message: ModelResponse) -> list[object]:
+    return [part for part in message.parts if not isinstance(part, (TextPart, ThinkingPart)) or part.content]
+
+
+def _is_item_sequence(value: object) -> TypeIs[Sequence[object]]:
+    return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
+
+
+def _is_token_id(value: object) -> TypeIs[int]:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _last_subsequence_index(haystack: Sequence[int], needle: Sequence[int]) -> int:
+    for index in range(len(haystack) - len(needle), -1, -1):
+        if haystack[index : index + len(needle)] == needle:
+            return index
+    return -1
+
+
+def _dsml_calls_tag(family: str) -> str:
+    return " calls" if family == "deepseek41" else "tool_calls"
+
+
 def _recorded_sampled_segments(
     message: ModelResponse,
     content_hash: str,
@@ -63,23 +92,21 @@ def _recorded_sampled_segments(
     if record.get("content_hash") != content_hash:
         return None
     raw_segments = record.get("segments")
-    if not isinstance(raw_segments, Sequence) or isinstance(raw_segments, (str, bytes, bytearray)):
+    if not _is_item_sequence(raw_segments):
         raise ValueError("sampled response segments must be a sequence")
     segments = []
     for raw_segment in raw_segments:
         if not isinstance(raw_segment, Mapping):
             raise ValueError("sampled response segment must be a mapping")
         kind = raw_segment.get("kind")
-        raw_tokens = raw_segment.get("tokens")
         if kind not in {"assistant", "eos"}:
             raise ValueError("sampled response segment kind must be assistant or eos")
-        if not isinstance(raw_tokens, Sequence) or isinstance(raw_tokens, (str, bytes, bytearray)):
+        raw_tokens = raw_segment.get("tokens")
+        if not _is_item_sequence(raw_tokens):
             raise ValueError("sampled response segment tokens must be a sequence")
-        tokens = [
-            token for token in raw_tokens if isinstance(token, int) and not isinstance(token, bool) and token >= 0
-        ]
-        if len(tokens) != len(raw_tokens):
+        if not all(_is_token_id(token) for token in raw_tokens):
             raise ValueError("sampled response token IDs must be non-negative integers")
+        tokens = list(cast("Sequence[int]", raw_tokens))
         segments.append(RenderedSegment(kind, tokens))
     return segments
 
@@ -141,7 +168,7 @@ class MessageRenderer:
 
     def _dsml_calls(self, parts: Sequence[ToolCallPart], sampled: bool) -> str:
         family = self.engine.info.family
-        calls = " calls" if family == "deepseek41" else "tool_calls"
+        calls = _dsml_calls_tag(family)
         stanzas = []
         for part in parts:
             details = part.provider_details or {}
@@ -157,18 +184,19 @@ class MessageRenderer:
         """Keep a sampled DSML opener only in the tool-call group that owns it."""
         text = cast("TextPart", parts[index]).content
         family = self.engine.info.family
-        if (
-            not sampled
-            or family not in ("deepseek4", "deepseek41")
-            or index + 1 >= len(parts)
-            or not isinstance(parts[index + 1], ToolCallPart)
-        ):
+        follows_tool_call = (
+            sampled
+            and family in DSML_FAMILIES
+            and index + 1 < len(parts)
+            and isinstance(parts[index + 1], ToolCallPart)
+        )
+        if not follows_tool_call:
             return text
-        calls = " calls" if family == "deepseek41" else "tool_calls"
+        calls = _dsml_calls_tag(family)
         return text.removesuffix(f"<｜DSML｜{calls}>")
 
     @staticmethod
-    def _assistant_prefix_state(
+    def _assistant_prefix(
         builder: PromptBuilder,
         prefix: Sequence[int],
         parts: Sequence[object],
@@ -180,18 +208,9 @@ class MessageRenderer:
         assistant_prefix = builder.assistant_prefix(prefix)
         think_open = builder.engine.tokenize("<think>", rendered=True)
         think_close = builder.engine.tokenize("</think>", rendered=True)
-
-        def last_marker(marker: Sequence[int]) -> int:
-            return max(
-                (
-                    index
-                    for index in range(len(assistant_prefix) - len(marker) + 1)
-                    if assistant_prefix[index : index + len(marker)] == marker
-                ),
-                default=-1,
-            )
-
-        opens_thinking = last_marker(think_open) > last_marker(think_close)
+        opens_thinking = _last_subsequence_index(assistant_prefix, think_open) > _last_subsequence_index(
+            assistant_prefix, think_close
+        )
         in_thinking = opens_thinking and bool(parts) and not isinstance(parts[0], ThinkingPart)
         return assistant_prefix, in_thinking
 
@@ -209,13 +228,13 @@ class MessageRenderer:
         message: ModelResponse,
         content_hash: str,
     ) -> list[RenderedSegment] | None:
-        if (message.metadata or {}).get("ds4.source") != "sampled":
+        if not _is_sampled(message):
             return None
         recorded = _recorded_sampled_segments(message, content_hash)
         if recorded is None:
             return None
-        parts = [part for part in message.parts if not isinstance(part, (TextPart, ThinkingPart)) or part.content]
-        assistant_prefix, _ = self._assistant_prefix_state(builder, prefix, parts, sampled=True)
+        parts = _content_parts(message)
+        assistant_prefix, _ = self._assistant_prefix(builder, prefix, parts, sampled=True)
         return [RenderedSegment("assistant_prefix", assistant_prefix), *recorded]
 
     def response_segments(  # noqa: PLR0915 - Response rendering handles every message-part family.
@@ -225,10 +244,10 @@ class MessageRenderer:
         message: ModelResponse,
     ) -> list[RenderedSegment]:
         spans: list[tuple[str, bool]] = []
-        sampled = (message.metadata or {}).get("ds4.source") == "sampled"
+        sampled = _is_sampled(message)
         family = self.engine.info.family
-        parts = [part for part in message.parts if not isinstance(part, (TextPart, ThinkingPart)) or part.content]
-        assistant_prefix, in_thinking = self._assistant_prefix_state(builder, prefix, parts, sampled)
+        parts = _content_parts(message)
+        assistant_prefix, in_thinking = self._assistant_prefix(builder, prefix, parts, sampled)
 
         def close_thinking() -> None:
             nonlocal in_thinking
@@ -251,7 +270,7 @@ class MessageRenderer:
                 else:
                     spans.extend((("<think>", True), (part.content, False), ("</think>", True)))
                 index += 1
-            elif family in ("deepseek4", "deepseek41"):
+            elif family in DSML_FAMILIES:
                 close_thinking()
                 end = index
                 while end < len(parts) and isinstance(parts[end], ToolCallPart):
@@ -312,12 +331,11 @@ class MessageRenderer:
         if isinstance(message, ModelRequest):
             segments = self.request_segments(builder, target.transcript.tokens, message)
         else:
-            recorded = self._recorded_response_segments(builder, target.transcript.tokens, message, content_hash)
-            segments = (
-                recorded if recorded is not None else self.response_segments(builder, target.transcript.tokens, message)
-            )
+            segments = self._recorded_response_segments(builder, target.transcript.tokens, message, content_hash)
+            if segments is None:
+                segments = self.response_segments(builder, target.transcript.tokens, message)
         meta = {"key": key, "content_hash": content_hash, "source": "rendered"}
-        sampled = isinstance(message, ModelResponse) and ((message.metadata or {}).get("ds4.source") == "sampled")
+        sampled = isinstance(message, ModelResponse) and _is_sampled(message)
         for segment in segments:
             if segment.tokens:
                 segment_meta = None if sampled and segment.kind == "assistant_prefix" else meta
@@ -329,7 +347,7 @@ class MessageRenderer:
         for message in messages:
             if not isinstance(message, ModelResponse):
                 continue
-            sampled = (message.metadata or {}).get("ds4.source") == "sampled"
+            sampled = _is_sampled(message)
             saw_call = separated = False
             for part in message.parts:
                 if isinstance(part, TextPart):
