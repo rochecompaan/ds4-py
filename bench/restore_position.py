@@ -86,6 +86,15 @@ def _compare_restore(
 
     first_trace = read_replay(case1.trace_path)
     second_trace = read_replay(case2.trace_path)
+    first_prompt = first_trace.rounds[0].prompt
+    second_prompt = second_trace.rounds[0].prompt
+    if first_prompt != second_prompt:
+        mismatch = next(
+            (index for index, pair in enumerate(zip(first_prompt, second_prompt)) if pair[0] != pair[1]),
+            min(len(first_prompt), len(second_prompt)),
+        )
+        problems.append(f"5.1 plan: follow-up prompts differ at token index {mismatch}")
+        valid = False
     first = tuple(token for round_ in first_trace.rounds for token in round_.sampled)
     second = tuple(token for round_ in second_trace.rounds for token in round_.sampled)
     for label, run, trace in (("case 1", case1, first_trace), ("case 2", case2, second_trace)):

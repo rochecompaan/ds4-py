@@ -482,6 +482,26 @@ def test_restore_position_uses_fixed_followup_round_not_later_tool_round(tmp_pat
     assert result.valid
 
 
+def test_restore_rejects_equal_length_prompts_with_different_tokens(tmp_path: Path) -> None:
+    save = make_save(tmp_path)
+
+    def drive(home: Any, session_id: Any, case: Any, trace_path: Any) -> Any:
+        run = restore_run(case, trace_path)
+        if case == 2:
+            record = json.loads(trace_path.read_text())
+            record["prompt"] = [8, 9]
+            record["prefill_suffix"] = [8, 9]
+            trace_path.write_text(json.dumps(record) + "\n")
+        return run
+
+    result = check_restore(save, tmp_path / "work", operations=FakeRestoreOperations(drive))
+
+    assert not result.passed
+    assert not result.valid
+    assert "5.1" in result.detail
+    assert "index 0" in result.detail
+
+
 @pytest.mark.parametrize(
     "changes",
     [
