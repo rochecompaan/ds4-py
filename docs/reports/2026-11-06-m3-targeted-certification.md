@@ -18,7 +18,9 @@ Prefill processes input tokens. Decode produces new tokens. The key-value (KV) c
 | 6A, driver equivalence | PASS | All `77/77` rounds passed with `1,232` decode steps. The maximum logit delta was `4.726562394807843e-07`, below `1e-05`. |
 | 6B, self-replay | PASS | All `34/34` rounds passed against the retained ds4-py trace. |
 
-Certification: `targeted`. Result: PASS. Targeted-9 exited `0` in `1h 35m 30s`. It tested revision `3ef9aa5600887e8f9c3e125a6a75e18a04ba310a`. Later commits do not change agent or harness behavior.
+Certification: `targeted`. Result: PASS. Targeted-9 exited `0` in `1h 35m 30s`. It tested revision `3ef9aa5600887e8f9c3e125a6a75e18a04ba310a`.
+
+The agent code is the same as `3ef9aa5` except for the readability refactor `6949978` and the engine fix `bfa7eb5`, which publishes terminal events drained after cancellation. The later harness commits were not part of the live run and are not certified by it: `5eb8d5f` derives cap outcomes from terminal evidence; `550d4f0` aligns the reference driver's terminal policy; `aad3fb2` validates observed C reference provenance; `311471d` compares restore prompt tokens; `0093bc8` shares complete environment provenance across restore sidecars; and `28d6e2e` enforces per-round event token budgets.
 
 An offline re-evaluation of the retained 10 cap-parity pairs using `terminal_reason == "max_tokens"` as the cap criterion also passed `10/10`; no native run was repeated. All 10 retained ds4-py cap rounds ended with `tool_call_complete`, one step before the C arm's `stop_token`, so they exercise the old tool-syntax policy difference. Both reasons are non-capped and the offline decision is unchanged, but the raw traces cannot show what additional native decoding the new policy would produce.
 
@@ -49,7 +51,7 @@ host:                  NVIDIA RTX PRO 6000 Blackwell Workstation Edition, driver
 instance:              59386390
 ```
 
-The merged agent code differs from `3ef9aa5` only by the readability-only refactor of `src/ds4py/message_rendering.py` in `6949978ad668c37e7d7709f8608bee5929d5f19d`, verified by the unchanged exact-token round-trip tests in `tests/agent/test_tool_render.py` and `tests/agent/test_restore.py`.
+The merged agent code differs from `3ef9aa5` only by the readability-only refactor of `src/ds4py/message_rendering.py` in `6949978ad668c37e7d7709f8608bee5929d5f19d` and the engine fix in `bfa7eb566e121d23ac62c9e53b7d8cedc339afc7`. The refactor is verified by the unchanged exact-token round-trip tests in `tests/agent/test_tool_render.py` and `tests/agent/test_restore.py`.
 
 ## How we got here
 
