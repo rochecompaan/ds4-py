@@ -1,0 +1,12 @@
+diff --git a/ds4_cuda.cu b/ds4_cuda.cu
+--- a/ds4_cuda.cu
++++ b/ds4_cuda.cu
+@@ -4189,1 +4189,8 @@ static int cuda_register_model_map(const void *model_map, uint64_t model_size,
++    const char *disable_host_register = getenv("DS4_CUDA_DISABLE_HOST_REGISTER");
++    if (disable_host_register && disable_host_register[0]) {
++        fprintf(stderr,
++                "ds4: CUDA (no-copy) host registration disabled by DS4_CUDA_DISABLE_HOST_REGISTER\n");
++        return 1;
++    }
++
+     if (cuda_integrated_artifact_map(model_map)) {

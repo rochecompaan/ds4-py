@@ -5,11 +5,12 @@ from typing import TYPE_CHECKING
 
 from bench.models import EventSummary, ToolAccounting
 from ds4py._json import JsonValue, is_json_object
+from ds4py.engine.events import STOP_REASONS
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from ds4py.engine.replay_types import ReplayTrace
+    from ds4py.engine.replay_types import ReplayRound, ReplayTrace
 
 
 class MetricError(ValueError):
@@ -70,8 +71,10 @@ def summarize_events(  # noqa: C901, PLR0912, PLR0915 - One pass validates and a
     events: Iterable[dict[str, JsonValue]],
     *,
     wall_seconds: float,
+    response_budget: int,
 ) -> EventSummary:
     """Summarize one attempt's JSONL records without inventing missing values."""
+    budget = _count(response_budget, "response_budget")
     records = list(events)
     if not records:
         raise MetricError("an attempt needs a nonempty list of event objects")
@@ -83,6 +86,9 @@ def summarize_events(  # noqa: C901, PLR0912, PLR0915 - One pass validates and a
     parser_errors = non_extend = invalid_non_extend = allowed_non_extend = 0
     ratios: list[float] = []
     reasons: list[str] = []
+    terminal_reasons: list[str] = []
+    parsed_since_stop = 0
+    round_tokens = 0
     seen_runs: set[str] = set()
     canonical_calls: set[str] = set()
     resolved_calls: set[str] = set()
@@ -98,6 +104,11 @@ def summarize_events(  # noqa: C901, PLR0912, PLR0915 - One pass validates and a
         elif kind == "Token":
             _count(nested.get("id"), "Token.id")
             tokens += 1
+            round_tokens += 1
+            if round_tokens > budget:
+                raise MetricError(
+                    f"round {len(terminal_reasons)} has {round_tokens} Token events, exceeding response budget {budget}"
+                )
         elif kind == "Synced":
             plan_kind, reused, denominator = _reuse(nested.get("plan"))
             if denominator:
@@ -119,12 +130,25 @@ def summarize_events(  # noqa: C901, PLR0912, PLR0915 - One pass validates and a
             reason = nested.get("reason")
             if not isinstance(reason, str):
                 raise MetricError("Stopped event needs a reason")
+            if reason not in STOP_REASONS:
+                raise MetricError(f"unknown terminal reason: {reason!r}")
+            if reason == "tool_call_complete" and parsed_since_stop == 0:
+                raise MetricError("tool_call_complete requires a parsed call in the same round")
+            if reason == "max_tokens" and round_tokens != budget:
+                raise MetricError(
+                    f"round {len(terminal_reasons)} max_tokens has {round_tokens} Token events, "
+                    f"expected response budget {budget}"
+                )
+            terminal_reasons.append(reason)
             parser_errors += reason == "parser_error"
+            parsed_since_stop = 0
+            round_tokens = 0
         elif kind == "ToolCalls":
             calls = nested.get("calls")
             if not isinstance(calls, list):
                 raise MetricError("ToolCalls event needs a calls list")
             parsed += len(calls)
+            parsed_since_stop += len(calls)
         elif kind == "FunctionToolCallEvent":
             part, call_id = _canonical_tool_part(payload.get("part"))
             if part.get("part_kind") != "tool-call":
@@ -159,6 +183,8 @@ def summarize_events(  # noqa: C901, PLR0912, PLR0915 - One pass validates and a
     unresolved = canonical_calls - resolved_calls
     if unresolved:
         raise MetricError(f"canonical tool calls without outcomes: {sorted(unresolved)!r}")
+    if not terminal_reasons:
+        raise MetricError("finished attempt has no terminal evidence")
     accounting = ToolAccounting(parsed, executed, refused, retried)
     return EventSummary(
         wall_seconds=_wall(wall_seconds),
@@ -173,7 +199,23 @@ def summarize_events(  # noqa: C901, PLR0912, PLR0915 - One pass validates and a
         parser_errors=parser_errors,
         tool_accounting=accounting,
         reuse_ratios=tuple(ratios),
+        terminal_reasons=tuple(terminal_reasons),
     )
+
+
+def classify_c_terminal(round_: ReplayRound, response_budget: int) -> str:
+    """Return context_limited, prefix_only, max_tokens, or recorded_boundary."""
+    budget = _count(response_budget, "response_budget")
+    sampled = len(round_.sampled)
+    if sampled > budget:
+        raise MetricError(f"sampled length {sampled} exceeds response budget {budget}")
+    if round_.context_limited:
+        return "context_limited"
+    if round_.prefix_only:
+        return "prefix_only"
+    if sampled == budget:
+        return "max_tokens"
+    return "recorded_boundary"
 
 
 def metrics_from_trace(
@@ -182,12 +224,14 @@ def metrics_from_trace(
     wall_seconds: float,
     progress_events: int,
     tool_calls: int,
+    response_budget: int,
 ) -> EventSummary:
     """Extract C metrics when no JSONL harness event stream is available."""
     rounds = list(trace.rounds)
     if not rounds:
         raise MetricError("a finished trace needs at least one round")
     ratios = []
+    terminal_reasons = []
     tokens = 0
     non_extend = 0
     previous_length = None
@@ -200,6 +244,7 @@ def metrics_from_trace(
             raise MetricError(f"round {index} cached prefix exceeds its prompt")
         ratios.append(cached / prompt_length)
         sampled = len(round_.sampled)
+        terminal_reasons.append(classify_c_terminal(round_, response_budget))
         tokens += sampled
         if previous_length is not None and cached != previous_length:
             non_extend += 1
@@ -214,6 +259,7 @@ def metrics_from_trace(
         non_extend_rounds=non_extend,
         tool_accounting=None,
         reuse_ratios=tuple(ratios),
+        terminal_reasons=tuple(terminal_reasons),
     )
 
 
@@ -245,4 +291,5 @@ def combine_summaries(summaries: Iterable[EventSummary]) -> EventSummary:
         parser_errors=sum(value.parser_errors for value in values),
         tool_accounting=accounting,
         reuse_ratios=ratios,
+        terminal_reasons=tuple(reason for value in values for reason in value.terminal_reasons),
     )

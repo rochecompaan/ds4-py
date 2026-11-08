@@ -162,6 +162,32 @@ Without explicit language selection, the native build can succeed but model load
 The patches select Metal 3.2 when the SDK and operating system support it.
 They select Metal 4.0 on macOS 26 or later when the SDK supports it.
 
+### Apply the CUDA host-register opt-out patch
+
+Apply this patch on a CUDA host when `cudaHostRegister` fails or stalls on the no-copy path.
+The vast.ai hosts showed this symptom.
+Apply it once to the clean source checkout before building `libds4` or `ds4-agent`.
+
+```bash
+git -C "$DS4_SRC" apply --check \
+  "$PWD/docs/patches/cuda-no-copy-host-register-opt-out.patch"
+git -C "$DS4_SRC" apply --whitespace=error \
+  "$PWD/docs/patches/cuda-no-copy-host-register-opt-out.patch"
+```
+
+The patch adds the `DS4_CUDA_DISABLE_HOST_REGISTER=1` runtime opt-out.
+Set this variable in each shell that starts `ds4-agent` or loads `libds4`:
+
+```bash
+export DS4_CUDA_DISABLE_HOST_REGISTER=1
+```
+
+The opt-out selects the existing device-cache path instead of no-copy host registration.
+The patch is a no-op when the variable is unset.
+If you reset or check out the source again, apply the patch again.
+Keep the same patched source tree for both native builds.
+CPU and Metal builds do not need this patch.
+
 ## Build and check the native library
 
 Set `DS4PY_HOME` to keep this test installation inside the checkout.

@@ -123,6 +123,7 @@ class EventSummary:
     parser_errors: int = 0
     tool_accounting: ToolAccounting | None = ToolAccounting()
     reuse_ratios: tuple[float, ...] = ()
+    terminal_reasons: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, value: object) -> EventSummary:
@@ -150,6 +151,7 @@ class EventSummary:
                     "reuse_ratios",
                 )
             ),
+            terminal_reasons=_strings(_field(data, "terminal_reasons"), "terminal_reasons"),
         )
 
 
@@ -252,6 +254,10 @@ class TaskRunResult:
     @property
     def reuse_ratios(self) -> tuple[float, ...]:
         return self.summary.reuse_ratios
+
+    @property
+    def terminal_reasons(self) -> tuple[str, ...]:
+        return self.summary.terminal_reasons
 
     @property
     def save_dir(self) -> Path | None:

@@ -75,24 +75,34 @@ lint.per-file-ignores."bench/graders/test_ctx_command.py" = [
   "S101",   # Grader assertions are intentional.
   "TID251", # Grader doubles can import Any; TypeGuard has a separate ban.
 ]
-lint.per-file-ignores."bench/replay_c_traces.py" = [
-  "FBT003",  # Existing replay helpers keep positional booleans.
-  "PLC0415", # Replay workers import isolation-specific modules lazily.
-  "PLR2004", # Protocol exit codes and token counts are intentional.
+lint.per-file-ignores."bench/phases.py" = [
+  "S603", # Reference drivers use fixed argument lists without a shell.
 ]
 lint.per-file-ignores."bench/report.py" = [
   "FBT001", # Existing report helpers keep positional booleans for API compatibility.
   "RUF002", # Protocol examples require fullwidth vertical bars in docstrings.
 ]
 lint.per-file-ignores."bench/restore_check.py" = [
+  "FBT003", # Restore result constructors keep positional booleans.
+]
+lint.per-file-ignores."bench/restore_equivalence.py" = [
+  "PLR2004", # Gate 5 case numbers are part of the evidence protocol.
+  "S603",    # Restore commands use fixed argument lists without a shell.
+]
+lint.per-file-ignores."bench/restore_fidelity.py" = [
+  "FBT003", # Existing comparison helpers keep positional booleans.
+]
+lint.per-file-ignores."bench/restore_plan.py" = [
   "FBT003",  # Existing restore helpers keep positional booleans.
   "PLC0415", # Restore workers import isolation-specific modules lazily.
-  "PLR2004", # Protocol exit codes and token counts are intentional.
-  "S603",    # Restore commands use fixed argument lists without a shell.
 ]
 lint.per-file-ignores."bench/run_bakeoff.py" = [
   "S603", # Bakeoff commands use fixed argument lists without a shell.
   "S606", # Bakeoff subprocesses never use a shell.
+]
+lint.per-file-ignores."bench/trace_selection.py" = [
+  "FBT003",  # Existing replay helpers keep positional booleans.
+  "PLR2004", # Protocol think modes and token counts are intentional.
 ]
 lint.per-file-ignores."bench/workspaces.py" = [
   "PLC0415", # Workspace isolation imports task-specific modules lazily.
