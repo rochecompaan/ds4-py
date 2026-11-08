@@ -71,8 +71,10 @@ def summarize_events(  # noqa: C901, PLR0912, PLR0915 - One pass validates and a
     events: Iterable[dict[str, JsonValue]],
     *,
     wall_seconds: float,
+    response_budget: int,
 ) -> EventSummary:
     """Summarize one attempt's JSONL records without inventing missing values."""
+    budget = _count(response_budget, "response_budget")
     records = list(events)
     if not records:
         raise MetricError("an attempt needs a nonempty list of event objects")
@@ -86,6 +88,7 @@ def summarize_events(  # noqa: C901, PLR0912, PLR0915 - One pass validates and a
     reasons: list[str] = []
     terminal_reasons: list[str] = []
     parsed_since_stop = 0
+    round_tokens = 0
     seen_runs: set[str] = set()
     canonical_calls: set[str] = set()
     resolved_calls: set[str] = set()
@@ -101,6 +104,11 @@ def summarize_events(  # noqa: C901, PLR0912, PLR0915 - One pass validates and a
         elif kind == "Token":
             _count(nested.get("id"), "Token.id")
             tokens += 1
+            round_tokens += 1
+            if round_tokens > budget:
+                raise MetricError(
+                    f"round {len(terminal_reasons)} has {round_tokens} Token events, exceeding response budget {budget}"
+                )
         elif kind == "Synced":
             plan_kind, reused, denominator = _reuse(nested.get("plan"))
             if denominator:
@@ -126,9 +134,15 @@ def summarize_events(  # noqa: C901, PLR0912, PLR0915 - One pass validates and a
                 raise MetricError(f"unknown terminal reason: {reason!r}")
             if reason == "tool_call_complete" and parsed_since_stop == 0:
                 raise MetricError("tool_call_complete requires a parsed call in the same round")
+            if reason == "max_tokens" and round_tokens != budget:
+                raise MetricError(
+                    f"round {len(terminal_reasons)} max_tokens has {round_tokens} Token events, "
+                    f"expected response budget {budget}"
+                )
             terminal_reasons.append(reason)
             parser_errors += reason == "parser_error"
             parsed_since_stop = 0
+            round_tokens = 0
         elif kind == "ToolCalls":
             calls = nested.get("calls")
             if not isinstance(calls, list):

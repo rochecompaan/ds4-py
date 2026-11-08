@@ -138,7 +138,7 @@ def canonical_events() -> list[dict[str, Any]]:
 
 
 def test_event_metrics_cover_six_comparison_values_and_tool_accounting() -> None:
-    summary = summarize_events(valid_events(), wall_seconds=2.5)
+    summary = summarize_events(valid_events(), wall_seconds=2.5, response_budget=2)
 
     assert summary.wall_seconds == 2.5
     assert summary.progress_events == 2
@@ -156,7 +156,7 @@ def test_event_metrics_cover_six_comparison_values_and_tool_accounting() -> None
 
 
 def test_canonical_tool_results_pair_by_id_and_count_denials() -> None:
-    summary = summarize_events(canonical_events(), wall_seconds=1)
+    summary = summarize_events(canonical_events(), wall_seconds=1, response_budget=2)
 
     assert summary.tool_calls == 2
     assert cast("Any", summary.tool_accounting).executed == 1
@@ -184,7 +184,7 @@ def test_canonical_retry_prompt_is_a_resolution_not_an_execution() -> None:
         event("run_end", {"status": "success"}),
     ]
 
-    summary = summarize_events(events, wall_seconds=1)
+    summary = summarize_events(events, wall_seconds=1, response_budget=2)
 
     assert cast("Any", summary.tool_accounting).executed == 0
     assert cast("Any", summary.tool_accounting).retried == 1
@@ -218,7 +218,7 @@ def test_inconsistent_canonical_tool_evidence_raises(mutation: Any) -> None:
         del events[5]
 
     with pytest.raises(MetricError):
-        summarize_events(events, wall_seconds=1)
+        summarize_events(events, wall_seconds=1, response_budget=2)
 
 
 def test_non_extension_rounds_require_recorded_compaction_or_strategy_reason() -> None:
@@ -227,7 +227,7 @@ def test_non_extension_rounds_require_recorded_compaction_or_strategy_reason() -
     events.insert(-2, synced("restore", 10, 90, "strategy"))
     events.insert(-2, synced("rebuild", 0, 100))
 
-    summary = summarize_events(events, wall_seconds=1)
+    summary = summarize_events(events, wall_seconds=1, response_budget=2)
 
     assert summary.non_extend_rounds == 3
     assert summary.allowed_non_extend_rounds == 2
@@ -238,7 +238,7 @@ def test_non_extension_rounds_require_recorded_compaction_or_strategy_reason() -
 def test_zero_reuse_denominator_is_the_only_excluded_reuse_sample() -> None:
     events = valid_events()
     events.insert(-2, synced(reused=0, to_prefill=0))
-    summary = summarize_events(events, wall_seconds=1)
+    summary = summarize_events(events, wall_seconds=1, response_budget=2)
     assert summary.avg_prefill_reuse == pytest.approx(0.4)
 
     only_zero = [
@@ -247,13 +247,13 @@ def test_zero_reuse_denominator_is_the_only_excluded_reuse_sample() -> None:
         event("Stopped", {"event": {"reason": "stop_token"}}),
         event("run_end", {"status": "success"}),
     ]
-    assert summarize_events(only_zero, wall_seconds=1).avg_prefill_reuse is None
+    assert summarize_events(only_zero, wall_seconds=1, response_budget=2).avg_prefill_reuse is None
 
 
 def test_parser_error_and_bad_argument_retry_have_distinct_gate_semantics() -> None:
     events = valid_events()
     events[-2] = event("Stopped", {"event": {"reason": "parser_error"}})
-    summary = summarize_events(events, wall_seconds=1)
+    summary = summarize_events(events, wall_seconds=1, response_budget=2)
 
     assert summary.parser_errors == 1
     assert cast("Any", summary.tool_accounting).retried == 1
@@ -265,7 +265,7 @@ def test_unknown_terminal_reason_is_malformed_evidence() -> None:
     events[-2] = event("Stopped", {"event": {"reason": "mystery"}})
 
     with pytest.raises(MetricError, match="unknown terminal reason"):
-        summarize_events(events, wall_seconds=1)
+        summarize_events(events, wall_seconds=1, response_budget=2)
 
 
 def test_tool_call_complete_requires_a_parsed_call() -> None:
@@ -273,21 +273,21 @@ def test_tool_call_complete_requires_a_parsed_call() -> None:
     events[-2] = event("Stopped", {"event": {"reason": "tool_call_complete"}})
 
     with pytest.raises(MetricError, match="tool_call_complete"):
-        summarize_events(events, wall_seconds=1)
+        summarize_events(events, wall_seconds=1, response_budget=2)
 
 
 def test_finished_attempt_requires_terminal_evidence() -> None:
     events = [item for item in valid_events() if item["kind"] != "Stopped"]
 
     with pytest.raises(MetricError, match="terminal"):
-        summarize_events(events, wall_seconds=1)
+        summarize_events(events, wall_seconds=1, response_budget=2)
 
 
 def test_terminal_reasons_survive_attempt_combination_in_event_order() -> None:
     first_events = valid_events()
     first_events[-2] = event("Stopped", {"event": {"reason": "max_tokens"}})
-    first = summarize_events(first_events, wall_seconds=1)
-    second = summarize_events(valid_events(), wall_seconds=1)
+    first = summarize_events(first_events, wall_seconds=1, response_budget=2)
+    second = summarize_events(valid_events(), wall_seconds=1, response_budget=2)
 
     combined = combine_summaries((first, second))
 
@@ -296,7 +296,7 @@ def test_terminal_reasons_survive_attempt_combination_in_event_order() -> None:
 
 def test_missing_tool_outcome_is_evidence_failure_not_a_valid_zero() -> None:
     events = [item for item in valid_events() if item["kind"] != "ToolResultEvent"]
-    summary = summarize_events(events, wall_seconds=1)
+    summary = summarize_events(events, wall_seconds=1, response_budget=2)
 
     assert summary.tool_calls == 2
     assert not cast("Any", summary.tool_accounting).complete
@@ -314,7 +314,7 @@ def test_malformed_or_incomplete_events_raise(mutation: Any) -> None:
         events[2] = event("Token", {"event": {"id": "not-an-int"}})
 
     with pytest.raises(MetricError):
-        summarize_events(events, wall_seconds=1)
+        summarize_events(events, wall_seconds=1, response_budget=2)
 
 
 def test_trace_metrics_use_committed_samples_and_prefix_extension() -> None:

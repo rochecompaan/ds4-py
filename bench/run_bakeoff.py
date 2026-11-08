@@ -107,7 +107,11 @@ def _attempt_summary(
     wall_seconds: float,
 ) -> EventSummary:
     if events_path.is_file():
-        summary = summarize_events(load_events(events_path), wall_seconds=wall_seconds)
+        summary = summarize_events(
+            load_events(events_path),
+            wall_seconds=wall_seconds,
+            response_budget=config.tokens,
+        )
         if config.agent == "c":
             summary = replace(summary, tool_accounting=None)
         _trace, tokens = _trace_tokens(trace_path)

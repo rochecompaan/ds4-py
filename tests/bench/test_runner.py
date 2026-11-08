@@ -16,13 +16,14 @@ sys.path.insert(0, str(Path(__file__).parents[2]))
 from bench.comparison import RateEvidence, StepCapture, TopLogit
 from bench.driver_cases import DriverCase, DriverRoundEvidence, read_case_manifest
 from bench.driver_equivalence import DriverEquivalenceResult, DriverRoundResult
-from bench.metrics import EventSummary, ToolAccounting
+from bench.metrics import EventSummary, MetricError, ToolAccounting
 from bench.provenance import ProgressChunk, RoundProvenance, SyncCall, TraceProvenance
 from bench.report import GateResult, build_report
 from bench.restore_check import CheckResult, RestoreResult, RestoreSummary
 from bench.run_bakeoff import (
     AgentConfig,
     TaskRunResult,
+    _attempt_summary,
     build_agent_command,
     run_bakeoff,
     run_reference_equivalence,
@@ -285,6 +286,56 @@ def test_request_limit_failure_is_named_in_task_errors(tmp_path: Path) -> None:
     assert "attempt 1 request_limit" in completed.errors
 
 
+@pytest.mark.parametrize(
+    ("reason", "sampled", "budget", "message"),
+    [
+        ("max_tokens", (1,), 2, "max_tokens has 1 Token events, expected response budget 2"),
+        ("stop_token", (1, 2), 1, "has 2 Token events, exceeding response budget 1"),
+    ],
+)
+def test_ds4py_event_metrics_enforce_response_budget(
+    tmp_path: Path,
+    reason: str,
+    sampled: tuple[int, ...],
+    budget: int,
+    message: str,
+) -> None:
+    events_path = tmp_path / "events.jsonl"
+    records = [
+        {"kind": "run_start", "run_id": "run-1", "payload": {}},
+        *({"kind": "Token", "run_id": "run-1", "payload": {"event": {"id": token}}} for token in sampled),
+        {"kind": "Stopped", "run_id": "run-1", "payload": {"event": {"reason": reason}}},
+        {"kind": "run_end", "run_id": "run-1", "payload": {"status": "success"}},
+    ]
+    events_path.write_text("".join(json.dumps(record) + "\n" for record in records))
+    trace_path = tmp_path / "trace.jsonl"
+    trace_path.write_text(
+        json.dumps(
+            {
+                "session_id": "session-1",
+                "run_id": "run-1",
+                "step_index": 0,
+                "round_index": 0,
+                "prompt": [1, 2],
+                "think": 0,
+                "cached": 0,
+                "prefill_suffix": [1, 2],
+                "sampled": list(sampled),
+            }
+        )
+        + "\n"
+    )
+
+    with pytest.raises(MetricError, match=message):
+        _attempt_summary(
+            replace(config(tmp_path), tokens=budget),
+            events_path,
+            trace_path,
+            "",
+            1.0,
+        )
+
+
 def test_expected_max_tokens_exit_is_not_lifecycle_error(tmp_path: Path) -> None:
     source = make_exercise(tmp_path)
     workspace = prepare_exercise(source, tmp_path / "staged", max_attempts=1)
@@ -297,6 +348,7 @@ def test_expected_max_tokens_exit_is_not_lifecycle_error(tmp_path: Path) -> None
     agent = replace(
         config(tmp_path),
         executable=(sys.executable, str(executable)),
+        tokens=1,
     )
 
     completed = run_task(
