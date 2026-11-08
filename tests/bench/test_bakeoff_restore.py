@@ -28,6 +28,14 @@ from pydantic_ai_harness.step_persistence import (
 
 import ds4py
 from bench.comparison import StepCapture, TopLogit
+from bench.provenance import (
+    CUDA_DISABLE_HOST_REGISTER_ENV,
+    NATIVE_PATCHES_ENV,
+    Q8_F16_CACHE_ENV,
+    NativePatch,
+    TraceProvenance,
+    validate_session_pair,
+)
 from bench.restore_check import (
     FOLLOWUP,
     CheckResult,
@@ -707,6 +715,45 @@ def test_same_history_replays_saved_attempt_and_matches_restore(
 
     monkeypatch.chdir(project)
     monkeypatch.setenv("DS4PY_HOME", str(store.root))
+    patch_name = "docs/patches/cuda-no-copy-host-register-opt-out.patch"
+    patch = NativePatch(
+        patch_name,
+        hashlib.sha256((Path(__file__).parents[2] / patch_name).read_bytes()).hexdigest(),
+    )
+    environment = {
+        "BAKEOFF_SESSION_ID": "session-1",
+        "DS4_BAKEOFF_INSTANCE_ID": "instance-1",
+        "DS4_BAKEOFF_GPU_MODEL": "gpu",
+        "DS4_BAKEOFF_GPU_DRIVER_VERSION": "driver",
+        "DS4_BAKEOFF_DS4_REVISION": "ds4",
+        "DS4_BAKEOFF_DS4PY_REVISION": "python",
+        "DS4_BAKEOFF_LIBDS4_SHA256": "library",
+        "DS4_BAKEOFF_MODEL_SHA256": "model",
+        Q8_F16_CACHE_ENV: "5120",
+        NATIVE_PATCHES_ENV: patch_name,
+        CUDA_DISABLE_HOST_REGISTER_ENV: "1",
+    }
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    session = BakeoffSession(
+        bakeoff_session_id="session-1",
+        instance_id="instance-1",
+        gpu_model="gpu",
+        gpu_driver_version="driver",
+        ds4_revision="ds4",
+        ds4py_revision="python",
+        libds4_sha256="library",
+        model_path=str(Path("f.gguf").resolve()),
+        model_sha256="model",
+        backend="cpu",
+        ctx=65536,
+        temperature=0.0,
+        seed=1,
+        response_budget=8192,
+        q8_f16_cache_mb=5120,
+        native_patches=(patch,),
+        cuda_disable_host_register="1",
+    )
     restore_trace = tmp_path / "case-1.jsonl"
     restore_metadata = tmp_path / "case-1.json"
     restore_engine = restore_fake_engine(restore_script("follow-up answer"))
@@ -725,6 +772,10 @@ def test_same_history_replays_saved_attempt_and_matches_restore(
                 "cpu",
                 "--ctx",
                 "65536",
+                "--temp",
+                "0",
+                "--seed",
+                "1",
                 "--tokens",
                 "8192",
                 "--trace",
@@ -752,6 +803,10 @@ def test_same_history_replays_saved_attempt_and_matches_restore(
                 "cpu",
                 "--ctx",
                 "65536",
+                "--temp",
+                "0",
+                "--seed",
+                "1",
                 "--tokens",
                 "8192",
                 "--trace",
@@ -770,6 +825,15 @@ def test_same_history_replays_saved_attempt_and_matches_restore(
     assert replay_rounds[-1].prompt == restore_rounds[0].prompt
     assert replay_rounds[-1].cached == record.tokens
     assert replay_rounds[-1].sampled == ()
+    for metadata_path, output_trace, source_trace, reset_policy in (
+        (restore_metadata, restore_trace, restore_trace, "restore-switch"),
+        (replay_metadata, replay_trace, original_trace, "same-history-replay"),
+    ):
+        expected = session.provenance(output_trace, source_trace, rounds=(), reset_policy=reset_policy)
+        raw = json.loads(metadata_path.read_text())["provenance"]
+        raw["native_patches"] = tuple(NativePatch(**item) for item in raw.get("native_patches", ()))
+        actual = TraceProvenance(**raw)
+        assert validate_session_pair(expected, actual) == ()
 
 
 def test_default_noninteractive_attempt_uses_its_existing_single_save(

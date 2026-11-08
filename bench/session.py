@@ -21,6 +21,7 @@ from bench.provenance import (
     NativePatch,
     RoundProvenance,
     TraceProvenance,
+    native_patch_provenance,
     write_trace_provenance,
 )
 from ds4py._native.loader import resolve_lib_path
@@ -48,19 +49,6 @@ _OBSERVED_DRIVER_FIELDS = (
     "observed_seed",
     "observed_temperature",
 )
-
-
-def native_patch_provenance(repo_root: Path, specification: str) -> tuple[NativePatch, ...]:
-    """Hash repo-relative native patch paths in stable name order."""
-    patches = []
-    for name in specification.split(os.pathsep):
-        if not name:
-            continue
-        path = Path(name)
-        if path.is_absolute() or ".." in path.parts:
-            raise ValueError("native patch paths must be relative to the ds4-py repository")
-        patches.append(NativePatch(name=path.as_posix(), sha256=file_sha256(repo_root / path)))
-    return tuple(sorted(patches, key=lambda patch: patch.name))
 
 
 def _git_revision(path: Path) -> str:

@@ -6,7 +6,6 @@ import argparse
 import hashlib
 import heapq
 import json
-import os
 from array import array
 from dataclasses import asdict
 from pathlib import Path
@@ -14,7 +13,7 @@ from typing import TYPE_CHECKING, cast
 
 import ds4py
 from bench.comparison import TOP_K, StepCapture, TopLogit
-from bench.provenance import Q8_F16_CACHE_ENV, Q8_F16_CACHE_MB, TraceProvenance
+from bench.provenance import provenance_from_environment
 from bench.trace_selection import replay_round
 from ds4py.agent_cli import _think_mode, parser
 from ds4py.engine.replay import read_replay
@@ -237,26 +236,11 @@ def same_history_command(argv: Sequence[str]) -> int:
         )
     trace_path = Path(args.trace)
     original_trace = save_dir.parents[2] / "trace.jsonl"
-    provenance = TraceProvenance(
-        bakeoff_session_id=os.environ.get("BAKEOFF_SESSION_ID", "standalone"),
-        instance_id=os.environ.get("DS4_BAKEOFF_INSTANCE_ID", "unknown"),
-        gpu_model=os.environ.get("DS4_BAKEOFF_GPU_MODEL", "unknown"),
-        gpu_driver_version=os.environ.get("DS4_BAKEOFF_GPU_DRIVER_VERSION", "unknown"),
-        ds4_revision=os.environ.get("DS4_BAKEOFF_DS4_REVISION", "unknown"),
-        ds4py_revision=os.environ.get("DS4_BAKEOFF_DS4PY_REVISION", "unknown"),
-        libds4_sha256=os.environ.get("DS4_BAKEOFF_LIBDS4_SHA256", "unknown"),
-        model_path=str(Path(args.model).expanduser().resolve()),
-        model_sha256=os.environ.get("DS4_BAKEOFF_MODEL_SHA256", "unknown"),
-        backend=args.backend,
-        ctx=args.ctx,
-        q8_f16_cache_mb=int(os.environ.get(Q8_F16_CACHE_ENV, str(Q8_F16_CACHE_MB))),
-        temperature=args.temp,
-        seed=args.seed,
-        response_budget=args.tokens,
+    provenance = provenance_from_environment(
+        args,
         reset_policy="same-history-replay",
         trace_sha256=hashlib.sha256(trace_path.read_bytes()).hexdigest(),
         source_trace_sha256=hashlib.sha256(original_trace.read_bytes()).hexdigest(),
-        rounds=(),
     )
     followup = read_replay(own.restore_trace).rounds[0]
     own.metadata.write_text(

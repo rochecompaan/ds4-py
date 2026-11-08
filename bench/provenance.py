@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import Protocol
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
+from ds4py.abi.manifest import file_sha256
 
 Q8_F16_CACHE_ENV = "DS4_CUDA_Q8_F16_CACHE_MB"
 Q8_F16_CACHE_MB = 5120
@@ -20,6 +20,19 @@ CUDA_DISABLE_HOST_REGISTER_ENV = "DS4_CUDA_DISABLE_HOST_REGISTER"
 class NativePatch:
     name: str
     sha256: str
+
+
+def native_patch_provenance(repo_root: Path, specification: str) -> tuple[NativePatch, ...]:
+    """Hash repo-relative native patch paths in stable name order."""
+    patches = []
+    for name in specification.split(os.pathsep):
+        if not name:
+            continue
+        path = Path(name)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError("native patch paths must be relative to the ds4-py repository")
+        patches.append(NativePatch(name=path.as_posix(), sha256=file_sha256(repo_root / path)))
+    return tuple(sorted(patches, key=lambda patch: patch.name))
 
 
 @dataclass(frozen=True)
@@ -77,6 +90,49 @@ class TraceProvenance:
     native_patches: tuple[NativePatch, ...] = ()
     cuda_disable_host_register: str = ""
     invalid_reason: str | None = None
+
+
+class _EnvironmentProvenanceArgs(Protocol):
+    model: str
+    backend: str
+    ctx: int
+    temp: float
+    seed: int
+    tokens: int
+
+
+def provenance_from_environment(
+    args: _EnvironmentProvenanceArgs,
+    *,
+    reset_policy: str,
+    trace_sha256: str,
+    source_trace_sha256: str,
+) -> TraceProvenance:
+    """Build a complete restore sidecar from the inherited session environment."""
+    repo_root = Path(__file__).resolve().parents[1]
+    return TraceProvenance(
+        bakeoff_session_id=os.environ.get("BAKEOFF_SESSION_ID", "standalone"),
+        instance_id=os.environ.get("DS4_BAKEOFF_INSTANCE_ID", "unknown"),
+        gpu_model=os.environ.get("DS4_BAKEOFF_GPU_MODEL", "unknown"),
+        gpu_driver_version=os.environ.get("DS4_BAKEOFF_GPU_DRIVER_VERSION", "unknown"),
+        ds4_revision=os.environ.get("DS4_BAKEOFF_DS4_REVISION", "unknown"),
+        ds4py_revision=os.environ.get("DS4_BAKEOFF_DS4PY_REVISION", "unknown"),
+        libds4_sha256=os.environ.get("DS4_BAKEOFF_LIBDS4_SHA256", "unknown"),
+        model_path=str(Path(args.model).expanduser().resolve()),
+        model_sha256=os.environ.get("DS4_BAKEOFF_MODEL_SHA256", "unknown"),
+        backend=args.backend,
+        ctx=args.ctx,
+        q8_f16_cache_mb=int(os.environ.get(Q8_F16_CACHE_ENV, str(Q8_F16_CACHE_MB))),
+        temperature=args.temp,
+        seed=args.seed,
+        response_budget=args.tokens,
+        reset_policy=reset_policy,
+        trace_sha256=trace_sha256,
+        source_trace_sha256=source_trace_sha256,
+        rounds=(),
+        native_patches=native_patch_provenance(repo_root, os.environ.get(NATIVE_PATCHES_ENV, "")),
+        cuda_disable_host_register=os.environ.get(CUDA_DISABLE_HOST_REGISTER_ENV, ""),
+    )
 
 
 _IDENTITY_FIELDS = (

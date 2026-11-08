@@ -27,7 +27,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bench.comparison import TOP_K, StepCapture, TopLogit
-from bench.provenance import Q8_F16_CACHE_ENV, Q8_F16_CACHE_MB, TraceProvenance
+from bench.provenance import provenance_from_environment
 from ds4py.engine.events import Stopped, Synced
 from ds4py.errors import Ds4pyError
 from ds4py.store import SessionStore
@@ -425,26 +425,11 @@ def restore_command(argv: Sequence[str]) -> int:
     trace_sha256 = hashlib.sha256(trace_path.read_bytes()).hexdigest()
     save_path = Path(os.environ.get("DS4PY_HOME", "")) / "sessions" / own.session_id / "save.json"
     save_record_sha256 = hashlib.sha256(save_path.read_bytes()).hexdigest() if save_path.is_file() else ""
-    provenance = TraceProvenance(
-        bakeoff_session_id=os.environ.get("BAKEOFF_SESSION_ID", "standalone"),
-        instance_id=os.environ.get("DS4_BAKEOFF_INSTANCE_ID", "unknown"),
-        gpu_model=os.environ.get("DS4_BAKEOFF_GPU_MODEL", "unknown"),
-        gpu_driver_version=os.environ.get("DS4_BAKEOFF_GPU_DRIVER_VERSION", "unknown"),
-        ds4_revision=os.environ.get("DS4_BAKEOFF_DS4_REVISION", "unknown"),
-        ds4py_revision=os.environ.get("DS4_BAKEOFF_DS4PY_REVISION", "unknown"),
-        libds4_sha256=os.environ.get("DS4_BAKEOFF_LIBDS4_SHA256", "unknown"),
-        model_path=str(Path(args.model).expanduser().resolve()),
-        model_sha256=os.environ.get("DS4_BAKEOFF_MODEL_SHA256", "unknown"),
-        backend=args.backend,
-        ctx=args.ctx,
-        q8_f16_cache_mb=int(os.environ.get(Q8_F16_CACHE_ENV, str(Q8_F16_CACHE_MB))),
-        temperature=args.temp,
-        seed=args.seed,
-        response_budget=args.tokens,
+    provenance = provenance_from_environment(
+        args,
         reset_policy="restore-switch",
         trace_sha256=trace_sha256,
         source_trace_sha256=trace_sha256,
-        rounds=(),
     )
     own.metadata.write_text(
         json.dumps(
