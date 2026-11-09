@@ -399,6 +399,16 @@ class Session:
             self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
             self._transcript.truncate(token_count)
 
+    def install_segments(self, segments: Sequence[Segment]) -> None:
+        """Install saved provenance over tokens an already-loaded payload set.
+
+        Between rounds only. The saved ranges must describe the loaded tokens
+        without gaps or overlap, so invalid input leaves the transcript intact.
+        """
+        with self._lock:
+            self._require_idle()
+            self._transcript.install(segments)
+
     def replace_transcript(self, replacement: TranscriptReplacement, *, reason: str) -> Plan:
         """Replace the whole transcript between rounds through the engine worker.
 

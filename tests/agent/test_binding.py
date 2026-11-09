@@ -22,7 +22,8 @@ import ds4py
 from ds4py import ThinkMode
 from ds4py._native.fake import FakeNative
 from ds4py.binding import MessageBinder, _BoundMessage, _content_hash
-from ds4py.engine.session import Engine
+from ds4py.binding_provenance import prepare_provenance
+from ds4py.engine.session import Engine, Session
 from ds4py.errors import EngineError
 
 
@@ -140,6 +141,79 @@ def test_restore_binds_an_ordered_subsequence_of_canonical_history() -> None:
         assert [record.key for record in restored._records] == [
             cast("Any", message.metadata)["ds4.key"] for message in bound
         ]
+        assert restored._signature is None
+        assert restored._restored is True
+
+
+def test_restore_uses_session_segment_writer(monkeypatch: pytest.MonkeyPatch) -> None:
+    with fake_engine() as engine:
+        session = engine.session()
+        binder = MessageBinder(session)
+        canonical = [user("first"), ModelResponse([TextPart("answer")])]
+        binder.prepare(canonical)
+        saved_segments = binder.export_segments()
+        saved_records = binder.records()
+
+        restored = MessageBinder(session)
+        calls: list[tuple[Any, ...]] = []
+
+        def install(segments: Any) -> None:
+            # Preparation is pure: no record swap may happen before installation.
+            assert restored.records() == ()
+            calls.append(tuple(segments))
+            Session.install_segments(session, segments)
+
+        monkeypatch.setattr(session, "install_segments", install)
+        restored.restore(canonical, saved_segments)
+
+        assert calls == [session.transcript.segments]
+        assert restored.records() == saved_records
+        assert restored.export_segments() == saved_segments
+        assert restored._signature is None
+        assert restored._restored is True
+
+
+def test_prepare_provenance_deep_copies_bound_messages() -> None:
+    with fake_engine() as engine:
+        session = engine.session()
+        binder = MessageBinder(session)
+        messages = [user("first")]
+        binder.prepare(messages)
+        key = cast("Any", messages[0].metadata)["ds4.key"]
+        prepared = prepare_provenance(messages, binder.export_segments(), loaded=len(session.transcript))
+
+        messages[0].metadata = {"ds4.key": "changed"}
+
+        assert cast("Any", prepared.bound_messages[0].metadata)["ds4.key"] == key
+
+
+def test_prepare_provenance_accepts_replacement_segments() -> None:
+    with fake_engine() as engine:
+        session = engine.session()
+        binder = MessageBinder(session)
+        messages = [user("first")]
+        binder.prepare(messages)
+
+        prepared = prepare_provenance(messages, session.transcript.segments, loaded=len(session.transcript))
+
+        assert prepared.installed == session.transcript.segments
+        assert prepared.records == binder.records()
+
+
+def test_apply_compaction_assigns_records_without_restore_state() -> None:
+    with fake_engine() as engine:
+        session = engine.session()
+        binder = MessageBinder(session)
+        messages = [user("first"), ModelResponse([TextPart("answer")])]
+        binder.prepare(messages)
+        signature = binder._signature
+        prepared = prepare_provenance(messages, binder.export_segments(), loaded=len(session.transcript))
+
+        binder.apply_compaction(prepared)
+
+        assert binder.records() == prepared.records
+        assert binder._signature == signature
+        assert binder._restored is False
 
 
 def test_system_and_instruction_parts_are_separate_system_segments() -> None:

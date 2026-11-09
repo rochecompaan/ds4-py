@@ -79,7 +79,11 @@ def restore_snapshot(  # noqa: PLR0913 - Restoration needs the complete saved ex
     plan: RestorePlan,
     session_dir: Path,
 ) -> RestoreResult:
-    """Install one snapshot validated by :func:`validate_restore_snapshot`."""
+    """Install one snapshot validated by :func:`validate_restore_snapshot`.
+
+    KV loading and provenance installation run through the session writer; the
+    binder assigns its prepared records only after both succeed.
+    """
     outcome: RestoreOutcome = {}
     loaded: list[int] | None = None
     if plan.payload_bytes is not None:
