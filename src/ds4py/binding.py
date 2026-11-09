@@ -26,6 +26,7 @@ from ds4py.binding_provenance import (
     _validate,
     prepare_provenance,
 )
+from ds4py.binding_request import count_bound_request
 from ds4py.engine import chat as chat_ops
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.tool_prompt import ToolDefinition
@@ -139,7 +140,7 @@ class MessageBinder:
     def __init__(self, session: Session) -> None:
         self.session = session
         self._renderer = MessageRenderer(session.engine)
-        self.note_provider = None
+        self.note_provider: DS4SystemNotes | None = None
         self._records: list[BoundMessage] = []
         self._bound_messages: list[ModelMessage] = []
         self._signature = None
@@ -491,10 +492,24 @@ class MessageBinder:
         *,
         tools: Iterable[object] = (),
         instructions: str | None = None,
+        preserve_bound: bool = False,
     ) -> int:
+        """Count a request, including its assistant prefix, without native sync.
+
+        ``preserve_bound`` uses the current native preamble and exact sampled
+        spans for pending results; the default renders the supplied configuration.
+        """
         messages = list(messages)
         _validate(messages)
         scratch = _ScratchSession(self.session.engine)
+        if preserve_bound and self._records:
+            end = self._records[0].start
+            for segment in self.session.transcript.segments:
+                if segment.end <= end:
+                    scratch.append_tokens(
+                        self.session.transcript.tokens[segment.start : segment.end], segment.kind, segment.meta
+                    )
+            return count_bound_request(self, scratch, messages)
         scratch.start_chat(_definitions(tools), instructions)
         for message in messages:
             key = (message.metadata or {}).get("ds4.key", "")

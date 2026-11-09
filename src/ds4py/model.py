@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, ClassVar, SupportsFloat, SupportsIndex, cast, 
 from uuid import uuid4
 
 import anyio
+from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.profiles import ModelProfile, ToolAdditionMode, ToolDeferralMode
@@ -190,6 +191,7 @@ class DS4Model(Model):
         messages: list[ModelMessage],
         settings: ModelSettings | None,
         params: ModelRequestParameters,
+        run_context: RunContext[object] | None = None,
     ) -> AsyncGenerator[DS4StreamedResponse]:
         policy, max_tokens, stop_sequences = self._request_config(settings)
         messages = self.binder.canonicalize(messages)
@@ -207,6 +209,7 @@ class DS4Model(Model):
             policy,
             max_tokens,
             stop_sequences,
+            run_context=run_context,
         )
         with self.session.events_on_loop(asyncio.get_running_loop()):
             try:
@@ -222,9 +225,22 @@ class DS4Model(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         settings, params = self.prepare_request(model_settings, model_request_parameters)
-        async with self._open_stream(messages, settings, params) as stream:
-            async for _ in stream:
-                pass
+        # The pinned harness supplies its context implicitly for nonstream calls.
+        run_context = get_current_run_context()
+        async with self._open_stream(messages, settings, params, run_context) as stream:
+            try:
+                async for _ in stream:
+                    pass
+            except BaseException:
+                # Like the harness's streamed path, publish the finalized partial
+                # response to canonical history even when the request raises.
+                await stream._finish()
+                response = stream.get()
+                if run_context is not None and stream._sampled_start is not None:
+                    key = (response.metadata or {}).get("ds4.key")
+                    if not any((message.metadata or {}).get("ds4.key") == key for message in run_context.messages):
+                        run_context.messages.append(response)
+                raise
             return stream.get()
 
     @asynccontextmanager
@@ -237,7 +253,7 @@ class DS4Model(Model):
         run_context: RunContext[object] | None = None,
     ) -> AsyncGenerator[DS4StreamedResponse]:
         settings, params = self.prepare_request(model_settings, model_request_parameters)
-        async with self._open_stream(messages, settings, params) as stream:
+        async with self._open_stream(messages, settings, params, run_context) as stream:
             yield stream
 
 
@@ -252,10 +268,13 @@ class DS4StreamedResponse(StreamedResponse):
         sampling: SamplingPolicy,
         max_tokens: int,
         stop_sequences: Sequence[bytes],
+        *,
+        run_context: RunContext[object] | None = None,
     ) -> None:
         super().__init__(model_request_parameters=params)
         self._model = model
         self._messages = messages
+        self._run_context = run_context
         self._session = model.session
         self._binder = model.binder
         self._timestamp = datetime.now(UTC)
@@ -561,7 +580,8 @@ class DS4StreamedResponse(StreamedResponse):
         # suspended round. Observe only this owner's work to avoid double counts.
         unsubscribe = self._session.on_event(synced, kinds={"Synced"})
         try:
-            room = await owner.make_room(self._messages, ContextRequest(event.needed, "reserve"))
+            messages = owner.reserve_messages(self._messages, self._run_context)
+            room = await owner.make_room(messages, ContextRequest(event.needed, "reserve"))
         except BaseException:
             event.fail()
             raise

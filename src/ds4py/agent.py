@@ -61,6 +61,7 @@ def build_agent_components(  # noqa: PLR0913 - Agent composition mirrors the run
 
     notes = DS4SystemNotes(model.session)
     model.note_provider = notes
+    model.binder.note_provider = notes
 
     components: list[AbstractCapability] = [
         LocalWorkspace(project_dir, read_only=read_only),

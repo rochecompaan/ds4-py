@@ -45,6 +45,13 @@ class LLMCompaction(ContextStrategy):
         super().__init__(binder)
         self.soft = soft
 
+    @override
+    def reserve_messages(
+        self, request_messages: list[ModelMessage], run_context: RunContext[object] | None
+    ) -> list[ModelMessage]:
+        """Persistent compaction commits the harness history, not its request copy."""
+        return run_context.messages if run_context is not None else request_messages
+
     def summary_reserve(self) -> int:
         """Exact rendered private suffix, C's +64, and C's summary budget."""
         engine = self.binder.session.engine

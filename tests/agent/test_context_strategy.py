@@ -166,7 +166,7 @@ def _tool_return(result: Any) -> ToolReturnPart:
 
 
 def test_registered_owner_receives_tool_overflow() -> None:
-    binder = StubBinder([90, 100], transcript_tokens=90, ctx=100)
+    binder = StubBinder([90, 100, 99], transcript_tokens=90, ctx=100)
     owner = RecordingOwner(binder)
 
     result = asyncio.run(_tool_agent(owner, "x" * 100).run("go"))
@@ -177,7 +177,7 @@ def test_registered_owner_receives_tool_overflow() -> None:
 
 
 def test_fitting_tool_result_does_not_ask_the_owner() -> None:
-    binder = StubBinder([90, 95], transcript_tokens=90, ctx=1000)
+    binder = StubBinder([90, 95, 95], transcript_tokens=90, ctx=1000)
     owner = RecordingOwner(binder)
 
     result = asyncio.run(_tool_agent(owner, "small").run("go"))
@@ -187,7 +187,7 @@ def test_fitting_tool_result_does_not_ask_the_owner() -> None:
 
 
 def test_failed_tool_room_returns_the_still_does_not_fit_error() -> None:
-    binder = StubBinder([90, 100], transcript_tokens=90, ctx=100)
+    binder = StubBinder([90, 100, 99], transcript_tokens=90, ctx=100)
     owner = RecordingOwner(binder, room=RoomResult(made_room=False))
 
     result = asyncio.run(_tool_agent(owner, "x" * 100).run("go"))

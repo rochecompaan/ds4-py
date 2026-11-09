@@ -2,12 +2,15 @@
 
 import asyncio
 from collections.abc import Sequence
+from copy import deepcopy
 from dataclasses import replace
 from typing import Any, cast
 
 import pytest
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import RunUsage
 
 import ds4py
 from ds4py import ThinkMode
@@ -26,7 +29,10 @@ PREFIX = tuple(tokenize_rendered("<|im_start|>assistant\n<think>\n\n</think>\n\n
 
 
 @pytest.mark.parametrize("early_close", [False, True])
-def test_reserve_compaction_continues_same_response(early_close: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("canonical_context", [False, True])
+def test_reserve_compaction_continues_same_response(
+    early_close: bool, canonical_context: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Losing/re-rendering the open tail, replacing the parser, or reconciling at
     # the pre-compaction offset must break the public response or exact tokens.
     output = tuple(tokenize_rendered("before after" + TOOL))
@@ -91,7 +97,11 @@ def test_reserve_compaction_continues_same_response(early_close: bool, monkeypat
                     summaries.append(event)
 
             session.on_event(record_event, kinds={"Synced", "SummaryToken"})
-            async with model.request_stream(messages, None, ModelRequestParameters()) as stream:
+            history = deepcopy(messages) if canonical_context else messages
+            run_context = RunContext(deps=None, model=model, usage=RunUsage(), messages=history)
+            async with model.request_stream(
+                messages, None, ModelRequestParameters(), run_context if canonical_context else None
+            ) as stream:
                 metadata = stream.get().metadata
                 assert metadata is not None
                 original_key = metadata["ds4.key"]
@@ -110,6 +120,13 @@ def test_reserve_compaction_continues_same_response(early_close: bool, monkeypat
                         break
                 response = stream.get()
 
+            assert isinstance(history[0], ModelRequest)
+            summary_part = history[0].parts[-1]
+            assert isinstance(summary_part, UserPromptPart) and summary_part.content == "durable state"
+            if canonical_context:
+                assert isinstance(messages[0], ModelRequest)
+                original_part = messages[0].parts[0]
+                assert isinstance(original_part, UserPromptPart) and original_part.content == "x" * 4000
             assert len(committed) == 1
             assert pull_locked == [False]
             assert original_key not in bound_keys[0]

@@ -375,7 +375,9 @@ class AgentRuntime:
                     run_id=run_id,
                     usage_limits=UsageLimits(request_limit=self._request_limit),
                     capabilities=[
-                        StepPersistence(store=holder.current),
+                        # Stash the current canonical list before the first
+                        # request, including reserve commits followed by errors.
+                        StepPersistence(store=holder.current, capture_frontier=True),
                         _ModelStepTrace(self._session),
                     ],
                 )

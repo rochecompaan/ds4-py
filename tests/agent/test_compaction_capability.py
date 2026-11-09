@@ -208,7 +208,7 @@ def test_make_room_checks_actual_freed_tokens(needed: int, want: bool) -> None:
 
 def test_tool_overflow_adds_summary_usage_once() -> None:
     async def run(generated: int) -> int:
-        binder = StubBinder([90, 100], transcript_tokens=90, ctx=100)
+        binder = StubBinder([90, 100, 99], transcript_tokens=90, ctx=100)
         owner = RecordingOwner(binder, room=RoomResult(True, generated))
         result = await _tool_agent(owner, "large").run("go")
         return result.usage.output_tokens

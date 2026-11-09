@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Literal, override
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, ToolReturn, ToolReturnPart
 
+from ds4py.errors import ContextExhausted
+
 if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage, ToolCallPart
     from pydantic_ai.models import ModelRequestContext
@@ -63,7 +65,41 @@ class ContextStrategy(AbstractCapability, ABC):
     ) -> ModelRequestContext:
         """Keep keyed canonical boundaries instead of the harness's merged view."""
         request_context.messages = ctx.messages
+        await self._fit_pending_results(ctx)
         return request_context
+
+    async def _fit_pending_results(self, ctx: RunContext[object]) -> None:
+        """Check the complete grouped request before it can enter the transcript."""
+        if not ctx.messages or not isinstance(pending := ctx.messages[-1], ModelRequest):
+            return
+        results: list[ToolReturnPart] = [part for part in pending.parts if isinstance(part, ToolReturnPart)]
+        if not results:
+            return
+        size = self.binder.session.engine.config.ctx
+
+        def needed() -> int:
+            return self.binder.count_tokens(ctx.messages, preserve_bound=True) + _RESERVE - size
+
+        overflow = needed()
+        if overflow <= 0:
+            return
+        room = await self.make_room(ctx.messages, ContextRequest(overflow, "tool_result"))
+        ctx.usage.output_tokens += room.generated_tokens
+        # Compaction may replace the message objects, so select from live history.
+        pending = ctx.messages[-1]
+        results = [part for part in pending.parts if isinstance(part, ToolReturnPart)]
+        for part in reversed(results):
+            if needed() <= 0:
+                return
+            part.content = TOOL_RESULT_DOES_NOT_FIT
+        if needed() > 0:
+            raise ContextExhausted("pending tool errors do not fit the context")
+
+    def reserve_messages(
+        self, request_messages: list[ModelMessage], run_context: RunContext[object] | None
+    ) -> list[ModelMessage]:
+        """Custom/view-only owners recover within the actual model request view."""
+        return request_messages
 
     def _tool_return_message(self, call: ToolCallPart, result: object) -> ModelRequest:
         content = result.return_value if isinstance(result, ToolReturn) else result
