@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
     from ds4py.capabilities.context import ContextStrategy
     from ds4py.capabilities.system_notes import DS4SystemNotes
+    from ds4py.engine.lifecycle import SessionEvent
     from ds4py.engine.session import Session
 
 _END = sentinel("_END")
@@ -272,6 +273,7 @@ class DS4StreamedResponse(StreamedResponse):
         self._round_start = len(self._session.transcript)
         self._sampled_start: int | None = None
         self._prefilled = 0
+        self._cached = 0
         self._output_tokens = 0
         self._summary_tokens = 0
         self._tool_index = 0
@@ -328,6 +330,7 @@ class DS4StreamedResponse(StreamedResponse):
             return
         self._usage = RequestUsage(
             input_tokens=self._prefilled,
+            cache_read_tokens=self._cached,
             output_tokens=self._output_tokens + self._summary_tokens,
             details={"prefill_tokens": self._prefilled},
         )
@@ -405,6 +408,7 @@ class DS4StreamedResponse(StreamedResponse):
             # A reserve-resumed round may sync again; that later sync reports
             # only the work it did, so total prefill is the sum of all syncs.
             self._prefilled += event.prefilled
+            self._cached += event.plan.reused
         elif isinstance(event, Stopped):
             self._stopped(event.reason)
         elif isinstance(event, Interrupted):
@@ -547,7 +551,26 @@ class DS4StreamedResponse(StreamedResponse):
         if owner is None:
             event.fail()
             raise ContextExhausted(self._context_exhausted_message(event.needed))
-        room = await owner.make_room(self._messages, ContextRequest(event.needed, "reserve"))
+
+        def synced(notification: SessionEvent) -> None:
+            sync = notification.payload.get("event")
+            if isinstance(sync, Synced):
+                self._dispatch(sync)
+
+        # Replacement syncs are ordered native work, but are not yielded by the
+        # suspended round. Observe only this owner's work to avoid double counts.
+        unsubscribe = self._session.on_event(synced, kinds={"Synced"})
+        try:
+            room = await owner.make_room(self._messages, ContextRequest(event.needed, "reserve"))
+        except BaseException:
+            event.fail()
+            raise
+        finally:
+            unsubscribe()
+            # The verbatim open tail may have moved, including on an owner
+            # failure after commit. Summary output never belongs in this cutoff.
+            if self._sampled_start is not None:
+                self._sampled_start = len(self._session.transcript) - self._output_tokens
         self._summary_tokens += room.generated_tokens
         if not room.made_room:
             event.fail()

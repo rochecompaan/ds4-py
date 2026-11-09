@@ -86,19 +86,6 @@ def plan_tail(binder: MessageBinder, messages: Sequence[ModelMessage]) -> Compac
     # Unrendered pending requests are always retained.
     cut = min(cut, positions[records[-1].key] + 1) if records else 0
     cut = _exchange_start(snapshot, cut)
-    starts = {record.key: record.start for record in records}
-    bottom = next(
-        (
-            starts[key]
-            for message in snapshot[cut:]
-            if isinstance(key := (message.metadata or {}).get("ds4.key"), str) and key in starts
-        ),
-        len(tokens),
-    )
-    # Include notes immediately preceding the retained message, not a fragment.
-    for segment in reversed(segments):
-        if segment.end == bottom and segment.kind == "note":
-            bottom = segment.start
     end = records[-1].end if records else system_end
     open_start = next(
         (
@@ -108,6 +95,19 @@ def plan_tail(binder: MessageBinder, messages: Sequence[ModelMessage]) -> Compac
         ),
         None,
     )
+    starts = {record.key: record.start for record in records}
+    bottom = next(
+        (
+            starts[key]
+            for message in snapshot[cut:]
+            if isinstance(key := (message.metadata or {}).get("ds4.key"), str) and key in starts
+        ),
+        open_start if open_start is not None else len(tokens),
+    )
+    # Include notes immediately preceding the retained message, not a fragment.
+    for segment in reversed(segments):
+        if segment.end == bottom and segment.kind == "note":
+            bottom = segment.start
     return CompactionTail(
         snapshot[cut:],
         bottom,

@@ -13,11 +13,13 @@ from ds4py.engine.events import (
     Prefill,
     ReserveReached,
     Stopped,
+    SummaryToken,
     Synced,
     Thinking,
     Token,
     ToolSyntax,
 )
+from ds4py.engine.transcript import Segment, TranscriptReplacement
 from ds4py.errors import EngineError
 
 DSML = (
@@ -203,3 +205,67 @@ def test_closing_a_paused_round_drains_and_preserves_worker_ownership() -> None:
         assert [segment.kind for segment in session.transcript.segments].count("eos") == 1
         session.append_user("next")
         assert list(session.run_round(max_tokens=0))[-1] == Stopped("max_tokens")
+
+
+def test_replacement_is_allowed_only_at_the_exact_reserve_boundary() -> None:
+    with chat_session(98) as session:
+        round_ = session.run_round()
+        try:
+            next(round_)
+            replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
+            with pytest.raises(EngineError, match="round is open"):
+                session.replace_transcript(replacement, reason="compaction")
+            pause = next_pause(round_, [])
+            make_room(session)
+            replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
+            session.replace_transcript(replacement, reason="compaction")
+            assert session._active_round and session._reserve_boundary
+            pause.resume(1)
+            next(round_)
+            with pytest.raises(EngineError, match="round is open"):
+                session.replace_transcript(replacement, reason="compaction")
+            assert list(round_)[-1] == Stopped("stop_token")
+        finally:
+            round_.close()
+        assert not session._active_round and not session._reserve_boundary
+        replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
+        session.replace_transcript(replacement, reason="compaction")
+
+
+def test_summary_ownership_blocks_replacement_even_if_outer_round_closes() -> None:
+    with chat_session(98, 98) as session:
+        outer = session.run_round()
+        next_pause(outer, [])
+        make_room(session, 4096)
+        rejected = []
+
+        def replace_during_summary(event: object) -> None:
+            replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
+            with pytest.raises(EngineError, match="round is open"):
+                session.replace_transcript(replacement, reason="compaction")
+            outer.close()
+            with pytest.raises(EngineError, match="round is open"):
+                session.replace_transcript(replacement, reason="compaction")
+            rejected.append(True)
+
+        session.on_event(replace_during_summary, kinds={SummaryToken.__name__})
+        assert session.prepare_summary(0).summary == "a"
+        assert rejected == [True]
+        assert not session._active_round and not session._reserve_boundary
+        replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
+        session.replace_transcript(replacement, reason="compaction")
+
+
+def test_reserve_replacement_drops_checkpoints_beyond_the_new_end() -> None:
+    with chat_session(98) as session:
+        session.checkpoint("history")
+        outer = session.run_round()
+        try:
+            next_pause(outer, [])
+            replacement = TranscriptReplacement(session.transcript.tokens[:100], (Segment(0, 100, "system", {}),))
+            session.replace_transcript(replacement, reason="compaction")
+            assert "history" not in session._checkpoint_tokens
+            assert session.transcript.tokens == replacement.tokens
+            assert session._active_round and session._reserve_boundary
+        finally:
+            outer.close()

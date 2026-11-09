@@ -413,7 +413,7 @@ class Session:
             self._transcript.install(segments)
 
     def replace_transcript(self, replacement: TranscriptReplacement, *, reason: str) -> Plan:
-        """Replace the whole transcript between rounds through the engine worker.
+        """Replace history between rounds or at the explicit reserve decision.
 
         Segments must cover the tokens without gaps or overlap, so invalid input
         changes neither native state nor history. The worker restores the longest
@@ -422,12 +422,15 @@ class Session:
         a paused round are discarded.
         """
         with self._lock:
-            self._require_idle()
+            self._require_open()
+            if self._summary_active or (self._active_round and not self._reserve_boundary):
+                raise EngineError("a round is open")
             plan = rebind.replace_transcript(self, replacement, reason=reason)
             self._transcript.replace(replacement.tokens, replacement.segments)
             for key, length in tuple(self._checkpoint_tokens.items()):
                 if length > len(replacement.tokens):
-                    self.drop_checkpoint(key)
+                    list(self._job_events(CheckpointJob(key, drop=True)))
+                    self._checkpoint_tokens.pop(key, None)
             self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
             return plan
 
