@@ -19,6 +19,7 @@ from ds4py.errors import EngineError
 
 from . import chat as chat_ops
 from . import rebind
+from .compaction import SUMMARY_PROMPT, SummaryJob, SummaryResult
 from .decode import DecodeStep, GenerateJob
 from .events import (
     Checkpointed,
@@ -187,6 +188,7 @@ class Session:
         self._rng = Rng(engine.sampling_defaults.seed)
         self._lock = threading.RLock()
         self._active_round = False
+        self._reserve_boundary = False
         self._decode_step: DecodeStep | None = None
         self._logits_hooks: list[Callable[[LogitsView], None]] = []
         self._paused_stream: RoundStream | None = None
@@ -428,6 +430,33 @@ class Session:
             self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
             return plan
 
+    def prepare_summary(self, bottom: int) -> SummaryResult:
+        """Summarize only the caller's token prefix without changing live history.
+
+        Runs between rounds (including reserve-paused continuations). Private
+        output emits SummaryToken, never response Token/TextDelta events.
+        """
+        with self._lock:
+            self._require_open()
+            if self._active_round and not self._reserve_boundary:
+                raise EngineError("a round is open")
+            bottom = operator.index(bottom)
+            if not 0 <= bottom <= len(self._transcript):
+                raise ValueError("summary position is outside the transcript")
+            active, boundary = self._active_round, self._reserve_boundary
+            self._active_round, self._reserve_boundary = True, False
+        try:
+            tokens = list(self._transcript.tokens[:bottom])
+            tokens.extend(PromptBuilder(self._engine).message(tokens, "user", SUMMARY_PROMPT))
+            tokens.extend(self._engine._assistant_prefix(tokens, ThinkMode.NONE))
+            job = SummaryJob(tuple(tokens))
+            for _ in self._job_events(job):
+                pass
+            return job.result.result()
+        finally:
+            with self._lock:
+                self._active_round, self._reserve_boundary = active, boundary
+
     def reconcile_round(self, token_count: int) -> None:
         """Rewind native state and transcript to one closed round's sampled end.
 
@@ -512,8 +541,12 @@ class Session:
             ),
             on_fail=lambda: decision.update(action="fail"),
         )
-        self._publish(pause)
-        yield pause
+        self._reserve_boundary = True
+        try:
+            self._publish(pause)
+            yield pause
+        finally:
+            self._reserve_boundary = False
         if not decision:
             raise EngineError("reserve pause requires a decision before advancing")
         if decision["action"] == "fail":

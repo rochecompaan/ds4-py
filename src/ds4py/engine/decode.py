@@ -169,6 +169,10 @@ class DecodeContext:
             return self._engine.is_stop(token)
         return self._engine.is_stop_for_think_mode(token, self._job.think_mode)
 
+    def sample(self, session: SessionHandle) -> int:
+        policy = self.sampling()
+        return session.sample(policy.temperature, policy.top_k, policy.top_p, policy.min_p, self.rng)
+
     def sampling(self) -> SamplingPolicy:
         policy = self._job.sampling
         overlay = self._overlay
@@ -328,14 +332,23 @@ class DecodeStep(Protocol):
     def run(self, session: SessionHandle, ctx: DecodeContext) -> None: ...
 
 
+class PlainDecodeContext(Protocol):
+    """Acceptance policy used by the shared single-token decode loop."""
+
+    def cancelled(self) -> bool: ...
+    def before_sample(self) -> None: ...
+    def sample(self, session: SessionHandle) -> int: ...
+    def accept(self, token: int) -> Verdict: ...
+    def commit(self, token: int) -> Verdict: ...
+
+
 class PlainStep:
     hooks_every_sample = True
 
-    def run(self, session: SessionHandle, ctx: DecodeContext) -> None:
+    def run(self, session: SessionHandle, ctx: PlainDecodeContext) -> None:
         while not ctx.cancelled():
             ctx.before_sample()
-            p = ctx.sampling()
-            token = session.sample(p.temperature, p.top_k, p.top_p, p.min_p, ctx.rng)
+            token = ctx.sample(session)
             if token < 0:
                 raise EngineError("cannot sample: the session state is not valid; sync first")
             verdict = ctx.accept(token)
