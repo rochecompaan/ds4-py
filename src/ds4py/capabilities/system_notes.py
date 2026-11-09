@@ -162,6 +162,9 @@ class DS4SystemNotes(AbstractCapability):
     def restore_from_segments(self, segments: Sequence[object]) -> None:
         """Restore date/hints state from saved transcript segments."""
         self.sync_from_segments(segments)
+        # A saved history has already started, even if compaction removed its
+        # original date note. Loading it must not invent a new session start.
+        self._date_emitted = bool(segments)
         for segment in segments:
             subtype = self._segment_subtype(segment)
             if subtype in ("hints_full", "hints_on"):

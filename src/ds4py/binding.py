@@ -175,13 +175,14 @@ class MessageBinder:
     def adopt(self, messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         """Reconcile bound content by message key without truncating harness history.
 
+        Recover exact merged request boundaries first, just as for model input.
         The incoming sequence is authoritative: it may contain history omitted
         from the model's request view. A candidate with the same stable key can
         inherit its bound counterpart's content (for example, a partial response
         that the harness later completed). An unkeyed processed copy can recover
         its key only from a unique match that differs at most by request instructions.
         """
-        candidates = list(messages)
+        candidates = self.canonicalize(list(messages))
         _validate(candidates)
         bound = {record.key: index for index, record in enumerate(self._records)}
         recoverable: dict[str, list[int]] = {}
