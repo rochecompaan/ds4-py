@@ -174,10 +174,10 @@ class TUI:
             if prompt_task in done:
                 try:
                     line = self._take_prompt(prompt_task)
-                    if self._answering:
-                        self._answers.put_nowait(line)
-                    elif line.strip().split(maxsplit=1)[:1] == ["/compact"]:
+                    if line.strip().split(maxsplit=1)[:1] == ["/compact"]:
                         await self.dispatch(line)
+                    elif self._answering:
+                        self._answers.put_nowait(line)
                     else:
                         self._queued.append(line)
                 except EOFError:

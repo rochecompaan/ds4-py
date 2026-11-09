@@ -18,6 +18,7 @@ from test_tui_commands import FakeRuntime, make_tui
 
 from ds4py.engine.events import Prefill
 from ds4py.engine.lifecycle import SessionEvent
+from ds4py.errors import EngineError
 from ds4py.tui import TUI
 from ds4py.tui_render import FooterModel, StreamRenderer, markdown_fragments
 
@@ -90,6 +91,70 @@ def test_model_question_uses_active_prompt_and_returns_typed_answer() -> None:
     assert isinstance(runtime.response, AskUserResponse)
     assert runtime.response.answers[0].selected == ("two",)
     assert runtime.calls == [("run", "ask")]
+
+
+def test_compact_reports_busy_without_consuming_a_pending_question_answer() -> None:
+    from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse, Question, QuestionOption
+
+    async def scenario() -> None:
+        question_pending = asyncio.Event()
+        feedback_received = asyncio.Event()
+        question_done = asyncio.Event()
+        responses: list[AskUserResponse] = []
+        runtime = FakeRuntime()
+        request = AskUserRequest(
+            questions=(
+                Question(
+                    header="next",
+                    question="What next?",
+                    options=(QuestionOption(label="one"), QuestionOption(label="two")),
+                ),
+            )
+        )
+        with create_pipe_input() as input_:
+            tui = TUI(cast("Any", runtime), input=input_, output=DummyOutput())
+            messages: list[str] = []
+
+            def show(text: object) -> None:
+                messages.append(str(text))
+                if str(text).startswith(("error:", "Invalid choice")):
+                    feedback_received.set()
+
+            async def ask_during_run(prompt: str) -> None:
+                runtime.calls.append(("run", prompt))
+                question_pending.set()
+                responses.append(await tui.ask(request))
+                question_done.set()
+
+            async def compact() -> None:
+                runtime.calls.append(("compact",))
+                raise EngineError("a run is already active")
+
+            cast("Any", runtime).run = ask_during_run
+            cast("Any", runtime).compact = compact
+            cast("Any", tui).show_message = show
+            task = asyncio.create_task(tui.run("ask"))
+            try:
+                await asyncio.wait_for(question_pending.wait(), 2)
+                messages.clear()
+                input_.send_text("/compact\n")
+                await asyncio.wait_for(feedback_received.wait(), 2)
+                assert messages == ["error: a run is already active"]
+                assert runtime.calls == [("run", "ask"), ("compact",)]
+                assert not question_done.is_set()
+                assert responses == []
+                assert tui.footer.status != "compacting"
+                input_.send_text("1\n")
+                await asyncio.wait_for(question_done.wait(), 2)
+                assert responses[0].answers[0].selected == ("one",)
+                assert not responses[0].cancelled
+            finally:
+                if not question_done.is_set():
+                    input_.send_text("1\n")
+                input_.send_text("/exit\n")
+                await asyncio.wait_for(task, 2)
+
+    asyncio.run(scenario())
 
 
 def test_prompt_loop_can_run_an_initial_prompt_inside_the_event_loop() -> None:
