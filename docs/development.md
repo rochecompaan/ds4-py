@@ -70,6 +70,101 @@ unzip -l dist/*.whl
 actionlint .github/workflows/ci.yml
 ```
 
+## Context compaction
+
+The default agent registers `LLMCompaction` as its automatic context owner.
+Before a model request, it checks the bound transcript against the configured
+context size. The default soft trigger is 85 percent (`used >= int(ctx * 0.85)`).
+It also triggers when free space is no greater than the larger of
+`min(8192, ctx // 8)` and `summary_reserve() + 128`. The summary reserve includes
+the rendered private summary suffix, 64 safety tokens, and a summary budget of
+`max(256, min(ctx // 8, 4096))` tokens.
+
+The same owner receives oversized tool-result hooks and response-reserve
+requests. When a response reaches its reserve boundary, generation pauses,
+compaction attempts to make room, and generation resumes in the same
+`ModelResponse`. Already delivered response text is not emitted again. Summary
+tokens count once as output usage for automatic compaction, but never become
+response text. If a tool result still does not fit, the owner returns a tool
+error instead of inserting that oversized result. If reserve recovery cannot
+make room, the response fails with `ContextExhausted`.
+
+### Manual compaction and custom owners
+
+In the interactive shell, `/compact` takes no arguments. It reports the token
+change on success or `Nothing to compact` when there is no removable history.
+It is rejected while a run is active, including while an interactive tool is
+waiting for an answer; it neither queues compaction nor treats the command as
+the answer. The programmatic entry point is `await runtime.compact()`, with the
+same idle-only restriction.
+
+`ContextComposition(owner=custom_strategy)` replaces the default automatic
+owner with a `ContextStrategy` capability. Exactly one automatic owner is
+registered: the selected capability receives the tool-overflow and
+response-reserve hooks as well as model-request hooks. The selection survives
+`/new` and `/switch`.
+
+`runtime.components.compactor` remains a concrete `LLMCompaction` manual
+service, even when a custom automatic owner is selected. Its
+`compact_messages(messages, reason="manual")` method operates on the supplied
+history in place. The runtime's manual entry point uses this service, not the
+custom owner. Replacing the automatic owner does not register a second
+automatic compactor. Use the runtime entry point for its active-run guard.
+
+### History replacement and persistence
+
+Summary generation uses the session's model with thinking disabled and greedy,
+tool-masked decoding. The engine receives only the selected token prefix; the
+capability selects the message tail. The tail budget is
+`max(1, min(ctx // 10, 50_000))` tokens, adjusted to whole messages and complete
+tool exchanges. Retained token IDs are copied from the transcript, not
+reconstructed from message text, including an open response tail during reserve
+recovery.
+
+Compaction replaces the live canonical message list in place with one summary
+request followed by the retained messages. It preserves system instructions,
+assigns a fresh `ds4.key` to the summary request, and preserves the retained
+messages' stable keys and token provenance. The native transcript becomes the
+system prefix, rendered summary request, and verbatim retained tail. It is not
+an extra summary appended to otherwise unchanged history.
+
+The commit prepares message provenance first, performs native replacement as
+the only fallible mutation, then installs the prepared binder and message
+state. A failed native replacement leaves the previous history and transcript
+intact; there is no rollback protocol. Summary preparation restores the
+borrowed native state before replacement. A native restoration failure is
+surfaced and poisons the worker rather than continuing with private summary
+state.
+
+Saving writes the compacted current history and matching native payload.
+Switch and fork preserve its keys and provenance. Existing step snapshots
+retain the removed messages, so compaction is not a deletion or redaction of
+older run records. Save-record v1 and old step snapshot formats are unchanged.
+An exact compatible native KV payload is reused with no restore prefill; the
+next request extends the loaded state. With an absent, stripped, or
+incompatible payload, the compacted messages are rendered again and the next
+request performs a rebuild prefill.
+
+### Verification limits
+
+Portable agent, engine, persistence, and conformance tests use synthetic native
+contracts, including FakeNative. They do not establish native inference or live
+replay parity; full native inference and live replay parity remain deferred.
+The live setup below describes how to collect that separate evidence, not a
+completed compaction parity result.
+
+Two scope gaps remain:
+
+- There is no command-level `/strip`. Existing payload removal and restore
+  paths cover the equivalent stripped-payload behavior in portable tests.
+- C's second nearly-full restored-context `summary_bottom` cutoff and its
+  retained-unsummarized-token path are not implemented. When no history can
+  safely be removed, compaction is a no-op; when summary generation cannot fit,
+  it fails with prior state preserved instead of implementing that C fallback.
+
+The trigger rules and covered continuation behavior do not imply complete C
+parity. Other deferred milestone work is not made complete by compaction.
+
 ## Choose a backend
 
 The backend is the compute implementation that runs model inference.

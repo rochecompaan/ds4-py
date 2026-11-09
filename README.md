@@ -49,6 +49,31 @@ uv run --extra agent ds4py \
 Read [the agent guide](docs/agent.md) for workspace access, sessions, restore
 paths, and storage.
 
+### Compact context
+
+The default agent uses `LLMCompaction` to summarize older history automatically
+at 85 percent context use, or earlier to reserve room for a summary. It also
+attempts recovery when a tool result or an in-progress response needs room.
+Reserve recovery continues the same model response without repeating output.
+
+Use `/compact` with no arguments to compact manually while idle. The command
+is rejected during an active run, including while a tool is waiting for an
+answer. Manual compaction remains available with a custom automatic context
+owner.
+
+Compaction replaces the current stored history with a summary and a verbatim
+recent tail, preserving retained message keys and token provenance. Saving
+persists that compacted history; older step snapshots still contain removed
+history. A valid native KV payload restores without prefill. Save-record v1
+and old step snapshot formats are unchanged.
+
+See [the development guide](docs/development.md#context-compaction) for owner
+composition, persistence, and limits. Full native inference and live replay
+parity remain deferred. There is no `/strip` command, and C's second
+nearly-full restored-context `summary_bottom` cutoff and retained-unsummarized-token
+path are not implemented; these cases instead use a safe no-op or fail with
+state preserved. This is not complete C parity.
+
 ## Acceptance
 
 Read [the agent bake-off guide](bench/README.md) for the fixed inputs, machine
