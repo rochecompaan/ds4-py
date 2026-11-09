@@ -17,6 +17,7 @@ import ds4py
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
+from ds4py.binding import MessageBinder
 from ds4py.capabilities.context import ContextRequest, ContextStrategy, RoomResult
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.sampling import SamplingPolicy
@@ -79,9 +80,16 @@ class RecordingOwner(ContextStrategy):
         return self.room
 
 
-def fake_engine(*, script: Any = None) -> Engine:
-    native = FakeNative(script=script) if script is not None else FakeNative()
-    native._info = replace(native._info, name="fake-ds4")
+def fake_engine(*, family: str = "deepseek4", script: Any = None) -> Engine:
+    info = replace(
+        FakeNative()._info,
+        name="fake-ds4",
+        family=family,
+        is_deepseek41=family == "deepseek41",
+        is_glm_dsa=family == "glm",
+        is_qwen4=family == "qwen",
+    )
+    native = FakeNative(info=info, script=script) if script is not None else FakeNative(info=info)
     return ds4py.open("f.gguf", ctx=8192, think=ThinkMode.NONE, native=native)
 
 
@@ -106,6 +114,24 @@ def sequential_text(text: str) -> Any:
         token = tokens[index] if index < len(tokens) else FAKE_EOS
         index += 1
         return token
+
+    return script
+
+
+BIG_TOOL_RESULT = "z" * 20_000
+TOOL_CALL_RAW = "<tool_call>\n<function=read_big>\n<parameter=path>\n/tmp/x\n</parameter>\n</function>\n</tool_call>"
+
+
+def tool_then_answer(tool_call: str, answer: str) -> Any:
+    rounds = (tuple(tokenize_rendered(tool_call)), tuple(tokenize_rendered(answer)))
+    state = {"round": 0}
+
+    def script(prompt: Any, generated: Any) -> Any:
+        tokens = rounds[min(state["round"], len(rounds) - 1)]
+        if len(generated) < len(tokens):
+            return tokens[len(generated)]
+        state["round"] += 1
+        return FAKE_EOS
 
     return script
 
@@ -168,6 +194,59 @@ def test_failed_tool_room_returns_the_still_does_not_fit_error() -> None:
 
     assert owner.requests == [ContextRequest(1, "tool_result")]
     assert _tool_return(result).content == TOOL_ERROR
+
+
+def test_tool_fit_check_uses_the_live_prompt_and_rendered_delta() -> None:
+    """The fit base is the live transcript, not a scratch render of the request list."""
+
+    async def scenario() -> tuple[RecordingOwner, int, int, list[ModelMessage], Any]:
+        with fake_engine(family="qwen", script=tool_then_answer(TOOL_CALL_RAW, "done")) as engine:
+            session = engine.session()
+            model = make_model(session)
+            prompts: list[int] = []
+            snapshots: list[list[ModelMessage]] = []
+
+            async def on_room(messages: list[ModelMessage], _request: ContextRequest) -> None:
+                prompts.append(len(session.transcript))
+                snapshots.append(list(messages))
+
+            owner = RecordingOwner(model.binder, room=RoomResult(made_room=False), on_room=on_room)
+            model.context_owner = owner
+            agent: Agent[Any, str] = Agent(model, capabilities=[owner])
+
+            @agent.tool_plain
+            def read_big(path: str) -> str:
+                return BIG_TOOL_RESULT
+
+            result = await agent.run("go")
+
+            assert result.output == "done"
+            assert len(prompts) == 1
+            return owner, prompts[0], engine.config.ctx, snapshots[0], result
+
+    owner, base, ctx, messages, result = asyncio.run(scenario())
+    call = next(
+        part
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    )
+    candidate = ModelRequest([ToolReturnPart(call.tool_name, BIG_TOOL_RESULT, tool_call_id=call.tool_call_id)])
+    with fake_engine(family="qwen") as oracle:
+        oracle_session = oracle.session()
+        scratch = MessageBinder(oracle_session)
+        scratch.prepare(messages)
+        before = len(oracle_session.transcript)
+        scratch.prepare([*messages, candidate])
+        rendered = len(oracle_session.transcript) - before
+
+    assert _tool_return(result).content == TOOL_ERROR
+    # Hand-checked counts: live prompt 545, wrong scratch base 358, rendered tool
+    # message 20038, and a 8192 context, so the required room is 545+20038+1-8192.
+    assert (base, before, rendered, ctx) == (545, 358, 20038, 8192)
+    assert owner.requests == [ContextRequest(base + rendered + 1 - ctx, "tool_result")]
+    assert owner.requests[0].needed_tokens == 12392
 
 
 def test_reserve_without_owner_raises_context_exhausted() -> None:
