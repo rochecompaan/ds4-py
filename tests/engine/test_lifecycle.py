@@ -275,9 +275,12 @@ def test_new_propagates_an_unrelated_native_sync_error_without_starting_a_sessio
         assert session.engine._worker is worker
         # The failed reset must not mutate checkpoint ownership: both mappings
         # and the native snapshot survive, so checkpoint operations still work.
-        assert facade_checkpoints == {"turn": checkpointed.tokens}
+        assert facade_checkpoints.keys() == {"system", "turn"}
+        assert facade_checkpoints["turn"] == checkpointed.tokens
+        assert facade_checkpoints["system"] < checkpointed.tokens
         assert session._checkpoint_tokens == facade_checkpoints
-        assert session.engine._worker._checkpoints == {"turn": (native_tokens, snapshot)}
+        assert session.engine._worker._checkpoints.keys() == {"system", "turn"}
+        assert session.engine._worker._checkpoints["turn"] == (native_tokens, snapshot)
         assert not snapshot.closed
         # The worker owns a still-usable session after the failed reset.
         session.append_user("after")
@@ -286,8 +289,8 @@ def test_new_propagates_an_unrelated_native_sync_error_without_starting_a_sessio
         assert session.plan().kind == "restore" and session.plan().checkpoint == "turn"
         session.drop_checkpoint("turn")
         assert snapshot.closed
-        assert session._checkpoint_tokens == {}
-        assert session.engine._worker._checkpoints == {}
+        assert session._checkpoint_tokens.keys() == {"system"}
+        assert session.engine._worker._checkpoints.keys() == {"system"}
 
 
 def test_switch_publishes_exact_order_and_runs_restore_while_idle() -> None:

@@ -18,6 +18,7 @@ from ds4py._native.protocol import EngineConfig, Native, ThinkMode
 from ds4py.errors import EngineError
 
 from . import chat as chat_ops
+from . import rebind
 from .decode import DecodeStep, GenerateJob
 from .events import (
     Checkpointed,
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
     from .tool_prompt import ToolDefinition
 from .prompt import PromptBuilder
 from .sampling import Rng, SamplingPolicy
-from .transcript import Segment, Transcript, TranscriptView
+from .transcript import Segment, Transcript, TranscriptReplacement, TranscriptView
 from .worker import (
     CheckpointJob,
     EngineWorker,
@@ -397,6 +398,21 @@ class Session:
                     self.drop_checkpoint(key)
             self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
             self._transcript.truncate(token_count)
+
+    def replace_transcript(self, replacement: TranscriptReplacement, *, reason: str) -> Plan:
+        """Replace the whole transcript between rounds through the engine worker.
+
+        Segments must cover the tokens without gaps or overlap, so invalid input
+        changes neither native state nor history. The worker restores the longest
+        valid checkpoint or rebuilds from token zero; only a completed sync
+        commits the new tokens and provenance. A paused round is discarded.
+        """
+        with self._lock:
+            self._require_idle()
+            plan = rebind.replace_transcript(self, replacement, reason=reason)
+            self._transcript.replace(replacement.tokens, replacement.segments)
+            self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
+            return plan
 
     def reconcile_round(self, token_count: int) -> None:
         """Rewind native state and transcript to one closed round's sampled end.

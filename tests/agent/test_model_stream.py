@@ -234,6 +234,7 @@ def test_session_bus_listeners_stay_on_the_asyncio_thread() -> None:
             assert [kind for kind, _ in delivered] == [
                 "run_start",
                 "Synced",
+                "Synced",
                 "Token",
                 "Token",
                 "Token",

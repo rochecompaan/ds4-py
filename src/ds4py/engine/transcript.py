@@ -29,6 +29,14 @@ class Segment:
     meta: Mapping[str, object]
 
 
+@dataclass(frozen=True)
+class TranscriptReplacement:
+    """Validated tokens and provenance that replace a chat transcript."""
+
+    tokens: tuple[int, ...]
+    segments: tuple[Segment, ...]
+
+
 class TranscriptView:
     """Live, read-only observations of session-owned history."""
 
@@ -121,6 +129,13 @@ class Transcript:
                 else segment
                 for segment in self._segments
             ]
+
+    def replace(self, tokens: Sequence[int], segments: Sequence[Segment]) -> None:
+        """Atomically replace all tokens and provenance with a validated chat history."""
+        with self._lock:
+            self._tokens = list(tokens)
+            self._segments = list(segments)
+            self._chat = True
 
     def install(self, segments: Sequence[Segment]) -> None:
         """Replace provenance over tokens a native payload already established.

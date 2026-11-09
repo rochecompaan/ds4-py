@@ -5,10 +5,11 @@ from typing import TYPE_CHECKING, cast
 from ds4py.errors import EngineError
 
 from .decode import GenerateJob
+from .events import Interrupted
 from .pause import resolve_control
 from .prompt import PromptBuilder
 from .stream import RoundStream
-from .worker import SyncJob
+from .worker import SYSTEM, SyncJob
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable, Mapping, Sequence
@@ -37,11 +38,21 @@ def start_chat(
     tools: Iterable[ToolDefinition] = (),
     instructions: str | None = None,
 ) -> None:
+    """Render the system prefix, sync only it, and hold the ``system`` checkpoint.
+
+    User tokens therefore enter the native session after the checkpoint exists,
+    so a later rewrite restores the system prefix instead of rebuilding it.
+    """
     if session._transcript.chat:
         raise EngineError("chat is already initialized")
     segments = PromptBuilder(session._engine).begin(tools, instructions)
     for segment in segments:
         _append(session, segment.tokens, segment.kind)
+    tokens = session._transcript.tokens
+    if tokens:
+        if any(isinstance(event, Interrupted) for event in session._job_events(SyncJob(tokens))):
+            raise EngineError("chat start was interrupted")
+        session.checkpoint(SYSTEM)
     session._transcript.set_chat()
 
 

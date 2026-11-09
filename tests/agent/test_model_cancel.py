@@ -153,10 +153,13 @@ def test_cancel_during_prefill_leaves_transcript_intact(
 ) -> None:
     waiting, release = threading.Event(), threading.Event()
     original_sync = FakeSession.sync
+    syncs = []
 
     def blocking_sync(self: Any, tokens: Any, *, progress: Any = None, cancel: Any = None) -> Any:
-        waiting.set()
-        assert release.wait(5), "prefill release timed out"
+        syncs.append(len(tokens))
+        if len(syncs) == 2:  # The first sync commits the system prefix at chat setup.
+            waiting.set()
+            assert release.wait(5), "prefill release timed out"
         return original_sync(self, tokens, progress=progress, cancel=cancel)
 
     monkeypatch.setattr(FakeSession, "sync", blocking_sync)
@@ -171,6 +174,7 @@ def test_cancel_during_prefill_leaves_transcript_intact(
                 ModelRequestParameters(),
             ) as stream:
                 prompt = session.transcript.tokens
+                system_used = session.ctx_used
                 cancel = session._worker.cancel_event
                 pull = asyncio.create_task(cast("Any", anext(stream.__aiter__())))
                 await asyncio.wait_for(asyncio.to_thread(waiting.wait, 5), 10)
@@ -185,9 +189,9 @@ def test_cancel_during_prefill_leaves_transcript_intact(
             assert response.parts == []
             assert response.usage.output_tokens == 0
             assert session.transcript.tokens == prompt
-            # M2 keeps an interrupted prefill out of live KV; the next round
-            # restores it from the intact transcript.
-            assert session.ctx_used == 0
+            # The interrupted prefill keeps the committed system prefix; the
+            # next round extends it from the intact transcript.
+            assert session.ctx_used == system_used < len(prompt)
             assert not [call for call in native_calls(session) if call[0] == "eval"]
 
     asyncio.run(scenario())
@@ -330,6 +334,7 @@ def test_paused_round_can_resume_without_second_assistant_prefix() -> None:
                 ModelRequestParameters(),
             ) as stream:
                 prompt_length = len(session.transcript)
+                system_used = session.ctx_used
                 prefix = len(PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens))
                 session._worker.call(
                     lambda engine, native: setattr(native, "_ctx", prompt_length + prefix + 2)
@@ -345,7 +350,7 @@ def test_paused_round_can_resume_without_second_assistant_prefix() -> None:
             assert kinds == expected_kinds
             assert kinds.count("assistant_prefix") == 1
             assert kinds.count("assistant") == 1
-            expected_prefill = prompt_length + prefix
+            expected_prefill = prompt_length + prefix - system_used
             assert response.usage.input_tokens == expected_prefill
             assert response.usage.details == {"prefill_tokens": expected_prefill}
             assert response.usage.output_tokens == 3
@@ -433,7 +438,7 @@ def test_second_round_prefill_cancel_preserves_prior_provenance(
 
     def blocking_sync(self: Any, tokens: Any, *, progress: Any = None, cancel: Any = None) -> Any:
         syncs.append(len(tokens))
-        if len(syncs) == 2:
+        if len(syncs) == 3:  # Setup, first round, then the second round's prefill.
             waiting.set()
             assert release.wait(5), "prefill release timed out"
         return original_sync(self, tokens, progress=progress, cancel=cancel)

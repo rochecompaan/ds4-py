@@ -47,7 +47,6 @@ def test_text_and_tool_rounds_append_replayable_records(tmp_path: Path, monkeypa
                 synced = event.payload["event"]
                 observed.append((tuple(session.transcript.tokens), synced.plan.reused))
 
-        session.on_event(observe)
         monkeypatch.setattr(
             session,
             "append_tool_results",
@@ -55,6 +54,8 @@ def test_text_and_tool_rounds_append_replayable_records(tmp_path: Path, monkeypa
         )
         with PrefillTraceWriter(session, path, think=engine.think) as writer:
             session.start_chat()
+            # The system-only sync belongs to chat setup, not to a run round.
+            session.on_event(observe)
             session.emit("run_start", run_id="run-text")
             text_events = list(session.run_round())
             session.emit("run_end", run_id="run-text", status="success")

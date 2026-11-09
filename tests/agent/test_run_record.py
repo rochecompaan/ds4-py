@@ -45,9 +45,9 @@ def test_engine_events_are_one_flushed_json_line_each(tmp_path: Path) -> None:
     path = tmp_path / "events.jsonl"
     with fake_engine(script=scripted_text("ok")) as engine:
         session = engine.session()
+        session.start_chat()
         record = DS4RunRecord(session, path)
         asyncio.run(record.for_run(run_context(run_id="run-1")))
-        session.start_chat()
         session.emit("run_start")
         list(session.run_round())
         session.emit("run_end", status="success")
@@ -67,8 +67,8 @@ def test_engine_events_are_one_flushed_json_line_each(tmp_path: Path) -> None:
     assert "Synced" in kinds and "Token" in kinds
     synced = next(line for line in lines if line["kind"] == "Synced")
     event = synced["payload"]["event"]
-    assert event["plan"]["kind"] == "rebuild"
-    assert event["pos"] > 0 and event["prefilled"] == event["pos"]
+    assert event["plan"]["kind"] == "extend"
+    assert 0 < event["prefilled"] < event["pos"]
 
     tokens = [line["payload"]["event"] for line in lines if line["kind"] == "Token"]
     assert tokens

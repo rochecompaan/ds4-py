@@ -199,7 +199,11 @@ def test_count_tokens_does_not_mutate_or_sync() -> None:
         assert count == len(before) + len(user_delta) + len(prefix)
         assert session.transcript.tokens == before
         assert session.transcript.segments == before_segments
-        assert native_calls(session) == before_calls == []
+        # Preparing the chat synced only the system prefix; count_tokens itself
+        # adds no native work.
+        system_end = next(segment.start for segment in before_segments if segment.kind != "system")
+        assert before_calls == [("sync", system_end)]
+        assert native_calls(session) == before_calls
 
 
 def test_provenance_covers_every_token_and_marks_sampled_response() -> None:
