@@ -23,7 +23,8 @@ from ds4py.engine import decode as decode_module
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.session import Engine
-from ds4py.model import ContextReserveError, DS4Model, DS4StreamedResponse
+from ds4py.errors import ContextExhausted
+from ds4py.model import DS4Model, DS4StreamedResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "engine"))
 from fake_steps import FakeMultiTokenStep
@@ -258,7 +259,7 @@ def test_cancel_during_speculative_block_publishes_evaluated_prefix(
     asyncio.run(scenario())
 
 
-def test_context_reserve_default_fails_clearly_without_compaction() -> None:
+def test_context_reserve_without_owner_raises_context_exhausted() -> None:
     async def scenario() -> None:
         with fake_engine(script=scripted_text("abc")) as engine:
             session = engine.session()
@@ -273,89 +274,14 @@ def test_context_reserve_default_fails_clearly_without_compaction() -> None:
                 session._worker.call(
                     lambda engine, native: setattr(native, "_ctx", prompt_length + prefix + 2)
                 ).result()
-                with pytest.raises(ContextReserveError) as raised:
+                with pytest.raises(ContextExhausted):
                     async for _ in stream:
                         pass
                 response = cast("Any", stream).get()
 
-            message = str(raised.value)
-            assert "context reserve" in message
-            assert "compaction" in message and "M4" in message
             assert response.state == "incomplete"
             assert response_text(response) == "a"
             assert session.transcript.tokens == native_tokens(session)
-
-    asyncio.run(scenario())
-
-
-def sequential_text(text: Any) -> Any:
-    tokens = tuple(tokenize_rendered(text))
-    index = 0
-
-    def script(prompt: Any, generated: Any) -> Any:
-        nonlocal index
-        token = tokens[index] if index < len(tokens) else FAKE_EOS
-        index += 1
-        return token
-
-    return script
-
-
-def test_paused_round_can_resume_without_second_assistant_prefix() -> None:
-    async def baseline() -> Any:
-        with fake_engine(script=sequential_text("abc")) as engine:
-            session = engine.session()
-            model = make_model(session)
-            async with model.request_stream(
-                [user()],
-                None,
-                ModelRequestParameters(),
-            ) as stream:
-                async for _ in stream:
-                    pass
-                return session.transcript.tokens, [segment.kind for segment in session.transcript.segments]
-
-    expected_tokens, expected_kinds = asyncio.run(baseline())
-
-    async def scenario() -> None:
-        with fake_engine(script=sequential_text("abc")) as engine:
-            session = engine.session()
-            decisions = []
-
-            def make_room(needed: Any) -> int:
-                decisions.append(needed)
-                session._worker.call(lambda engine, native: setattr(native, "_ctx", 4096)).result()
-                return 0
-
-            model = make_model(session, reserve_handler=make_room)
-            async with model.request_stream(
-                [user()],
-                None,
-                ModelRequestParameters(),
-            ) as stream:
-                prompt_length = len(session.transcript)
-                system_used = session.ctx_used
-                prefix = len(PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens))
-                session._worker.call(
-                    lambda engine, native: setattr(native, "_ctx", prompt_length + prefix + 2)
-                ).result()
-                async for _ in stream:
-                    pass
-                response = cast("Any", stream).get()
-
-            assert decisions == [1]
-            assert response_text(response) == "abc"
-            assert session.transcript.tokens == expected_tokens
-            kinds = [segment.kind for segment in session.transcript.segments]
-            assert kinds == expected_kinds
-            assert kinds.count("assistant_prefix") == 1
-            assert kinds.count("assistant") == 1
-            expected_prefill = prompt_length + prefix - system_used
-            assert response.usage.input_tokens == expected_prefill
-            assert response.usage.details == {"prefill_tokens": expected_prefill}
-            assert response.usage.output_tokens == 3
-            assert response.usage.requests == 1
-            assert response.usage.total_tokens == expected_prefill + 3
 
     asyncio.run(scenario())
 

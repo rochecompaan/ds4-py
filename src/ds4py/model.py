@@ -19,6 +19,7 @@ from pydantic_ai.usage import RequestUsage
 from typing_extensions import sentinel
 
 from ds4py.binding import MessageBinder
+from ds4py.capabilities.context import ContextRequest
 from ds4py.engine.events import (
     Event,
     Interrupted,
@@ -31,10 +32,10 @@ from ds4py.engine.events import (
     ToolSyntax,
 )
 from ds4py.engine.sampling import SamplingPolicy
-from ds4py.errors import EngineError
+from ds4py.errors import ContextExhausted, EngineError
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
+    from collections.abc import AsyncGenerator, AsyncIterator, Iterator, Sequence
 
     from pydantic_ai.messages import (
         FinishReason,
@@ -46,14 +47,11 @@ if TYPE_CHECKING:
     from pydantic_ai.settings import ModelSettings
     from pydantic_ai.tools import RunContext
 
+    from ds4py.capabilities.context import ContextStrategy
     from ds4py.capabilities.system_notes import DS4SystemNotes
     from ds4py.engine.session import Session
 
 _END = sentinel("_END")
-
-
-class ContextReserveError(EngineError):
-    """The response hit the context reserve and no compaction strategy is installed."""
 
 
 class ResponseTerminalError(EngineError):
@@ -62,10 +60,6 @@ class ResponseTerminalError(EngineError):
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(f"model response ended with {reason}")
-
-
-def _context_reserve_message(needed: int | None) -> str:
-    return f"context reserve reached with {needed} token(s) needed; M4 compaction is not available in this build"
 
 
 def _next[T](iterator: Iterator[T]) -> T | _END:
@@ -127,7 +121,6 @@ class DS4Model(Model):
         max_tokens: int = 50_000,
         stop_sequences: Sequence[bytes] = (),
         note_provider: DS4SystemNotes | None = None,
-        reserve_handler: Callable[[int], int | None] | None = None,
     ) -> None:
         super().__init__()
         self.session = session
@@ -136,9 +129,8 @@ class DS4Model(Model):
         self.max_tokens = max_tokens
         self.stop_sequences = stop_sequences
         self.note_provider = note_provider
-        # No compaction strategy is installed. A handler may free space and return the new
-        # reserve budget; otherwise the default policy fails the open response.
-        self.reserve_handler = reserve_handler
+        # Composition selects the one automatic strategy; it is not session state.
+        self.context_owner: ContextStrategy | None = None
 
     @property
     @override
@@ -208,6 +200,7 @@ class DS4Model(Model):
         )
         response = DS4StreamedResponse(
             self,
+            messages,
             params,
             policy,
             max_tokens,
@@ -249,9 +242,10 @@ class DS4Model(Model):
 class DS4StreamedResponse(StreamedResponse):
     """Translate facade events while finalizing sampled provenance exactly once."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913, PLR0917 - The response mirrors the request and stream configuration.
         self,
         model: DS4Model,
+        messages: list[ModelMessage],
         params: ModelRequestParameters,
         sampling: SamplingPolicy,
         max_tokens: int,
@@ -259,6 +253,7 @@ class DS4StreamedResponse(StreamedResponse):
     ) -> None:
         super().__init__(model_request_parameters=params)
         self._model = model
+        self._messages = messages
         self._session = model.session
         self._binder = model.binder
         self._timestamp = datetime.now(UTC)
@@ -277,13 +272,13 @@ class DS4StreamedResponse(StreamedResponse):
         self._sampled_start: int | None = None
         self._prefilled = 0
         self._output_tokens = 0
+        self._summary_tokens = 0
         self._tool_index = 0
         self._in_tool_syntax = False
         self._pull_lock = asyncio.Lock()
         self._pending_pull: asyncio.Future[Event | _END] | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
         self._reserve_needed: int | None = None
-        self._context_exhausted = False
 
     @property
     @override
@@ -332,7 +327,7 @@ class DS4StreamedResponse(StreamedResponse):
             return
         self._usage = RequestUsage(
             input_tokens=self._prefilled,
-            output_tokens=self._output_tokens,
+            output_tokens=self._output_tokens + self._summary_tokens,
             details={"prefill_tokens": self._prefilled},
         )
         # A round that never reached its first sync never opened a response: its
@@ -370,11 +365,6 @@ class DS4StreamedResponse(StreamedResponse):
         outputs: list[ModelResponseStreamEvent] = []
         if isinstance(event, ReserveReached):
             self._reserve_needed = event.needed
-            budget = self._model.reserve_handler(event.needed) if self._model.reserve_handler is not None else None
-            if budget is None:
-                event.fail()
-            else:
-                event.resume(budget)
         elif isinstance(event, ToolSyntax):
             self._in_tool_syntax = event.state != "DONE"
         elif isinstance(event, TextDelta):
@@ -416,8 +406,6 @@ class DS4StreamedResponse(StreamedResponse):
             self._prefilled += event.prefilled
         elif isinstance(event, Stopped):
             self._stopped(event.reason)
-            if event.reason == "context_exhausted":
-                self._context_exhausted = True
         elif isinstance(event, Interrupted):
             self._interrupted()
         return outputs
@@ -461,6 +449,8 @@ class DS4StreamedResponse(StreamedResponse):
                 self._round_exhausted = True
                 return
             self._dispatch(event)
+            if isinstance(event, ReserveReached):
+                event.fail()
             if isinstance(event, (Stopped, Interrupted)):
                 return
 
@@ -476,6 +466,8 @@ class DS4StreamedResponse(StreamedResponse):
                 raise
             if event is not _END:
                 self._dispatch(event)
+                if isinstance(event, ReserveReached):
+                    event.fail()
         await asyncio.to_thread(self._round.close)
         sampled_start = self._sampled_start if self._sampled_start is not None else self._round_start
         cutoff = sampled_start + self._output_tokens
@@ -534,10 +526,11 @@ class DS4StreamedResponse(StreamedResponse):
                     self._round_exhausted = True
                     self._reconciled = True
                     break
+                if isinstance(event, ReserveReached):
+                    await self._make_room_for_reserve(event)
+                    continue
                 for part_event in self._dispatch(event):
                     yield part_event
-                if self._context_exhausted:
-                    raise ContextReserveError(_context_reserve_message(self._reserve_needed))
                 if isinstance(event, Stopped) and event.reason in {
                     "max_tokens",
                     "parser_error",
@@ -545,6 +538,23 @@ class DS4StreamedResponse(StreamedResponse):
                     raise ResponseTerminalError(event.reason)
         finally:
             await self._finish()
+
+    async def _make_room_for_reserve(self, event: ReserveReached) -> None:
+        """Await the selected owner after ``_pull`` has released ``_pull_lock``."""
+        self._reserve_needed = event.needed
+        owner = self._model.context_owner
+        if owner is None:
+            event.fail()
+            raise ContextExhausted(self._context_exhausted_message(event.needed))
+        room = await owner.make_room(self._messages, ContextRequest(event.needed, "reserve"))
+        self._summary_tokens += room.generated_tokens
+        if not room.made_room:
+            event.fail()
+            raise ContextExhausted(self._context_exhausted_message(event.needed))
+        event.resume(1)
+
+    def _context_exhausted_message(self, needed: int | None) -> str:
+        return f"context reserve reached with {needed} token(s) needed and no room was made"
 
     @override
     async def close_stream(self) -> None:

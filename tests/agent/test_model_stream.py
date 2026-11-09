@@ -1,7 +1,7 @@
 import asyncio
 import threading
 from dataclasses import replace
-from typing import Any, cast
+from typing import Any, cast, override
 
 import pytest
 from pydantic_ai.messages import (
@@ -18,10 +18,13 @@ from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeEngine, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.binding import MessageBinder
+from ds4py.capabilities.context import ContextStrategy, RoomResult
 from ds4py.engine.events import STOP_REASONS
+from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.session import Engine
 from ds4py.engine.worker import SyncJob
+from ds4py.errors import ContextExhausted
 from ds4py.model import DS4Model
 
 
@@ -311,3 +314,38 @@ def test_direct_stream_response_is_reused_by_the_next_request_without_rerenderin
             assert not outputs
 
     asyncio.run(scenario())
+
+
+class _MessageListOwner(ContextStrategy):
+    def __init__(self) -> None:
+        super().__init__(cast("Any", None))
+        self.message_lists: list[list[Any]] = []
+
+    @override
+    async def make_room(self, messages: list[Any], request: Any) -> RoomResult:
+        self.message_lists.append(messages)
+        return RoomResult(made_room=False)
+
+
+def test_reserve_owner_receives_the_request_message_list() -> None:
+    async def scenario() -> tuple[_MessageListOwner, list[Any]]:
+        with fake_engine(script=scripted_text("ab")) as engine:
+            session = engine.session()
+            owner = _MessageListOwner()
+            model = make_model(session)
+            model.context_owner = owner
+            messages: list[Any] = [user("specific request")]
+            async with model.request_stream(messages, None, ModelRequestParameters()) as stream:
+                prompt_length = len(session.transcript)
+                prefix = len(PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens))
+                session._worker.call(
+                    lambda engine, native: setattr(native, "_ctx", prompt_length + prefix + 2)
+                ).result()
+                with pytest.raises(ContextExhausted):
+                    async for _ in stream:
+                        pass
+            return owner, messages
+
+    owner, messages = asyncio.run(scenario())
+    assert owner.message_lists == [messages]
+    assert owner.message_lists[0] is messages
