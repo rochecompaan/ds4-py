@@ -113,6 +113,13 @@ def install_builtin_commands(
         no_args(args, "/save")
         return _record("saved", await runtime.save())
 
+    async def compact(*args: str) -> str:
+        no_args(args, "/compact")
+        result = await runtime.compact()
+        if not result.dropped:
+            return "Nothing to compact"
+        return f"Compacted {result.dropped} messages; kept {result.kept} ({result.generated_tokens} generated tokens)"
+
     async def switch(*args: str) -> str:
         if len(args) != 1:
             _usage("/switch <prefix>")
@@ -129,6 +136,7 @@ def install_builtin_commands(
         ("exit", exit_, "Exit the shell", "/exit"),
         ("new", new, "Start a new session", "/new"),
         ("save", save, "Save the current session", "/save"),
+        ("compact", compact, "Compact the current history", "/compact"),
         ("switch", switch, "Restore a saved session", "/switch <prefix>"),
         ("hints", hints, "Toggle programming hints", "/hints on|off"),
     ):

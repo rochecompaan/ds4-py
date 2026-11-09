@@ -3,8 +3,10 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
+from ds4py.engine.lifecycle import SessionEvent
 from ds4py.errors import EngineError
 from ds4py.store import SaveRecord
 from ds4py.tui import TUI
@@ -115,6 +117,8 @@ def test_command_errors_name_the_problem_and_usage() -> None:
             await tui.commands.execute("/switch")
         with pytest.raises(CommandError, match=r"/hints on\|off"):
             await tui.commands.execute("/hints perhaps")
+        with pytest.raises(CommandError, match="usage: /compact"):
+            await tui.commands.execute("/compact extra")
 
     asyncio.run(scenario())
 
@@ -122,7 +126,8 @@ def test_command_errors_name_the_problem_and_usage() -> None:
 def test_slash_completion_covers_only_builtin_commands_and_extensions() -> None:
     tui = make_tui()
     names = {item.text.strip() for item in tui.commands.completions("/")}
-    assert names == {"/exit", "/new", "/save", "/switch", "/hints"}
+    assert names == {"/exit", "/new", "/save", "/switch", "/hints", "/compact"}
+    assert {item.text.strip() for item in tui.commands.completions("/co")} == {"/compact"}
     assert {item.text.strip() for item in tui.commands.completions("/sw")} == {"/switch"}
 
     tui.commands.register("custom", lambda: "ok", description="Custom command")
@@ -138,3 +143,75 @@ def test_extension_command_uses_the_same_execution_path() -> None:
         usage="/hello <name>",
     )
     assert asyncio.run(registry.execute("/hello world")) == "hello world"
+
+
+def test_compaction_lifecycle_updates_footer_without_response_text() -> None:
+    runtime = FakeRuntime()
+    with create_pipe_input() as input_:
+        tui = TUI(cast("Any", runtime), input=input_, output=DummyOutput())
+        try:
+            tui.footer.handle_event(SessionEvent("before_compact", "session", {"reason": "manual", "old_tokens": 900}))
+            assert tui.footer.status == "compacting"
+            assert "compacting" in "".join(fragment[1] for fragment in tui.footer.render(200))
+            tui.footer.handle_event(
+                SessionEvent(
+                    "compacted",
+                    "session",
+                    {
+                        "reason": "manual",
+                        "old_tokens": 900,
+                        "new_tokens": 200,
+                        "generated_tokens": 13,
+                    },
+                )
+            )
+            assert tui.footer.status == "idle"
+            assert tui.footer.ctx_used == 200
+            assert "900 → 200 tokens, 13 generated" in "".join(fragment[1] for fragment in tui.footer.render(200))
+            assert tui.renderer.handle_event(SessionEvent("compacted", "session", {})) == []
+        finally:
+            tui.close()
+
+
+def test_compact_is_reported_busy_immediately_during_prompt_loop() -> None:
+    async def scenario() -> None:
+        started = asyncio.Event()
+        busy_reported = asyncio.Event()
+        finish = asyncio.Event()
+        calls: list[str] = []
+        runtime = FakeRuntime()
+
+        async def run(prompt: str) -> None:
+            started.set()
+            await finish.wait()
+
+        async def compact() -> None:
+            calls.append("compact")
+            raise EngineError("a run is already active")
+
+        cast("Any", runtime).run = run
+        cast("Any", runtime).compact = compact
+        with create_pipe_input() as input_:
+            tui = TUI(cast("Any", runtime), input=input_, output=DummyOutput())
+            messages: list[str] = []
+
+            def show(text: object) -> None:
+                messages.append(str(text))
+                busy_reported.set()
+
+            cast("Any", tui).show_message = show
+            task = asyncio.create_task(tui.run("hello"))
+            try:
+                await started.wait()
+                input_.send_text("/compact\n")
+                await asyncio.wait_for(busy_reported.wait(), 2)
+                assert messages == ["error: a run is already active"]
+                assert calls == ["compact"]
+                assert not finish.is_set()
+                assert runtime.calls == []
+            finally:
+                finish.set()
+                input_.send_text("/exit\n")
+                await asyncio.wait_for(task, 2)
+
+    asyncio.run(scenario())

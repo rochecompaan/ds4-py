@@ -146,6 +146,7 @@ class FooterModel:
         self.service_pid: int | None = None
         self.service_status: str | None = None
         self.custom: dict[str, str] = {}
+        self._before_compact_status: str | None = None
         self._unsubscribe = runtime.on_event(self.handle_event)
 
     def handle_event(self, event: SessionEvent) -> None:  # noqa: PLR0912 - Each session event owns a footer transition.
@@ -155,6 +156,12 @@ class FooterModel:
         elif event.kind == "run_end":
             self.status = "idle"
             self.prefill = None
+        elif event.kind == "before_compact":
+            self._before_compact_status = self.status
+            self.status = "compacting"
+            self.prefill = None
+        elif event.kind == "compacted":
+            self._compacted(event)
         elif event.kind == "Token":
             self.status = "streaming"
         elif event.kind == "Prefill":
@@ -184,6 +191,22 @@ class FooterModel:
                 self.custom[key] = str(value)
             else:
                 self.custom.pop(key, None)
+
+    def _compacted(self, event: SessionEvent) -> None:
+        self.finish_compaction()
+        new_tokens = event.payload["new_tokens"]
+        if not isinstance(new_tokens, int):
+            raise TypeError("compacted token count must be an integer")
+        self.ctx_used = new_tokens
+        self.custom["compact"] = (
+            f"{event.payload['old_tokens']} → {new_tokens} tokens, {event.payload['generated_tokens']} generated"
+        )
+
+    def finish_compaction(self) -> None:
+        """Restore status even when a manual attempt is a no-op or fails."""
+        if self._before_compact_status is not None:
+            self.status = self._before_compact_status
+            self._before_compact_status = None
 
     def _parts(self) -> list[str]:
         parts = [self.status]

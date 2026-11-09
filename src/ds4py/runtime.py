@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.tools import RunContext
 
+    from ds4py.capabilities.compaction import CompactionResult
     from ds4py.engine.lifecycle import Listener, SessionEvent
     from ds4py.engine.prefix import PrefixTurn
     from ds4py.engine.session import Session
@@ -416,6 +417,13 @@ class AgentRuntime:
             return result
         finally:
             self._running = False
+
+    async def compact(self) -> CompactionResult:
+        """Compact the owned history in place while idle, using the concrete owner."""
+        self._require_open()
+        if self._running:
+            raise EngineError("a run is already active")
+        return await self.components.compactor.compact_messages(self._messages, reason="manual")
 
     def cancel(self) -> None:
         """Cancel the active agent run and its engine work; a no-op while idle."""
