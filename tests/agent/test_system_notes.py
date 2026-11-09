@@ -77,6 +77,30 @@ def test_compaction_resets_hints() -> None:
     assert result[0][1] == "hints_full"
 
 
+def test_manual_compaction_resets_hints_through_session_subscription() -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from pydantic_ai.messages import ModelResponse, TextPart
+
+    from ds4py.binding import MessageBinder
+    from ds4py.capabilities.compaction import LLMCompaction
+
+    with _fake_engine("summary") as engine:
+        session = engine.session()
+        notes = DS4SystemNotes(session, clock=lambda: "fixed date", hints=True)
+        binder = MessageBinder(session)
+        messages = [user_req("old" * 100), ModelResponse([TextPart("old answer")]), user_req("recent")]
+        ctx: Any = SimpleNamespace()
+        request: Any = SimpleNamespace()
+        asyncio.run(notes.before_model_request(ctx, request))
+        asyncio.run(notes.before_model_request(ctx, request))
+        binder.prepare(messages, note_provider=notes)
+        assert notes.pending(messages) == []
+        asyncio.run(LLMCompaction(binder).compact_messages(messages, reason="manual"))
+        assert [subtype for _, subtype in notes.pending(messages)] == ["hints_full"]
+
+
 def test_restore_from_segments() -> None:
     session: Any = MockSession()
     notes = DS4SystemNotes(session)

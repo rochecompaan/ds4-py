@@ -18,6 +18,7 @@ from pydantic_ai_harness import (
 from pydantic_ai_harness.ask_user import Answerer as QuestionAnswerer
 
 from ds4py.agent_prompt import DEFAULT_CODING_AGENT_INSTRUCTIONS
+from ds4py.capabilities.compaction import LLMCompaction
 from ds4py.capabilities.file_system import DS4FileSystem
 from ds4py.capabilities.harness_events import HarnessEventBridge
 from ds4py.capabilities.run_record import DS4RunRecord
@@ -25,6 +26,7 @@ from ds4py.capabilities.shell_jobs import DS4ShellJobs
 from ds4py.capabilities.system_notes import DS4SystemNotes
 
 if TYPE_CHECKING:
+    from ds4py.capabilities.context import ContextComposition
     from ds4py.model import DS4Model
 
 
@@ -37,6 +39,7 @@ class AgentOptions(TypedDict, total=False):
 class AgentComponents:
     agent: Agent
     components: list[AbstractCapability]
+    compactor: LLMCompaction
 
 
 def build_agent_components(  # noqa: PLR0913 - Agent composition mirrors the runtime feature set.
@@ -48,9 +51,13 @@ def build_agent_components(  # noqa: PLR0913 - Agent composition mirrors the run
     interactive: bool = False,
     question_answerer: QuestionAnswerer | None = None,
     session_dir: str | Path | None = None,
+    context: ContextComposition | None = None,
 ) -> AgentComponents:
     """Build the default capability list and the harness agent."""
     project_dir = Path(project_dir)
+    compactor = LLMCompaction(model.binder)
+    owner = context.owner if context is not None and context.owner is not None else compactor
+    model.context_owner = owner
 
     notes = DS4SystemNotes(model.session)
     model.note_provider = notes
@@ -90,6 +97,7 @@ def build_agent_components(  # noqa: PLR0913 - Agent composition mirrors the run
         DS4RunRecord(model.session, Path(session_dir or project_dir) / "events.jsonl"),
         Instrumentation(),
         notes,
+        owner,
     ]
     if interactive:
         components.append(AskUser(answerer=question_answerer))
@@ -98,4 +106,4 @@ def build_agent_components(  # noqa: PLR0913 - Agent composition mirrors the run
         "capabilities": components,
         "instructions": system if system is not None else DEFAULT_CODING_AGENT_INSTRUCTIONS,
     }
-    return AgentComponents(agent=Agent(model, **options), components=components)
+    return AgentComponents(agent=Agent(model, **options), components=components, compactor=compactor)

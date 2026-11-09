@@ -33,6 +33,7 @@ from pydantic_ai_harness.step_persistence import (
 )
 
 from ds4py.agent import QuestionAnswerer, build_agent_components
+from ds4py.capabilities.context import ContextComposition
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.errors import EngineError, StoreError
@@ -158,6 +159,7 @@ class AgentRuntime:
         interactive: bool = False,
         question_answerer: QuestionAnswerer | None = None,
         request_limit: int = 50,
+        context: ContextComposition | None = None,
     ) -> None:
         self.model = model
         self.project_dir = Path(project_dir)
@@ -183,6 +185,7 @@ class AgentRuntime:
             interactive=interactive,
             question_answerer=question_answerer,
             session_dir=self._session_dir,
+            context=context if context is not None else ContextComposition(),
         )
         self._agent = self.components.agent
         self._notes = next(

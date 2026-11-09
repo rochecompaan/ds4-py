@@ -11,6 +11,7 @@ from pydantic_ai.messages import ModelRequest, ToolReturn, ToolReturnPart
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage, ToolCallPart
+    from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.tools import RunContext, ToolDefinition
 
     from ds4py.binding import MessageBinder
@@ -35,6 +36,13 @@ class RoomResult:
     generated_tokens: int = 0
 
 
+@dataclass(frozen=True)
+class ContextComposition:
+    """Select one automatic owner; manual compaction remains available."""
+
+    owner: ContextStrategy | None = None
+
+
 class ContextStrategy(AbstractCapability, ABC):
     """One capability owns the shared tool fit check and the reserve response hook.
 
@@ -48,6 +56,14 @@ class ContextStrategy(AbstractCapability, ABC):
     @abstractmethod
     async def make_room(self, messages: list[ModelMessage], request: ContextRequest) -> RoomResult:
         """Make room inside the live request messages and report the post-move fit."""
+
+    @override
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        """Keep keyed canonical boundaries instead of the harness's merged view."""
+        request_context.messages = ctx.messages
+        return request_context
 
     def _tool_return_message(self, call: ToolCallPart, result: object) -> ModelRequest:
         content = result.return_value if isinstance(result, ToolReturn) else result
@@ -74,6 +90,7 @@ class ContextStrategy(AbstractCapability, ABC):
         if needed <= 0:
             return result
         room = await self.make_room(ctx.messages, ContextRequest(needed, "tool_result"))
+        ctx.usage.output_tokens += room.generated_tokens
         if not room.made_room:
             return TOOL_RESULT_DOES_NOT_FIT
         return result

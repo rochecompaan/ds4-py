@@ -20,11 +20,14 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from test_context_strategy import RecordingOwner
 
 import ds4py
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
+from ds4py.capabilities.compaction import LLMCompaction
+from ds4py.capabilities.context import ContextComposition, ContextRequest, RoomResult
 from ds4py.engine.prefix import PrefixTurn
 from ds4py.engine.replay import read_replay
 from ds4py.engine.sampling import SamplingPolicy
@@ -788,3 +791,159 @@ def test_snapshot_history_failure_fails_the_run(tmp_path: Path, monkeypatch: pyt
             assert [line["payload"]["status"] for line in terminal] == ["error"]
         finally:
             asyncio.run(runtime.close())
+
+
+@pytest.mark.parametrize("identity", ["new", "switch"])
+@pytest.mark.parametrize("custom", [False, True])
+def test_identity_then_manual_compact_and_exact_same_model_continuation(
+    tmp_path: Path, identity: str, custom: bool
+) -> None:
+    with fake_engine(script=scripted_rounds("answer")) as engine:
+        model = make_model(engine)
+        selected = RecordingOwner(model.binder) if custom else None
+        runtime = AgentRuntime(
+            model,
+            project_dir(tmp_path),
+            store=SessionStore(tmp_path / "store"),
+            clock=fixed_clock,
+            context=ContextComposition(selected),
+        )
+        owner = model.context_owner
+        compactor = runtime.components.compactor
+        assert owner is (selected if custom else compactor)
+        assert isinstance(compactor, LLMCompaction)
+
+        async def seed() -> None:
+            await runtime.run("old " * 3000)
+            await runtime.run("recent")
+
+        async def scenario() -> None:
+            await seed()
+            record = await runtime.save()
+            await runtime.new()
+            if identity == "switch":
+                await runtime.switch(record.session_id)
+                # Loaded KV is usable, but old named system checkpoints were cleared.
+                assert model.session._checkpoint_tokens == {}
+                ordinary = await runtime.run("ordinary continuation")
+                assert ordinary.output == "answer"
+                assert ordinary.usage.input_tokens == 46  # 21 payload + 8 user wrapper + 17 assistant opener
+            else:
+                await seed()
+            assert model.context_owner is owner
+            old_tokens = model.session.transcript.tokens
+            syncs: list[Any] = []
+            unsubscribe = model.session.on_event(lambda event: syncs.append(event.payload["event"]), kinds={"Synced"})
+            result = await compactor.compact_messages(runtime._messages, reason="manual")
+            unsubscribe()
+            assert result.dropped >= 2
+            compacted = model.session.transcript.tokens
+            assert len(compacted) < len(old_tokens)
+            binder_records = model.binder.records()
+            assert len(syncs) == 1  # only replacement sync is public; summary uses a private native sync
+            plan = syncs[0].plan
+            if identity == "switch":
+                assert plan.reused == 0
+                assert plan.to_prefill == len(compacted)
+            else:
+                assert plan.checkpoint == "system"
+                assert plan.reused == binder_records[0].start
+                assert plan.to_prefill == len(compacted) - binder_records[0].start
+            continuation = await runtime.run("continue")
+            assert continuation.output == "answer"
+            assert continuation.usage.output_tokens == 6
+            assert continuation.usage.input_tokens == 33  # 8 payload + 8 user wrapper + 17 assistant opener
+            assert model.binder.records()[: len(binder_records)] == binder_records
+            assert model.session.transcript.tokens[: len(compacted)] == compacted
+            assert model.context_owner is owner
+            await runtime.close()
+
+        asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("identity", ["new", "switch"])
+def test_custom_owner_receives_real_tool_and_reserve_hooks_after_identity(tmp_path: Path, identity: str) -> None:
+    from pydantic_ai.models import ModelRequestParameters
+
+    from ds4py.engine.prompt import PromptBuilder
+    from ds4py.errors import ContextExhausted
+
+    with fake_engine(script=scripted_rounds("answer")) as engine:
+        model = make_model(engine)
+        owner = RecordingOwner(model.binder, room=RoomResult(False))
+        runtime = AgentRuntime(
+            model,
+            project_dir(tmp_path),
+            store=SessionStore(tmp_path / "store"),
+            clock=fixed_clock,
+            context=ContextComposition(owner),
+        )
+
+        async def scenario() -> None:
+            await runtime.run("seed")
+            record = await runtime.save()
+            await runtime.new()
+            if identity == "switch":
+                await runtime.switch(record.session_id)
+
+            # Register one genuinely oversized tool, beyond read_file's output limit.
+            @runtime.components.agent.tool_plain
+            def huge() -> str:
+                return "z" * 100000
+
+            cast("FakeNative", engine.native).script = scripted_rounds(
+                "<tool_call><function=huge></function></tool_call>", "done"
+            )
+            result = await runtime.run("read huge")
+            assert result.output == "done"
+            assert owner.requests[-1].reason == "tool_result"
+            assert any(
+                isinstance(p, ToolReturnPart) and p.content == "Tool error: tool result still does not fit"
+                for m in result.all_messages()
+                for p in m.parts
+            )
+            assert model.context_owner is owner
+            assert [c for c in runtime.components.components if c is owner] == [owner]
+            cast("FakeNative", engine.native).script = scripted_rounds("abc")
+            async with model.request_stream(
+                [*runtime.messages, ModelRequest([UserPromptPart("reserve")])], None, ModelRequestParameters()
+            ) as stream:
+                prefix = len(PromptBuilder(engine).assistant_prefix(model.session.transcript.tokens))
+                limit = len(model.session.transcript) + prefix + 2
+                model.session._worker.call(lambda e, native: setattr(native, "_ctx", limit)).result()
+                with pytest.raises(ContextExhausted):
+                    async for _ in stream:
+                        pass
+            assert [request.reason for request in owner.requests] == ["tool_result", "reserve"]
+            assert owner.requests[-1] == ContextRequest(1, "reserve")
+            await runtime.close()
+
+        asyncio.run(scenario())
+
+
+def test_automatic_compaction_persists_history_and_counts_summary_once(tmp_path: Path) -> None:
+    with fake_engine(script=scripted_rounds("answer", "answer", "private summary", "final answer")) as engine:
+        model = make_model(engine)
+        runtime = AgentRuntime(
+            model, project_dir(tmp_path), system="", store=SessionStore(tmp_path / "store"), clock=fixed_clock
+        )
+        events = []
+        runtime.on_event(events.append, kinds={"before_compact", "compacted"})
+
+        async def scenario() -> None:
+            await runtime.run("x" * 40000)
+            await runtime.run("r" * (56000 - len(model.session.transcript)))
+            retained_key = (runtime.messages[2].metadata or {})["ds4.key"]
+            result = await runtime.run("finish")
+            assert result.output == "final answer"
+            assert result.usage.output_tokens == 27  # 15 summary + 12 public output
+            assert len(runtime.messages) == 5  # summary, retained pair, pending user, final response
+            assert (runtime.messages[1].metadata or {})["ds4.key"] == retained_key
+            assert not any(
+                isinstance(p, UserPromptPart) and p.content == "x" * 40000 for m in runtime.messages for p in m.parts
+            )
+            assert [event.kind for event in events] == ["before_compact", "compacted"]
+            assert events[1].payload["generated_tokens"] == 15
+            await runtime.close()
+
+        asyncio.run(scenario())

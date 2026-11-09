@@ -5,7 +5,9 @@ from typing import Any, cast
 import pytest
 from pydantic_ai.messages import (
     BinaryImage,
+    InstructionBaselinePart,
     InstructionPart,
+    ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
@@ -354,3 +356,39 @@ def test_rejected_non_integer_truncate_leaves_checkpoint_usable() -> None:
         assert plan.kind == "restore"
         assert plan.checkpoint == "kept"
         list(session.run_round(max_tokens=0))
+
+
+def test_canonicalize_exact_merged_requests_restores_bound_keys() -> None:
+    with fake_engine() as engine:
+        binder = MessageBinder(engine.session())
+        first, second = user("summary"), user("retained constraints")
+        messages: list[ModelMessage] = [first, second, ModelResponse([TextPart("answer")])]
+        binder.prepare(messages)
+        merged = ModelRequest([*first.parts, *second.parts])
+        canonical = binder.canonicalize([merged, messages[2]])
+        assert canonical == messages
+        assert canonical[0] is not messages[0]
+        assert canonical[1] is not messages[1]
+        assert binder.prepare(canonical).kind == "unchanged"
+        canonical[0].parts = []
+        assert binder.canonicalize([merged])[0].parts == messages[0].parts
+
+
+def test_canonicalize_leaves_nonmatching_view_only_requests_untouched() -> None:
+    with fake_engine() as engine:
+        binder = MessageBinder(engine.session())
+        binder.prepare([user("summary"), user("retained constraints")])
+        changed = ModelRequest([UserPromptPart("summary"), UserPromptPart("different view")])
+        view: list[ModelMessage] = [changed]
+        assert binder.canonicalize(view) is view
+        assert view[0] is changed
+
+
+def test_canonicalize_does_not_discard_changed_framework_parts() -> None:
+    with fake_engine() as engine:
+        binder = MessageBinder(engine.session())
+        first, second = user("summary"), user("retained")
+        binder.prepare([first, second])
+        changed = ModelRequest([*first.parts, *second.parts, InstructionBaselinePart(instructions=[])])
+        view: list[ModelMessage] = [changed]
+        assert binder.canonicalize(view) is view

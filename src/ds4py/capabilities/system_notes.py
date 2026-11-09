@@ -61,7 +61,6 @@ class DS4SystemNotes(AbstractCapability):
         self._hints_full_emitted = False
         self._hints_applied: bool | _UNSET | _UNKNOWN = _UNSET
         self._compaction_subscribed = False
-        self._compaction_subject = None
 
     def pending(self, messages: Sequence[ModelMessage]) -> list[tuple[str, str]]:
         """Return notes that would be emitted without mutating provider state."""
@@ -115,11 +114,6 @@ class DS4SystemNotes(AbstractCapability):
         self, ctx: RunContext[object], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         if not self._compaction_subscribed:
-            subject = getattr(ctx, "compaction_subject", None)
-            if subject is None:
-                subject = getattr(request_context, "compaction_subject", None)
-            if subject is not None:
-                self._compaction_subject = subject
             if hasattr(self.session, "on_event"):
                 self.session.on_event(self._on_compacted, kinds="compacted")
             self._compaction_subscribed = True

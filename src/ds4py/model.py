@@ -191,6 +191,7 @@ class DS4Model(Model):
         params: ModelRequestParameters,
     ) -> AsyncGenerator[DS4StreamedResponse]:
         policy, max_tokens, stop_sequences = self._request_config(settings)
+        messages = self.binder.canonicalize(messages)
         instruction_parts = self._get_instruction_parts(messages, params)
         self.binder.prepare(
             messages,

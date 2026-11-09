@@ -219,6 +219,44 @@ class MessageBinder:
             return []
         return adopted[: bound_indices[-1] + 1]
 
+    def canonicalize(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        """Undo only a unique exact harness merge of adjacent bound requests.
+
+        The harness normalizes after capability hooks, discarding application
+        keys when merging requests. Recover known part boundaries, never an
+        unrelated or deliberately changed request-only view.
+        """
+        canonical: list[ModelMessage] = []
+        changed = False
+        for message in messages:
+            matches: list[list[ModelMessage]] = []
+            if isinstance(message, ModelRequest) and not (message.metadata or {}).get("ds4.key"):
+                for start, first in enumerate(self._bound_messages):
+                    if not isinstance(first, ModelRequest):
+                        continue
+                    parts = list(first.parts)
+                    instructions = first.instructions
+                    for end in range(start + 1, len(self._bound_messages)):
+                        following = self._bound_messages[end]
+                        if not isinstance(following, ModelRequest):
+                            break
+                        if (
+                            bool(instructions)
+                            and bool(following.instructions)
+                            and instructions != following.instructions
+                        ):
+                            break
+                        instructions = instructions or following.instructions
+                        parts.extend(following.parts)
+                        if parts == message.parts and instructions == message.instructions:
+                            matches.append(self._bound_messages[start : end + 1])
+            if len(matches) == 1:
+                canonical.extend(deepcopy(matches[0]))
+                changed = True
+            else:
+                canonical.append(message)
+        return canonical if changed else messages
+
     def records(self) -> tuple[BoundMessage, ...]:
         """The keyed ranges currently bound to the transcript."""
         return tuple(self._records)
