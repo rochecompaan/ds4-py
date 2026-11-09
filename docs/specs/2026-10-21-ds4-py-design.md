@@ -329,7 +329,7 @@ One `threading.Thread` owns the `SessionHandle`. Callers submit jobs to a queue 
 | `SyncJob(tokens, images)` | plans the sync (below), loads the checkpoint if the plan is `restore`, then calls `sync` with progress and cancel callbacks installed | `Prefill(done, total, cached_prefix, tps)` at most every 100 ms, then `Synced(pos, plan)` or `Interrupted(pos)` |
 | `CheckpointJob(key, drop=False)` | saves or frees a snapshot of the live state (below) | `Checkpointed(key, tokens, bytes)` or `Dropped(key)` |
 | `GenerateJob(sampling, stop_policy, max_tokens)` | the decode loop below | `Token(id, text_bytes)`, `Thinking(on/off)`, `ToolSyntax(state)`, `Stopped(reason)`, where the reason is `stop_token`, `tool_call_complete`, `max_tokens`, `context_reserve`, `interrupted` or `parser_error` |
-| `CompactJob(reason)` | the compaction recipe (section 13), generated with `argmax` | `Prefill…`, `Token…`, `Compacted(summary, dropped, kept)` |
+| `CompactJob(reason)` | prepares the compaction replacement (section 13), generated with `argmax`, without changing the live transcript | `CompactionStarted`, `Prefill…`, `Token…`. `Compacted(summary, dropped, kept)` is emitted only after the atomic commit |
 | `SaveJob(path)`, `LoadJob(path)` | section 17 | `Saved(bytes)`, `Loaded(tokens)` |
 | `ControlJob(steer=, power=, think=)` | between turns only | `Applied` |
 | `WorkerCallJob(fn)` | `session.on_worker(fn)` | `Done(result)` or `Failed(error)` |
@@ -438,7 +438,7 @@ session.plan(view_tokens)                    # exact Plan(kind, reused, to_prefi
 session.checkpoint(key); session.drop_checkpoint(key)  # snapshots for later restores
 session.state(key, factory)                  # session-owned state for capabilities (section 13)
 session.ctx_used                             # ds4_session_pos, exact
-session.compact(reason)
+session.prepare_compaction(reason)           # prepare a replacement; commit through MessageBinder
 session.save(path); session.load(path)
 session.fork()                               # new session id and created_at; transcript and live KV kept (section 17)
 session.add_logits_hook(hook)
@@ -588,10 +588,10 @@ The contract a strategy implements:
 | `on_event` | Turn-end bookkeeping. Stamp stable keys into `message.metadata['ds4.key']` so cut points are keyed by message, not by list index |
 | `session.plan(view) -> Plan(kind, reused, to_prefill, fits, checkpoint)` | Renders a candidate view without syncing and says whether it extends the live KV, restores a held checkpoint or rebuilds, with the exact prefill cost (section 10) |
 | `session.checkpoint(key)`, `session.drop_checkpoint(key)` | Hold or free a snapshot of the live state at its current end. A strategy holds one where it knows later moves will start, such as a turn boundary that its next batch of stubs will not cross. Each costs host memory, and the retained payloads share a byte budget, including `system` (section 10) |
-| `session.compact(...)` | Only `DS4Compaction` uses the engine-side summary job. Other strategies never call the model themselves |
-| `make_room(ctx, needed_tokens) -> list[ModelMessage] \| None` | Called on the strategy that owns the context trigger when a tool result does not fit, or when generation reaches the reserve inside a response (section 11). The strategy frees space in its own way and returns the new request view, or `None` if it cannot. A persistent strategy also rewrites `ctx.messages[:]` |
+| `session.prepare_compaction(...)` | Only `DS4Compaction` uses the engine-side summary job. Other strategies never call the model themselves. The job prepares a replacement without changing the live transcript |
+| `make_room(ctx, request: ContextRequest) -> list[ModelMessage] \| None` | Called on the strategy that owns the context trigger when a tool result does not fit, or when generation reaches the reserve inside a response (section 11). The typed request carries the reason, needed tokens, and any open response key. The strategy frees space in its own way and returns the new request view, or `None` if it cannot. A persistent strategy commits `ctx.messages[:]` with the transcript and binding |
 
-Exactly one strategy owns the trigger in a session. A strategy declares `owns_context_trigger = True` and records itself as the owner in session state. `DS4Compaction` stands down when another owner is present, and `DS4Model` finds the owner there while a stream is open. Manual `/compact` still works.
+Exactly one strategy owns the trigger in a session. `build_agent_components` selects the custom strategy or the default `DS4Compaction` once and stores that owner in session state. It does not install `DS4Compaction` as an automatic capability when a custom owner is present. `AgentComponents.compactor` exposes a separate manual service, so `/compact` still works without owner registration or stand-down rules.
 
 | Strategy | Kind | What moves, and when | Cost per move | What the model can recover |
 | --- | --- | --- | --- | --- |
@@ -600,15 +600,15 @@ Exactly one strategy owns the trigger in a session. A strategy declares `owns_co
 | `Bookmarks` | persistent | Replace chosen messages (large tool results, a finished sub-task) with a one-line stub such as `[bookmark b17: bash output, 12 KiB, 3 errors; expand_bookmark("b17")]`, in batches at turn boundaries | everything after the latest held checkpoint before the first replaced message; with only `system`, the whole view after the system prefix | the exact original, through `expand_bookmark` |
 | Harness `ClearToolResults`, `SlidingWindowCompaction`, `SummarizingCompaction`, `TieredCompaction` | persistent | as the harness documents | the same rule: the whole view after the system prefix, each time an old message changes. `ClearToolResults` changes old messages most often, so it is the most expensive | per strategy |
 
-`DS4Compaction` in detail: a `before_model_request` hook with the C agent's trigger, `ctx_used >= 0.85 * ctx` or `ctx - used <= max(min(8192, ctx/8), reserve + 128)`. `reserve` is the rendered length of the compaction prompt, plus an assistant prefix, plus `clamp(ctx/8, 256, 4096)` for the summary. When it fires, it calls `session.compact(reason)`, which runs the whole recipe on the worker in one pass:
+`DS4Compaction` in detail: a `before_model_request` hook with the C agent's trigger, `ctx_used >= 0.85 * ctx` or `ctx - used <= max(min(8192, ctx/8), reserve + 128)`. `reserve` is the rendered length of the compaction prompt, plus an assistant prefix, plus `clamp(ctx/8, 256, 4096)` for the summary. When it fires, it calls `session.prepare_compaction(reason)`, which prepares the recipe on the worker without changing the live transcript:
 
 1. Sync `transcript[:bottom] + user(prompt) + assistant_prefix(no-think)`.
 2. Generate the summary with `argmax` until a stop token or the DSML special token.
-3. Choose the tail and resync `system + user(summary) + tail`.
+3. Choose the tail and build a `TranscriptReplacement` from `system + user(summary) + tail`.
 
-Then the hook rewrites `ctx.messages[:]` to the system parts, a `UserPromptPart(summary)` and the tail's messages, and rebinds. Step 3's resync restores the `system` checkpoint and prefills the summary message and the tail, where C rebuilds from token 0.
+Then the hook builds the system parts, a `UserPromptPart(summary)`, and the tail's messages. `MessageBinder.commit_compaction()` prevalidates the new provenance and commits the native replacement, binding, and `ctx.messages[:]` as one change. Its single rollback path restores all three on failure. Both compaction and `/switch` use `MessageBinder.install_transcript()` for keys, hashes, positions, and segment installation. The replacement restores the `system` checkpoint and prefills the summary message and the tail, where C rebuilds from token 0. `chat_ops.start_chat` creates that checkpoint after the first system-only sync, before user tokens enter the native session.
 
-The hook covers compaction between requests only. When generation reaches the reserve in the middle of a response, the open stream handles it (section 11): `DS4Model` calls `make_room`, and `DS4Compaction` runs the same recipe with the open assistant message kept. The partial response's tokens follow the tail, and generation continues in the same `ModelResponse`, as the C agent does (`ds4_agent.c:9675–10229`).
+The hook covers compaction between requests only. When generation reaches the reserve in the middle of a response, the open stream handles it (section 11): `_get_event_iterator` awaits `make_room` with a typed `ContextRequest` after releasing `_pull_lock`. `_dispatch` remains synchronous event translation. `DS4Compaction` prepares and commits the same recipe with the open assistant message kept. The partial response's tokens follow the tail, and generation continues in the same `ModelResponse`, as the C agent does (`ds4_agent.c:9675–10229`).
 
 The check before a tool result is added lives in `after_tool_execute` and is shared by every strategy. If the result does not fit, the check calls `make_room` on the strategy that owns the context trigger. The mid-response reserve uses the same call:
 
@@ -645,74 +645,75 @@ flowchart TB
         Command["SlashCommandRegistry<br/>tui_commands.py<br/>/compact"]
         Runtime["AgentRuntime<br/>runtime.py<br/>messages, compact(), save(), switch(), fork()"]
         Model["DS4Model<br/>model.py<br/>request_stream()"]
-        Stream["DS4StreamedResponse<br/>model.py<br/>event iterator and usage"]
+        Stream["DS4StreamedResponse<br/>model.py<br/>async recovery and usage"]
         TUI["TUI<br/>tui.py and tui_render.py<br/>compaction status"]
     end
 
     subgraph Context["Context capabilities"]
         direction TB
-        Strategy["ContextStrategy<br/>capabilities/context.py<br/>owns_context_trigger, make_room()"]
+        Strategy["ContextStrategy<br/>capabilities/context.py<br/>make_room(ctx, ContextRequest)"]
         Compactor["LLMCompaction<br/>capabilities/compaction.py<br/>soft = 0.85<br/>before_model_request(), compact_messages(), make_room()"]
-        Manager["ContextManager<br/>capabilities/context.py<br/>owner, open_response_key, register()"]
-        Reserve["model_context.py<br/>make_room_for_response()"]
+        Manager["ContextManager<br/>capabilities/context.py<br/>fixed owner and shared fit check"]
+        Reserve["model_context.py<br/>typed request, no mutable response state"]
     end
 
     subgraph Binding["Message and token binding"]
         direction TB
-        Binder["MessageBinder<br/>binding.py<br/>prepare(), adopt_compaction(), count_tokens()"]
-        BindingCompaction["binding_compaction.py<br/>key, hash, and provenance matching"]
+        Binder["MessageBinder<br/>binding.py<br/>prepare(), install_transcript(), commit_compaction(), count_tokens()"]
     end
 
     subgraph Engine["Native engine"]
         direction TB
-        Session["Session<br/>engine/session.py<br/>ctx_used, state(), compact(), replace_transcript()"]
+        Session["Session<br/>engine/session.py<br/>prepare_compaction(), replace_transcript()"]
         Worker["EngineWorker<br/>engine/worker.py<br/>runs native jobs"]
-        CompactJob["CompactJob<br/>engine/compaction.py<br/>summary prompt, argmax, tail selection"]
-        Result["CompactionResult<br/>engine/compaction.py<br/>summary, dropped, kept, tail_keys"]
+        CompactJob["CompactJob<br/>engine/compaction.py<br/>prepares summary, tail, and replacement"]
+        Result["CompactionResult<br/>engine/compaction.py<br/>summary, counts, tail_keys, replacement"]
         Prompt["PromptBuilder<br/>engine/prompt.py<br/>renders the summary prompt"]
         Decode["GenerateJob and DecodeStep<br/>engine/decode.py<br/>generates plain summary tokens"]
         Rebind["rebind.py<br/>replace_transcript()<br/>checkpoint restore or rebuild"]
+        Chat["chat.py<br/>first system-only sync<br/>then system checkpoint"]
         Transcript["Transcript<br/>engine/transcript.py<br/>tokens and segments"]
     end
 
     subgraph Persistence["Session persistence"]
         direction TB
         Store["SessionStore<br/>store.py<br/>save.json, session.kv, steps/"]
-        Restore["runtime_restore.py<br/>snapshot, KV, and segment restore"]
+        Restore["runtime_restore.py<br/>snapshot, KV, and shared installer"]
     end
 
     Command -->|/compact| Runtime
-    Runtime -->|manual compaction| Compactor
+    Runtime -->|explicit manual compactor| Compactor
     Runtime -->|save, switch, fork| Store
     Runtime -->|switch| Restore
     Model -->|prepare messages| Binder
     Model -->|run_round| Session
-    Stream -->|ReserveReached| Reserve
-    Reserve -->|owner and response key| Manager
+    Stream -->|ReserveReached outside pull lock| Reserve
+    Reserve -->|ContextRequest| Manager
     Manager -->|make_room| Compactor
     Compactor -->|implements| Strategy
-    Compactor -->|compact with reason| Session
-    Compactor -->|adopt compacted history| Binder
+    Compactor -->|prepare with response key| Session
+    Compactor -->|one atomic commit| Binder
     Compactor -.->|before_compact and compacted| TUI
     Session -->|on_worker| Worker
-    Worker -->|runs| CompactJob
+    Worker -->|prepares| CompactJob
     CompactJob -->|builds prompt| Prompt
     CompactJob -->|generates with argmax| Decode
-    CompactJob -->|returns| Result
-    CompactJob -->|system, summary, tail| Rebind
+    CompactJob -->|returns without live commit| Result
     Session -->|replace_transcript| Rebind
     Rebind -->|replaces tokens and segments| Transcript
     Session -->|owns| Transcript
-    Binder -->|delegates compaction adoption| BindingCompaction
-    BindingCompaction -->|reads keys, hashes, positions| Transcript
-    CompactJob -.->|CompactionStarted and Compacted| Stream
+    Binder -->|shared provenance installer| Transcript
+    Session -->|start_chat| Chat
+    Chat -->|system SyncJob then CheckpointJob| Worker
+    CompactJob -.->|CompactionStarted| Stream
+    Compactor -.->|Compacted after commit| Stream
     Session -.->|Token and Synced| Stream
     Store -->|save record and snapshot| Restore
-    Restore -->|rebuilds binding| Binder
+    Restore -->|install_transcript| Binder
     Restore -->|loads KV| Session
 ```
 
-`LLMCompaction` changes harness messages. `CompactJob` changes native tokens. `MessageBinder` joins those changes through keys and provenance. `DS4StreamedResponse` stays alive during reserve compaction.
+`LLMCompaction` builds the compacted message list. `CompactJob` prepares the native replacement without committing it. `MessageBinder` owns the shared provenance installer and the only compaction rollback path. `DS4StreamedResponse` awaits reserve recovery outside `_pull_lock` and keeps `_dispatch` synchronous.
 
 ## 14. Policy: owned by extensions
 

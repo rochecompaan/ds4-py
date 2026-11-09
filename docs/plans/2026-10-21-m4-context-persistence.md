@@ -4,7 +4,7 @@
 
 **Goal:** Add automatic and manual LLM compaction, which replaces old history with a model-written summary, and continue the current response after compaction.
 
-**Architecture:** `LLMCompaction` replaces the stored history with the system parts, a user summary, and a retained tail. The engine creates the summary on its worker and replaces the token transcript. `MessageBinder` keeps message keys and token provenance aligned with that transcript. One context owner handles automatic compaction, tool-result overflow, and reserve pauses.
+**Architecture:** `LLMCompaction` replaces the stored history with the system parts, a user summary, and a retained tail. The engine prepares the summary and replacement on its worker. `MessageBinder` uses one provenance installer for restore and compaction, then commits transcript, binding, and messages as one atomic change. Composition selects one automatic context owner and exposes a separate manual compactor.
 
 **Diagram:** See [standard compaction architecture](../specs/2026-10-21-ds4-py-design.md#standard-compaction-architecture) for the full class and module view.
 
@@ -24,6 +24,9 @@ A reserve is token space kept for the next response. KV is the model's cached to
 - Do not implement the 50,000-token reminder, the system-prefix cache, `Bookmarks`, `/list`, `/strip`, or `/del` in this branch.
 - Use the existing `MessageBinder.count_tokens()` and `Session.ctx_used` for exact token counts. Do not add text-length estimates.
 - Use the existing engine worker, tokenizer, prompt builder, and decoder. Do not create another model session or tool loop for summaries.
+- Use one `MessageBinder.install_transcript()` for compaction and `/switch`. Do not add a second provenance matcher.
+- Select one automatic context owner in `build_agent_components`. Expose manual compaction through `AgentComponents.compactor`.
+- Pass a typed `ContextRequest` to `make_room()`. Do not store the current response key on `ContextManager`.
 - Keep the save-record format at version 1. Do not add fields for paged views.
 - Keep old step snapshots unchanged. They preserve history that compaction removes from the live message list.
 - Run project commands from the worktree inside `devenv shell`.
@@ -40,32 +43,37 @@ A reserve is token space kept for the next response. KV is the model's cached to
 
 ## File Structure
 
-- `engine/compaction.py` runs the summary job and selects the retained tail.
+- `engine/compaction.py` runs the summary job and prepares the retained tail and replacement.
 - `engine/rebind.py` replaces transcript tokens and segments through the worker.
-- `binding_compaction.py` aligns compacted messages with the replaced transcript.
-- `capabilities/context.py` defines the context-owner contract and shared fit check.
-- `capabilities/compaction.py` implements the persistent history rewrite.
-- `model_context.py` connects an open model stream to the context owner.
+- `engine/chat.py` creates the `system` checkpoint after the first system-only sync.
+- `binding.py` owns the shared provenance installer and the atomic compaction commit.
+- `runtime_restore.py` uses the same installer for `/switch`.
+- `capabilities/context.py` defines typed overflow requests and the shared fit check.
+- `capabilities/compaction.py` implements the persistent history rewrite and the manual compactor protocol.
+- `model_context.py` connects an open model stream to the context owner without holding the pull lock.
 - Existing public classes remain thin facades for these focused modules.
 
 ---
 
-## Task 1: Add transcript replacement and compaction binding
+## Task 1: Share transcript installation and add one atomic commit
 
 **Files:**
 - Modify: `src/ds4py/engine/transcript.py`
 - Modify: `src/ds4py/engine/session.py`
 - Modify: `src/ds4py/engine/chat.py`
 - Modify: `src/ds4py/binding.py`
+- Modify: `src/ds4py/runtime_restore.py`
 - Create: `src/ds4py/engine/rebind.py`
-- Create: `src/ds4py/binding_compaction.py`
 - Create: `tests/engine/test_transcript_replace.py`
-- Create: `tests/agent/test_binding_compaction.py`
+- Modify: `tests/agent/test_binding.py`
+- Modify: `tests/agent/test_conformance_persistence.py`
 
 **Interfaces:**
-- Produces: `Session.replace_transcript(segments: Sequence[Segment], *, reason: str) -> Plan`.
-- Produces: `MessageBinder.adopt_compaction(messages: Sequence[ModelMessage]) -> None`.
-- Consumes: Existing transcript segments, message keys, content hashes, checkpoints, and sync plans.
+- Produces: `TranscriptReplacement(tokens: tuple[int, ...], segments: tuple[Segment, ...])`.
+- Produces: `Session.replace_transcript(replacement: TranscriptReplacement, *, reason: str) -> Plan`.
+- Produces: `MessageBinder.install_transcript(messages: Sequence[ModelMessage], segments: Sequence[_Provenance]) -> None`.
+- Produces: `MessageBinder.commit_compaction(messages: list[ModelMessage], compacted_messages: Sequence[ModelMessage], replacement: TranscriptReplacement) -> None`.
+- Consumes: Existing restore validation, transcript segments, message keys, content hashes, checkpoints, and sync plans.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -73,44 +81,49 @@ Add tests for a replaced transcript and its binding. Use a system prefix, two us
 
 ```python
 def test_replace_transcript_uses_longest_valid_checkpoint() -> None:
-    result = session.replace_transcript(compacted_segments, reason="compaction")
+    result = session.replace_transcript(compacted_replacement, reason="compaction")
     assert result.kind == "restore"
     assert result.checkpoint == "system"
-    assert session.transcript.tokens == expected_tokens
-    assert session.transcript.segments == compacted_segments
+    assert session.transcript.tokens == compacted_replacement.tokens
+    assert session.transcript.segments == compacted_replacement.segments
 
 
-def test_adopt_compaction_preserves_retained_message_keys() -> None:
-    binder.adopt_compaction(compacted_messages)
+def test_shared_installer_preserves_retained_message_keys() -> None:
+    session.replace_transcript(compacted_replacement, reason="compaction")
+    binder.install_transcript(compacted_messages, compacted_replacement.segments)
     assert retained_keys(binder) == original_tail_keys
     assert summary_segment(binder).meta["source"] == "compaction"
 ```
 
-Add a test that the first system sync holds the `system` checkpoint. This checkpoint is in memory. It is not the deferred system-prefix disk cache.
+Test the first system-only sync in `chat_ops.start_chat`. It must hold the in-memory `system` checkpoint before any user tokens are synced. This checkpoint is not the deferred system-prefix disk cache.
 
-Add cases for gaps, overlaps, stale keys, stale hashes, and a missing checkpoint. Invalid input must not change the transcript or binding.
+Add cases for gaps, overlaps, stale keys, stale hashes, and a missing checkpoint. Invalid input must not change the transcript or binding. Run the same validation cases through compaction and `/switch` restore.
+
+Add commit failure cases at native replacement, binding installation, and message rewrite. Assert that tokens, segments, binder records, bound messages, and `ctx.messages` all return to their original state.
 
 - [ ] **Step 2: Run the tests and make sure that they fail**
 
 ```bash
-uv run --frozen --extra agent pytest tests/engine/test_transcript_replace.py tests/agent/test_binding_compaction.py -q
+uv run --frozen --extra agent pytest tests/engine/test_transcript_replace.py tests/agent/test_binding.py tests/agent/test_conformance_persistence.py -q
 ```
 
-Expected: FAIL because transcript replacement and compaction adoption do not exist.
+Expected: FAIL because transcript replacement and the shared commit do not exist.
 
-- [ ] **Step 3: Implement the replacement and binding operations**
+- [ ] **Step 3: Implement the shared installer and atomic commit**
 
-Make `engine/rebind.py` validate contiguous segments from token zero. Run replacement through the existing worker. Hold the `system` checkpoint after the first system sync. Restore the longest valid checkpoint or rebuild from token zero.
+Make `engine/rebind.py` validate contiguous segments from token zero. Run replacement through the existing worker. Restore the longest valid checkpoint or rebuild from token zero. Keep checkpoint creation out of this module.
 
-Make `binding_compaction.py` match retained messages by key and content hash. Require one new summary message with `source="compaction"`. Keep token positions and sampled tail tokens unchanged.
+In `chat_ops.start_chat`, sync only the initial system segments through the existing `_job_events(SyncJob(...))` path. Call `session.checkpoint("system")` after that sync succeeds. Later rewrites only consume this checkpoint.
 
-Keep `Session` and `MessageBinder` as thin delegates. Do not add request-only views or paging state.
+Refactor `MessageBinder._restore_state` into one pure preparation helper and use `install_transcript()` for both compaction and `/switch`. Replace the `runtime_restore.py` call to `restore()` with `install_transcript()`. Keep `validate_restore()` as the non-mutating check before a native payload load. Do not add a compaction-specific binding module or a second provenance matcher.
+
+Make `commit_compaction()` capture the old tokens, segments, binder state, and message list before any change. Prevalidate the new binding against the replacement token count. Call `Session.replace_transcript()`, call `install_transcript()`, and rewrite `messages[:]`. On any error, restore the old native replacement and the exact old binder and message state through one rollback path. Return only after every change succeeds.
 
 - [ ] **Step 4: Run the focused tests and make sure that they pass**
 
 ```bash
-uv run --frozen --extra agent pytest tests/engine/test_transcript_replace.py tests/agent/test_binding_compaction.py tests/agent/test_binding.py -q
-uv run --frozen --extra agent pytest tests/engine/test_plan.py tests/engine/test_worker.py -q
+uv run --frozen --extra agent pytest tests/engine/test_transcript_replace.py tests/agent/test_binding.py tests/agent/test_conformance_persistence.py -q
+uv run --frozen --extra agent pytest tests/engine/test_plan.py tests/engine/test_worker.py tests/agent/test_store.py -q
 ```
 
 Expected: PASS.
@@ -118,13 +131,13 @@ Expected: PASS.
 - [ ] **Step 5: Commit the task**
 
 ```bash
-git add src/ds4py/engine/transcript.py src/ds4py/engine/session.py src/ds4py/engine/chat.py src/ds4py/engine/rebind.py src/ds4py/binding.py src/ds4py/binding_compaction.py tests/engine/test_transcript_replace.py tests/agent/test_binding_compaction.py
-git commit -m "feat: add compaction transcript rebinding"
+git add src/ds4py/engine/transcript.py src/ds4py/engine/session.py src/ds4py/engine/chat.py src/ds4py/engine/rebind.py src/ds4py/binding.py src/ds4py/runtime_restore.py tests/engine/test_transcript_replace.py tests/agent/test_binding.py tests/agent/test_conformance_persistence.py
+git commit -m "feat: add atomic transcript compaction"
 ```
 
 ---
 
-## Task 2: Add one context owner and shared overflow handling
+## Task 2: Add typed overflow requests and async reserve recovery
 
 **Files:**
 - Create: `src/ds4py/capabilities/context.py`
@@ -133,72 +146,60 @@ git commit -m "feat: add compaction transcript rebinding"
 - Modify: `src/ds4py/errors.py`
 - Create: `tests/agent/test_context_manager.py`
 - Modify: `tests/agent/test_model_cancel.py`
+- Modify: `tests/agent/test_model_stream.py`
 
 **Interfaces:**
-- Produces: `ContextStrategy` with `owns_context_trigger: bool` and `make_room(ctx, needed_tokens)`.
-- Produces: `ContextManager` in `session.state()` under the key `ds4.context`.
-- Produces: `ContextManager.register(owner, *, compaction: bool) -> bool`.
-- Produces: `ContextManager.open_response_key: str | None` for reserve compaction.
-- Produces: `make_room_for_response(ctx, needed_tokens, *, response_key: str)` in `model_context.py`.
+- Produces: `ContextRequest(needed_tokens: int, reason: Literal["tool_result", "reserve"], response_key: str | None = None)`.
+- Produces: `ContextStrategy.make_room(ctx: RunContext[object], request: ContextRequest) -> list[ModelMessage] | None`.
+- Produces: `ContextManager(owner: ContextStrategy | None)` in `session.state()` under the key `ds4.context`.
+- Produces: `make_room_for_response(ctx: RunContext[object], request: ContextRequest) -> int` in `model_context.py`.
 - Produces: `ContextExhausted`. Keep `ContextReserveError` as an alias.
 - Consumes: `MessageBinder.count_tokens()`, `Session.ctx_used`, and Task 1 rebinding.
 
 - [ ] **Step 1: Write the failing tests**
 
-Use a test-only owner to prove registration and overflow behavior.
+Use a test-only owner to prove request contents and overflow behavior.
 
 ```python
 async def test_tool_overflow_asks_owner_once() -> None:
     result = await invoke_after_tool_execute(oversized_result)
-    assert owner.make_room_calls == [(run_context, needed_tokens)]
+    assert owner.requests == [ContextRequest(needed_tokens, "tool_result")]
     assert result.content == fitting_result
 
 
-async def test_missing_owner_raises_context_exhausted() -> None:
-    with pytest.raises(ContextExhausted):
-        await consume_reserve_paused_response()
-    assert partial_text_was_returned is False
-    assert partial_tokens_remain_in_transcript is True
+async def test_reserve_recovery_passes_response_key_without_lock() -> None:
+    response = await consume_reserve_paused_response()
+    assert owner.requests == [ContextRequest(1, "reserve", original_response_key)]
+    assert owner.pull_lock_was_locked is False
+    assert response_keys == [original_response_key]
 ```
 
-Add tests for per-run capability copies and duplicate custom owners. A failed retry must return exactly `Tool error: tool result still does not fit`.
+Add a missing-owner case that raises `ContextExhausted` and preserves partial tokens without returning partial text as an answer. Add a cleanup-race case that fails a reserve pause without calling async owner code while `_pull_lock` is held. A failed tool-result retry must return exactly `Tool error: tool result still does not fit`.
+
+Replace the synchronous `reserve_handler` test in `test_model_cancel.py`. Assert that `DS4Model` no longer accepts that argument and that the async owner path resumes the same response.
 
 - [ ] **Step 2: Run the tests and make sure that they fail**
 
 ```bash
-uv run --frozen --extra agent pytest tests/agent/test_context_manager.py tests/agent/test_model_cancel.py -q
+uv run --frozen --extra agent pytest tests/agent/test_context_manager.py tests/agent/test_model_cancel.py tests/agent/test_model_stream.py -q
 ```
 
-Expected: FAIL because owner registration and reserve recovery do not exist.
+Expected: FAIL because typed owner requests and async reserve recovery do not exist.
 
-- [ ] **Step 3: Implement owner registration and overflow handling**
+- [ ] **Step 3: Implement typed requests and the stream state transition**
 
-Define this protocol in `capabilities/context.py`:
+Define `ContextRequest` as a frozen dataclass. Require a response key when `reason == "reserve"`. Reject a response key when `reason == "tool_result"`.
 
-```python
-class ContextStrategy(AbstractCapability, ABC):
-    owns_context_trigger: bool
+Define `ContextStrategy` with only `make_room(ctx, request)`. Define `ContextManager` with an owner fixed at construction and one shared `after_tool_execute` fit check. Do not add registration methods, ownership mode flags, stand-down behavior, or current-request fields. Task 4 selects the owner once during composition.
 
-    @abstractmethod
-    async def make_room(
-        self,
-        ctx: RunContext[object],
-        needed_tokens: int,
-    ) -> list[ModelMessage] | None: ...
-```
+Make `make_room_for_response()` pass the same request object to the owner. Return reserve budget `1` after a successful rewrite. Raise `ContextExhausted` when no owner can free space. Do not store the response key in session state.
 
-Store the active owner and current request data in session state. Register the compactor with `compaction=True` and a custom owner with `compaction=False`.
-
-A custom owner replaces a registered compactor. A compactor stands down when `register()` returns `False`. Raise `ValueError` for two custom owners.
-
-Make `make_room_for_response()` set `open_response_key` while the owner runs. Clear it in `finally`. Tool-result overflow leaves it as `None`.
-
-Run one shared `after_tool_execute` fit check. Put async reserve coordination in `model_context.py`. Preserve the partial transcript when no owner can free space.
+Delete the `reserve_handler` constructor argument, model attribute, synchronous `_dispatch` branch, and old test. In `_get_event_iterator`, handle `ReserveReached` after `_pull()` returns and after `_pull_lock` is released. Await the owner, then call `event.resume(1)` or `event.fail()`. Keep `_dispatch()` as pure synchronous event translation. If cleanup encounters a reserve pause while holding `_pull_lock`, fail the pause instead of awaiting owner code.
 
 - [ ] **Step 4: Run the focused tests and make sure that they pass**
 
 ```bash
-uv run --frozen --extra agent pytest tests/agent/test_context_manager.py tests/agent/test_model_cancel.py -q
+uv run --frozen --extra agent pytest tests/agent/test_context_manager.py tests/agent/test_model_cancel.py tests/agent/test_model_stream.py -q
 uv run --frozen --extra agent pytest tests/agent/test_agent_factory.py tests/agent/test_runtime.py -q
 ```
 
@@ -207,13 +208,13 @@ Expected: PASS.
 - [ ] **Step 5: Commit the task**
 
 ```bash
-git add src/ds4py/capabilities/context.py src/ds4py/model_context.py src/ds4py/model.py src/ds4py/errors.py tests/agent/test_context_manager.py tests/agent/test_model_cancel.py
-git commit -m "feat: add context overflow coordination"
+git add src/ds4py/capabilities/context.py src/ds4py/model_context.py src/ds4py/model.py src/ds4py/errors.py tests/agent/test_context_manager.py tests/agent/test_model_cancel.py tests/agent/test_model_stream.py
+git commit -m "feat: add typed context overflow handling"
 ```
 
 ---
 
-## Task 3: Implement the engine summary job
+## Task 3: Prepare the engine summary and replacement
 
 **Files:**
 - Create: `src/ds4py/engine/compaction.py`
@@ -224,10 +225,10 @@ git commit -m "feat: add context overflow coordination"
 - Create: `tests/engine/test_compaction.py`
 
 **Interfaces:**
-- Produces: `Session.compact(reason: str) -> CompactionResult`.
-- Produces: `CompactionResult(summary: str, dropped: int, kept: int, tail_keys: tuple[str, ...])`.
-- Produces: `CompactionStarted` and `Compacted` engine events.
-- Consumes: Task 1 transcript replacement and the existing decode primitives.
+- Produces: `Session.prepare_compaction(reason: str, *, response_key: str | None = None) -> CompactionResult`.
+- Produces: `CompactionResult(summary: str, dropped: int, kept: int, tail_keys: tuple[str, ...], replacement: TranscriptReplacement)`.
+- Produces: `CompactionStarted` before summary generation.
+- Consumes: Task 1 `TranscriptReplacement` and the existing decode primitives. Task 4 emits `Compacted` only after the atomic commit.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -239,19 +240,21 @@ def test_summary_limit_matches_c(ctx: int, limit: int) -> None:
     assert summary_limit(ctx) == limit
 
 
-def test_compaction_rebuilds_system_summary_and_verbatim_tail() -> None:
-    result = session.compact("threshold")
+def test_compaction_prepares_system_summary_and_verbatim_tail() -> None:
+    before = (session.transcript.tokens, session.transcript.segments)
+    result = session.prepare_compaction("threshold")
     assert result.summary == expected_summary
-    assert session.transcript.tokens == system_tokens + summary_tokens + original_tail_tokens
+    assert result.replacement.tokens == system_tokens + summary_tokens + original_tail_tokens
     assert result.tail_keys == expected_tail_keys
     assert result.dropped + result.kept == original_history_tokens
+    assert (session.transcript.tokens, session.transcript.segments) == before
 ```
 
 Add stop-token, maximum-summary, masked tool-syntax, and leaked DSML cases. A leaked DSML start must stop the summary and remove its incomplete text.
 
 Add tail cases at user boundaries. Limit the tail to `min(ctx / 10, 50000)` tokens. Keep whole tool exchanges and any open assistant output.
 
-Add failure and cancellation cases. Assert the original tokens and segments remain unchanged. Assert no `Compacted` event occurs.
+Add failure and cancellation cases. Assert the original native state, tokens, and segments remain unchanged. Assert no `Compacted` event occurs.
 
 - [ ] **Step 2: Run the tests and make sure that they fail**
 
@@ -259,17 +262,17 @@ Add failure and cancellation cases. Assert the original tokens and segments rema
 uv run --frozen --extra agent pytest tests/engine/test_compaction.py -q
 ```
 
-Expected: FAIL because `Session.compact()` does not exist.
+Expected: FAIL because `Session.prepare_compaction()` does not exist.
 
-- [ ] **Step 3: Implement `CompactJob` and `Session.compact()`**
+- [ ] **Step 3: Implement `CompactJob` and `Session.prepare_compaction()`**
 
 Build the summary prompt as `transcript[:bottom] + user(prompt) + assistant_prefix(no-think)`. Generate plain text with `argmax`.
 
 Set the summary limit to `clamp(ctx / 8, 256, 4096)`. Stop at a normal stop token or a DSML special token. Never parse summary text as a tool call.
 
-Select the tail at a user-token boundary. Replace the live transcript only after a valid summary exists. Use `system + user(summary) + verbatim tail`, then append any open assistant prefix and sampled tokens.
+Select the tail at a user-token boundary. After a valid summary exists, build a `TranscriptReplacement` from `system + user(summary) + verbatim tail`. Append any open assistant prefix and sampled tokens. Do not change the live transcript, binder, or messages in this task.
 
-Emit `CompactionStarted` before summary tokens. Emit `Compacted(summary, dropped, kept)` only after transcript replacement succeeds. Treat `dropped` and `kept` as token counts.
+Emit `CompactionStarted` before summary tokens. Restore the native state that existed before summary generation before returning or raising. Treat `dropped` and `kept` as token counts. Do not emit `Compacted` in this task.
 
 - [ ] **Step 4: Run the focused tests and make sure that they pass**
 
@@ -284,18 +287,17 @@ Expected: PASS.
 
 ```bash
 git add src/ds4py/engine/compaction.py src/ds4py/engine/events.py src/ds4py/engine/session.py src/ds4py/engine/decode.py src/ds4py/_native/fake.py tests/engine/test_compaction.py
-git commit -m "feat: add engine LLM compaction"
+git commit -m "feat: prepare engine LLM compaction"
 ```
 
 ---
 
-## Task 4: Add automatic `LLMCompaction` between requests
+## Task 4: Add automatic compaction and explicit manual composition
 
 **Files:**
 - Create: `src/ds4py/capabilities/compaction.py`
 - Modify: `src/ds4py/capabilities/context.py`
 - Modify: `src/ds4py/capabilities/__init__.py`
-- Modify: `src/ds4py/binding.py`
 - Modify: `src/ds4py/agent.py`
 - Modify: `src/ds4py/runtime.py`
 - Create: `tests/agent/test_compaction_capability.py`
@@ -304,13 +306,14 @@ git commit -m "feat: add engine LLM compaction"
 - Modify: `tests/agent/test_noninteractive.py`
 
 **Interfaces:**
-- Produces: `LLMCompaction(session: Session, *, soft: float = 0.85)`.
+- Produces: `LLMCompaction(binder: MessageBinder, *, soft: float = 0.85)`.
 - Produces: `DS4Compaction = LLMCompaction`.
-- Produces: `compact_messages(messages, *, reason) -> tuple[list[ModelMessage], CompactionResult]`.
+- Produces: `ManualCompactor` with `compact_messages(messages: list[ModelMessage], *, reason: str, response_key: str | None = None) -> tuple[list[ModelMessage], CompactionResult]`.
+- Produces: `AgentComponents.compactor: ManualCompactor`.
 - Produces: `build_agent_components(..., context_strategy: ContextStrategy | None = None)`.
 - Produces: `AgentRuntime(..., context_strategy: ContextStrategy | None = None)`.
-- Default: One `LLMCompaction(soft=0.85)` owns automatic context management.
-- Consumes: Task 1 binding, Task 2 owner registration, and Task 3 `Session.compact()`.
+- Default: One `LLMCompaction(soft=0.85)` owns automatic context management and also serves as the explicit manual compactor.
+- Consumes: Task 1 atomic commit, Task 2 `ContextManager`, and Task 3 `Session.prepare_compaction()`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -335,21 +338,24 @@ Add composition tests for the default and a custom strategy:
 
 ```python
 def test_default_agent_installs_one_llm_compaction_owner() -> None:
-    compactors = [c for c in components if isinstance(c, LLMCompaction)]
+    compactors = [c for c in components.components if isinstance(c, LLMCompaction)]
     assert len(compactors) == 1
     assert compactors[0].soft == 0.85
     assert context_owner(session) is compactors[0]
+    assert components.compactor is compactors[0]
 
 
 def test_custom_strategy_replaces_only_automatic_owner() -> None:
     components = build_with_context_strategy(custom_strategy)
     assert context_owner(session) is custom_strategy
-    assert manual_compactor(components) is not custom_strategy
+    assert not any(isinstance(c, LLMCompaction) for c in components.components)
+    assert isinstance(components.compactor, LLMCompaction)
+    assert components.compactor is not custom_strategy
 ```
 
 Add a noninteractive FakeNative run that crosses the soft limit and continues with the compacted history.
 
-Add cases for no safe tail, summary failure, binder failure, and a custom context owner. Every case must leave `ctx.messages` and the native transcript unchanged.
+Add cases for no safe tail, summary failure, binder failure, message rewrite failure, and a custom context owner. Every case must leave `ctx.messages`, the native transcript, and the binding unchanged. Assert no `compacted` event after a failed commit.
 
 - [ ] **Step 2: Run the tests and make sure that they fail**
 
@@ -357,25 +363,23 @@ Add cases for no safe tail, summary failure, binder failure, and a custom contex
 uv run --frozen --extra agent pytest tests/agent/test_compaction_capability.py tests/agent/test_agent_factory.py tests/agent/test_runtime.py tests/agent/test_noninteractive.py -q
 ```
 
-Expected: FAIL because the capability and its default installation do not exist.
+Expected: FAIL because the capability and explicit composition do not exist.
 
-- [ ] **Step 3: Implement the capability**
+- [ ] **Step 3: Implement the capability and static owner selection**
 
-Add a pure `should_compact()` helper for the two C trigger rules. Register with `compaction=True`. Run automatic compaction only when `register()` returns `True`.
+Add a pure `should_compact()` helper for the two C trigger rules. Build the new history from system and instruction parts, one `ModelRequest` with `UserPromptPart(summary)`, and the retained tail. Give the summary a new `ds4.key`. Keep retained messages and their keys unchanged.
 
-Build the new history from system and instruction parts, one `ModelRequest` with `UserPromptPart(summary)`, and the retained tail. Give the summary a new `ds4.key`. Keep retained messages and their keys unchanged.
+In `compact_messages()`, emit `before_compact`, call `Session.prepare_compaction()`, and build the new message list. Pass the live list, new list, and `result.replacement` to Task 1 `MessageBinder.commit_compaction()`. Do not implement a second rollback path. During automatic compaction, set `request_context.messages` to the committed list. Emit `compacted` only after the commit succeeds. Manual compaction returns the committed list without requiring a request context.
 
-Emit `before_compact` before the engine job. Adopt the new binding and rewrite `ctx.messages[:]` only after a successful job. Restore the original native segments if binding adoption fails. Emit `compacted` after both changes succeed.
+In `build_agent_components`, create one `LLMCompaction` with `model.binder`. Select `context_strategy if context_strategy is not None else compactor` as the only automatic owner. Store that owner in `session.state("ds4.context", ...)` once. Add only the selected owner to the capability list. When a custom strategy is supplied, do not install `LLMCompaction` as an automatic capability.
 
-Set `request_context.messages` to the same compacted history. Keep configuration on the capability and mutable state in `session.state()`.
-
-Create one `LLMCompaction` in `build_agent_components`. Let an optional custom strategy own automatic management. Keep the compactor available for manual compaction in Task 7.
+Return the manual compactor through `AgentComponents.compactor`. In `AgentRuntime`, store this explicit dependency and pass through `context_strategy`. Do not scan capabilities to locate the compactor. Keep configuration on the capability and mutable state in `session.state()`.
 
 - [ ] **Step 4: Run the focused tests and make sure that they pass**
 
 ```bash
 uv run --frozen --extra agent pytest tests/agent/test_compaction_capability.py tests/engine/test_compaction.py tests/agent/test_context_manager.py -q
-uv run --frozen --extra agent pytest tests/agent/test_binding_compaction.py tests/agent/test_system_notes.py -q
+uv run --frozen --extra agent pytest tests/agent/test_binding.py tests/agent/test_system_notes.py -q
 uv run --frozen --extra agent pytest tests/agent/test_agent_factory.py tests/agent/test_runtime.py tests/agent/test_noninteractive.py -q
 ```
 
@@ -384,7 +388,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit the task**
 
 ```bash
-git add src/ds4py/capabilities/compaction.py src/ds4py/capabilities/context.py src/ds4py/capabilities/__init__.py src/ds4py/binding.py src/ds4py/agent.py src/ds4py/runtime.py tests/agent/test_compaction_capability.py tests/agent/test_agent_factory.py tests/agent/test_runtime.py tests/agent/test_noninteractive.py
+git add src/ds4py/capabilities/compaction.py src/ds4py/capabilities/context.py src/ds4py/capabilities/__init__.py src/ds4py/agent.py src/ds4py/runtime.py tests/agent/test_compaction_capability.py tests/agent/test_agent_factory.py tests/agent/test_runtime.py tests/agent/test_noninteractive.py
 git commit -m "feat: add automatic LLM history compaction"
 ```
 
@@ -396,13 +400,12 @@ git commit -m "feat: add automatic LLM history compaction"
 - Modify: `src/ds4py/model.py`
 - Modify: `src/ds4py/model_context.py`
 - Modify: `src/ds4py/binding.py`
-- Modify: `src/ds4py/binding_compaction.py`
 - Create: `tests/agent/test_compaction_stream.py`
 - Modify: `tests/agent/test_model_stream.py`
 
 **Interfaces:**
-- Consumes: `make_room_for_response(ctx, needed_tokens, response_key=...)` and `Session.compact("reserve")`.
-- Consumes: `ContextManager.open_response_key` so `LLMCompaction` can retain the open assistant segments.
+- Consumes: `make_room_for_response(ctx, request)` with `ContextRequest(reason="reserve", response_key=...)`.
+- Consumes: `Session.prepare_compaction("reserve", response_key=...)` and Task 1 `commit_compaction()` so `LLMCompaction` can retain the open assistant segments.
 - Produces: Reserve recovery that resumes the existing round and `DS4StreamedResponse`.
 - Produces: Usage based on each real `Synced.plan`, including `cache_read_tokens`.
 
@@ -442,11 +445,11 @@ Expected: FAIL because reserve handling ends the stream and cache usage is incom
 
 - [ ] **Step 3: Implement reserve compaction and usage accounting**
 
-Pass the saved `RunContext` and response key to `make_room_for_response()`. Let the active owner compact with the partial assistant output present. The engine finds the open assistant prefix and sampled tokens at the transcript tail.
+Pass the saved `RunContext` and typed `ContextRequest` to `make_room_for_response()`. Pass `request.response_key` directly to `LLMCompaction.compact_messages()` and `Session.prepare_compaction()`. The engine finds the open assistant prefix and sampled tokens at the transcript tail. Do not read response state from `ContextManager`.
 
-Keep the trailing assistant prefix, sampled tokens, response key, parser, and parts manager alive. Update binder offsets before calling `ReserveReached.resume(...)`. Do not call parser `finish()` at the reserve boundary.
+Keep the trailing assistant prefix, sampled tokens, response key, parser, and parts manager alive. Complete the Task 1 atomic commit before calling `ReserveReached.resume(1)`. Do not call parser `finish()` at the reserve boundary. Keep reserve recovery outside `_pull_lock` and keep `_dispatch()` free of async work, as Task 2 defines.
 
-Use `CompactionStarted` and `Compacted` to suppress summary text in the response. Count all generated tokens once in `output_tokens`. Count real prefill and cache reuse from every `Synced` event.
+Use `CompactionStarted` and the post-commit `Compacted` event to suppress summary text in the response. Count all generated tokens once in `output_tokens`. Count real prefill and cache reuse from every `Synced` event.
 
 Call `ReserveReached.fail(...)` and raise `ContextExhausted` when recovery fails.
 
@@ -462,27 +465,24 @@ Expected: PASS.
 - [ ] **Step 5: Commit the task**
 
 ```bash
-git add src/ds4py/model.py src/ds4py/model_context.py src/ds4py/binding.py src/ds4py/binding_compaction.py tests/agent/test_compaction_stream.py tests/agent/test_model_stream.py
+git add src/ds4py/model.py src/ds4py/model_context.py src/ds4py/binding.py tests/agent/test_compaction_stream.py tests/agent/test_model_stream.py
 git commit -m "feat: resume responses after reserve compaction"
 ```
 
 ---
 
-## Task 6: Preserve compacted sessions across save, switch, and fork
+## Task 6: Add compacted-session persistence regression coverage
 
 **Files:**
-- Modify: `src/ds4py/runtime.py`
-- Modify: `src/ds4py/runtime_restore.py`
-- Modify: `src/ds4py/binding.py`
 - Create: `tests/agent/test_compaction_persistence.py`
 - Modify: `tests/agent/test_conformance_persistence.py`
 
 **Interfaces:**
 - Consumes: Existing version 1 save records, `AgentRuntime.save()`, `switch()`, and `fork()`.
-- Consumes: Compaction keys and provenance from Task 4.
-- Produces: No new persistence format or public record fields.
+- Consumes: Task 1 `MessageBinder.install_transcript()` and compaction provenance from Task 4.
+- Produces: Regression tests only. No new persistence format, production restore path, or public record fields.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the regression tests**
 
 Compact a session, save it, and switch back to it.
 
@@ -497,21 +497,17 @@ async def test_exact_restore_after_compaction_has_no_prefill() -> None:
 
 Add a missing-payload case that renders the compacted snapshot fresh. Add a fork case that keeps keys, messages, binding, and live KV. Assert old runs still contain the history from before compaction.
 
-- [ ] **Step 2: Run the tests and make sure that they fail**
+Do not require messages from old step runs to have segments in the current KV. Do not add paged-view rules. A fork changes only the session identity and creation time.
+
+- [ ] **Step 2: Run the regression tests**
 
 ```bash
 uv run --frozen --extra agent pytest tests/agent/test_compaction_persistence.py -q
 ```
 
-Expected: FAIL on any compaction provenance that restore does not rebuild. If all cases pass, keep them as regression coverage and record that result.
+Expected: PASS because compaction and `/switch` already share the Task 1 installer. If a case fails, return to Task 1 and fix the shared installer or atomic commit. Do not add compaction-specific restore production code in this task.
 
-- [ ] **Step 3: Fix the provenance gaps found by the tests**
-
-Reuse the existing snapshot, save record, and segment restore paths. Match the summary and retained tail by key and content hash.
-
-Do not require messages from old step runs to have segments in the current KV. Do not add paged-view rules. A fork changes only the session identity and creation time.
-
-- [ ] **Step 4: Run the focused tests and make sure that they pass**
+- [ ] **Step 3: Run the related persistence tests**
 
 ```bash
 uv run --frozen --extra agent pytest tests/agent/test_compaction_persistence.py tests/agent/test_conformance_persistence.py -q
@@ -520,14 +516,12 @@ uv run --frozen --extra agent pytest tests/agent/test_store.py tests/agent/test_
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the task**
+- [ ] **Step 4: Commit the regression tests**
 
 ```bash
-git add src/ds4py/runtime.py src/ds4py/runtime_restore.py src/ds4py/binding.py tests/agent/test_compaction_persistence.py tests/agent/test_conformance_persistence.py
+git add tests/agent/test_compaction_persistence.py tests/agent/test_conformance_persistence.py
 git commit -m "test: cover compacted session persistence"
 ```
-
-If production fixes are needed, use `fix: restore compacted session provenance` as the commit subject.
 
 ---
 
@@ -544,7 +538,7 @@ If production fixes are needed, use `fix: restore compacted session provenance` 
 **Interfaces:**
 - Produces: `AgentRuntime.compact() -> CompactionResult`.
 - Produces: `/compact` with no arguments.
-- Consumes: `LLMCompaction.compact_messages(messages, reason="manual")`.
+- Consumes: `AgentComponents.compactor: ManualCompactor` and `compact_messages(messages, reason="manual")`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -570,7 +564,7 @@ Expected: FAIL because the runtime method and command do not exist.
 
 - [ ] **Step 3: Implement runtime compaction and the command**
 
-Keep `AgentRuntime.compact()` as a thin delegate to the compactor. Stop and await an active run before changing messages. Assign `self._messages` only after compaction succeeds.
+Keep `AgentRuntime.compact()` as a thin delegate to `self.components.compactor`. Do not scan capabilities or use `isinstance` to find it. Stop and await an active run before changing messages. Assign `self._messages` only after the Task 1 atomic commit succeeds.
 
 Register `/compact` through `SlashCommandRegistry`. Reuse the existing no-argument validation and command error format. Render progress and completion from session events. Do not import TUI code from a capability.
 
