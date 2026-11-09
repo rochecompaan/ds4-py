@@ -632,6 +632,88 @@ ds4-py keeps this state in the session:
 - A capability keeps no session state on `self`. Its `for_run` returns an instance that refers to `session.state(...)`. So the paging cut, the bookmark table, the reminder's growth counter and the list of background commands last from one prompt to the next.
 - The session drives the state's lifecycle through the event bus (section 22). `/new`, `/switch` and exit all send `session_end`. On it, the session calls `close()` on every state object and drops them all, so background commands stop and nothing leaks into the next session. On `forked`, the state is kept, because a fork keeps the transcript and the message keys. On `compacted`, a strategy that does not own the trigger resets its own state.
 
+### Standard compaction architecture
+
+The first implementation names the concrete class `LLMCompaction` and keeps `DS4Compaction` as an alias. Only standard compaction appears in this diagram. `RollingWindow` belongs to a follow-up change.
+
+Each box names its module and main responsibility. Solid arrows show calls or ownership. Dashed arrows show events.
+
+```mermaid
+flowchart TB
+    subgraph Harness["Harness and interface"]
+        direction TB
+        Command["SlashCommandRegistry<br/>tui_commands.py<br/>/compact"]
+        Runtime["AgentRuntime<br/>runtime.py<br/>messages, compact(), save(), switch(), fork()"]
+        Model["DS4Model<br/>model.py<br/>request_stream()"]
+        Stream["DS4StreamedResponse<br/>model.py<br/>event iterator and usage"]
+        TUI["TUI<br/>tui.py and tui_render.py<br/>compaction status"]
+    end
+
+    subgraph Context["Context capabilities"]
+        direction TB
+        Strategy["ContextStrategy<br/>capabilities/context.py<br/>owns_context_trigger, make_room()"]
+        Compactor["LLMCompaction<br/>capabilities/compaction.py<br/>soft = 0.85<br/>before_model_request(), compact_messages(), make_room()"]
+        Manager["ContextManager<br/>capabilities/context.py<br/>owner, open_response_key, register()"]
+        Reserve["model_context.py<br/>make_room_for_response()"]
+    end
+
+    subgraph Binding["Message and token binding"]
+        direction TB
+        Binder["MessageBinder<br/>binding.py<br/>prepare(), adopt_compaction(), count_tokens()"]
+        BindingCompaction["binding_compaction.py<br/>key, hash, and provenance matching"]
+    end
+
+    subgraph Engine["Native engine"]
+        direction TB
+        Session["Session<br/>engine/session.py<br/>ctx_used, state(), compact(), replace_transcript()"]
+        Worker["EngineWorker<br/>engine/worker.py<br/>runs native jobs"]
+        CompactJob["CompactJob<br/>engine/compaction.py<br/>summary prompt, argmax, tail selection"]
+        Result["CompactionResult<br/>engine/compaction.py<br/>summary, dropped, kept, tail_keys"]
+        Prompt["PromptBuilder<br/>engine/prompt.py<br/>renders the summary prompt"]
+        Decode["GenerateJob and DecodeStep<br/>engine/decode.py<br/>generates plain summary tokens"]
+        Rebind["rebind.py<br/>replace_transcript()<br/>checkpoint restore or rebuild"]
+        Transcript["Transcript<br/>engine/transcript.py<br/>tokens and segments"]
+    end
+
+    subgraph Persistence["Session persistence"]
+        direction TB
+        Store["SessionStore<br/>store.py<br/>save.json, session.kv, steps/"]
+        Restore["runtime_restore.py<br/>snapshot, KV, and segment restore"]
+    end
+
+    Command -->|/compact| Runtime
+    Runtime -->|manual compaction| Compactor
+    Runtime -->|save, switch, fork| Store
+    Runtime -->|switch| Restore
+    Model -->|prepare messages| Binder
+    Model -->|run_round| Session
+    Stream -->|ReserveReached| Reserve
+    Reserve -->|owner and response key| Manager
+    Manager -->|make_room| Compactor
+    Compactor -->|implements| Strategy
+    Compactor -->|compact with reason| Session
+    Compactor -->|adopt compacted history| Binder
+    Compactor -.->|before_compact and compacted| TUI
+    Session -->|on_worker| Worker
+    Worker -->|runs| CompactJob
+    CompactJob -->|builds prompt| Prompt
+    CompactJob -->|generates with argmax| Decode
+    CompactJob -->|returns| Result
+    CompactJob -->|system, summary, tail| Rebind
+    Session -->|replace_transcript| Rebind
+    Rebind -->|replaces tokens and segments| Transcript
+    Session -->|owns| Transcript
+    Binder -->|delegates compaction adoption| BindingCompaction
+    BindingCompaction -->|reads keys, hashes, positions| Transcript
+    CompactJob -.->|CompactionStarted and Compacted| Stream
+    Session -.->|Token and Synced| Stream
+    Store -->|save record and snapshot| Restore
+    Restore -->|rebuilds binding| Binder
+    Restore -->|loads KV| Session
+```
+
+`LLMCompaction` changes harness messages. `CompactJob` changes native tokens. `MessageBinder` joins those changes through keys and provenance. `DS4StreamedResponse` stays alive during reserve compaction.
+
 ## 14. Policy: owned by extensions
 
 The base agent installs no approval capability and asks for no tool confirmation in either interactive or non-interactive mode ([ADR 0002](../adr/0002-no-built-in-tool-approval-policies.md)). Tools run without a policy prompt. There is no `--yolo` flag because there is no built-in policy to bypass.
