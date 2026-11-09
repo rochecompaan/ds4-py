@@ -188,6 +188,7 @@ class Session:
         self._rng = Rng(engine.sampling_defaults.seed)
         self._lock = threading.RLock()
         self._active_round = False
+        self._summary_active = False
         self._reserve_boundary = False
         self._decode_step: DecodeStep | None = None
         self._logits_hooks: list[Callable[[LogitsView], None]] = []
@@ -342,7 +343,7 @@ class Session:
 
     def _require_idle(self) -> None:
         self._require_open()
-        if self._active_round:
+        if self._active_round or self._summary_active:
             raise EngineError("a round is open")
 
     def _reset(self) -> None:
@@ -438,13 +439,13 @@ class Session:
         """
         with self._lock:
             self._require_open()
-            if self._active_round and not self._reserve_boundary:
+            if self._summary_active or (self._active_round and not self._reserve_boundary):
                 raise EngineError("a round is open")
             bottom = operator.index(bottom)
             if not 0 <= bottom <= len(self._transcript):
                 raise ValueError("summary position is outside the transcript")
-            active, boundary = self._active_round, self._reserve_boundary
-            self._active_round, self._reserve_boundary = True, False
+            # The outer round owns its flags and may close during event delivery.
+            self._summary_active = True
         try:
             tokens = list(self._transcript.tokens[:bottom])
             tokens.extend(PromptBuilder(self._engine).message(tokens, "user", SUMMARY_PROMPT))
@@ -455,7 +456,7 @@ class Session:
             return job.result.result()
         finally:
             with self._lock:
-                self._active_round, self._reserve_boundary = active, boundary
+                self._summary_active = False
 
     def reconcile_round(self, token_count: int) -> None:
         """Rewind native state and transcript to one closed round's sampled end.
@@ -521,7 +522,7 @@ class Session:
         """
         with self._lock:
             self._require_open()
-            if self._active_round:
+            if self._active_round or self._summary_active:
                 raise EngineError("cannot add a logits hook during an active round")
             self._logits_hooks.append(hook)
 

@@ -36,6 +36,7 @@ SUMMARY_PROMPT = (
 _DSML_TEXT = "\uff5cDSML\uff5c"
 _DSML = _DSML_TEXT.encode()
 _MIN_SUMMARY_TOKENS = 256
+_QWEN_TOOL_MARKERS = ("<function=", "</function>", "<parameter=", "</parameter>")
 _TOOL_MARKERS = (
     "<tool_call>",
     "</tool_call>",
@@ -77,8 +78,10 @@ class _SummaryDecode:
         self._tokens: list[SummaryToken] = []
         self._text = bytearray()
         self._dsml_ids = engine.tokenize(_DSML_TEXT, rendered=True)
-        # Only dedicated vocabulary tokens are maskable, not plain spelling.
-        self._masked = {ids[0] for marker in _TOOL_MARKERS if len(ids := engine.tokenize(marker, rendered=True)) == 1}
+        markers = _TOOL_MARKERS + (_QWEN_TOOL_MARKERS if engine.info().family == "qwen" else ())
+        self._literal_markers = (_DSML, *(marker.encode() for marker in markers))
+        # Mask dedicated tokens and sanitize ordinary spellings of the same set.
+        self._masked = {ids[0] for marker in markers if len(ids := engine.tokenize(marker, rendered=True)) == 1}
         self._logits = array("f", [0.0]) * engine.info().vocab_size
 
     def cancelled(self) -> bool:
@@ -94,8 +97,8 @@ class _SummaryDecode:
     def sample(self, session: SessionHandle) -> int:
         return session.argmax()
 
-    def _truncate(self, end: int) -> None:
-        if end and self._text[end - 1] == ord("<"):
+    def _truncate(self, end: int, *, dsml: bool = True) -> None:
+        if dsml and end and self._text[end - 1] == ord("<"):
             end -= 1
         del self._text[end:]
         remaining = end
@@ -120,9 +123,14 @@ class _SummaryDecode:
         text = self._engine.token_text(token)
         self._tokens.append(SummaryToken(token, text))
         self._text.extend(text)
-        marker = self._text.find(_DSML)
-        if marker >= 0:
-            self._truncate(marker)
+        boundaries = [
+            (position, marker == _DSML)
+            for marker in self._literal_markers
+            if (position := self._text.find(marker)) >= 0
+        ]
+        if boundaries:
+            position, dsml = min(boundaries)
+            self._truncate(position, dsml=dsml)
             return Verdict.STOP_AFTER
         return Verdict.STOP_AFTER if len(self._tokens) >= self._limit else Verdict.CONTINUE
 
@@ -132,8 +140,8 @@ class _SummaryDecode:
         if not self._text:
             raise EngineError("compaction summary was empty")
         result = SummaryResult(self._text.decode("utf-8", errors="replace"), tuple(t.id for t in self._tokens))
-        # Buffer until control-marker trimming is complete: even private events
-        # must not expose DSML or the '<' that precedes its dedicated token.
+        # Buffer until all control-marker trimming is complete: even private
+        # events must not expose tool syntax, DSML, or its preceding '<'.
         for token in self._tokens:
             emit(token)
         return result
@@ -169,7 +177,11 @@ def summarize(  # noqa: PLR0913 - Summary execution needs native handles and wor
                 # Invalid/empty states cannot be snapshotted. Rebuild without
                 # cancellation, then reinstate invalid semantics, never private KV.
                 session.invalidate()
-                if prior:
+                if len(prior) == session.ctx():
+                    # Sync requires spare room, but eval may fill the last slot.
+                    session.sync(prior[:-1])
+                    session.eval(prior[-1])
+                elif prior:
                     session.sync(prior)
                 else:
                     session.rewind(0)

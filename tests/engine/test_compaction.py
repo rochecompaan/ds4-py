@@ -304,3 +304,125 @@ def test_summary_retains_mixed_text_token_id_at_dsml_boundary(literal: bool, mon
         result = session.prepare_summary(0)
         assert (result.summary, result.tokens, len(result.tokens)) == ("safe", (121,), 1)
         assert observed == [SummaryToken(121, b"safe")]
+
+
+def test_summary_listener_closing_outer_round_does_not_resurrect_it() -> None:
+    from ds4py.engine.events import ReserveReached, SummaryToken
+
+    with ds4py.open("f.gguf", ctx=2048, native=FakeNative(script=lambda p, g: 98)) as engine:
+        session = engine.session()
+        session.append_user("hi")
+        outer = session.run_round()
+        closed: list[tuple[bool, bool]] = []
+        try:
+            next(event for event in outer if isinstance(event, ReserveReached))
+
+            def close_outer(event: object) -> None:
+                outer.close()
+                closed.append((session._active_round, session._reserve_boundary))
+
+            session.on_event(close_outer, kinds=(SummaryToken.__name__,))
+            assert session.prepare_summary(0).summary == "a" * 256
+            assert closed and all(flags == (False, False) for flags in closed)
+            # Summary cleanup must not reclaim the expired outer-round flags.
+            session.append_tokens([99], "user")
+            assert (session._active_round, session._reserve_boundary) == (False, False)
+        finally:
+            outer.close()
+
+
+@pytest.mark.parametrize("outcome", ["success", "failure", "cancel_sync", "cancel_decode"])
+def test_summary_restores_full_invalid_native_state(outcome: str) -> None:
+    cancel = threading.Event()
+
+    def script(prompt: Sequence[int], generated: Sequence[int]) -> int:
+        if outcome == "failure":
+            raise EngineError("injected full-state failure")
+        if outcome == "cancel_decode":
+            cancel.set()
+        return reply(b"ok")(prompt, generated)
+
+    with ds4py.open("f.gguf", ctx=2048, cancel=cancel, native=FakeNative(script=script)) as engine:
+        session = engine.session()
+        session.append_tokens([11, 12], "user")
+
+        def fill(native: FakeSession) -> None:
+            native.sync([31] * 2047)
+            native.eval(32)
+            native.invalidate()
+
+        session._worker.call(lambda e, s: fill(cast("FakeSession", s))).result()
+        before = (session.transcript.tokens, session.transcript.segments, state(session))
+        if outcome == "cancel_sync":
+            cancel.set()
+        if outcome == "success":
+            assert session.prepare_summary(0).summary == "ok"
+        else:
+            message = "injected full-state failure" if outcome == "failure" else "interrupted"
+            with pytest.raises(EngineError, match=message):
+                session.prepare_summary(0)
+        assert (session.transcript.tokens, session.transcript.segments, state(session)) == before
+        assert not cancel.is_set()
+        # The worker remains usable, rather than being poisoned by cleanup.
+        session._worker.call(lambda e, s: s.sync([41, 42])).result()
+        assert state(session)[:2] == ((41, 42), True)
+
+
+@pytest.mark.parametrize(
+    ("family", "marker"),
+    [
+        ("deepseek4", "<tool_call>"),
+        ("deepseek4", "</tool_call>"),
+        ("deepseek4", "<arg_key>"),
+        ("deepseek4", "</arg_key>"),
+        ("deepseek4", "<arg_value>"),
+        ("deepseek4", "</arg_value>"),
+        ("deepseek4", "<tool_response>"),
+        ("deepseek4", "</tool_response>"),
+        ("qwen", "<function="),
+        ("qwen", "</function>"),
+        ("qwen", "<parameter="),
+        ("qwen", "</parameter>"),
+    ],
+)
+@pytest.mark.parametrize("layout", ["bytes", "mixed", "split"])
+def test_summary_sanitizes_literal_tool_delimiters(
+    family: str, marker: str, layout: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from ds4py._native.fake import FakeEngine
+    from ds4py.engine.events import SummaryToken
+
+    original = FakeEngine.token_text
+    # Exercise every interior split when two ordinary tokens straddle a marker.
+    splits = range(1, len(marker)) if layout == "split" else (0,)
+    for split in splits:
+        chunks = (b"safe" + marker[:split].encode(), marker[split:].encode() + b"bad")
+
+        def text(engine: FakeEngine, token: int, chunks: tuple[bytes, bytes] = chunks) -> bytes:
+            if layout == "mixed" and token == 121:
+                return b"safe" + marker.encode() + b"bad"
+            if layout == "split" and token in (121, 122):
+                return chunks[token - 121]
+            return original(engine, token)
+
+        def script(prompt: Sequence[int], generated: Sequence[int]) -> int:
+            if layout == "bytes":
+                return reply(b"safe" + marker.encode() + b"bad")(prompt, generated)
+            if layout == "mixed":
+                return 121 if not generated else FAKE_EOS
+            return (121, 122, FAKE_EOS)[min(len(generated), 2)]
+
+        monkeypatch.setattr(FakeEngine, "token_text", text)
+        info = replace(FakeNative()._info, family=family, is_qwen4=family == "qwen")
+        with ds4py.open("f.gguf", ctx=4096, native=FakeNative(script=script, info=info)) as engine:
+            session = engine.session()
+            observed: list[object] = []
+            session.on_event(lambda e, sink=observed: sink.append(e.payload.get("event")))
+            result = session.prepare_summary(0)
+            expected_ids = (116, 98, 103, 102) if layout == "bytes" else (121,)
+            assert (result.summary, result.tokens) == ("safe", expected_ids)
+            events = [event for event in observed if isinstance(event, SummaryToken)]
+            assert tuple(event.id for event in events) == expected_ids
+            assert b"".join(event.text_bytes for event in events) == b"safe"
