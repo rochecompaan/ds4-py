@@ -8,7 +8,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bench.metrics import MetricError, metrics_from_trace, summarize_events
+from bench.metrics import (
+    MetricError,
+    classify_c_terminal,
+    combine_summaries,
+    metrics_from_trace,
+    summarize_events,
+)
 from ds4py.engine.replay_types import ReplayRound, ReplayTrace
 
 
@@ -126,12 +132,13 @@ def canonical_events() -> list[dict[str, Any]]:
         function_call("call-2"),
         function_result("call-2", outcome="denied"),
         function_result("call-1"),
+        event("Stopped", {"event": {"reason": "tool_call_complete"}}),
         event("run_end", {"status": "success"}),
     ]
 
 
 def test_event_metrics_cover_six_comparison_values_and_tool_accounting() -> None:
-    summary = summarize_events(valid_events(), wall_seconds=2.5)
+    summary = summarize_events(valid_events(), wall_seconds=2.5, response_budget=2)
 
     assert summary.wall_seconds == 2.5
     assert summary.progress_events == 2
@@ -141,6 +148,7 @@ def test_event_metrics_cover_six_comparison_values_and_tool_accounting() -> None
     assert summary.non_extend_rounds == 0
     assert summary.invalid_non_extend_rounds == 0
     assert summary.parser_errors == 0
+    assert summary.terminal_reasons == ("stop_token",)
     assert cast("Any", summary.tool_accounting).parsed == 2
     assert cast("Any", summary.tool_accounting).executed == 1
     assert cast("Any", summary.tool_accounting).retried == 1
@@ -148,7 +156,7 @@ def test_event_metrics_cover_six_comparison_values_and_tool_accounting() -> None
 
 
 def test_canonical_tool_results_pair_by_id_and_count_denials() -> None:
-    summary = summarize_events(canonical_events(), wall_seconds=1)
+    summary = summarize_events(canonical_events(), wall_seconds=1, response_budget=2)
 
     assert summary.tool_calls == 2
     assert cast("Any", summary.tool_accounting).executed == 1
@@ -172,10 +180,11 @@ def test_canonical_retry_prompt_is_a_resolution_not_an_execution() -> None:
         ),
         function_call(),
         function_result(part_kind="retry-prompt", outcome=None),
+        event("Stopped", {"event": {"reason": "tool_call_complete"}}),
         event("run_end", {"status": "success"}),
     ]
 
-    summary = summarize_events(events, wall_seconds=1)
+    summary = summarize_events(events, wall_seconds=1, response_budget=2)
 
     assert cast("Any", summary.tool_accounting).executed == 0
     assert cast("Any", summary.tool_accounting).retried == 1
@@ -198,18 +207,18 @@ def test_inconsistent_canonical_tool_evidence_raises(mutation: Any) -> None:
     if mutation == "duplicate_call":
         events.insert(3, function_call("call-1"))
     elif mutation == "duplicate_result":
-        events.insert(-1, function_result("call-1"))
+        events.insert(6, function_result("call-1"))
     elif mutation == "unknown_result":
-        events[-2] = function_result("unknown")
+        events[5] = function_result("unknown")
     elif mutation == "missing_call_id":
         del events[2]["payload"]["part"]["tool_call_id"]
     elif mutation == "empty_result_id":
-        events[-2] = function_result("")
+        events[5] = function_result("")
     else:
-        del events[-2]
+        del events[5]
 
     with pytest.raises(MetricError):
-        summarize_events(events, wall_seconds=1)
+        summarize_events(events, wall_seconds=1, response_budget=2)
 
 
 def test_non_extension_rounds_require_recorded_compaction_or_strategy_reason() -> None:
@@ -218,7 +227,7 @@ def test_non_extension_rounds_require_recorded_compaction_or_strategy_reason() -
     events.insert(-2, synced("restore", 10, 90, "strategy"))
     events.insert(-2, synced("rebuild", 0, 100))
 
-    summary = summarize_events(events, wall_seconds=1)
+    summary = summarize_events(events, wall_seconds=1, response_budget=2)
 
     assert summary.non_extend_rounds == 3
     assert summary.allowed_non_extend_rounds == 2
@@ -229,30 +238,65 @@ def test_non_extension_rounds_require_recorded_compaction_or_strategy_reason() -
 def test_zero_reuse_denominator_is_the_only_excluded_reuse_sample() -> None:
     events = valid_events()
     events.insert(-2, synced(reused=0, to_prefill=0))
-    summary = summarize_events(events, wall_seconds=1)
+    summary = summarize_events(events, wall_seconds=1, response_budget=2)
     assert summary.avg_prefill_reuse == pytest.approx(0.4)
 
     only_zero = [
         event("run_start"),
         synced("rebuild", 0, 0),
+        event("Stopped", {"event": {"reason": "stop_token"}}),
         event("run_end", {"status": "success"}),
     ]
-    assert summarize_events(only_zero, wall_seconds=1).avg_prefill_reuse is None
+    assert summarize_events(only_zero, wall_seconds=1, response_budget=2).avg_prefill_reuse is None
 
 
 def test_parser_error_and_bad_argument_retry_have_distinct_gate_semantics() -> None:
     events = valid_events()
     events[-2] = event("Stopped", {"event": {"reason": "parser_error"}})
-    summary = summarize_events(events, wall_seconds=1)
+    summary = summarize_events(events, wall_seconds=1, response_budget=2)
 
     assert summary.parser_errors == 1
     assert cast("Any", summary.tool_accounting).retried == 1
     assert cast("Any", summary.tool_accounting).complete
 
 
+def test_unknown_terminal_reason_is_malformed_evidence() -> None:
+    events = valid_events()
+    events[-2] = event("Stopped", {"event": {"reason": "mystery"}})
+
+    with pytest.raises(MetricError, match="unknown terminal reason"):
+        summarize_events(events, wall_seconds=1, response_budget=2)
+
+
+def test_tool_call_complete_requires_a_parsed_call() -> None:
+    events = [item for item in valid_events() if item["kind"] != "ToolCalls"]
+    events[-2] = event("Stopped", {"event": {"reason": "tool_call_complete"}})
+
+    with pytest.raises(MetricError, match="tool_call_complete"):
+        summarize_events(events, wall_seconds=1, response_budget=2)
+
+
+def test_finished_attempt_requires_terminal_evidence() -> None:
+    events = [item for item in valid_events() if item["kind"] != "Stopped"]
+
+    with pytest.raises(MetricError, match="terminal"):
+        summarize_events(events, wall_seconds=1, response_budget=2)
+
+
+def test_terminal_reasons_survive_attempt_combination_in_event_order() -> None:
+    first_events = valid_events()
+    first_events[-2] = event("Stopped", {"event": {"reason": "max_tokens"}})
+    first = summarize_events(first_events, wall_seconds=1, response_budget=2)
+    second = summarize_events(valid_events(), wall_seconds=1, response_budget=2)
+
+    combined = combine_summaries((first, second))
+
+    assert combined.terminal_reasons == ("max_tokens", "stop_token")
+
+
 def test_missing_tool_outcome_is_evidence_failure_not_a_valid_zero() -> None:
     events = [item for item in valid_events() if item["kind"] != "ToolResultEvent"]
-    summary = summarize_events(events, wall_seconds=1)
+    summary = summarize_events(events, wall_seconds=1, response_budget=2)
 
     assert summary.tool_calls == 2
     assert not cast("Any", summary.tool_accounting).complete
@@ -270,7 +314,7 @@ def test_malformed_or_incomplete_events_raise(mutation: Any) -> None:
         events[2] = event("Token", {"event": {"id": "not-an-int"}})
 
     with pytest.raises(MetricError):
-        summarize_events(events, wall_seconds=1)
+        summarize_events(events, wall_seconds=1, response_budget=2)
 
 
 def test_trace_metrics_use_committed_samples_and_prefix_extension() -> None:
@@ -289,6 +333,7 @@ def test_trace_metrics_use_committed_samples_and_prefix_extension() -> None:
         wall_seconds=3,
         progress_events=7,
         tool_calls=4,
+        response_budget=3,
     )
 
     assert summary.wall_seconds == 3
@@ -298,10 +343,38 @@ def test_trace_metrics_use_committed_samples_and_prefix_extension() -> None:
     assert summary.avg_prefill_reuse == pytest.approx((0.8 + 0.25) / 3)
     assert summary.non_extend_rounds == 1
     assert summary.invalid_non_extend_rounds == 0
+    assert summary.terminal_reasons == ("recorded_boundary", "max_tokens", "recorded_boundary")
     assert summary.tool_accounting is None
 
 
 def test_trace_reuse_rejects_inconsistent_cached_prefix() -> None:
     trace = ReplayTrace(None, None, (ReplayRound(0, (1, 2), (3,), 0, 3, False),))
     with pytest.raises(MetricError):
-        metrics_from_trace(trace, wall_seconds=1, progress_events=1, tool_calls=0)
+        metrics_from_trace(trace, wall_seconds=1, progress_events=1, tool_calls=0, response_budget=3)
+
+
+@pytest.mark.parametrize(
+    ("context_limited", "prefix_only", "sampled", "expected"),
+    [
+        (True, True, (3, 4), "context_limited"),
+        (False, True, (3, 4), "prefix_only"),
+        (False, False, (3, 4), "max_tokens"),
+        (False, False, (3,), "recorded_boundary"),
+    ],
+)
+def test_c_terminal_classification_uses_recorded_boundaries(
+    context_limited: bool,
+    prefix_only: bool,
+    sampled: tuple[int, ...],
+    expected: str,
+) -> None:
+    round_ = ReplayRound(0, (1, 2), sampled, 0, 0, context_limited, prefix_only)
+
+    assert classify_c_terminal(round_, response_budget=2) == expected
+
+
+def test_c_terminal_rejects_samples_beyond_the_response_budget() -> None:
+    round_ = ReplayRound(0, (1, 2), (3, 4, 5), 0, 0, True)
+
+    with pytest.raises(MetricError, match="response budget"):
+        classify_c_terminal(round_, response_budget=2)

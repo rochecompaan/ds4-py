@@ -502,6 +502,7 @@ class Session:
         # submit may fail before there is an iterator to drain.
         events = self._worker.submit(job)
         exhausted = interrupted = terminal = False
+        published: Event | None = None
         try:
             for event in events:
                 if isinstance(job, (SavePayloadJob, LoadPayloadJob)):
@@ -514,6 +515,7 @@ class Session:
                 if pause_on_reserve and isinstance(event, Stopped) and event.reason == "context_reserve":
                     return (yield from self._reserve_decision(cast("GenerateJob", job)))
                 self._publish(event)
+                published = event
                 yield event
             exhausted = True
         finally:
@@ -526,6 +528,8 @@ class Session:
                     # another Ctrl+C during cleanup. Never release a live job.
                     events.wait()
                     for event in events:
+                        if event is not published:
+                            self._publish(event)
                         if isinstance(event, Interrupted) or (
                             isinstance(event, Stopped) and event.reason == "interrupted"
                         ):

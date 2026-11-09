@@ -22,7 +22,7 @@ from ds4py.engine.plan import Plan
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.session import Engine, Session
 from ds4py.engine.transcript import Transcript
-from ds4py.engine.worker import SYSTEM, EngineWorker
+from ds4py.engine.worker import SYSTEM, EngineWorker, SyncJob
 from ds4py.errors import CheckpointError, EngineError
 
 
@@ -395,6 +395,47 @@ def test_cancel_after_sync_interrupts_generation_and_clears_flag() -> None:
         assert list(rnd) == [Stopped("interrupted")]
         assert s.transcript.tokens == (5, 6)
         assert list(s.run_round(max_tokens=1))[-1] == Stopped("max_tokens")
+
+
+def test_close_publishes_terminal_event_emitted_only_after_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancel = threading.Event()
+    first = Prefill(0, 1, 0, 0.0)
+    terminal = Stopped("interrupted")
+
+    class DrainAfterCancel:
+        def __init__(self) -> None:
+            self.returned = 0
+
+        def __iter__(self) -> Any:
+            return self
+
+        def __next__(self) -> Any:
+            if self.returned == 2:
+                raise StopIteration
+            if self.returned == 1:
+                assert cancel.is_set(), "terminal event was emitted before cancellation"
+            self.returned += 1
+            return first if self.returned == 1 else terminal
+
+        def wait(self) -> None:
+            assert cancel.is_set(), "cleanup waited without requesting cancellation"
+
+    drained = DrainAfterCancel()
+    monkeypatch.setattr(EngineWorker, "submit", lambda _worker, _job: drained)
+    observed = []
+    with fake_engine(cancel=cancel) as engine:
+        session = engine.session()
+        session.on_event(
+            lambda event: observed.append(event.payload["event"]),
+            kinds={"Prefill", "Stopped"},
+        )
+        round_events = session._job_events(SyncJob((1,)))
+        assert next(round_events) is first
+        round_events.close()
+
+    assert observed == [first, terminal]
 
 
 def test_negative_round_budget_does_not_generate() -> None:

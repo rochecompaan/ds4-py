@@ -333,6 +333,12 @@ class MessageBinder:
                     index = matches[0]
             if index is not None and _content_hash(candidate) != self._records[index].content_hash:
                 adopted_candidate = deepcopy(self._bound_messages[index])
+            elif index is not None:
+                sampled = (self._bound_messages[index].metadata or {}).get("ds4.sampled")
+                if sampled is not None:
+                    metadata = dict(adopted_candidate.metadata or {})
+                    metadata["ds4.sampled"] = deepcopy(sampled)
+                    adopted_candidate.metadata = metadata
             adopted.append(adopted_candidate)
         self._keyed(adopted)
         return adopted
@@ -689,6 +695,16 @@ class MessageBinder:
             if segment.kind in ("assistant", "eos")
         ]
         sampled_start = trailing[0].start if trailing else len(self.session.transcript)
+        response.metadata["ds4.sampled"] = {
+            "content_hash": content_hash,
+            "segments": [
+                {
+                    "kind": segment.kind,
+                    "tokens": list(self.session.transcript.tokens[segment.start : segment.end]),
+                }
+                for segment in trailing
+            ],
+        }
         self.session._transcript.annotate(
             sampled_start,
             kinds=("assistant", "eos"),

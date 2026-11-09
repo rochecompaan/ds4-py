@@ -560,6 +560,45 @@ def test_cancelled_run_reports_interrupted_status(tmp_path: Path) -> None:
     assert terminal and terminal[-1]["payload"]["status"] == "interrupted"
 
 
+def test_runtime_cancel_finishes_run_without_native_release(tmp_path: Path) -> None:
+    """Cancelling native work alone must not leave the outer agent run alive."""
+    project = project_dir(tmp_path)
+    store = SessionStore(tmp_path / "home")
+    with fake_engine(script=scripted_rounds("answer")) as engine:
+        model = BlockingModel(engine.session(), sampling=SamplingPolicy(seed=1))
+        runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
+
+        async def scenario() -> Any:
+            entered = asyncio.Event()
+            release = asyncio.Event()
+            model.entered = entered
+            model.release = release
+            task = asyncio.create_task(runtime.run("hello"))
+            await asyncio.wait_for(entered.wait(), timeout=10)
+
+            runtime.cancel()
+            done, _ = await asyncio.wait({task}, timeout=0.5)
+            if not task.done():
+                release.set()
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+            assert task in done, "runtime.cancel left the agent run waiting for its next model request"
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            return runtime.session_id
+
+        try:
+            session_id = asyncio.run(scenario())
+            assert runtime.status == "interrupted"
+        finally:
+            asyncio.run(runtime.close())
+
+    events = read_events(store.session_dir(session_id) / "events.jsonl")
+    terminal = [line for line in events if line["kind"] == "run_end"]
+    assert terminal and terminal[-1]["payload"]["status"] == "interrupted"
+
+
 def test_load_prefix_seeds_history_the_next_run_renders(tmp_path: Path) -> None:
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
