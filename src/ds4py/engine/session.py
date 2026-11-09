@@ -405,12 +405,16 @@ class Session:
         Segments must cover the tokens without gaps or overlap, so invalid input
         changes neither native state nor history. The worker restores the longest
         valid checkpoint or rebuilds from token zero; only a completed sync
-        commits the new tokens and provenance. A paused round is discarded.
+        commits the new tokens and provenance. Checkpoints beyond the new end and
+        a paused round are discarded.
         """
         with self._lock:
             self._require_idle()
             plan = rebind.replace_transcript(self, replacement, reason=reason)
             self._transcript.replace(replacement.tokens, replacement.segments)
+            for key, length in tuple(self._checkpoint_tokens.items()):
+                if length > len(replacement.tokens):
+                    self.drop_checkpoint(key)
             self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
             return plan
 

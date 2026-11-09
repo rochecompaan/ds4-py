@@ -10,6 +10,7 @@ from ds4py._native.fake import FakeNative
 from ds4py.engine.session import Engine
 from ds4py.engine.transcript import Segment, TranscriptReplacement
 from ds4py.engine.worker import SYSTEM
+from ds4py.errors import CheckpointError, EngineError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -95,3 +96,47 @@ def test_invalid_replacement_leaves_native_and_transcript_state_unchanged(
         assert session.transcript.tokens == before_tokens
         assert session.transcript.segments == before_segments
         assert session.ctx_used == 2
+
+
+def test_replace_transcript_drops_checkpoints_past_the_new_end() -> None:
+    with fake_engine() as engine:
+        session = engine.session()
+        session.start_chat()
+        system = session.transcript.tokens
+        session.append_user("old question")
+        list(session.run_round(max_tokens=0))
+        turn = session.checkpoint("turn")
+        assert len(system) < turn.tokens
+
+        replacement = compacted(system, (601,))
+        assert len(replacement.tokens) < turn.tokens
+        session.replace_transcript(replacement, reason="compaction")
+
+        with pytest.raises(CheckpointError):
+            session.drop_checkpoint("turn")
+        session.drop_checkpoint(SYSTEM)
+
+
+def test_interrupted_replacement_leaves_native_and_transcript_state_unchanged() -> None:
+    with fake_engine() as engine:
+        session = engine.session()
+        session.start_chat()
+        session.append_user("old question")
+        list(session.run_round(max_tokens=0))
+        tail = (701, 702)
+        tokens = (*session.transcript.tokens, *tail)
+        segments = (
+            *session.transcript.segments,
+            Segment(len(tokens) - len(tail), len(tokens), "user", EMPTY),
+        )
+        before_tokens = session.transcript.tokens
+        before_segments = session.transcript.segments
+        before_ctx = session.ctx_used
+        session.cancel()
+
+        with pytest.raises(EngineError, match=r"transcript replacement \(compaction\) did not complete"):
+            session.replace_transcript(TranscriptReplacement(tokens, segments), reason="compaction")
+
+        assert session.transcript.tokens == before_tokens
+        assert session.transcript.segments == before_segments
+        assert session.ctx_used == before_ctx
