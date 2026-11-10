@@ -17,7 +17,8 @@ import ds4py
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import SPECIAL_TOKENS, tokenize_rendered
-from ds4py.binding import MessageBinder, _arguments
+from ds4py.binding import MessageBinder
+from ds4py.binding_provenance import _arguments
 from ds4py.engine.session import Engine
 from ds4py.engine.tool_syntax import make_parser
 from ds4py.engine.tool_syntax.render import render_tool_call

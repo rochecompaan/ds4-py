@@ -27,7 +27,6 @@ from ds4py.binding_plan import (
 )
 from ds4py.binding_provenance import (
     BoundMessage,
-    _arguments,  # noqa: F401 - Re-exported for tool rendering tests.
     _content_hash,
     _digest,
     _key_recovery_hash,
