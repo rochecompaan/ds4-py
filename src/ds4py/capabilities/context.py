@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, override
+from typing import TYPE_CHECKING, Literal, cast, override
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, ToolReturn, ToolReturnPart
@@ -104,23 +104,16 @@ class ContextStrategy(AbstractCapability, ABC):
             return
 
         def needed() -> int:
-            return self._needed_tokens(ctx.messages, request_context=request_context)
+            return self._needed_for_request(ctx.messages, request_context)
 
         overflow = needed()
         if overflow <= 0:
             return
-        with summary_usage(self.binder.session, usage_charge(ctx)) as attempt:
-            room = await self.make_room(ctx.messages, ContextRequest(overflow, "tool_result"))
-            attempt.report_legacy(room.generated_tokens)
+        room = await self._recover_room(ctx, overflow)
         # Compaction may replace the message objects, so select from live history.
         pending = ctx.messages[-1]
         results = [part for part in pending.parts if isinstance(part, ToolReturnPart)]
-        for rejected, part in enumerate(reversed(results)):
-            if (room.made_room or rejected > 0) and needed() <= 0:
-                return
-            part.content = TOOL_RESULT_DOES_NOT_FIT
-        if needed() > 0:
-            raise ContextExhausted("pending tool errors do not fit the context")
+        self._reject_until_fit(results, room, needed)
 
     def reserve_messages(
         self, request_messages: list[ModelMessage], run_context: RunContext[object] | None
@@ -132,19 +125,40 @@ class ContextStrategy(AbstractCapability, ABC):
         content = result.return_value if isinstance(result, ToolReturn) else result
         return ModelRequest([ToolReturnPart(call.tool_name, content, tool_call_id=call.tool_call_id)])
 
-    def _needed_tokens(
-        self, messages: Sequence[ModelMessage], *, request_context: ModelRequestContext | None = None
-    ) -> int:
-        if request_context is not None:
-            params = request_context.model_request_parameters
-            count = self.binder.count_rendered_request(
-                messages, tools=params.declared_tool_defs.values(), instructions=request_instructions(messages, params)
-            )
-        elif self.binder.session.transcript.chat:
-            count = self.binder.count_bound_request(messages)
-        else:
-            raise EngineError("after-tool fit requires an initialized chat")
+    def _needed_for_request(self, messages: Sequence[ModelMessage], request_context: ModelRequestContext) -> int:
+        """Measure the effective configured projection, not the old bound chat."""
+        params = request_context.model_request_parameters
+        count = self.binder.count_rendered_request(
+            messages, tools=params.declared_tool_defs.values(), instructions=request_instructions(messages, params)
+        )
         return count + _RESERVE - self.binder.session.engine.config.ctx
+
+    def _needed_for_chat(self, messages: Sequence[ModelMessage]) -> int:
+        """Measure the strict bound projection; after-tool calls require a prepared chat."""
+        if not self.binder.session.transcript.chat:
+            raise EngineError("after-tool fit requires an initialized chat")
+        count = self.binder.count_bound_request(messages)
+        return count + _RESERVE - self.binder.session.engine.config.ctx
+
+    async def _recover_room(self, ctx: RunContext[object], needed_tokens: int) -> RoomResult:
+        """Run the one owner attempt and account for its summary output once."""
+        with summary_usage(self.binder.session, usage_charge(ctx)) as attempt:
+            room = await self.make_room(ctx.messages, ContextRequest(needed_tokens, "tool_result"))
+            attempt.report_legacy(room.generated_tokens)
+        return room
+
+    def _reject_until_fit(self, results: Sequence[ToolReturnPart], room: RoomResult, needed: Callable[[], int]) -> None:
+        """Reject trailing live results until the complete request fits exactly.
+
+        An explicit owner failure forces the first rejection even when the
+        complete request currently fits; subsequent rejections are minimal.
+        """
+        for rejected, part in enumerate(reversed(results)):
+            if (room.made_room or rejected > 0) and needed() <= 0:
+                return
+            part.content = TOOL_RESULT_DOES_NOT_FIT
+        if needed() > 0:
+            raise ContextExhausted("pending tool errors do not fit the context")
 
     @override
     async def after_tool_execute(
@@ -158,12 +172,15 @@ class ContextStrategy(AbstractCapability, ABC):
     ) -> object:
         """Ask this owner for room before an oversized tool result enters history."""
         candidate = self._tool_return_message(call, result)
-        needed = self._needed_tokens([*ctx.messages, candidate])
+        needed = self._needed_for_chat([*ctx.messages, candidate])
         if needed <= 0:
             return result
-        with summary_usage(self.binder.session, usage_charge(ctx)) as attempt:
-            room = await self.make_room(ctx.messages, ContextRequest(needed, "tool_result"))
-            attempt.report_legacy(room.generated_tokens)
-        if not room.made_room or self._needed_tokens([*ctx.messages, candidate]) > 0:
-            return TOOL_RESULT_DOES_NOT_FIT
-        return result
+        room = await self._recover_room(ctx, needed)
+        part = cast("ToolReturnPart", candidate.parts[0])
+
+        def still_needed() -> int:
+            return self._needed_for_chat([*ctx.messages, candidate])
+
+        original = part.content
+        self._reject_until_fit([part], room, still_needed)
+        return TOOL_RESULT_DOES_NOT_FIT if part.content is not original else result

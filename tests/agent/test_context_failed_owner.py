@@ -10,6 +10,7 @@ from pydantic_ai.usage import RunUsage
 from test_context_strategy import RecordingOwner, fake_engine, make_model, prepared_tool_binder
 
 from ds4py.capabilities.context import TOOL_RESULT_DOES_NOT_FIT, ContextRequest, RoomResult
+from ds4py.errors import ContextExhausted
 
 
 @pytest.mark.parametrize("entry", ["pending", "after_tool"])
@@ -50,11 +51,11 @@ def test_reduced_fitting_return_still_honors_failed_owner(entry: str, decision: 
                 result = pending.parts[0]
                 assert isinstance(result, ToolReturnPart)
                 output = result.content
-                assert owner._needed_tokens(messages, request_context=request) <= 0
+                assert owner._needed_for_request(messages, request) <= 0
             else:
                 output = await owner.after_tool_execute(ctx, call=call, tool_def=definition, args={}, result=value)
                 candidate = owner._tool_return_message(call, output)
-                assert owner._needed_tokens([*messages, candidate]) <= 0
+                assert owner._needed_for_chat([*messages, candidate]) <= 0
             assert owner.requests == [ContextRequest(1, "tool_result")]
             assert output == (value if decision == "success_reduced" else TOOL_RESULT_DOES_NOT_FIT)
 
@@ -117,6 +118,32 @@ def test_grouped_owner_failure_rejects_only_necessary_trailing_results(
             await owner._fit_pending_results(ctx, request)
             assert tuple(part.content for part in parts) == expected
             assert len(owner.requests) == 1 and owner.requests[0].needed_tokens > 0
-            assert owner._needed_tokens(messages, request_context=request) <= 0
+            assert owner._needed_for_request(messages, request) <= 0
+
+    asyncio.run(scenario())
+
+
+def test_error_only_replacement_that_still_overflows_raises_context_exhausted() -> None:
+    # Replacing every result with the error text is not free. Overflow that
+    # remains after all rejections must not be reported as a successful fit.
+    async def scenario() -> None:
+        with fake_engine() as engine:
+            model = make_model(engine.session())
+            owner = RecordingOwner(model.binder, room=RoomResult(False))
+            pending = ModelRequest([ToolReturnPart("read_big", "x" * 9000, tool_call_id="one")])
+            messages: list[ModelMessage] = [ModelRequest([UserPromptPart("x" * 20000)]), pending]
+            ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=messages)
+            request = ModelRequestContext(
+                model=model,
+                messages=messages,
+                model_settings=None,
+                model_request_parameters=ModelRequestParameters(),
+            )
+            with pytest.raises(ContextExhausted, match="pending tool errors do not fit"):
+                await owner.before_model_request(ctx, request)
+            assert len(owner.requests) == 1 and owner.requests[0].needed_tokens > 0
+            rejected = pending.parts[0]
+            assert isinstance(rejected, ToolReturnPart)
+            assert rejected.content == TOOL_RESULT_DOES_NOT_FIT
 
     asyncio.run(scenario())
