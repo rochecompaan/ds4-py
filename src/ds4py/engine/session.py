@@ -617,9 +617,8 @@ class Session:
         The response owner calls this after closing and draining its facade
         iterator. Cancellation cannot still be observed by a native job here.
         """
-        with self._lock:
-            self._require_idle()
-            self.truncate(token_count)
+        with self.binding_transaction() as transaction:
+            transaction.truncate(token_count)
             self._worker.call(lambda engine, native: native.rewind(token_count)).result()
             self.clear_cancellation()
 
