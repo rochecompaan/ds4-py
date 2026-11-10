@@ -68,6 +68,8 @@ def test_outer_cancellation_cancels_and_drains_operation() -> None:
         finished = asyncio.Event()
 
         class BlockingRuntime(FakeRuntime):
+            status = "running"
+
             @override
             async def run(self, prompt: str) -> None:
                 self.calls.append(("run", prompt))

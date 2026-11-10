@@ -81,12 +81,12 @@ def test_cancelled_close_retains_one_teardown_until_run_drains(
                     assert str(cancelled.value.__cause__) == "state close failed"
                 await asyncio.wait_for(second, 5)
                 result = await asyncio.gather(run, return_exceptions=True)
-                assert isinstance(result[0], EngineError)
+                assert isinstance(result[0], asyncio.CancelledError)
                 assert not runtime._running and not runtime._closing
                 assert runtime._closed and runtime.status == "closed" and session._closed
                 assert len(closed_tokens) == 1
                 assert session.transcript.tokens[: len(closed_tokens[0])] == closed_tokens[0]
-                assert [e.payload["outcome"] for e in events if e.kind == "compaction_finished"] == ["failed"]
+                assert [e.payload["outcome"] for e in events if e.kind == "compaction_finished"] == ["cancelled"]
                 assert len([e for e in events if e.kind == "run_end"]) == 1
                 assert not session._active_round and session._operations.kind is None
                 assert session._worker._poisoned_by is None

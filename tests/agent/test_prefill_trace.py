@@ -165,6 +165,23 @@ def test_failed_round_keeps_committed_tokens_and_ignores_save_only_sync(
     assert records[0]["sampled"] == [3]
 
 
+def test_prompt_extension_before_sampling_extends_the_replay_prompt(tmp_path: Path) -> None:
+    path = tmp_path / "trace.jsonl"
+    session: Any = TraceSession([1, 2, 3, 4])
+    with PrefillTraceWriter(session, path, think=1):
+        session.emit("run_start", run_id="extended")
+        session.emit("Synced", event=synced(2, 1))
+        session.emit("Synced", event=synced(3, 2))
+        session.emit("Token", event=Token(4, b"b"))
+        session.emit("Stopped", event=Stopped("stop_token"))
+        session.emit("run_end", run_id="extended", status="success")
+
+    record = read_replay(path).rounds[0]
+    assert record.prompt == (1, 2, 3)
+    assert record.cached == 1
+    assert record.sampled == (4,)
+
+
 def test_repeated_sync_preserves_original_prompt_and_all_samples(
     tmp_path: Path,
 ) -> None:

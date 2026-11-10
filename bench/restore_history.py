@@ -67,33 +67,53 @@ def _event_payload(event: dict[str, JsonValue], kind: str) -> dict[str, JsonValu
     return _json_object(payload.get("event"), f"{kind} event")
 
 
+def _validate_sync_chain(round_: ReplayRound, syncs: Sequence[dict[str, JsonValue]], index: int) -> None:
+    position = round_.cached
+    for sync in syncs:
+        plan = _json_object(sync.get("plan"), f"sync {index} plan")
+        pos = sync.get("pos")
+        reused = plan.get("reused")
+        to_prefill = plan.get("to_prefill")
+        if type(pos) is not int or type(reused) is not int or type(to_prefill) is not int:
+            raise RestoreHistoryError(f"round {index} sync evidence has non-integer positions")
+        if reused != position or pos != position + to_prefill:
+            raise RestoreHistoryError(f"round {index} sync evidence differs from the original trace")
+        position = pos
+    if position != len(round_.prompt):
+        raise RestoreHistoryError(f"round {index} sync evidence differs from the original trace")
+
+
 def _validate_event_history(events: Sequence[dict[str, JsonValue]], trace: ReplayTrace, saved_tokens: int) -> None:
-    syncs = [_event_payload(event, "Synced") for event in events if event.get("kind") == "Synced"]
+    round_syncs: list[tuple[dict[str, JsonValue], ...]] = []
     sampled: list[tuple[int, ...]] = []
+    current_syncs: list[dict[str, JsonValue]] = []
     current: list[int] = []
+    sampling = False
     for event in events:
         kind = event.get("kind")
-        if kind == "Token":
+        if kind == "Synced" and not sampling:
+            current_syncs.append(_event_payload(event, "Synced"))
+        elif kind == "Token":
             token = _event_payload(event, "Token").get("id")
             if type(token) is not int:
                 raise RestoreHistoryError("Token event has a non-integer ID")
+            sampling = True
             current.append(token)
         elif kind == "Stopped":
+            round_syncs.append(tuple(current_syncs))
             sampled.append(tuple(current))
+            current_syncs = []
             current = []
-    if len(syncs) != len(trace.rounds) + 1:
-        raise RestoreHistoryError(f"expected {len(trace.rounds) + 1} original syncs, found {len(syncs)}")
-    if len(sampled) != len(trace.rounds):
-        raise RestoreHistoryError(f"expected {len(trace.rounds)} original decode rounds, found {len(sampled)}")
-    for index, (round_, sync, tokens) in enumerate(zip(trace.rounds, syncs[: len(trace.rounds)], sampled, strict=True)):
-        plan = _json_object(sync.get("plan"), f"sync {index} plan")
-        expected = (len(round_.prompt), round_.cached, len(round_.prompt) - round_.cached)
-        observed = (sync.get("pos"), plan.get("reused"), plan.get("to_prefill"))
-        if observed != expected:
-            raise RestoreHistoryError(f"round {index} sync evidence differs from the original trace")
+            sampling = False
+    if len(round_syncs) != len(trace.rounds) or any(not syncs for syncs in round_syncs):
+        raise RestoreHistoryError(f"expected prompt syncs for {len(trace.rounds)} original rounds")
+    if len(current_syncs) != 1:
+        raise RestoreHistoryError(f"expected one final save sync, found {len(current_syncs)}")
+    for index, (round_, syncs, tokens) in enumerate(zip(trace.rounds, round_syncs, sampled, strict=True)):
+        _validate_sync_chain(round_, syncs, index)
         if tokens != round_.sampled:
             raise RestoreHistoryError(f"round {index} sampled IDs differ from the original save events")
-    if syncs[-1].get("pos") != saved_tokens:
+    if current_syncs[0].get("pos") != saved_tokens:
         raise RestoreHistoryError("final save sync position differs from the save record")
 
 
