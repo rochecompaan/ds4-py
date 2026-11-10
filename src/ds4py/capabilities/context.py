@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, cast, override
+from typing import TYPE_CHECKING, Literal, override
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, ToolReturn, ToolReturnPart
@@ -121,9 +121,9 @@ class ContextStrategy(AbstractCapability, ABC):
         """Custom/view-only owners recover within the actual model request view."""
         return request_messages
 
-    def _tool_return_message(self, call: ToolCallPart, result: object) -> ModelRequest:
+    def _tool_return_part(self, call: ToolCallPart, result: object) -> ToolReturnPart:
         content = result.return_value if isinstance(result, ToolReturn) else result
-        return ModelRequest([ToolReturnPart(call.tool_name, content, tool_call_id=call.tool_call_id)])
+        return ToolReturnPart(call.tool_name, content, tool_call_id=call.tool_call_id)
 
     def _needed_for_request(self, messages: Sequence[ModelMessage], request_context: ModelRequestContext) -> int:
         """Measure the effective configured projection, not the old bound chat."""
@@ -171,16 +171,16 @@ class ContextStrategy(AbstractCapability, ABC):
         result: object,
     ) -> object:
         """Ask this owner for room before an oversized tool result enters history."""
-        candidate = self._tool_return_message(call, result)
+        part = self._tool_return_part(call, result)
+        candidate = ModelRequest([part])
         needed = self._needed_for_chat([*ctx.messages, candidate])
         if needed <= 0:
             return result
         room = await self._recover_room(ctx, needed)
-        part = cast("ToolReturnPart", candidate.parts[0])
 
         def still_needed() -> int:
             return self._needed_for_chat([*ctx.messages, candidate])
 
-        original = part.content
+        rejected = not room.made_room or still_needed() > 0
         self._reject_until_fit([part], room, still_needed)
-        return TOOL_RESULT_DOES_NOT_FIT if part.content is not original else result
+        return TOOL_RESULT_DOES_NOT_FIT if rejected else result
