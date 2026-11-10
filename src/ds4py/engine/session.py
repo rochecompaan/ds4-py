@@ -421,17 +421,9 @@ class Session:
             return self._transcript.append(tokens, role, meta)
 
     def truncate(self, token_count: int) -> None:
-        """Truncate between rounds and invalidate checkpoints beyond the new end."""
-        with self._lock:
-            self._require_idle()
-            self._truncate_locked(token_count)
-
-    def _truncate_locked(self, token_count: int) -> None:
-        # Admission is already granted: the caller holds the mutation lock.
-        position = self._truncate_position(token_count)
-        for key in self._stale_checkpoints(position):
-            self._drop_checkpoint_locked(key)
-        self._truncate_python(position)
+        """Truncate through the same claimed pipeline as binding preparation."""
+        with self.binding_transaction() as transaction:
+            transaction.truncate(token_count)
 
     def _truncate_position(self, token_count: int) -> int:
         position = operator.index(token_count)

@@ -244,6 +244,21 @@ def test_checkpoint_drop_does_not_deadlock_a_listener_mutation_attempt() -> None
     asyncio.run(scenario())
 
 
+def test_session_truncate_drops_checkpoints_outside_the_mutation_lock() -> None:
+    with fake_engine() as engine:
+        session = engine.session()
+        session.start_chat()
+        session.checkpoint("stale")
+        locked: list[bool] = []
+        session.on_event(lambda _event: locked.append(session._lock.locked()), kinds={"Dropped"})
+
+        session.truncate(0)
+
+        assert locked == [False, False]
+        assert session.transcript.tokens == ()
+        assert session._checkpoint_tokens == {}
+
+
 def test_failed_checkpoint_drop_propagates_and_keeps_the_session_usable() -> None:
     with fake_engine() as engine:
         session = engine.session()
