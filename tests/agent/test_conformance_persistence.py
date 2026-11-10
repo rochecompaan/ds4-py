@@ -38,7 +38,7 @@ def test_load_payload_and_binder_restore_install_summary_request_provenance(runt
         assert tuple(loaded) == tokens == session.transcript.tokens
         assert binder.records() == records
         assert binder.export_segments() == segments
-        assert session._checkpoint_tokens == {}
+        assert session.history.checkpoint_tokens == {}
         assert session.plan().reused == len(tokens)
         assert session.plan().to_prefill == 0
         # Keep runtime history paired with the explicitly loaded payload.

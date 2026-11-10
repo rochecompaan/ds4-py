@@ -69,7 +69,7 @@ def test_cancelled_close_retains_one_teardown_until_run_drains(
                 await asyncio.sleep(0)
                 assert not second.done(), "concurrent close returned before teardown"
                 assert not first.done(), "cancelled close abandoned its teardown owner"
-                assert not run.done() and not session._operations.closed
+                assert not run.done() and not session.history.operations.closed
                 assert runtime._active is not None and runtime._active.kind == "close"
                 with pytest.raises(EngineError, match="runtime is closing"):
                     await runtime.compact()
@@ -83,12 +83,12 @@ def test_cancelled_close_retains_one_teardown_until_run_drains(
                 result = await asyncio.gather(run, return_exceptions=True)
                 assert isinstance(result[0], asyncio.CancelledError)
                 assert runtime._active is None
-                assert runtime._closed and runtime.status == "closed" and session._operations.closed
+                assert runtime._closed and runtime.status == "closed" and session.history.operations.closed
                 assert len(closed_tokens) == 1
                 assert session.transcript.tokens[: len(closed_tokens[0])] == closed_tokens[0]
                 assert [e.payload["outcome"] for e in events if e.kind == "compaction_finished"] == ["cancelled"]
                 assert len([e for e in events if e.kind == "run_end"]) == 1
-                assert not session._operations.active_round and session._operations.kind is None
+                assert not session.history.operations.active_round and session.history.operations.kind is None
                 assert session._worker._poisoned_by is None
                 stable = session.transcript.tokens, list(runtime.messages), len(events), list(closed_tokens)
                 await runtime.close()

@@ -190,6 +190,43 @@ def test_preamble_event_delivery_does_not_deadlock_a_mutation_attempt() -> None:
     asyncio.run(scenario())
 
 
+def test_public_start_chat_delivery_keeps_the_claim_and_does_not_deadlock() -> None:
+    # Public start-chat uses the same claimed transaction as binding: the
+    # producer holds only its claim during native sync, so a loop-delivered
+    # listener is rejected instead of waiting on the producer's mutation lock.
+    async def scenario() -> None:
+        with fake_engine() as engine:
+            session = engine.session()
+            outcomes: list[str] = []
+
+            def attempt_mutation() -> None:
+                try:
+                    session.append_tokens([9], "user")
+                except EngineError:
+                    outcomes.append("rejected")
+                else:
+                    outcomes.append("appended")
+
+            def listener(event: object) -> None:
+                done = threading.Event()
+
+                def attempt() -> None:
+                    attempt_mutation()
+                    done.set()
+
+                threading.Thread(target=attempt, daemon=True).start()
+                if not done.wait(5):
+                    outcomes.append("blocked")
+
+            session.on_event(listener, kinds={"Synced"})
+            with session.events_on_loop(asyncio.get_running_loop()):
+                await asyncio.wait_for(asyncio.to_thread(session.start_chat), 30)
+            assert outcomes == ["rejected"]
+            assert session.transcript.chat
+
+    asyncio.run(scenario())
+
+
 def test_checkpoint_drop_does_not_deadlock_a_listener_mutation_attempt() -> None:
     # Checkpoint disposal during the transaction runs with only the claim held,
     # so a loop-delivered listener can never wait on the producer's lock.
@@ -198,7 +235,7 @@ def test_checkpoint_drop_does_not_deadlock_a_listener_mutation_attempt() -> None
             session = engine.session()
             session.start_chat()
             session.checkpoint("turn")
-            stale = len(session._checkpoint_tokens)
+            stale = len(session.history.checkpoint_tokens)
             assert stale == 2
             dropped: list[str] = []
             observed: list[int] = []
@@ -239,7 +276,7 @@ def test_checkpoint_drop_does_not_deadlock_a_listener_mutation_attempt() -> None
             # the refused writer never interleaved with the transaction.
             assert observed == [0] * stale
             assert session.transcript.tokens == ()
-            assert session._checkpoint_tokens == {}
+            assert session.history.checkpoint_tokens == {}
 
     asyncio.run(scenario())
 
@@ -250,13 +287,13 @@ def test_session_truncate_drops_checkpoints_outside_the_mutation_lock() -> None:
         session.start_chat()
         session.checkpoint("stale")
         locked: list[bool] = []
-        session.on_event(lambda _event: locked.append(session._lock.locked()), kinds={"Dropped"})
+        session.on_event(lambda _event: locked.append(session.history.mutation_lock.locked()), kinds={"Dropped"})
 
         session.truncate(0)
 
         assert locked == [False, False]
         assert session.transcript.tokens == ()
-        assert session._checkpoint_tokens == {}
+        assert session.history.checkpoint_tokens == {}
 
 
 def test_reconcile_drops_checkpoints_outside_the_mutation_lock() -> None:
@@ -265,13 +302,13 @@ def test_reconcile_drops_checkpoints_outside_the_mutation_lock() -> None:
         session.start_chat()
         session.checkpoint("stale")
         locked: list[bool] = []
-        session.on_event(lambda _event: locked.append(session._lock.locked()), kinds={"Dropped"})
+        session.on_event(lambda _event: locked.append(session.history.mutation_lock.locked()), kinds={"Dropped"})
 
         session.reconcile_round(0)
 
         assert locked == [False, False]
         assert session.transcript.tokens == ()
-        assert session._checkpoint_tokens == {}
+        assert session.history.checkpoint_tokens == {}
 
 
 def test_failed_checkpoint_drop_propagates_and_keeps_the_session_usable() -> None:
@@ -280,14 +317,14 @@ def test_failed_checkpoint_drop_propagates_and_keeps_the_session_usable() -> Non
         session.start_chat()
         # A key Python lists but the worker never snapshotted: disposal rejects
         # from the native job, after the locked Python truncation committed.
-        session._checkpoint_tokens["ghost"] = len(session.transcript)
+        session.history._checkpoints["ghost"] = len(session.transcript)
         with session.binding_transaction() as transaction:
             with pytest.raises(CheckpointError, match="ghost"):
                 transaction.truncate(0)
             assert session.transcript.tokens == ()
-            assert session._checkpoint_tokens == {}
+            assert session.history.checkpoint_tokens == {}
         # The rejected disposal releases the claim and later admission still works.
-        assert session._operations.kind is None
+        assert session.history.operations.kind is None
         session.append_tokens([9], "user")
         assert session.transcript.tokens == (9,)
 
@@ -299,7 +336,7 @@ def test_binding_plan_cannot_apply_against_changed_prefix() -> None:
         group = replacement((101, 102), (0, 2, "user"))
         with session.binding_transaction() as transaction:
             # A stale writer commits history the planned offsets never observed.
-            session._transcript.append([7], "user")
+            session.history.mutable_transcript.append([7], "user")
             stale = session.transcript.segments
             with pytest.raises(EngineError, match="binding transaction"):
                 transaction.apply_appends(group)
@@ -353,9 +390,9 @@ def test_apply_appends_rejects_an_invalid_group_without_mutation(
             session.transcript.tokens,
             session.transcript.segments,
             session.transcript.chat,
-            session._paused_stream,
-            session._paused_control,
-            session._paused_sampled_tokens,
+            session.history.paused_stream,
+            session.history.paused_control,
+            session.history.paused_sampled_tokens,
         )
         native = session._worker.call(lambda e, n: tuple(n.tokens())).result()
         with pytest.raises(ValueError, match=message):
@@ -366,9 +403,9 @@ def test_apply_appends_rejects_an_invalid_group_without_mutation(
             session.transcript.tokens,
             session.transcript.segments,
             session.transcript.chat,
-            session._paused_stream,
-            session._paused_control,
-            session._paused_sampled_tokens,
+            session.history.paused_stream,
+            session.history.paused_control,
+            session.history.paused_sampled_tokens,
         ) == before
 
 
@@ -399,7 +436,7 @@ def test_later_publication_failure_retains_the_completed_prefix(after: bool) -> 
         assert notes._date_emitted and not notes._hints_full_emitted
         # The failed publication released its claim, so an idle operation is
         # admitted again before the retry.
-        assert session._operations.kind is None
+        assert session.history.operations.kind is None
         session.checkpoint("after-failure")
         binder.prepare(messages)
         assert len(binder.records()) == 2
@@ -415,7 +452,7 @@ def test_failed_retirement_restores_the_whole_group_and_paused_state() -> None:
         session = engine.session()
         session.append_user("first")
         assert list(session.run_round(stop_sequences=[b"ok"]))[-1] == Stopped("stop_sequence")
-        paused = (session._paused_stream, session._paused_control, session._paused_sampled_tokens)
+        paused = (session.history.paused_stream, session.history.paused_control, session.history.paused_sampled_tokens)
         assert paused[0] is not None and paused[1] is not None
         tokens = PromptBuilder(engine).append_assistant_end()
         group = replacement(tokens, (0, len(tokens), "eos"))
@@ -430,18 +467,18 @@ def test_failed_retirement_restores_the_whole_group_and_paused_state() -> None:
                 transaction.apply_appends(group, retire_paused=True, publish=fail)
             assert session.transcript.tokens == before
             assert (
-                session._paused_stream,
-                session._paused_control,
-                session._paused_sampled_tokens,
+                session.history.paused_stream,
+                session.history.paused_control,
+                session.history.paused_sampled_tokens,
             ) == paused
             # Python-only appends never roll native state back or forward.
             assert session._worker.call(lambda e, n: tuple(n.tokens())).result() == native
             transaction.apply_appends(group, retire_paused=True)
         assert session.transcript.tokens[len(before) :] == tuple(tokens)
         assert (
-            session._paused_stream,
-            session._paused_control,
-            session._paused_sampled_tokens,
+            session.history.paused_stream,
+            session.history.paused_control,
+            session.history.paused_sampled_tokens,
         ) == (None, None, None)
 
 

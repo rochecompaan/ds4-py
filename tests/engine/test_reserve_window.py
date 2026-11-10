@@ -204,8 +204,8 @@ def test_synthetic_stale_first_exit_preserves_newer_window_identity(strict: bool
                 # context remains entered. Install a newer handle explicitly to
                 # cover the defensive identity guard in that context's finally.
                 operations = ReserveOperations(session, strict=strict)
-                with session._lock:
-                    session._operations.install_reserve(operations)
+                with session.history.mutation_lock:
+                    session.history.operations.install_reserve(operations)
                 replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
                 ticket = operations.issue_authority("replacement")
                 expired_window.__exit__(None, None, None)

@@ -208,14 +208,14 @@ def test_empty_replacement_is_valid_everywhere() -> None:
         list(session.run_round(max_tokens=0))
         session.checkpoint("history")
         assert session._worker.call(lambda e, n: tuple(n.tokens())).result() == (7, 8)
-        assert session._checkpoint_tokens == {"history": 2}
+        assert session.history.checkpoint_tokens == {"history": 2}
 
         session.replace_transcript(TranscriptReplacement((), ()), reason="empty")
 
         assert session.ctx_used == 0 and session.transcript.chat
         assert session.transcript.tokens == session.transcript.segments == ()
         assert session._worker.call(lambda e, n: tuple(n.tokens())).result() == ()
-        assert session._checkpoint_tokens == {}
+        assert session.history.checkpoint_tokens == {}
         with pytest.raises(CheckpointError):
             session.drop_checkpoint("history")
 

@@ -1,7 +1,8 @@
 """Validate a transcript replacement and rebind it through the engine worker.
 
-Replacement never writes history: `Session` commits the validated tokens and
-segments only after the worker has restored a checkpoint or rebuilt from zero.
+Replacement never writes history: `SessionHistory` commits the validated tokens
+and segments only after the worker has restored a checkpoint or rebuilt from
+zero.
 """
 
 from typing import TYPE_CHECKING
@@ -12,15 +13,17 @@ from .events import Synced
 from .native_restore import restore_native_tokens
 from .plan import Plan
 from .transcript import validate_segment_coverage
-from .worker import CheckpointJob, ResetJob, SyncJob
+from .worker import ResetJob, SyncJob
 
 if TYPE_CHECKING:
+    from .history import SessionHistory
     from .session import Session
     from .transcript import TranscriptReplacement
 
 
 def replace_transcript(
     session: Session,
+    history: SessionHistory,
     replacement: TranscriptReplacement,
     *,
     reason: str,
@@ -37,7 +40,7 @@ def replace_transcript(
         except BaseException as error:
             _restore_after_cleanup_failure(session, original, valid=valid, error=error)
             raise
-        session._checkpoint_tokens.clear()
+        history.clear_checkpoints()
         return Plan("rebuild", 0, 0, fits=True, checkpoint=None)
     try:
         plan = _sync_replacement(session, replacement, reason=reason)
@@ -45,10 +48,10 @@ def replace_transcript(
         _restore_native(session, original, valid=valid)
         raise
     try:
-        for key, length in tuple(session._checkpoint_tokens.items()):
+        for key, length in history.checkpoint_tokens.items():
             if length > len(replacement.tokens):
-                list(session._job_events(CheckpointJob(key, drop=True)))
-                session._checkpoint_tokens.pop(key, None)
+                history.dispose_checkpoint(key)
+                history.forget_checkpoint(key)
     except BaseException as error:
         _restore_after_cleanup_failure(session, original, valid=valid, error=error)
         raise

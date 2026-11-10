@@ -19,7 +19,7 @@ from ds4py._native.protocol import EngineConfig, Native, ThinkMode
 from ds4py.errors import EngineError
 
 from . import chat as chat_ops
-from . import rebind, session_operations
+from . import session_operations
 from .compaction import SummaryJob, SummaryResult, summary_suffix
 from .decode import DecodeStep, GenerateJob
 from .events import (
@@ -32,21 +32,19 @@ from .events import (
     Stopped,
     Synced,
 )
+from .history import BindingTransaction, SessionHistory
 from .lifecycle import SessionEvent, SessionLifecycle
-from .pause import ControlSpan, resolve_control
+from .pause import resolve_control
 from .reserve import ReserveAuthority, ReserveOperations, legacy_context
 
 if TYPE_CHECKING:
     from .logits import LogitsView
     from .plan import Plan
     from .prefix import PrefixTurn
-    from .stream import RoundStream
     from .tool_prompt import ToolDefinition
-from .prompt import PromptBuilder
 from .sampling import Rng, SamplingPolicy
-from .transcript import Segment, Transcript, TranscriptReplacement, TranscriptView, validate_segment_coverage
+from .transcript import Segment, TranscriptReplacement, TranscriptView, validate_segment_coverage
 from .worker import (
-    CheckpointJob,
     EngineWorker,
     Handles,
     Job,
@@ -185,17 +183,10 @@ class Session:
 
     def __init__(self, engine: Engine) -> None:
         self._engine, self._worker = engine, engine._worker
-        self._transcript = Transcript()
-        self._transcript_view = TranscriptView(self._transcript)
+        self._history = SessionHistory(self)
         self._rng = Rng(engine.sampling_defaults.seed)
-        self._lock = threading.RLock()
-        self._operations = session_operations.OperationState()
         self._decode_step: DecodeStep | None = None
         self._logits_hooks: list[Callable[[LogitsView], None]] = []
-        self._paused_stream: RoundStream | None = None
-        self._paused_control: ControlSpan | None = None
-        self._paused_sampled_tokens: list[int] | None = None
-        self._checkpoint_tokens: dict[str, int] = {}
         self._lifecycle = SessionLifecycle()
 
     @property
@@ -209,14 +200,19 @@ class Session:
         return self._engine
 
     @property
+    def history(self) -> SessionHistory:
+        """The owner of transcript, pause/checkpoint state, and claimed mutations."""
+        return self._history
+
+    @property
     def transcript(self) -> TranscriptView:
         """Read-only history; append_tokens is the guarded caller mutation path."""
-        return self._transcript_view
+        return self._history.transcript
 
     @property
     def paused(self) -> bool:
         """True while a stop-sequence-paused assistant may be retired."""
-        return self._paused_stream is not None
+        return self._history.paused
 
     @property
     def ctx_used(self) -> int:
@@ -245,13 +241,12 @@ class Session:
 
     def state[T](self, key: str, factory: Callable[[], T]) -> T:
         """Return the session-owned state for ``key``, creating it once."""
-        self._require_open()
+        self._history.require_open()
         return self._lifecycle.state(key, factory)
 
     def new(self) -> str:
         """End the old session, drop scoped state, and reset history/KV."""
-        with self._lock:
-            self._require_idle()
+        with self._history.edit():
             old = self.id
             self._lifecycle.emit("session_end", old=old)
             self._lifecycle.close_states()
@@ -272,8 +267,7 @@ class Session:
         runtime can load history/KV without a second identity or state set.
         Its returned mapping can refine the final ``switched`` payload.
         """
-        with self._lock:
-            self._require_idle()
+        with self._history.edit():
             old = self.id
             self._lifecycle.emit("switching", old=old, new=new_id)
             self._lifecycle.emit("session_end", old=old)
@@ -303,8 +297,7 @@ class Session:
 
     def fork(self) -> str:
         """Change only identity; transcript, KV, checkpoints, and state survive."""
-        with self._lock:
-            self._require_idle()
+        with self._history.edit():
             old = self.id
             new = uuid4().hex
             self._lifecycle.emit("forked", old=old, new=new)
@@ -313,8 +306,7 @@ class Session:
 
     def set_think(self, mode: int) -> None:
         """Set the think mode between rounds; bound prefixes rebuild next request."""
-        with self._lock:
-            self._require_idle()
+        with self._history.edit():
             normalized = self._worker.call(
                 lambda e, s: self._engine.native.think_mode_for_context(
                     mode,
@@ -325,63 +317,26 @@ class Session:
 
     def set_decode_step(self, step: DecodeStep | None) -> None:
         """Install the decode step between rounds; ``None`` restores the default."""
-        with self._lock:
-            self._require_idle()
-            if self._paused_stream is not None or self._paused_control is not None:
+        with self._history.edit():
+            if self._history.paused_stream is not None or self._history.paused_control is not None:
                 raise EngineError("cannot change decode step during a paused round")
             self._decode_step = step
 
     def close(self) -> None:
         """End the live session and close all state; safe to call repeatedly."""
-        with self._lock:
-            if self._operations.closed:
-                return
-            reason = self._blocked_reason("close")
-            if reason is not None:
-                raise EngineError(reason)
-            self._operations.close()
-            self._decode_step = None
-            self._lifecycle.emit("session_end", old=self.id)
-            self._lifecycle.close_states()
-
-    def _blocked_reason(
-        self,
-        policy: session_operations.GuardPolicy,
-        *,
-        authority: ReserveAuthority | None = None,
-        binding: session_operations.BindingTransaction | None = None,
-    ) -> str | None:
-        return session_operations.blocked_reason(self._operations, policy, authority=authority, binding=binding)
-
-    def _exclusive(
-        self,
-        kind: session_operations.OperationKind,
-        *,
-        authority: ReserveAuthority | None = None,
-    ) -> AbstractContextManager[session_operations.Claim]:
-        return session_operations.exclusive(self, kind, authority=authority)
-
-    def _require_open(self) -> None:
-        reason = self._blocked_reason("open")
-        if reason is not None:
-            raise EngineError(reason)
-
-    def _require_idle(self) -> None:
-        reason = self._blocked_reason("idle")
-        if reason is not None:
-            raise EngineError(reason)
+        if not self._history.close():
+            return
+        self._decode_step = None
+        self._lifecycle.emit("session_end", old=self.id)
+        self._lifecycle.close_states()
 
     def _reset(self) -> None:
         for _ in self._job_events(ResetJob()):
             pass
-        self._checkpoint_tokens.clear()
-        self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
-        self._transcript.reset()
+        self._history.reset()
 
     def append_tokens(self, tokens: Sequence[int], kind: str, meta: Mapping[str, object] | None = None) -> Segment:
-        with self._lock:
-            self._require_idle()
-            return self._transcript.append(tokens, kind, meta)
+        return self._history.append_tokens(tokens, kind, meta)
 
     def start_chat(
         self,
@@ -392,9 +347,7 @@ class Session:
 
         Rendering runs on the worker; caller-provided payloads stay plain text.
         """
-        with self._lock:
-            self._require_idle()
-            chat_ops.start_chat(self, tools, instructions)
+        self._history.start_chat(tools, instructions)
 
     def append_message(
         self,
@@ -405,53 +358,24 @@ class Session:
         meta: Mapping[str, object] | None = None,
     ) -> Segment:
         """Append one plain-payload chat message with optional provenance metadata."""
-        with self._lock:
-            self._require_idle()
-            if images:
-                raise EngineError("image input requires M5 vision support")
-            chat_ops._start_if_empty(self)
-            chat_ops.retire_paused(self)
-            tokens = PromptBuilder(self._engine).message(self._transcript.tokens, role, text)
-            return self._transcript.append(tokens, role, meta)
+        self._history.require_idle()
+        return chat_ops.append_message(self, role, text, images=images, meta=meta)
 
     def truncate(self, token_count: int) -> None:
         """Truncate through the same claimed pipeline as binding preparation."""
-        with self.binding_transaction() as transaction:
-            transaction.truncate(token_count)
-
-    def _truncate_position(self, token_count: int) -> int:
-        position = operator.index(token_count)
-        if not 0 <= position <= len(self._transcript):
-            raise ValueError("truncate position is outside the transcript")
-        return position
-
-    def _stale_checkpoints(self, position: int) -> tuple[str, ...]:
-        return tuple(key for key, length in self._checkpoint_tokens.items() if length > position)
-
-    def _truncate_python(self, position: int) -> None:
-        """Commit one truncation of history, pause state and stale checkpoint keys.
-
-        Native checkpoint disposal is not part of this step: the binding
-        transaction dispatches those drops with only its claim held, so event
-        delivery never waits on the mutation lock.
-        """
-        for key in self._stale_checkpoints(position):
-            del self._checkpoint_tokens[key]
-        self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
-        self._transcript.truncate(position)
+        self._history.truncate(token_count)
 
     def apply_appends(self, replacement: TranscriptReplacement, *, retire_paused: bool = False) -> None:
         """Append one validated group of segments atomically between rounds.
 
         Python-only: appends never synchronize native state. Kinds, coverage and
         resulting offsets are checked before one publication, so invalid input
-        changes neither history, chat flag nor Session-owned pause state.
+        changes neither history, chat flag nor paused state.
         """
-        with self._lock:
-            self._commit_appends(replacement, retire_paused=retire_paused)
+        self._history.apply_appends(replacement, retire_paused=retire_paused)
 
     @contextmanager
-    def binding_transaction(self) -> Generator[session_operations.BindingTransaction]:
+    def binding_transaction(self) -> Generator[BindingTransaction]:
         """Claim all binding boundaries of one real preparation plan.
 
         The claim begins before planning and excludes every other round,
@@ -459,36 +383,8 @@ class Session:
         work and native checkpoint disposal release the mutation lock but never
         the claim.
         """
-        with self._exclusive("binding") as claim:
-            transaction = session_operations.BindingTransaction(self, claim)
-            try:
-                yield transaction
-            finally:
-                transaction.close()
-
-    def _commit_appends(
-        self,
-        replacement: TranscriptReplacement,
-        *,
-        retire_paused: bool = False,
-        publish: Callable[[], None] | None = None,
-        binding: session_operations.BindingTransaction | None = None,
-    ) -> None:
-        # The lock is held; admission is granted here so every caller shares it.
-        reason = self._blocked_reason("idle", binding=binding)
-        if reason is not None:
-            raise EngineError(reason)
-        self._transcript.append_group(replacement)
-        paused = (self._paused_stream, self._paused_control, self._paused_sampled_tokens)
-        if retire_paused:
-            self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
-        try:
-            if publish is not None:
-                publish()
-        except BaseException:
-            self._transcript.rollback(len(self._transcript) - len(replacement.tokens))
-            self._paused_stream, self._paused_control, self._paused_sampled_tokens = paused
-            raise
+        with self._history.binding_transaction() as transaction:
+            yield transaction
 
     def install_segments(self, segments: Sequence[Segment]) -> None:
         """Install saved provenance over tokens an already-loaded payload set.
@@ -496,9 +392,7 @@ class Session:
         Between rounds only. The saved ranges must describe the loaded tokens
         without gaps or overlap, so invalid input leaves the transcript intact.
         """
-        with self._lock:
-            self._require_idle()
-            self._transcript.install(segments)
+        self._history.install(segments)
 
     def replace_transcript(
         self, replacement: TranscriptReplacement, *, reason: str, authority: ReserveAuthority | None = None
@@ -516,15 +410,7 @@ class Session:
         Strict paused callers require it; idle callers leave it as None. A
         supplied invalid, stale or listener-delivered ticket always rejects.
         """
-        with self._exclusive("replacement", authority=authority):
-            # Event delivery can synchronously wait for the loop. Never retain
-            # the mutation lock across worker emissions; the claim rejects writes.
-            plan = rebind.replace_transcript(self, replacement, reason=reason)
-            with self._lock:
-                self._require_open()
-                self._transcript.replace(replacement.tokens, replacement.segments)
-                self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
-                return plan
+        return self._history.replace_transcript(replacement, reason=reason, authority=authority)
 
     @contextmanager
     def reserve_window(self, event: ReserveReached, *, strict: bool = False) -> Generator[ReserveOperations]:
@@ -532,21 +418,22 @@ class Session:
 
         Legacy child executors remain ambiguous; this is not security isolation.
         """
-        with self._lock:
-            self._require_open()
+        history = self._history
+        with history.mutation_lock:
+            history.require_open()
             operations = ReserveOperations(self, strict=strict)
-            session_operations.open_reserve_window(self._operations, event, operations)
+            session_operations.open_reserve_window(history.operations, event, operations)
         try:
             with legacy_context(operations, enabled=not strict):
                 yield operations
         finally:
-            with self._lock:
-                self._operations.release_reserve(operations)
+            with history.mutation_lock:
+                history.operations.release_reserve(operations)
 
     def open_assistant_start(self) -> int | None:
         """Observe the sampled start of the trailing unkeyed assistant structure."""
-        with self._lock:
-            tokens, segments = self._transcript.tokens, self._transcript.segments
+        with self._history.mutation_lock:
+            tokens, segments = self._history.transcript.tokens, self._history.transcript.segments
             try:
                 validate_segment_coverage(segments, len(tokens))
             except ValueError as error:
@@ -574,11 +461,11 @@ class Session:
         Strict paused callers require it; idle callers leave it as None. A
         supplied invalid, stale or listener-delivered ticket always rejects.
         """
-        with self._exclusive("summary", authority=authority):
+        with self._history.claim("summary", authority=authority):
             bottom = operator.index(bottom)
-            if not 0 <= bottom <= len(self._transcript):
+            if not 0 <= bottom <= len(self._history.transcript):
                 raise ValueError("summary position is outside the transcript")
-            prefix = self._transcript.tokens[:bottom]
+            prefix = self._history.transcript.tokens[:bottom]
             job = SummaryJob(prefix + summary_suffix(self._engine, prefix))
             for _ in self._job_events(job):
                 pass
@@ -602,9 +489,8 @@ class Session:
         starts a fresh assistant prefix/parser. Nonempty images require M5.
         Rendering/tokenization is dispatched to the worker.
         """
-        with self._lock:
-            self._require_idle()
-            return chat_ops.append_user(self, text, images)
+        self._history.require_idle()
+        return chat_ops.append_user(self, text, images)
 
     def append_prefix(self, turns: Iterable[PrefixTurn]) -> None:
         """Append PrefixTurn history between rounds, starting an empty chat if needed.
@@ -612,9 +498,8 @@ class Session:
         Retires a paused assistant and closes each supplied assistant turn using
         the family's EOS policy. Rendering is dispatched to the worker.
         """
-        with self._lock:
-            self._require_idle()
-            chat_ops.append_prefix(self, turns)
+        self._history.require_idle()
+        chat_ops.append_prefix(self, turns)
 
     def append_tool_results(self, results: Iterable[str]) -> Segment:
         """Append results joined by two newlines as one tool message in initialized chat.
@@ -622,9 +507,8 @@ class Session:
         Between rounds only; closes a paused assistant before appending. Worker
         rendering escapes the matching tool-result closing delimiter.
         """
-        with self._lock:
-            self._require_idle()
-            return chat_ops.append_tool_results(self, results)
+        self._history.require_idle()
+        return chat_ops.append_tool_results(self, results)
 
     def append_system_note(self, text: str, *, subtype: str | None = None) -> Segment:
         """Append a newline-prefixed note between rounds in initialized chat.
@@ -632,9 +516,8 @@ class Session:
         Closes a paused assistant first and dispatches plain-payload rendering
         to the worker. ``subtype`` becomes save provenance metadata.
         """
-        with self._lock:
-            self._require_idle()
-            return chat_ops.append_system_note(self, text, subtype)
+        self._history.require_idle()
+        return chat_ops.append_system_note(self, text, subtype)
 
     def add_logits_hook(self, hook: Callable[[LogitsView], None]) -> None:
         """Register a lazy pre-sample hook on the worker-thread decode path.
@@ -645,10 +528,13 @@ class Session:
         The hook must not call engine, session, harness, cancellation, or
         blocking-I/O APIs; those calls can deadlock the native worker.
         """
-        with self._lock:
-            self._require_open()
-            if self._blocked_reason("idle") is not None:
-                raise EngineError("cannot add a logits hook during an active round")
+        history = self._history
+        with history.mutation_lock:
+            history.require_open()
+            try:
+                history.require_idle()
+            except EngineError as error:
+                raise EngineError("cannot add a logits hook during an active round") from error
             self._logits_hooks.append(hook)
 
     def _publish(self, event: Event) -> None:
@@ -661,9 +547,9 @@ class Session:
         decision: dict[str, object] = {}
 
         def decide(action: str, reserve: int = 0) -> None:
-            with self._lock:
-                self._operations.require_reserve(pause)
-                self._operations.end_reserve()
+            with self._history.mutation_lock:
+                self._history.operations.require_reserve(pause)
+                self._history.operations.end_reserve()
                 decision.update(action=action, reserve=reserve)
 
         pause = ReserveReached(
@@ -671,13 +557,14 @@ class Session:
             on_resume=lambda reserve: decide("resume", reserve),
             on_fail=lambda: decide("fail"),
         )
-        self._operations.begin_reserve(pause)
+        history = self._history
+        history.operations.begin_reserve(pause)
         try:
             self._publish(pause)
             yield pause
         finally:
-            with self._lock:
-                self._operations.end_reserve()
+            with history.mutation_lock:
+                history.operations.end_reserve()
         if not decision:
             raise EngineError("reserve pause requires a decision before advancing")
         if decision["action"] == "fail":
@@ -739,20 +626,20 @@ class Session:
         sampling: SamplingPolicy | None,
         stop_sequences: Sequence[bytes] = (),
     ) -> Generator[Event]:
-        resuming = self._paused_control is not None and self._paused_stream is None
-        control = resolve_control(self._paused_control if resuming else None, stop_sequences)
-        sampled_tokens = self._paused_sampled_tokens if resuming else []
+        resuming = self._history.paused_control is not None and self._history.paused_stream is None
+        control = resolve_control(self._history.paused_control if resuming else None, stop_sequences)
+        sampled_tokens = self._history.paused_sampled_tokens if resuming else []
         if sampled_tokens is None:
             raise AssertionError("paused raw round requires sampled tokens")
         try:
-            tokens = self._transcript.tokens
+            tokens = self._history.transcript.tokens
             if bool((yield from self._job_events(SyncJob(tokens)))):
                 return
             job = GenerateJob(
                 sampling or self._engine.sampling_defaults,
                 self._rng,
                 max_tokens,
-                self._transcript,
+                self._history.mutable_transcript,
                 logits_hooks=tuple(self._logits_hooks),
                 control=control,
                 resume=resuming,
@@ -762,10 +649,9 @@ class Session:
             yield from self._job_events(job)
         finally:
             if control.stop_sequence is not None:
-                self._paused_control = control
-                self._paused_sampled_tokens = sampled_tokens
+                self._history.pause_raw(control, sampled_tokens)
             else:
-                self._paused_control = self._paused_sampled_tokens = None
+                self._history.clear_pause()
 
     def run_round(
         self,
@@ -783,11 +669,9 @@ class Session:
         ReserveReached requires resume(reserve) or fail() before advancing.
         Closing the iterator drains native work.
         """
-        with self._lock:
-            self._require_idle()
-            self._operations.begin_round()
+        self._history.begin_round()
         try:
-            if self._transcript.chat:
+            if self._history.transcript.chat:
                 yield from chat_ops.run_round(
                     self,
                     max_tokens,
@@ -797,41 +681,18 @@ class Session:
             else:
                 yield from self._raw_round(max_tokens, sampling, stop_sequences)
         finally:
-            with self._lock:
-                self._operations.end_round()
+            self._history.end_round()
 
     def plan(self, tokens: Sequence[int] | None = None) -> Plan:
-        return self._worker.plan(self._transcript.tokens if tokens is None else tokens)
+        return self._worker.plan(self._history.transcript.tokens if tokens is None else tokens)
 
     def checkpoint(self, key: str) -> Checkpointed:
-        with self._lock:
-            self._require_idle()
-            return self._checkpoint_native(key)
-
-    def _checkpoint_native(self, key: str) -> Checkpointed:
-        # Admission is already granted. The binding transaction runs this with
-        # only its claim held, so delivery never waits on this thread's lock.
-        event = next(iter(self._job_events(CheckpointJob(key))))
-        if not isinstance(event, Checkpointed):
-            raise AssertionError(  # noqa: TRY004 - Preserve the impossible-event assertion contract.
-                "checkpoint job returned a non-checkpoint event"
-            )
-        self._checkpoint_tokens[key] = event.tokens
-        return event
+        """Snapshot native state between rounds under an exclusive claim."""
+        return self._history.checkpoint(key)
 
     def drop_checkpoint(self, key: str) -> None:
-        with self._lock:
-            self._require_idle()
-            self._drop_checkpoint_locked(key)
-
-    def _drop_checkpoint_locked(self, key: str) -> None:
-        self._drop_checkpoint(key)
-        self._checkpoint_tokens.pop(key, None)
-
-    def _drop_checkpoint(self, key: str) -> None:
-        # Admission is already granted; the caller may hold the mutation lock or
-        # only its operation claim, so a delivered event never waits on it.
-        list(self._job_events(CheckpointJob(key, drop=True)))
+        """Dispose one native checkpoint between rounds under an exclusive claim."""
+        self._history.drop_checkpoint(key)
 
     def save_payload(self, file: BinaryIO, *, header: bytes) -> Saved:
         """Sync the transcript and write the header plus staged native payload.
@@ -840,11 +701,11 @@ class Session:
         only a duplicated descriptor reaches native code. A failed sync or write
         leaves the Python file usable.
         """
-        with self._lock:
-            self._require_idle()
+        with self._history.mutation_lock:
+            self._history.require_idle()
             saved = None
             for event in self._job_events(
-                SavePayloadJob(self._transcript.tokens, header, file),
+                SavePayloadJob(self._history.transcript.tokens, header, file),
             ):
                 if isinstance(event, Saved):
                     saved = event
@@ -862,19 +723,19 @@ class Session:
         payload_bytes = operator.index(payload_bytes)
         if payload_bytes < 0:
             raise ValueError("payload byte count cannot be negative")
-        with self._lock:
-            self._require_idle()
+        with self._history.mutation_lock:
+            self._history.require_idle()
             loaded = None
             for event in self._job_events(
-                LoadPayloadJob(file, payload_bytes, self._transcript),
+                LoadPayloadJob(file, payload_bytes, self._history.mutable_transcript),
             ):
                 if isinstance(event, Loaded):
                     loaded = event
             if loaded is None:
                 raise EngineError("load did not complete")
-            self._checkpoint_tokens.clear()
-            self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
-            return list(self._transcript.tokens)
+            self._history.clear_checkpoints()
+            self._history.clear_pause()
+            return list(self._history.transcript.tokens)
 
     def on_worker[T](self, fn: Callable[[Handles], T]) -> Future[T]:
         """Run ``fn`` on the engine worker and return a future for its result.
@@ -883,7 +744,7 @@ class Session:
         them or use them on another thread. Blocking session or engine calls
         from the callback can deadlock the worker.
         """
-        self._require_open()
+        self._history.require_open()
         return self._worker.call(lambda e, s: fn(Handles(e.raw, s.raw)))
 
     def cancel(self) -> None:

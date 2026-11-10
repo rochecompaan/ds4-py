@@ -1,34 +1,32 @@
-"""Session-owned exclusive operations and atomic binding transactions.
+"""Session-owned admission state and exclusive operation policy.
 
 Admission state and admission policy live together here so every caller shares
 one model. ``OperationState`` owns the closed flag, the open round, the live
 reserve pause and its window, plus the one exclusive claim. The policies stay
 distinct: open-only observation, idle mutation, paused native summary/replacement
 work and close each reject a different set of states, and counting or planning
-carries no claim at all.
+carries no claim at all. History mutations own the lock and the claimed states;
+this module never reaches back into the facade.
 """
 
 from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from ds4py.errors import EngineError
 
-from . import chat
 from .lifecycle import in_listener
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterable
+    from collections.abc import Generator
+    from threading import RLock
 
     from .events import ReserveReached
     from .reserve import ReserveAuthority, ReserveOperation, ReserveOperations
-    from .session import Session
-    from .tool_prompt import ToolDefinition
-    from .transcript import TranscriptReplacement
 
-type OperationKind = Literal["binding", "summary", "replacement"]
+type OperationKind = Literal["binding", "checkpoint", "summary", "replacement"]
 type GuardPolicy = Literal["open", "idle", "native", "close"]
 
 _MESSAGES = {
@@ -39,12 +37,19 @@ _MESSAGES = {
     "window": "reserve window requires an unclaimed live pause",
 }
 
-# Only paused native work is guarded by a reserve operation; binding is idle.
+# Only paused native work is guarded by a reserve operation; idle work is not.
 _POLICIES: dict[OperationKind, tuple[GuardPolicy, ReserveOperation | None]] = {
     "binding": ("idle", None),
+    "checkpoint": ("idle", None),
     "summary": ("native", "summary"),
     "replacement": ("native", "replacement"),
 }
+
+
+class BindingLiveness(Protocol):
+    """The one live binding transaction an idle mutation may admit."""
+
+    def live(self, state: OperationState) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -156,7 +161,7 @@ def blocked_reason(
     policy: GuardPolicy,
     *,
     authority: ReserveAuthority | None = None,
-    binding: BindingTransaction | None = None,
+    binding: BindingLiveness | None = None,
 ) -> str | None:
     """Return the caller-specific rejection for ``policy``, or admit it."""
     if state.closed:
@@ -166,7 +171,7 @@ def blocked_reason(
     if policy == "close":
         return None if state.kind is None else _MESSAGES["native"]
     if policy == "idle":
-        admitted = (binding is not None and binding._live(state)) or not (state.active_round or state.kind is not None)
+        admitted = (binding is not None and binding.live(state)) or not (state.active_round or state.kind is not None)
         return None if admitted else _MESSAGES["busy"]
     window = state.reserve_event is not None and state.reserve_operations is not None
     busy = state.kind is not None or ((state.active_round or authority is not None) and not window)
@@ -189,15 +194,15 @@ def open_reserve_window(
 
 @contextmanager
 def exclusive(
-    session: Session,
+    state: OperationState,
+    lock: RLock,
     kind: OperationKind,
     *,
     authority: ReserveAuthority | None = None,
 ) -> Generator[Claim]:
     """Admit, claim and release one exclusive operation; the lock excludes writers."""
     policy, reserve_operation = _POLICIES[kind]
-    state = session._operations
-    with session._lock:
+    with lock:
         reason = blocked_reason(state, policy, authority=authority)
         if reason is not None:
             raise EngineError(reason)
@@ -212,111 +217,5 @@ def exclusive(
     try:
         yield claim
     finally:
-        with session._lock:
+        with lock:
             state.release(claim)
-
-
-class BindingTransaction:
-    """One claimed binding boundary sequence over Session-owned history.
-
-    The handle admits only the planned truncate/start/append sequence. Native
-    preamble work and native checkpoint disposal release the mutation lock but
-    never the claim, and every operation re-checks the prefix revision its plan
-    observed.
-    """
-
-    def __init__(self, session: Session, claim: Claim) -> None:
-        self._session = session
-        self._claim = claim
-        self._active = True
-        self._revision, self._length = session._transcript.snapshot()
-
-    def close(self) -> None:
-        self._active = False
-
-    def _observed(self) -> tuple[int, int]:
-        return self._session._transcript.snapshot()
-
-    def _live(self, state: OperationState) -> bool:
-        return self._active and state.owns(self._claim)
-
-    def _check_current(self) -> None:
-        revision, length = self._observed()
-        if not self._live(self._session._operations):
-            raise EngineError("the binding transaction is no longer active")
-        if (revision, length) != (self._revision, self._length):
-            raise EngineError("the transcript changed outside its binding transaction")
-
-    def _committed(self) -> None:
-        self._revision, self._length = self._observed()
-
-    def truncate(self, token_count: int) -> None:
-        """Truncate history and invalidate later checkpoints inside the claim.
-
-        The Python truncation commits under the mutation lock, then each stale
-        native checkpoint is disposed with only the claim held: a dispatched
-        drop can wait on cross-thread event delivery, and the claim already
-        excludes every writer and every idle checkpoint reader from the gap.
-        """
-        session = self._session
-        with session._lock:
-            self._check_current()
-            position = session._truncate_position(token_count)
-            stale = session._stale_checkpoints(position)
-            session._truncate_python(position)
-            self._committed()
-        for key in stale:
-            session._drop_checkpoint(key)
-        with session._lock:
-            self._check_current()
-
-    def start_chat(
-        self,
-        tools: Iterable[ToolDefinition] = (),
-        instructions: str | None = None,
-    ) -> None:
-        """Render, sync and hold the system preamble; roll Python state back on failure."""
-        session = self._session
-        with session._lock:
-            self._check_current()
-            start = len(session._transcript)
-            try:
-                chat.stage_chat(session, tools, instructions)
-            except BaseException:
-                session._transcript.rollback(start)
-                self._committed()
-                raise
-        try:
-            chat.sync_chat(session)
-        except BaseException:
-            with session._lock:
-                session._transcript.rollback(start)
-                self._committed()
-            raise
-        with session._lock:
-            session._transcript.set_chat()
-            self._committed()
-
-    def apply_appends(
-        self,
-        replacement: TranscriptReplacement,
-        *,
-        retire_paused: bool = False,
-        publish: Callable[[], None] | None = None,
-    ) -> None:
-        """Install one staged group and publish its state under the same lock."""
-        with self._session._lock:
-            self._check_current()
-            try:
-                self._session._commit_appends(
-                    replacement,
-                    retire_paused=retire_paused,
-                    publish=publish,
-                    binding=self,
-                )
-            except BaseException:
-                # A rejected publication restored the whole group; the claim is
-                # still coherent, so keep the observed prefix as its expectation.
-                self._committed()
-                raise
-            self._committed()

@@ -916,7 +916,7 @@ def test_identity_then_manual_compact_and_exact_same_model_continuation(
             if identity == "switch":
                 await runtime.switch(record.session_id)
                 # Loaded KV is usable, but old named system checkpoints were cleared.
-                assert model.session._checkpoint_tokens == {}
+                assert model.session.history.checkpoint_tokens == {}
                 ordinary = await runtime.run("ordinary continuation")
                 assert ordinary.output == "answer"
                 assert ordinary.usage.input_tokens == 46  # 21 payload + 8 user wrapper + 17 assistant opener

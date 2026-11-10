@@ -98,6 +98,10 @@ class TranscriptView:
     def chat(self) -> bool:
         return self._transcript.chat
 
+    def snapshot(self) -> tuple[int, int]:
+        """Return one coherent ``(revision, length)`` observation."""
+        return self._transcript.snapshot()
+
     def __len__(self) -> int:
         return len(self._transcript)
 

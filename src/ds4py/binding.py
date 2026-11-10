@@ -49,8 +49,8 @@ if TYPE_CHECKING:
     from ds4py.binding_plan import BindingBoundary
     from ds4py.binding_provenance import PreparedProvenance
     from ds4py.capabilities.system_notes import DS4SystemNotes
+    from ds4py.engine.history import BindingTransaction
     from ds4py.engine.session import Session
-    from ds4py.engine.session_operations import BindingTransaction
 
 
 def _definitions(tools: Iterable[object]) -> tuple[ToolDefinition, ...]:
@@ -545,7 +545,7 @@ class MessageBinder:
                 for segment in trailing
             ],
         }
-        self.session._transcript.annotate(
+        self.session.history.mutable_transcript.annotate(
             sampled_start,
             kinds=("assistant", "eos"),
             meta={"key": key, "content_hash": content_hash, "source": "sampled"},

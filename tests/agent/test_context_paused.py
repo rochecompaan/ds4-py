@@ -26,7 +26,7 @@ def test_paused_retirement_guards_the_one_token_request_boundary(family: str, pa
             response = await model.request(
                 messages, {"stop_sequences": ["stop"]} if paused else None, ModelRequestParameters()
             )
-            paused_stream = session._paused_stream
+            paused_stream = session.history.paused_stream
             assert (paused_stream is not None) is paused
             # One read_big header is 26 tokens; grouped result framing is 12
             # Qwen / 3 GLM, and the next assistant prefix is 17 Qwen / 3 GLM.
@@ -41,7 +41,7 @@ def test_paused_retirement_guards_the_one_token_request_boundary(family: str, pa
             assert model.binder.project_request(messages, bound=True) == count
             assert (session.transcript.tokens, model.binder.records()) == before
             assert pending.metadata is None
-            assert session._paused_stream is paused_stream
+            assert session.history.paused_stream is paused_stream
 
             owner = RecordingOwner(model.binder, room=RoomResult(False))
             ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=messages)
@@ -63,7 +63,7 @@ def test_paused_retirement_guards_the_one_token_request_boundary(family: str, pa
                 prefix = 17 if family == "qwen" else 3
                 assert len(session.transcript) + prefix == fitted
                 assert fitted + 1 <= 8192
-                assert session._paused_stream is None
+                assert session.history.paused_stream is None
                 assert sum(s.kind == "eos" for s in session.transcript.segments) == (1 if family == "qwen" else 0)
                 # Retirement is already included in binding now: never add it twice.
                 assert model.binder.project_request(messages, bound=True) == fitted
@@ -80,7 +80,7 @@ def test_unchanged_or_rewritten_paused_history_does_not_get_retirement_eos(rewri
             messages: list[ModelMessage] = [ModelRequest([UserPromptPart("go")])]
             response = await model.request(messages, {"stop_sequences": ["stop"]}, ModelRequestParameters())
             messages.append(response)
-            paused_stream = session._paused_stream
+            paused_stream = session.history.paused_stream
             assert paused_stream is not None
             changed = rewrite in {"new-key", "same-key", "same-key-with-suffix"}
             if changed:
@@ -95,7 +95,7 @@ def test_unchanged_or_rewritten_paused_history_does_not_get_retirement_eos(rewri
             before = (session.transcript.tokens, model.binder.records())
             count = model.binder.project_request(messages, bound=True)
             assert (session.transcript.tokens, model.binder.records()) == before
-            assert session._paused_stream is paused_stream
+            assert session.history.paused_stream is paused_stream
             if rewrite == "unkeyed":
                 assert all("ds4.key" not in (message.metadata or {}) for message in messages)
             model.binder.prepare(messages)
@@ -104,7 +104,7 @@ def test_unchanged_or_rewritten_paused_history_does_not_get_retirement_eos(rewri
             assert [s.meta.get("source") for s in session.transcript.segments if s.kind == "eos"] == (
                 ["rendered"] if rewrite == "same-key-with-suffix" else []
             )
-            assert (session._paused_stream is None) is changed
+            assert (session.history.paused_stream is None) is changed
 
     asyncio.run(scenario())
 
@@ -121,7 +121,7 @@ def test_after_tool_counts_paused_qwen_retirement_and_next_prefix(paused: bool) 
             )
             messages.append(response)
             body = "x" * (8191 - len(session.transcript) - 55)
-            before = (session.transcript.tokens, model.binder.records(), session._paused_stream)
+            before = (session.transcript.tokens, model.binder.records(), session.history.paused_stream)
             owner = RecordingOwner(model.binder, room=RoomResult(True, 5))
             ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=messages)
             result = await owner.after_tool_execute(
@@ -134,6 +134,6 @@ def test_after_tool_counts_paused_qwen_retirement_and_next_prefix(paused: bool) 
             assert result == (TOOL_RESULT_DOES_NOT_FIT if paused else body)
             assert owner.requests == ([ContextRequest(1, "tool_result")] if paused else [])
             assert ctx.usage.output_tokens == (5 if paused else 0)
-            assert (session.transcript.tokens, model.binder.records(), session._paused_stream) == before
+            assert (session.transcript.tokens, model.binder.records(), session.history.paused_stream) == before
 
     asyncio.run(scenario())

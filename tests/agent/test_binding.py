@@ -350,7 +350,7 @@ def test_rejected_non_integer_truncate_leaves_checkpoint_usable() -> None:
             session.truncate(cast("Any", 2.0))
 
         assert session.transcript.tokens == before
-        assert session._checkpoint_tokens == {"kept": 4}
+        assert session.history.checkpoint_tokens == {"kept": 4}
         session.truncate(4)
         plan = session.plan()
         assert plan.kind == "restore"

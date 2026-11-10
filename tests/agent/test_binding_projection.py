@@ -503,7 +503,7 @@ def test_native_preamble_write_failure_reuses_only_system_prefix_on_retry(
         assert binder.records() == ()
         assert binder._bound_messages == []
         assert binder._signature is None
-        assert session._checkpoint_tokens == {}
+        assert session.history.checkpoint_tokens == {}
         assert notes.checkpoint() == initial_notes
         assert messages[0].metadata is None
         monkeypatch.undo()

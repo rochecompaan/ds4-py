@@ -122,7 +122,7 @@ def test_compact_save_switch_restores_exact_kv_and_preserves_old_run(runtime: Ag
         assert session.plan().reused == len(tokens)
         assert session.plan().to_prefill == 0
         # Payload loading retains live KV, not the previous named checkpoints.
-        assert session._checkpoint_tokens == {}
+        assert session.history.checkpoint_tokens == {}
 
         continuation = await runtime.run("continue")
         assert continuation.output == "continued"
