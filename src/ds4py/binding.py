@@ -567,12 +567,12 @@ class MessageBinder:
         instructions: str | None = None,
     ) -> int:
         """Project configured preparation, retaining exact matching native spans."""
-        return self.plan_request(messages, tools=tools, instructions=instructions).count(self.session.engine)
+        return self.plan_request(messages, tools=tools, instructions=instructions).projected_tokens
 
     def count_bound_request(self, messages: Sequence[ModelMessage]) -> int:
         """Project against the initialized native preamble and sampled binding."""
         require_bound_chat(self)
-        return bound_plan(self, self.prepare_messages(messages)).count(self.session.engine)
+        return bound_plan(self, self.prepare_messages(messages)).projected_tokens
 
     def count_tokens(
         self,

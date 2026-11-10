@@ -84,7 +84,6 @@ class BindingBoundary:
 class BindingPlan:
     change: BindingChange
     messages: tuple[ModelMessage, ...]
-    prefix: TranscriptReplacement
     initial: BindingBoundary
     boundaries: tuple[BindingBoundary, ...]
     signature: Signature | None
@@ -92,14 +91,7 @@ class BindingPlan:
     truncate_to: int | None
     definitions: tuple[ToolDefinition, ...]
     instructions: str | None
-
-    def count(self, engine: Engine) -> int:
-        scratch = ScratchSession(engine)
-        scratch._transcript.replace(self.prefix.tokens, self.prefix.segments)
-        for boundary in self.boundaries:
-            for segment in boundary.appends.segments:
-                scratch.append_tokens(boundary.appends.tokens[segment.start : segment.end], segment.kind, segment.meta)
-        return len(scratch.transcript) + len(PromptBuilder(engine).assistant_prefix(scratch.transcript.tokens))
+    projected_tokens: int
 
 
 def _replacement(scratch: ScratchSession, start: int = 0) -> TranscriptReplacement:
@@ -220,7 +212,6 @@ def _transition(  # noqa: PLR0912, PLR0915 - One traversal owns every binding tr
         published = len(records)
         return appended
 
-    prefix = _replacement(scratch)
     initial = boundary(len(scratch.transcript))
     boundaries = []
     if retire:
@@ -259,7 +250,6 @@ def _transition(  # noqa: PLR0912, PLR0915 - One traversal owns every binding tr
     return BindingPlan(
         BindingChange(kind, start, binder._continuation(candidates)),
         tuple(candidates),
-        prefix,
         initial,
         tuple(boundaries),
         config.signature,
@@ -267,4 +257,5 @@ def _transition(  # noqa: PLR0912, PLR0915 - One traversal owns every binding tr
         truncate,
         config.definitions,
         config.instructions,
+        len(scratch.transcript) + len(PromptBuilder(binder.session.engine).assistant_prefix(scratch.transcript.tokens)),
     )

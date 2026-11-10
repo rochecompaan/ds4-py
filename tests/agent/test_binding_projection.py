@@ -62,6 +62,17 @@ def assert_projection(binder: MessageBinder, messages: list[ModelMessage], expec
     assert counts == [expected, expected]
 
 
+def test_plan_stores_exact_projected_token_count() -> None:
+    with fake_engine() as engine:
+        session = engine.session()
+        binder = MessageBinder(session)
+        messages = [user("request")]
+        plan = binder.plan_request(messages)
+        binder.prepare(messages)
+        expected = len(session.transcript) + len(PromptBuilder(engine).assistant_prefix(session.transcript.tokens))
+        assert plan.projected_tokens == expected
+
+
 def test_pending_note_rewrites_unchanged_bound_request() -> None:
     with fake_engine() as engine:
         session = engine.session()
