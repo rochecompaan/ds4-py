@@ -211,7 +211,7 @@ def test_tool_overflow_adds_summary_usage_once() -> None:
         with fake_engine() as engine:
             binder = prepared_tool_binder(engine.session())
             owner = RecordingOwner(binder, room=RoomResult(False, generated))
-            result = await _tool_agent(owner, "x" * 7399).run("go")
+            result = await _tool_agent(owner, "x" * 7287).run("go")
             return result.usage.output_tokens
 
     assert asyncio.run(run(13)) - asyncio.run(run(0)) == 13

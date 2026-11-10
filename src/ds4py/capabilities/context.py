@@ -110,13 +110,13 @@ class ContextStrategy(AbstractCapability, ABC):
     def _needed_tokens(
         self, messages: Sequence[ModelMessage], *, request_context: ModelRequestContext | None = None
     ) -> int:
-        if self.binder.session.transcript.chat:
-            count = self.binder.count_bound_request(messages)
-        elif request_context is not None:
+        if request_context is not None:
             params = request_context.model_request_parameters
             count = self.binder.count_rendered_request(
                 messages, tools=params.declared_tool_defs.values(), instructions=request_instructions(messages, params)
             )
+        elif self.binder.session.transcript.chat:
+            count = self.binder.count_bound_request(messages)
         else:
             raise EngineError("after-tool fit requires an initialized chat")
         return count + _RESERVE - self.binder.session.engine.config.ctx

@@ -90,3 +90,60 @@ def test_fresh_before_request_uses_effective_tools_instructions_and_notes() -> N
             assert not notes._date_emitted
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(("configuration", "overflow"), [("instructions", 1532), ("tools", 1614)])
+@pytest.mark.parametrize("owner_reduces_result", [False, True])
+def test_initialized_chat_fit_uses_changed_config_before_and_after_owner(
+    configuration: str, overflow: int, owner_reduces_result: bool
+) -> None:
+    async def scenario() -> None:
+        with fake_engine() as engine:
+            session = engine.session()
+            model = DS4Model(session, sampling=engine.sampling_defaults)
+            first = user("go")
+            messages: list[ModelMessage] = [first]
+            model.binder.prepare(messages)
+            old_tokens = session.transcript.tokens
+            old_records = model.binder.records()
+            instructions = None
+            definitions = []
+            if configuration == "instructions":
+                first.instructions = instructions = "x" * 2000
+            else:
+                definition = tool()
+                definition.description = "x" * 2000
+                definitions = [definition]
+            pending = ToolReturnPart("read", "x" * 7000)
+            messages.append(ModelRequest([pending]))
+            params = ModelRequestParameters(function_tools=definitions)
+            request = ModelRequestContext(
+                model=model, messages=messages, model_settings=None, model_request_parameters=params
+            )
+
+            async def make_room(live: list[ModelMessage], request: ContextRequest) -> None:
+                if owner_reduces_result:
+                    pending_request = live[-1]
+                    assert isinstance(pending_request, ModelRequest)
+                    pending_request.parts = [ToolReturnPart("read", "fits")]
+
+            owner = RecordingOwner(model.binder, room=RoomResult(True, 7), on_room=make_room)
+            ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=messages)
+            # The old 7721-token preamble projection fits; either new configuration
+            # overflows. Real configured preparation is 9721/9803 + 2 prefix.
+            assert model.binder.count_bound_request(messages) == 7721
+            assert model.binder.count_rendered_request(messages, tools=definitions, instructions=instructions) == (
+                9723 if configuration == "instructions" else 9805
+            )
+            await owner.before_model_request(ctx, request)
+            assert owner.requests == [ContextRequest(overflow, "tool_result")]
+            assert ctx.usage.output_tokens == 7
+            result_part = messages[-1].parts[0]
+            assert isinstance(result_part, ToolReturnPart)
+            assert result_part.content == ("fits" if owner_reduces_result else TOOL_RESULT_DOES_NOT_FIT)
+            assert session.transcript.tokens == old_tokens
+            assert model.binder.records() == old_records
+            model.binder.prepare(messages, tools=definitions, instructions=instructions)
+            assert len(session.transcript) + 2 + 1 <= 8192
+
+    asyncio.run(scenario())

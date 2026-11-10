@@ -1,5 +1,6 @@
 """Exact projection must follow preparation without consuming any live state."""
 
+from collections.abc import Sequence
 from copy import deepcopy
 from typing import Any
 
@@ -7,12 +8,14 @@ import pytest
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
 from test_binding import fake_engine, tool, user
 
-from ds4py._native.fake import FakeSession
+from ds4py._native.fake import FakeSession, FakeSnapshot
+from ds4py._native.protocol import CancelFn, ProgressFn, SyncStatus
 from ds4py.binding import MessageBinder
 from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.engine.lifecycle import SessionEvent
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.session import Session
+from ds4py.engine.worker import SyncJob
 from ds4py.errors import EngineError
 
 
@@ -318,3 +321,79 @@ def test_unchanged_pending_date_renders_clock_once() -> None:
         assert calls == 1
         assert notes._date_emitted
         assert len([s for s in session.transcript.segments if s.kind == "note"]) == 1
+
+
+@pytest.mark.parametrize("failure", ["sync-after-write", "checkpoint"])
+def test_native_preamble_write_failure_reuses_only_system_prefix_on_retry(
+    failure: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with fake_engine() as engine:
+        session = engine.session()
+        binder = MessageBinder(session)
+        notes = DS4SystemNotes(session, hints=True, clock=lambda: "fixed")
+        binder.note_provider = notes
+        messages: list[ModelMessage] = [user("go")]
+        initial_notes = notes.checkpoint()
+        system = tuple(token for segment in PromptBuilder(engine).begin() for token in segment.tokens)
+        assert len(system) == 666
+        sync = FakeSession.sync
+
+        def write_then_fail(
+            self: FakeSession,
+            tokens: Sequence[int],
+            *,
+            progress: ProgressFn | None = None,
+            cancel: CancelFn | None = None,
+        ) -> SyncStatus:
+            sync(self, tokens, progress=progress, cancel=cancel)
+            assert tuple(self.tokens()) == system
+            raise EngineError("sync failed after write")
+
+        def fail_checkpoint(self: FakeSession) -> FakeSnapshot:
+            assert tuple(self.tokens()) == system
+            raise EngineError("checkpoint failed")
+
+        if failure == "sync-after-write":
+            monkeypatch.setattr(FakeSession, "sync", write_then_fail)
+        else:
+            monkeypatch.setattr(FakeSession, "save_snapshot", fail_checkpoint)
+        with pytest.raises(EngineError, match="failed"):
+            binder.prepare(messages)
+
+        def native_tokens(engine: object, native: object) -> tuple[int, ...]:
+            assert isinstance(native, FakeSession)
+            return tuple(native.tokens())
+
+        # Successfully written native cache is reusable, not a committed chat or
+        # speculative notes. Python preparation rolled back its unfinished chat.
+        assert session._worker.call(native_tokens).result() == system
+        assert not session.transcript.chat
+        assert session.transcript.tokens == ()
+        assert binder.records() == ()
+        assert binder._bound_messages == []
+        assert binder._signature is None
+        assert session._checkpoint_tokens == {}
+        assert notes.checkpoint() == initial_notes
+        assert messages[0].metadata is None
+        monkeypatch.undo()
+
+        binder.prepare(messages)
+        assert session.transcript.chat
+        assert session._worker.call(native_tokens).result() == system
+        assert len(binder.records()) == 1
+        record = binder.records()[0]
+        assert messages[0].metadata == {"ds4.key": record.key}
+        assert record.end == len(session.transcript)
+        assert binder._bound_messages == messages
+        assert [s.meta.get("subtype") for s in session.transcript.segments if s.kind == "note"] == [
+            "date",
+            "hints_full",
+        ]
+        assert notes._date_emitted and notes._hints_full_emitted and notes._hints_applied is True
+        completed_notes = notes.checkpoint()
+        list(session._worker.submit(SyncJob(session.transcript.tokens)))
+        assert session._worker.call(native_tokens).result() == session.transcript.tokens
+        assert notes.checkpoint() == completed_notes
+        before = snapshot(binder, messages)
+        binder.prepare(messages)
+        assert snapshot(binder, messages) == before

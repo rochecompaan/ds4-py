@@ -12,6 +12,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.tools import ToolDefinition
 
 import ds4py
 from ds4py import ThinkMode
@@ -171,7 +172,16 @@ def _tool_return(result: Any) -> ToolReturnPart:
 
 def prepared_tool_binder(session: Any) -> MessageBinder:
     binder = MessageBinder(session)
-    binder.prepare([user("go"), ModelResponse([ToolCallPart("read_big", {}, tool_call_id="call-1")])])
+    # Match the no-argument tool declared by _tool_agent, including its schema.
+    binder.prepare(
+        [user("go"), ModelResponse([ToolCallPart("read_big", {}, tool_call_id="call-1")])],
+        tools=[
+            ToolDefinition(
+                name="read_big",
+                parameters_json_schema={"additionalProperties": False, "properties": {}, "type": "object"},
+            )
+        ],
+    )
     return binder
 
 
@@ -184,11 +194,11 @@ def test_registered_owner_receives_tool_overflow() -> None:
             cast("UserPromptPart", first.parts[0]).content = "g"
 
         owner = RecordingOwner(binder, on_room=make_room)
-        result = asyncio.run(_tool_agent(owner, "x" * 7399).run("go"))
+        result = asyncio.run(_tool_agent(owner, "x" * 7287).run("go"))
 
         assert owner.requests == [ContextRequest(1, "tool_result")]
         assert owner.message_lists == [list(result.all_messages()[:2])]
-        assert _tool_return(result).content == "x" * 7399
+        assert _tool_return(result).content == "x" * 7287
 
 
 def test_fitting_tool_result_does_not_ask_the_owner() -> None:
@@ -202,7 +212,7 @@ def test_fitting_tool_result_does_not_ask_the_owner() -> None:
 def test_failed_tool_room_returns_the_still_does_not_fit_error() -> None:
     with fake_engine() as engine:
         owner = RecordingOwner(prepared_tool_binder(engine.session()), room=RoomResult(made_room=False))
-        result = asyncio.run(_tool_agent(owner, "x" * 7399).run("go"))
+        result = asyncio.run(_tool_agent(owner, "x" * 7287).run("go"))
         assert owner.requests == [ContextRequest(1, "tool_result")]
         assert _tool_return(result).content == TOOL_ERROR
 
