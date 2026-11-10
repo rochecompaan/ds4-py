@@ -8,7 +8,7 @@ import pytest
 import ds4py
 from ds4py._native.fake import FakeNative
 from ds4py.engine.session import Engine
-from ds4py.engine.transcript import Segment, TranscriptReplacement
+from ds4py.engine.transcript import Segment, Transcript, TranscriptReplacement
 from ds4py.engine.worker import SYSTEM
 from ds4py.errors import CheckpointError, EngineError
 
@@ -76,8 +76,10 @@ def test_replace_transcript_rebuilds_from_zero_without_a_matching_checkpoint() -
         ((1, 2, 3, 4), (Segment(0, 3, "system", EMPTY), Segment(2, 4, "user", EMPTY))),
         ((1, 2, 3, 4), (Segment(0, 2, "system", EMPTY), Segment(2, 3, "user", EMPTY))),
         ((1, 2, 3, 4), (Segment(1, 4, "user", EMPTY),)),
+        ((1, 2, 3, 4), (Segment(0, 0, "user", EMPTY),)),
+        ((1, 2, 3, 4), (Segment(0, -1, "user", EMPTY),)),
     ],
-    ids=["gap", "overlap", "stale-token-count", "nonzero-start"],
+    ids=["gap", "overlap", "stale-token-count", "nonzero-start", "zero-length", "reversed"],
 )
 def test_invalid_replacement_leaves_native_and_transcript_state_unchanged(
     tokens: tuple[int, ...],
@@ -140,3 +142,76 @@ def test_interrupted_replacement_leaves_native_and_transcript_state_unchanged() 
         assert session.transcript.tokens == before_tokens
         assert session.transcript.segments == before_segments
         assert session.ctx_used == before_ctx
+
+
+@pytest.mark.parametrize(
+    "segments",
+    [
+        (Segment(1, 3, "user", EMPTY),),
+        (Segment(0, 1, "user", EMPTY), Segment(2, 3, "user", EMPTY)),
+        (Segment(0, 2, "user", EMPTY), Segment(1, 3, "user", EMPTY)),
+        (Segment(0, 0, "user", EMPTY),),
+        (Segment(0, -1, "user", EMPTY),),
+        (Segment(0, 2, "user", EMPTY),),
+    ],
+)
+@pytest.mark.parametrize("operation", ["replace", "install"])
+def test_direct_transcript_validation_is_atomic(segments: tuple[Segment, ...], operation: str) -> None:
+    transcript = Transcript()
+    transcript.append([7, 8, 9], "user")
+    before = (transcript.tokens, transcript.segments, transcript.chat)
+
+    def invalid_operation() -> None:
+        if operation == "replace":
+            transcript.replace([1, 2, 3], segments)
+        else:
+            transcript.install(segments)
+
+    with pytest.raises(ValueError, match="replacement segments"):
+        invalid_operation()
+    assert (transcript.tokens, transcript.segments, transcript.chat) == before
+
+
+def test_slice_concat_preserves_exact_tokens_and_metadata() -> None:
+    original = TranscriptReplacement(
+        (10, 20, 30, 40, 50),
+        (
+            Segment(0, 1, "system", EMPTY),
+            Segment(1, 3, "note", {"text": "remember"}),
+            Segment(3, 5, "user", {"key": "u"}),
+        ),
+    )
+    tail = original.slice(1)
+    assert tail.tokens == (20, 30, 40, 50)
+    assert tail.segments == (Segment(0, 2, "note", {"text": "remember"}), Segment(2, 4, "user", {"key": "u"}))
+    assert TranscriptReplacement.concat(original.slice(0, 1), tail) == original
+    assert original.slice(5) == TranscriptReplacement((), ())
+    assert original.slice(2, 4).segments == (
+        Segment(0, 1, "note", {"text": "remember"}),
+        Segment(1, 2, "user", {"key": "u"}),
+    )
+    for start, end in [(-1, 2), (2, 1), (0, 6)]:
+        with pytest.raises(ValueError, match="slice positions"):
+            original.slice(start, end)
+    with pytest.raises(ValueError, match="replacement segments"):
+        TranscriptReplacement.concat(TranscriptReplacement((1,), ()))
+
+
+def test_empty_replacement_is_valid_everywhere() -> None:
+    transcript = Transcript()
+    transcript.replace((), ())
+    transcript.install(())
+    assert transcript.chat and transcript.tokens == transcript.segments == ()
+    with fake_engine() as engine:
+        session = engine.session()
+        session.replace_transcript(TranscriptReplacement((), ()), reason="empty")
+        assert session.ctx_used == 0 and session.transcript.chat
+
+
+@pytest.mark.parametrize("loaded", [None, 3])
+def test_provenance_translates_structural_failures(loaded: int | None) -> None:
+    from ds4py.binding_provenance import prepare_provenance
+
+    with pytest.raises(EngineError, match="save record") as error:
+        prepare_provenance([], [Segment(1, 3, "system", EMPTY)], loaded=loaded)
+    assert isinstance(error.value.__cause__, ValueError)

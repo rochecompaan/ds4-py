@@ -122,10 +122,9 @@ def test_tail_budget_and_whole_tool_exchange(ctx: int, budget: int) -> None:
         binder.prepare(messages)
         planned = plan_tail(binder, messages)
         # Fallback target lands inside the return; it must include the call too.
-        assert planned.messages == messages[2:]
-        assert planned.bottom == binder.records()[2].start
-        assert planned.tokens == binder.session.transcript.tokens[planned.bottom :]
-        assert planned.budget == budget
+        assert planned.messages == tuple(messages[2:])
+        assert planned.bottom_tokens == binder.records()[2].start
+        assert planned.retained.tokens == binder.session.transcript.tokens[planned.bottom_tokens :]
 
 
 @pytest.mark.parametrize("phase", ["summary", "replacement"])
@@ -226,9 +225,9 @@ def test_tail_detects_unkeyed_native_assistant_without_a_fake_message() -> None:
         binder.session.append_tokens([260, 267], "assistant_prefix")
         binder.session.append_tokens([98, 99], "assistant")
         planned = plan_tail(binder, messages)
-        assert planned.open_start == start
         assert len(planned.messages) == 2
-        assert planned.tokens[-4:] == (260, 267, 98, 99)
+        assert planned.retained.tokens[-4:] == (260, 267, 98, 99)
+        assert planned.retained.segments[-2].start == start - planned.bottom_tokens
 
 
 def test_compaction_preserves_system_and_instruction_parts() -> None:

@@ -36,6 +36,7 @@ from ds4py.binding_provenance import (
 )
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.tool_prompt import ToolDefinition
+from ds4py.engine.transcript import TranscriptReplacement
 from ds4py.message_rendering import MessageRenderer
 
 if TYPE_CHECKING:
@@ -45,10 +46,6 @@ if TYPE_CHECKING:
     from ds4py.binding_provenance import PreparedProvenance, _Provenance
     from ds4py.capabilities.system_notes import DS4SystemNotes
     from ds4py.engine.session import Session
-
-
-# Kept for the existing summary renderer until its public rendering seam moves.
-_ScratchSession = ScratchSession
 
 
 @dataclass(frozen=True)
@@ -123,6 +120,15 @@ class MessageBinder:
         self._signature = None
         self._restored = False
         self._restored_notes: dict[str, list[tuple[str, str | None]]] = {}
+
+    def render_request(self, message: ModelRequest, *, prefix: TranscriptReplacement) -> TranscriptReplacement:
+        """Render a keyed request after an exact prefix, without an assistant prefix."""
+        scratch = ScratchSession(self.session.engine)
+        scratch._transcript.replace(prefix.tokens, prefix.segments)
+        request = deepcopy(message)
+        key = _ensure_key(request)
+        self._renderer.append(scratch, request, key, _content_hash(request))
+        return TranscriptReplacement(scratch.transcript.tokens, scratch.transcript.segments)
 
     def forget(self) -> None:
         """Drop binding state so the next request renders the message list fresh."""

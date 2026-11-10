@@ -9,15 +9,12 @@ from uuid import uuid4
 from pydantic_ai.messages import InstructionPart, ModelRequest, SystemPromptPart, UserPromptPart
 
 from ds4py._native.protocol import ThinkMode
-from ds4py.binding import _ScratchSession
-from ds4py.binding_provenance import _content_hash
 from ds4py.capabilities.compaction_tail import plan_tail
 from ds4py.capabilities.context import ContextRequest, ContextStrategy, RoomResult
 from ds4py.compaction_commit import commit_compaction
 from ds4py.engine.compaction import SUMMARY_PROMPT
 from ds4py.engine.prompt import PromptBuilder
-from ds4py.engine.transcript import Segment, TranscriptReplacement
-from ds4py.message_rendering import MessageRenderer
+from ds4py.engine.transcript import TranscriptReplacement
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
@@ -72,12 +69,12 @@ class LLMCompaction(ContextStrategy):
         old = len(session.transcript)
         session.emit("before_compact", reason=reason, old_tokens=old)
         tail = plan_tail(self.binder, messages)
-        if not tail.dropped or tail.bottom <= tail.system_end:
+        if not tail.cut_messages or tail.bottom_tokens <= tail.system_end_tokens:
             return CompactionResult("", 0, len(messages), 0)
-        summary = session.prepare_summary(tail.bottom)
+        summary = session.prepare_summary(tail.bottom_tokens)
         parts = [
             part
-            for message in tail.snapshot[: tail.dropped]
+            for message in tail.snapshot[: tail.cut_messages]
             if isinstance(message, ModelRequest)
             for part in message.parts
             if isinstance(part, (SystemPromptPart, InstructionPart))
@@ -95,29 +92,17 @@ class LLMCompaction(ContextStrategy):
             ),
             metadata={"ds4.key": key},
         )
-        scratch = _ScratchSession(session.engine)
-        for segment in session.transcript.segments:
-            if segment.end > tail.system_end:
-                break
-            scratch.append_tokens(session.transcript.tokens[segment.start : segment.end], segment.kind, segment.meta)
-        MessageRenderer(session.engine).append(scratch, request, key, _content_hash(request))
-        offset = len(scratch.transcript)
-        replacement = TranscriptReplacement(
-            (*scratch.transcript.tokens, *tail.tokens),
-            (
-                *scratch.transcript.segments,
-                *(
-                    Segment(segment.start + offset, segment.end + offset, segment.kind, segment.meta)
-                    for segment in tail.segments
-                ),
-            ),
+        prefix = TranscriptReplacement(session.transcript.tokens, session.transcript.segments).slice(
+            0, tail.system_end_tokens
         )
+        rendered = self.binder.render_request(request, prefix=prefix)
+        replacement = TranscriptReplacement.concat(rendered, tail.retained)
         commit_compaction(self.binder, messages, [request, *tail.messages], replacement)
         generated = len(summary.tokens)
         session.emit(
             "compacted", reason=reason, old_tokens=old, new_tokens=len(replacement.tokens), generated_tokens=generated
         )
-        return CompactionResult(summary.summary, tail.dropped, len(tail.messages), generated)
+        return CompactionResult(summary.summary, tail.cut_messages, len(tail.messages), generated)
 
     @override
     async def make_room(self, messages: list[ModelMessage], request: ContextRequest) -> RoomResult:

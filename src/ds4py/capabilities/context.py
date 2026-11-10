@@ -52,7 +52,10 @@ class ContextStrategy(AbstractCapability, ABC):
     """One capability owns the shared tool fit check and the reserve response hook.
 
     ``make_room`` mutates the supplied request message list in place and returns
-    only the shared fit result. The owner never returns a second message view.
+    only the shared fit result, never a second message view. ``reserve_messages``
+    selects an existing authority (the request view by default); persistent
+    owners may instead select canonical harness history. Neither creates a
+    second canonical history or changes the other owner's selection.
     """
 
     def __init__(self, binder: MessageBinder) -> None:

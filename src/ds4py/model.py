@@ -481,6 +481,12 @@ class DS4StreamedResponse(StreamedResponse):
             if isinstance(event, (Stopped, Interrupted)):
                 return
 
+    def _observe_sampled_start(self) -> None:
+        sampled_start = self._session.open_assistant_start()
+        if sampled_start is None:
+            raise EngineError("reserve owner removed the open assistant tail")
+        self._sampled_start = sampled_start
+
     async def _close_round_locked(self) -> None:
         if self._reconciled:
             return
@@ -496,6 +502,8 @@ class DS4StreamedResponse(StreamedResponse):
                 if isinstance(event, ReserveReached):
                     event.fail()
         await asyncio.to_thread(self._round.close)
+        if self._sampled_start is not None:
+            self._observe_sampled_start()
         sampled_start = self._sampled_start if self._sampled_start is not None else self._round_start
         cutoff = sampled_start + self._output_tokens
 
@@ -583,17 +591,24 @@ class DS4StreamedResponse(StreamedResponse):
         # suspended round. Observe only this owner's work to avoid double counts.
         unsubscribe = self._session.on_event(synced, kinds={"Synced"})
         try:
-            messages = owner.reserve_messages(self._messages, self._run_context)
-            room = await owner.make_room(messages, ContextRequest(event.needed, "reserve"))
+            try:
+                with self._session.reserve_window(event):
+                    messages = owner.reserve_messages(self._messages, self._run_context)
+                    room = await owner.make_room(messages, ContextRequest(event.needed, "reserve"))
+            finally:
+                unsubscribe()
+                # Even commit-then-raise owners can move the verbatim open tail.
+                # Observe its structure, never summary length or a missing result.
+                if not self._reconciled:
+                    primary = sys.exc_info()[0] is not None
+                    try:
+                        self._observe_sampled_start()
+                    except EngineError:
+                        if not primary:
+                            raise
         except BaseException:
             event.fail()
             raise
-        finally:
-            unsubscribe()
-            # The verbatim open tail may have moved, including on an owner
-            # failure after commit. Summary output never belongs in this cutoff.
-            if self._sampled_start is not None:
-                self._sampled_start = len(self._session.transcript) - self._output_tokens
         self._summary_tokens += room.generated_tokens
         if not room.made_room:
             event.fail()

@@ -9,25 +9,13 @@ from typing import TYPE_CHECKING
 from ds4py.errors import EngineError
 
 from .events import Synced
-from .worker import SyncJob
+from .plan import Plan
+from .transcript import validate_segment_coverage
+from .worker import ResetJob, SyncJob
 
 if TYPE_CHECKING:
-    from .plan import Plan
     from .session import Session
     from .transcript import TranscriptReplacement
-
-
-def validate(replacement: TranscriptReplacement) -> None:
-    """Require segments to cover the tokens contiguously from token zero."""
-    expected = 0
-    for segment in replacement.segments:
-        if segment.start != expected or segment.end <= segment.start:
-            raise ValueError("replacement segments must cover the tokens without gaps from token zero")
-        expected = segment.end
-    if expected != len(replacement.tokens):
-        raise ValueError(
-            f"replacement segments cover {expected} tokens, not the {len(replacement.tokens)} tokens present"
-        )
 
 
 def replace_transcript(
@@ -37,7 +25,12 @@ def replace_transcript(
     reason: str,
 ) -> Plan:
     """Validate, then sync the replacement tokens; return the worker's plan."""
-    validate(replacement)
+    validate_segment_coverage(replacement.segments, len(replacement.tokens))
+    if not replacement.tokens:
+        # Native sync rejects empty prompts; use the established reset path.
+        list(session._job_events(ResetJob()))
+        session._checkpoint_tokens.clear()
+        return Plan("rebuild", 0, 0, fits=True, checkpoint=None)
     plan: Plan | None = None
     for event in session._job_events(SyncJob(replacement.tokens)):
         if isinstance(event, Synced):

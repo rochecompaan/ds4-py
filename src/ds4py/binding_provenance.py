@@ -26,7 +26,7 @@ from pydantic_ai.messages import (
 )
 
 from ds4py._json import is_json_object, is_string_key_mapping
-from ds4py.engine.transcript import Segment
+from ds4py.engine.transcript import Segment, validate_segment_coverage
 from ds4py.errors import EngineError
 from ds4py.message_rendering import stable_text
 
@@ -233,13 +233,7 @@ def prepare_provenance(  # noqa: C901, PLR0912, PLR0915 - Restore validation cov
     ranges: dict[str, list[int]] = {}
     keys: list[str] = []
     hashes: dict[str, str] = {}
-    expected = 0
     for provenance in segments:
-        if provenance.start != expected or provenance.end <= provenance.start:
-            raise EngineError(
-                f"save record segment {provenance.start}:{provenance.end} does not continue the loaded transcript"
-            )
-        expected = provenance.end
         installed_segment, key, content_hash = _installable(provenance)
         installed.append(installed_segment)
         entries.append((provenance, key))
@@ -253,8 +247,11 @@ def prepare_provenance(  # noqa: C901, PLR0912, PLR0915 - Restore validation cov
             ranges[key] = [provenance.start, provenance.end]
             keys.append(key)
             hashes[key] = content_hash
-    if loaded is not None and expected != loaded:
-        raise EngineError(f"save record covers {expected} tokens, the loaded payload has {loaded}")
+    token_count = loaded if loaded is not None else (installed[-1].end if installed else 0)
+    try:
+        validate_segment_coverage(installed, token_count)
+    except ValueError as error:
+        raise EngineError(f"save record does not continue the loaded transcript: {error}") from error
 
     # A response's range starts at its assistant prefix, which has no key.
     pending_prefix = None

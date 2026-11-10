@@ -28,6 +28,21 @@ class Segment:
     kind: str
     meta: Mapping[str, object]
 
+    def shifted(self, delta: int) -> Segment:
+        """Return the same provenance in another token coordinate space."""
+        return replace(self, start=self.start + delta, end=self.end + delta)
+
+
+def validate_segment_coverage(segments: Sequence[Segment], token_count: int) -> None:
+    """Require positive contiguous ranges covering exactly the supplied tokens."""
+    expected = 0
+    for segment in segments:
+        if segment.start != expected or segment.end <= segment.start:
+            raise ValueError("replacement segments must cover the tokens without gaps from token zero")
+        expected = segment.end
+    if expected != token_count:
+        raise ValueError(f"replacement segments cover {expected} tokens, not the {token_count} tokens present")
+
 
 @dataclass(frozen=True)
 class TranscriptReplacement:
@@ -35,6 +50,34 @@ class TranscriptReplacement:
 
     tokens: tuple[int, ...]
     segments: tuple[Segment, ...]
+
+    def slice(self, start_tokens: int, end_tokens: int | None = None) -> TranscriptReplacement:
+        """Return a relative token slice, clipping provenance at its boundaries."""
+        validate_segment_coverage(self.segments, len(self.tokens))
+        end = len(self.tokens) if end_tokens is None else end_tokens
+        if not 0 <= start_tokens <= end <= len(self.tokens):
+            raise ValueError("slice positions are outside the transcript")
+        return TranscriptReplacement(
+            self.tokens[start_tokens:end],
+            tuple(
+                replace(segment, start=max(segment.start, start_tokens), end=min(segment.end, end)).shifted(
+                    -start_tokens
+                )
+                for segment in self.segments
+                if segment.end > start_tokens and segment.start < end and start_tokens < end
+            ),
+        )
+
+    @staticmethod
+    def concat(*parts: TranscriptReplacement) -> TranscriptReplacement:
+        """Join relative, fully covered values without touching live history."""
+        tokens: list[int] = []
+        segments: list[Segment] = []
+        for part in parts:
+            validate_segment_coverage(part.segments, len(part.tokens))
+            segments.extend(segment.shifted(len(tokens)) for segment in part.segments)
+            tokens.extend(part.tokens)
+        return TranscriptReplacement(tuple(tokens), tuple(segments))
 
 
 class TranscriptView:
@@ -133,8 +176,10 @@ class Transcript:
     def replace(self, tokens: Sequence[int], segments: Sequence[Segment]) -> None:
         """Atomically replace all tokens and provenance with a validated chat history."""
         with self._lock:
-            self._tokens = list(tokens)
-            self._segments = list(segments)
+            replacement_tokens, replacement_segments = list(tokens), list(segments)
+            validate_segment_coverage(replacement_segments, len(replacement_tokens))
+            self._tokens = replacement_tokens
+            self._segments = replacement_segments
             self._chat = True
 
     def install(self, segments: Sequence[Segment]) -> None:
@@ -146,15 +191,7 @@ class Transcript:
         """
         with self._lock:
             installed = list(segments)
-            expected = 0
-            for segment in installed:
-                if segment.start != expected or segment.end <= segment.start:
-                    raise ValueError("installed segments must cover the tokens without gaps")
-                expected = segment.end
-            if expected != len(self._tokens):
-                raise ValueError(
-                    f"installed segments cover {expected} tokens, not the {len(self._tokens)} tokens present"
-                )
+            validate_segment_coverage(installed, len(self._tokens))
             self._segments = installed
             self._chat = True
 

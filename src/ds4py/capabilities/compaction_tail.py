@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from pydantic_ai.messages import RetryPromptPart, ToolCallPart, ToolReturnPart
 
-from ds4py.engine.transcript import Segment
+from ds4py.engine.transcript import TranscriptReplacement
 from ds4py.errors import EngineError
 
 if TYPE_CHECKING:
@@ -21,15 +21,15 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class CompactionTail:
-    messages: list[ModelMessage]
-    bottom: int
-    tokens: tuple[int, ...]
-    segments: tuple[Segment, ...]
-    system_end: int
-    dropped: int
-    budget: int
-    open_start: int | None
-    snapshot: list[ModelMessage]
+    snapshot: tuple[ModelMessage, ...]
+    cut_messages: int
+    bottom_tokens: int
+    system_end_tokens: int
+    retained: TranscriptReplacement
+
+    @property
+    def messages(self) -> tuple[ModelMessage, ...]:
+        return self.snapshot[self.cut_messages :]
 
 
 def tail_boundary(bottom: int, system: int, budget: int, users: Sequence[int]) -> int:
@@ -109,17 +109,9 @@ def plan_tail(binder: MessageBinder, messages: Sequence[ModelMessage]) -> Compac
         if segment.end == bottom and segment.kind == "note":
             bottom = segment.start
     return CompactionTail(
-        snapshot[cut:],
-        bottom,
-        tokens[bottom:],
-        tuple(
-            Segment(segment.start - bottom, segment.end - bottom, segment.kind, segment.meta)
-            for segment in segments
-            if segment.start >= bottom
-        ),
-        system_end,
+        tuple(snapshot),
         cut,
-        budget,
-        open_start,
-        snapshot,
+        bottom,
+        system_end,
+        TranscriptReplacement(tokens, segments).slice(bottom),
     )

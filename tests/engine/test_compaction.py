@@ -260,7 +260,8 @@ def test_summary_is_allowed_only_at_reserve_boundary() -> None:
                 session.prepare_summary(0)
             pause = next(event for event in round_ if isinstance(event, ReserveReached))
             before = (session.transcript.tokens, session.transcript.segments, state(session))
-            assert session.prepare_summary(0).summary == "a" * 256
+            with session.reserve_window(pause):
+                assert session.prepare_summary(0).summary == "a" * 256
             assert (session.transcript.tokens, session.transcript.segments, state(session)) == before
             with pytest.raises(EngineError, match="round is open"):
                 session.append_tokens([99], "user")
@@ -315,18 +316,19 @@ def test_summary_listener_closing_outer_round_does_not_resurrect_it() -> None:
         outer = session.run_round()
         closed: list[tuple[bool, bool]] = []
         try:
-            next(event for event in outer if isinstance(event, ReserveReached))
+            pause = next(event for event in outer if isinstance(event, ReserveReached))
 
             def close_outer(event: object) -> None:
                 outer.close()
-                closed.append((session._active_round, session._reserve_boundary))
+                closed.append((session._active_round, session._reserve_event is not None))
 
             session.on_event(close_outer, kinds=(SummaryToken.__name__,))
-            assert session.prepare_summary(0).summary == "a" * 256
+            with session.reserve_window(pause):
+                assert session.prepare_summary(0).summary == "a" * 256
             assert closed and all(flags == (False, False) for flags in closed)
             # Summary cleanup must not reclaim the expired outer-round flags.
             session.append_tokens([99], "user")
-            assert (session._active_round, session._reserve_boundary) == (False, False)
+            assert (session._active_round, session._reserve_event is not None) == (False, False)
         finally:
             outer.close()
 

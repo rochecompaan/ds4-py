@@ -2,6 +2,7 @@
 
 import operator
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO, Self, cast
 
@@ -31,7 +32,14 @@ from .events import (
     Stopped,
     Synced,
 )
-from .lifecycle import SessionEvent, SessionLifecycle
+from .lifecycle import (
+    ReservePermission,
+    SessionEvent,
+    SessionLifecycle,
+    current_task,
+    in_listener,
+    reserve_authority,
+)
 from .pause import ControlSpan, resolve_control
 
 if TYPE_CHECKING:
@@ -42,7 +50,7 @@ if TYPE_CHECKING:
     from .tool_prompt import ToolDefinition
 from .prompt import PromptBuilder
 from .sampling import Rng, SamplingPolicy
-from .transcript import Segment, Transcript, TranscriptReplacement, TranscriptView
+from .transcript import Segment, Transcript, TranscriptReplacement, TranscriptView, validate_segment_coverage
 from .worker import (
     CheckpointJob,
     EngineWorker,
@@ -189,7 +197,8 @@ class Session:
         self._lock = threading.RLock()
         self._active_round = False
         self._summary_active = False
-        self._reserve_boundary = False
+        self._reserve_event: ReserveReached | None = None
+        self._reserve_permission: ReservePermission | None = None
         self._decode_step: DecodeStep | None = None
         self._logits_hooks: list[Callable[[LogitsView], None]] = []
         self._paused_stream: RoundStream | None = None
@@ -332,6 +341,8 @@ class Session:
         with self._lock:
             if self._closed:
                 return
+            self._revoke_reserve()
+            self._reserve_event = None
             self._closed = True
             self._decode_step = None
             self._lifecycle.emit("session_end", old=self.id)
@@ -423,7 +434,7 @@ class Session:
         """
         with self._lock:
             self._require_open()
-            if self._summary_active or (self._active_round and not self._reserve_boundary):
+            if self._summary_active or (self._active_round and not self._reserve_allowed()):
                 raise EngineError("a round is open")
             plan = rebind.replace_transcript(self, replacement, reason=reason)
             self._transcript.replace(replacement.tokens, replacement.segments)
@@ -434,6 +445,56 @@ class Session:
             self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
             return plan
 
+    def _reserve_allowed(self) -> bool:
+        permission = self._reserve_permission
+        return self._reserve_event is not None and permission is not None and permission.allows()
+
+    def _revoke_reserve(self) -> None:
+        if self._reserve_permission is not None:
+            self._reserve_permission.active = False
+
+    @contextmanager
+    def reserve_window(self, event: ReserveReached) -> Generator[None]:
+        """Authorize this live pause's selected owner, including its executor work.
+
+        Direct child tasks and listener callbacks are excluded. This is an
+        internal lifecycle guard, not isolation from deliberate context copying.
+        """
+        with self._lock:
+            self._require_open()
+            if event is not self._reserve_event or in_listener.get() or self._reserve_permission is not None:
+                raise EngineError("reserve window requires an unclaimed live pause")
+            permission = ReservePermission(current_task(), threading.get_ident())
+            self._reserve_permission = permission
+            token = reserve_authority.set(permission)
+        try:
+            yield
+        finally:
+            with self._lock:
+                permission.active = False
+                self._reserve_permission = None
+                reserve_authority.reset(token)
+
+    def open_assistant_start(self) -> int | None:
+        """Observe the sampled start of the trailing unkeyed assistant structure."""
+        with self._lock:
+            tokens, segments = self._transcript.tokens, self._transcript.segments
+            try:
+                validate_segment_coverage(segments, len(tokens))
+            except ValueError as error:
+                raise EngineError(f"invalid open assistant structure: {error}") from error
+            tail = list(segments)
+            # A supplied EOS and the round's own close can both be present.
+            while tail and tail[-1].kind == "eos" and not tail[-1].meta.get("key"):
+                tail.pop()
+            if tail and tail[-1].kind == "assistant" and not tail[-1].meta.get("key"):
+                tail.pop()
+            if tail and tail[-1].kind == "assistant_prefix" and not tail[-1].meta.get("key"):
+                return tail[-1].end
+            if segments and segments[-1].kind in {"assistant", "eos"} and not segments[-1].meta.get("key"):
+                raise EngineError("invalid open assistant structure: missing unkeyed prefix")
+            return None
+
     def prepare_summary(self, bottom: int) -> SummaryResult:
         """Summarize only the caller's token prefix without changing live history.
 
@@ -442,7 +503,7 @@ class Session:
         """
         with self._lock:
             self._require_open()
-            if self._summary_active or (self._active_round and not self._reserve_boundary):
+            if self._summary_active or (self._active_round and not self._reserve_allowed()):
                 raise EngineError("a round is open")
             bottom = operator.index(bottom)
             if not 0 <= bottom <= len(self._transcript):
@@ -537,20 +598,25 @@ class Session:
         job: GenerateJob,
     ) -> Generator[Event, None, bool | tuple[str, int]]:
         decision: dict[str, object] = {}
+
+        def decide(action: str, reserve: int = 0) -> None:
+            with self._lock:
+                self._revoke_reserve()
+                self._reserve_event = None
+                decision.update(action=action, reserve=reserve)
+
         pause = ReserveReached(
             job.reserve,
-            on_resume=lambda reserve: decision.update(
-                action="resume",
-                reserve=reserve,
-            ),
-            on_fail=lambda: decision.update(action="fail"),
+            on_resume=lambda reserve: decide("resume", reserve),
+            on_fail=lambda: decide("fail"),
         )
-        self._reserve_boundary = True
+        self._reserve_event = pause
         try:
             self._publish(pause)
             yield pause
         finally:
-            self._reserve_boundary = False
+            self._revoke_reserve()
+            self._reserve_event = None
         if not decision:
             raise EngineError("reserve pause requires a decision before advancing")
         if decision["action"] == "fail":
