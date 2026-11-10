@@ -71,11 +71,18 @@ def test_plan_transition_from_explicit_state_matches_preparation() -> None:
         binder.note_provider = DS4SystemNotes(session, hints=True, clock=lambda: "fixed")
         messages = [user("request")]
         # The snapshot comes from the real session, not from a second binder.
-        state = BindingState((), (), None, False, {}, session, MessageRenderer(engine))
-        prepared = binder.prepare_messages(messages)
+        state = BindingState(
+            records=(),
+            bound_messages=(),
+            signature=None,
+            restored=False,
+            restored_notes={},
+            session=session,
+            renderer=MessageRenderer(engine),
+        )
         plan = plan_transition(
             state,
-            prepared,
+            binder.prepare_messages(messages),
             BindingConfig((), None, None),
             binder.note_provider,
             system_changed=True,
@@ -84,6 +91,21 @@ def test_plan_transition_from_explicit_state_matches_preparation() -> None:
         binder.prepare(messages)
         expected = len(session.transcript) + len(PromptBuilder(engine).assistant_prefix(session.transcript.tokens))
         assert plan.projected_tokens == projected == expected
+
+        # The populated incremental path plans the same append as preparation.
+        messages.append(user("next"))
+        incremental = plan_transition(
+            binder._binding_state(),
+            binder.prepare_messages(messages),
+            BindingConfig((), None, binder._signature),
+            binder.note_provider,
+            system_changed=False,
+        )
+        bound = binder.project_request(messages, bound=True)
+        binder.prepare(messages)
+        expected = len(session.transcript) + len(PromptBuilder(engine).assistant_prefix(session.transcript.tokens))
+        assert incremental.change.kind == "append"
+        assert incremental.projected_tokens == bound == expected
 
 
 def test_pending_note_rewrites_unchanged_bound_request() -> None:
@@ -253,6 +275,20 @@ def test_bound_projection_rejects_before_preprocessing(monkeypatch: pytest.Monke
         monkeypatch.setattr(binder, "prepare_messages", unused)
         with pytest.raises(EngineError, match="initialized chat"):
             binder.project_request([user("go")], bound=True)
+
+
+def test_bound_projection_rejects_supplied_tools() -> None:
+    with fake_engine() as engine:
+        binder = MessageBinder(engine.session())
+        with pytest.raises(ValueError, match="bound request accepts no tools or instructions"):
+            binder.project_request([user("go")], tools=[tool()], bound=True)
+
+
+def test_bound_projection_rejects_supplied_instructions() -> None:
+    with fake_engine() as engine:
+        binder = MessageBinder(engine.session())
+        with pytest.raises(ValueError, match="bound request accepts no tools or instructions"):
+            binder.project_request([user("go")], instructions="rules", bound=True)
 
 
 def test_bound_projection_requires_initialized_chat_but_accepts_zero_records() -> None:

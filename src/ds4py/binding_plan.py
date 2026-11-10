@@ -58,6 +58,11 @@ class ScratchSession:
             self._transcript.append(segment.tokens, segment.kind)
         self._transcript.set_chat()
 
+    def load(self, tokens: Sequence[int], segments: Sequence[Segment], *, limit: int) -> None:
+        """Replace scratch history from live history and truncate to a token limit."""
+        self._transcript.replace(tokens, segments)
+        self._transcript.truncate(limit)
+
     def append_tokens(self, tokens: Sequence[int], kind: str, meta: Mapping[str, object] | None = None) -> Segment:
         return self._transcript.append(tokens, kind, meta)
 
@@ -249,8 +254,7 @@ def _incremental_prefix(
             kind="append",
         )
     end = len(transcript) if prefix.truncate is None else prefix.truncate
-    scratch._transcript.replace(transcript.tokens, transcript.segments)
-    scratch._transcript.truncate(end)
+    scratch.load(transcript.tokens, transcript.segments, limit=end)
     return prefix
 
 

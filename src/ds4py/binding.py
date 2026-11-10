@@ -498,11 +498,17 @@ class MessageBinder:
         """Project the exact request preparation would apply, without live mutation.
 
         ``bound`` projects against the initialized native preamble and sampled
-        binding, rejecting before preprocessing when no chat exists. The
-        configured form projects the request that ``prepare`` would apply.
+        binding, rejecting before preprocessing when no chat exists. It accepts
+        no tools or instructions, because the bound request is already fixed by
+        the prepared chat. The configured form projects the request that
+        ``prepare`` would apply.
         """
-        if bound and not self.session.transcript.chat:
-            raise EngineError("bound request requires an initialized chat")
+        if bound:
+            sentinel = object()
+            if instructions is not None or next(iter(tools), sentinel) is not sentinel:
+                raise ValueError("bound request accepts no tools or instructions")
+            if not self.session.transcript.chat:
+                raise EngineError("bound request requires an initialized chat")
         prepared = self.prepare_messages(messages)
         if bound:
             config = BindingConfig((), None, self._signature)

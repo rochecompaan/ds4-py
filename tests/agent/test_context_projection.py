@@ -48,7 +48,7 @@ def test_after_tool_without_prepared_chat_raises_instead_of_guessing_config() ->
             model = DS4Model(engine.session(), sampling=engine.sampling_defaults)
             owner = RecordingOwner(model.binder)
             ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=[user("go")])
-            with pytest.raises(EngineError, match="initialized chat"):
+            with pytest.raises(EngineError, match="bound request requires an initialized chat"):
                 await owner.after_tool_execute(
                     ctx,
                     call=ToolCallPart("read", {}),
