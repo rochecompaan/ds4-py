@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
     from pydantic_ai.models import ModelRequestParameters
 
-    from ds4py.binding import MessageBinder
+    from ds4py.binding import MessageBinder, PreparedMessages
     from ds4py.capabilities.system_notes import DS4SystemNotes, NoteState
     from ds4py.engine.session import Engine
     from ds4py.engine.tool_prompt import ToolDefinition
@@ -63,13 +63,20 @@ class ScratchSession:
 
 @dataclass(frozen=True)
 class BindingBoundary:
-    """An atomic append group and the state valid only after its complete apply."""
+    """An atomic append group and the state valid only after its complete apply.
+
+    ``start_messages``/``end_messages`` bound the newly committed candidate
+    range, so publication copies only those targets and earlier prefixes are
+    never rewritten.
+    """
 
     appends: TranscriptReplacement
     records: tuple[BoundMessage, ...]
     bound_messages: tuple[ModelMessage, ...]
     notes: NoteState | None
     restored_notes: SavedNotes
+    start_messages: int
+    end_messages: int
     retire_paused: bool = False
 
 
@@ -115,33 +122,33 @@ class BindingConfig:
 
 def configured_plan(
     binder: MessageBinder,
-    messages: Sequence[ModelMessage],
+    prepared: PreparedMessages,
     config: BindingConfig,
     provider: DS4SystemNotes | None,
 ) -> BindingPlan:
     changed = binder._signature != config.signature or not binder.session.transcript.chat
     if binder._restored and binder._restored_preamble(config.definitions, config.instructions):
         changed = False
-    return _transition(binder, messages, config, provider, system_changed=changed)
+    return _transition(binder, prepared, config, provider, system_changed=changed)
 
 
-def bound_plan(binder: MessageBinder, messages: Sequence[ModelMessage]) -> BindingPlan:
+def bound_plan(binder: MessageBinder, prepared: PreparedMessages) -> BindingPlan:
     if not binder.session.transcript.chat:
         raise EngineError("bound request requires an initialized chat")
     return _transition(
-        binder, messages, BindingConfig((), None, binder._signature), binder.note_provider, system_changed=False
+        binder, prepared, BindingConfig((), None, binder._signature), binder.note_provider, system_changed=False
     )
 
 
 def _transition(  # noqa: PLR0912, PLR0915 - One traversal owns every binding transition.
     binder: MessageBinder,
-    messages: Sequence[ModelMessage],
+    prepared: PreparedMessages,
     config: BindingConfig,
     provider: DS4SystemNotes | None,
     *,
     system_changed: bool,
 ) -> BindingPlan:
-    candidates = binder.canonicalize(deepcopy(list(messages)))
+    candidates = list(prepared.candidates)
     _validate(candidates)
     keyed = binder._keyed(candidates)
     preview = provider.preview() if provider is not None else None
@@ -191,15 +198,22 @@ def _transition(  # noqa: PLR0912, PLR0915 - One traversal owns every binding tr
     records = list(binder.records()[:common])
     bound = deepcopy(binder._bound_messages[:common])
 
+    published = 0
+
     def boundary(start: int, *, retire: bool = False) -> BindingBoundary:
-        return BindingBoundary(
+        nonlocal published
+        appended = BindingBoundary(
             _replacement(scratch, start),
             tuple(records),
             tuple(bound),
             preview.checkpoint() if preview is not None else None,
             tuple((key, tuple(notes)) for key, notes in restored.items()),
+            published,
+            len(records),
             retire,
         )
+        published = len(records)
+        return appended
 
     prefix = _replacement(scratch)
     initial = boundary(len(scratch.transcript))

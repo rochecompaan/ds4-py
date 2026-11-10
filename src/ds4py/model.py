@@ -23,7 +23,6 @@ from typing_extensions import sentinel
 
 from ds4py.async_session import await_retained, cancel_session_operation, drain_operation
 from ds4py.binding import MessageBinder
-from ds4py.binding_plan import request_instructions
 from ds4py.capabilities.context import ContextRequest
 from ds4py.engine.events import (
     Event,
@@ -202,13 +201,7 @@ class DS4Model(Model):
         run_context: RunContext[object] | None = None,
     ) -> AsyncGenerator[DS4StreamedResponse]:
         policy, max_tokens, stop_sequences = self._request_config(settings)
-        messages = self.binder.canonicalize(messages)
-        self.binder.prepare(
-            messages,
-            tools=params.declared_tool_defs.values(),
-            instructions=request_instructions(messages, params),
-            note_provider=self.note_provider,
-        )
+        messages = self.binder.prepare_model_request(messages, params, note_provider=self.note_provider)
         response = DS4StreamedResponse(
             self,
             messages,

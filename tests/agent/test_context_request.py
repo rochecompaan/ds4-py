@@ -102,3 +102,53 @@ def test_pending_count_keeps_native_sampled_prefix_and_grouped_wrappers(pending_
             assert len(model.session.transcript) == expected - 3  # Assistant prefix belongs to run_round.
 
     asyncio.run(scenario())
+
+
+def test_model_prepare_canonicalizes_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scenario() -> None:
+        with fake_engine(script=sequential_text("abc")) as engine:
+            model = make_model(engine)
+            binder = model.binder
+            original = binder.canonicalize
+            calls: list[int] = []
+
+            def counting(messages: list[ModelMessage]) -> list[ModelMessage]:
+                calls.append(len(messages))
+                return original(messages)
+
+            monkeypatch.setattr(binder, "canonicalize", counting)
+            messages: list[ModelMessage] = [ModelRequest([UserPromptPart("go")])]
+            await model.request(messages, None, ModelRequestParameters())
+            assert calls == [1]
+            published = messages[0].metadata
+            assert published is not None
+            assert binder.count_rendered_request(messages) > 0
+            assert messages[0].metadata == published
+            assert calls == [1, 1]
+
+    asyncio.run(scenario())
+
+
+def test_prepare_model_request_recovers_merged_request_with_one_canonicalize(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with fake_engine() as engine:
+        model = make_model(engine)
+        binder = model.binder
+        first = ModelRequest([UserPromptPart("summary")])
+        second = ModelRequest([UserPromptPart("retained")])
+        binder.prepare([first, second])
+        merged = ModelRequest([*first.parts, *second.parts])
+        original = binder.canonicalize
+        calls: list[int] = []
+
+        def counting(messages: list[ModelMessage]) -> list[ModelMessage]:
+            calls.append(len(messages))
+            return original(messages)
+
+        monkeypatch.setattr(binder, "canonicalize", counting)
+        returned = binder.prepare_model_request([merged], ModelRequestParameters())
+        assert calls == [1]
+        assert returned == [first, second]
+        assert returned[0] is not first
+        assert len(binder.records()) == 2

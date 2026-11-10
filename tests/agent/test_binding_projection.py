@@ -2,12 +2,13 @@
 
 from collections.abc import Sequence
 from copy import deepcopy
-from typing import Any, override
+from typing import Any, cast, override
 
 import pytest
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
 from test_binding import fake_engine, tool, user
 
+from ds4py import binding as binding_module
 from ds4py._native.fake import FakeSession, FakeSnapshot
 from ds4py._native.protocol import CancelFn, ProgressFn, SyncStatus
 from ds4py.binding import MessageBinder
@@ -165,6 +166,55 @@ def test_partial_append_rolls_back_to_last_completed_message(fail_at: int) -> No
             "date",
             "hints_full",
         ]
+
+
+def test_binding_key_publication_visits_each_committed_message_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Only publication copies planned metadata onto request targets: the old
+    # whole-prefix publish copied 1+2+...+N keys (10 -> 55, 20 -> 210).
+    copies: list[str] = []
+    real = binding_module.deepcopy
+
+    def counting(value: object) -> object:
+        if isinstance(value, dict) and "ds4.key" in value:
+            copies.append("ds4.key")
+        return real(value)
+
+    monkeypatch.setattr(binding_module, "deepcopy", counting)
+    for count in (10, 20):
+        copies.clear()
+        with fake_engine() as engine:
+            binder = MessageBinder(engine.session())
+            messages: list[ModelMessage] = [user(f"message {index}") for index in range(count)]
+            binder.prepare(messages)
+        assert len(copies) == count
+
+
+def test_published_metadata_is_not_aliased_to_bound_copies() -> None:
+    with fake_engine() as engine:
+        binder = MessageBinder(engine.session())
+        messages: list[ModelMessage] = [user("one"), user("two")]
+        binder.prepare(messages)
+        published = messages[0].metadata
+        assert published is not None
+        assert binder._bound_messages[0].metadata is not published
+        assert binder._bound_messages[0].metadata == published
+        published["ds4.key"] = "changed"
+        assert binder._bound_messages[0].metadata is not None
+        assert binder._bound_messages[0].metadata["ds4.key"] != "changed"
+
+
+def test_unchanged_processed_prefix_recovers_missing_keys_once() -> None:
+    with fake_engine() as engine:
+        binder = MessageBinder(engine.session())
+        messages: list[ModelMessage] = [user("one"), user("two")]
+        binder.prepare(messages)
+        keys = [cast("Any", message.metadata)["ds4.key"] for message in messages]
+        processed: list[ModelMessage] = [ModelRequest([UserPromptPart("one")]), ModelRequest([UserPromptPart("two")])]
+        change = binder.prepare(processed)
+        assert change.kind == "unchanged"
+        assert [cast("Any", message.metadata)["ds4.key"] for message in processed] == keys
 
 
 def test_bound_projection_requires_initialized_chat_but_accepts_zero_records() -> None:

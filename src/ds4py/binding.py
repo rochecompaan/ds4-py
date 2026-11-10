@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
 from pydantic_ai.messages import (
@@ -25,6 +25,7 @@ from ds4py.binding_plan import (
     ScratchSession,
     bound_plan,
     configured_plan,
+    request_instructions,
 )
 from ds4py.binding_provenance import (
     BoundMessage,
@@ -42,10 +43,13 @@ from ds4py.message_rendering import MessageRenderer
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
+    from pydantic_ai.models import ModelRequestParameters
+
     from ds4py.binding_plan import BindingBoundary
     from ds4py.binding_provenance import PreparedProvenance, _Provenance
     from ds4py.capabilities.system_notes import DS4SystemNotes
     from ds4py.engine.session import Session
+    from ds4py.engine.session_operations import BindingTransaction
 
 
 @dataclass(frozen=True)
@@ -57,6 +61,19 @@ class SegmentProvenance:
     content_hash: str
     source: str
     text: str | None = None
+
+
+@dataclass(frozen=True)
+class PreparedMessages:
+    """One canonicalized request: publication targets and planning copies.
+
+    ``targets`` receives published keys and is the response view handed back to
+    the harness. ``candidates`` are independent copies because the plan writes
+    recovered keys and rendered notes without mutating the request targets.
+    """
+
+    targets: tuple[ModelMessage, ...]
+    candidates: tuple[ModelMessage, ...]
 
 
 def _definitions(tools: Iterable[object]) -> tuple[ToolDefinition, ...]:
@@ -341,6 +358,25 @@ class MessageBinder:
             keyed.append((key, content_hash))
         return keyed
 
+    def prepare_messages(self, messages: Sequence[ModelMessage]) -> PreparedMessages:
+        """Canonicalize one request and isolate the copies used for planning."""
+        targets = tuple(self.canonicalize(list(messages)))
+        return PreparedMessages(targets, tuple(deepcopy(message) for message in targets))
+
+    def plan_prepared(
+        self,
+        prepared: PreparedMessages,
+        *,
+        tools: Iterable[object] = (),
+        instructions: str | None = None,
+        note_provider: DS4SystemNotes | None = None,
+    ) -> BindingPlan:
+        """Plan configured preparation from one canonicalized request."""
+        definitions = _definitions(tools)
+        signature = (_tool_digest(definitions), instructions, int(self.session.engine.think))
+        provider = note_provider if note_provider is not None else self.note_provider
+        return configured_plan(self, prepared, BindingConfig(definitions, instructions, signature), provider)
+
     def plan_request(
         self,
         messages: Sequence[ModelMessage],
@@ -350,36 +386,39 @@ class MessageBinder:
         note_provider: DS4SystemNotes | None = None,
     ) -> BindingPlan:
         """Plan configured preparation without changing any live state."""
-        definitions = _definitions(tools)
-        signature = (_tool_digest(definitions), instructions, int(self.session.engine.think))
-        provider = note_provider if note_provider is not None else self.note_provider
-        return configured_plan(self, messages, BindingConfig(definitions, instructions, signature), provider)
+        return self.plan_prepared(
+            self.prepare_messages(messages),
+            tools=tools,
+            instructions=instructions,
+            note_provider=note_provider,
+        )
 
     def _publish_boundary(
         self,
         boundary: BindingBoundary,
         provider: DS4SystemNotes | None,
-        originals: Sequence[ModelMessage],
+        targets: Sequence[ModelMessage],
         plan: BindingPlan,
     ) -> None:
         """Install one boundary's records, provider notes and keys, or restore it.
 
         Publication runs inside the Session-owned transaction, so a failure here
         restores this boundary's binder/provider/harness state and the Session
-        restores the group tokens together. Earlier boundaries stay committed.
-        Captured and restored metadata covers the whole prefix today; a
-        range-restricted key publication must narrow both to the same range.
+        restores the group tokens together. Only this boundary's newly committed
+        message range is captured, published and restored; earlier boundaries
+        stay committed and are never rewritten.
         """
         previous_state = (self._records, self._bound_messages, self._restored_notes)
         previous_notes = provider.checkpoint() if provider is not None else None
-        published = [(message, message.metadata) for message in originals[: len(boundary.records)]]
+        start, end = boundary.start_messages, boundary.end_messages
+        published = [(message, message.metadata) for message in targets[start:end]]
         try:
             self._records = list(boundary.records)
             self._bound_messages = list(boundary.bound_messages)
             self._restored_notes = {key: list(notes) for key, notes in boundary.restored_notes}
             if provider is not None and boundary.notes is not None:
                 provider.apply_preview(boundary.notes)
-            self._publish_keys(originals, plan)
+            self._publish_keys(targets, plan, start_messages=start, end_messages=end)
         except BaseException as error:
             self._records, self._bound_messages, self._restored_notes = previous_state
             for message, metadata in published:
@@ -409,32 +448,94 @@ class MessageBinder:
         """
         provider = note_provider if note_provider is not None else self.note_provider
         with self.session.binding_transaction() as transaction:
-            originals = self.canonicalize(list(messages))
-            plan = self.plan_request(originals, tools=tools, instructions=instructions, note_provider=note_provider)
-            if plan.truncate_to is not None:
-                transaction.truncate(plan.truncate_to)
-            if plan.reset_chat:
-                self._signature = None
-                self._restored = False
-            transaction.apply_appends(
-                plan.initial.appends,
-                publish=partial(self._publish_boundary, plan.initial, provider, originals, plan),
+            prepared = self.prepare_messages(messages)
+            plan = self.plan_prepared(
+                prepared,
+                tools=tools,
+                instructions=instructions,
+                note_provider=note_provider,
             )
-            if plan.reset_chat:
-                transaction.start_chat(plan.definitions, plan.instructions)
-            self._signature = plan.signature
-            self._restored = False
-            for boundary in plan.boundaries:
-                transaction.apply_appends(
-                    boundary.appends,
-                    retire_paused=boundary.retire_paused,
-                    publish=partial(self._publish_boundary, boundary, provider, originals, plan),
-                )
-            return plan.change
+            return self._apply_plan(transaction, plan, provider, prepared.targets)
 
-    def _publish_keys(self, originals: Sequence[ModelMessage], plan: BindingPlan) -> None:
-        for original, planned in zip(originals[: len(self._records)], plan.messages):
-            original.metadata = deepcopy(planned.metadata)
+    def prepare_model_request(
+        self,
+        messages: Sequence[ModelMessage],
+        params: ModelRequestParameters,
+        *,
+        note_provider: DS4SystemNotes | None = None,
+    ) -> list[ModelMessage]:
+        """Prepare one model request and return its canonical publication targets.
+
+        The Session binding transaction is claimed before canonicalization, so
+        the plan is built and published from exactly one preprocessing pass and
+        its targets become the response view without a second canonicalization.
+        """
+        provider = note_provider if note_provider is not None else self.note_provider
+        with self.session.binding_transaction() as transaction:
+            prepared = self.prepare_messages(messages)
+            plan = self.plan_prepared(
+                prepared,
+                tools=params.declared_tool_defs.values(),
+                instructions=request_instructions(prepared.targets, params),
+                note_provider=note_provider,
+            )
+            self._apply_plan(transaction, plan, provider, prepared.targets)
+        canonical = prepared.targets
+        if (
+            isinstance(messages, list)
+            and len(canonical) == len(messages)
+            and all(target is message for target, message in zip(canonical, messages, strict=True))
+        ):
+            # Without a recovered merge the harness list is already the response
+            # view; keep its identity so the reserve owner mutates what the
+            # stream reads back.
+            return cast("list[ModelMessage]", messages)
+        return list(canonical)
+
+    def _apply_plan(
+        self,
+        transaction: BindingTransaction,
+        plan: BindingPlan,
+        provider: DS4SystemNotes | None,
+        targets: Sequence[ModelMessage],
+    ) -> BindingChange:
+        """Apply one prepared plan through the claimed Session transaction."""
+        if plan.truncate_to is not None:
+            transaction.truncate(plan.truncate_to)
+        if plan.reset_chat:
+            self._signature = None
+            self._restored = False
+        transaction.apply_appends(
+            plan.initial.appends,
+            publish=partial(self._publish_boundary, plan.initial, provider, targets, plan),
+        )
+        if plan.reset_chat:
+            transaction.start_chat(plan.definitions, plan.instructions)
+        self._signature = plan.signature
+        self._restored = False
+        for boundary in plan.boundaries:
+            transaction.apply_appends(
+                boundary.appends,
+                retire_paused=boundary.retire_paused,
+                publish=partial(self._publish_boundary, boundary, provider, targets, plan),
+            )
+        return plan.change
+
+    def _publish_keys(
+        self,
+        targets: Sequence[ModelMessage],
+        plan: BindingPlan,
+        *,
+        start_messages: int,
+        end_messages: int,
+    ) -> None:
+        """Publish planned metadata for only the newly committed message range."""
+        for index in range(start_messages, end_messages):
+            planned = plan.messages[index].metadata
+            target = targets[index]
+            if target.metadata == planned:
+                continue
+            target.metadata = deepcopy(planned)
 
     def count_rendered_request(
         self,
@@ -448,7 +549,7 @@ class MessageBinder:
 
     def count_bound_request(self, messages: Sequence[ModelMessage]) -> int:
         """Project against the initialized native preamble and sampled binding."""
-        return bound_plan(self, messages).count(self.session.engine)
+        return bound_plan(self, self.prepare_messages(messages)).count(self.session.engine)
 
     def count_tokens(
         self,
