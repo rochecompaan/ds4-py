@@ -10,7 +10,8 @@ import pytest
 import ds4py
 from ds4py import ThinkMode
 from ds4py._native.fake import FakeNative
-from ds4py.engine.events import Event, ReserveReached
+from ds4py.engine.events import Event, ReserveReached, Stopped
+from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.session import Session
 from ds4py.engine.transcript import TranscriptReplacement
 from ds4py.errors import EngineError
@@ -98,6 +99,36 @@ def test_expired_pause_and_nested_windows_reject() -> None:
         round_.close()
         with pytest.raises(EngineError), session.reserve_window(pause):
             pass
+
+
+@pytest.mark.parametrize("stale_action", ["fail", "resume", "close"])
+def test_expired_round_cannot_revoke_another_rounds_reserve_window(stale_action: str) -> None:
+    with paused() as (session, expired_pause, expired_round):
+        expired_round.close()
+        session.append_user("next")
+        prefix = PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens)
+        capacity = len(session.transcript) + len(prefix) + 1
+        session._worker.call(lambda e, n: setattr(n, "_ctx", capacity)).result()
+        current_round = session.run_round()
+        try:
+            current_pause = next(event for event in current_round if isinstance(event, ReserveReached))
+            with session.reserve_window(current_pause):
+                replace(session)
+                if stale_action == "close":
+                    expired_round.close()
+                elif stale_action == "fail":
+                    with pytest.raises(EngineError, match="expired"):
+                        expired_pause.fail()
+                else:
+                    with pytest.raises(EngineError, match="expired"):
+                        expired_pause.resume(1)
+                # A stale handle must neither revoke permission nor consume the
+                # live decision: native replacement and that decision still work.
+                replace(session)
+                current_pause.fail()
+            assert list(current_round) == [Stopped("context_exhausted")]
+        finally:
+            current_round.close()
 
 
 @pytest.mark.parametrize("sampled", [0, 3])

@@ -207,7 +207,7 @@ def test_tail_keeps_open_assistant_when_no_bound_message_is_selected() -> None:
 
 
 @pytest.mark.parametrize("sampled", [0, 3])
-@pytest.mark.parametrize("outcome", ["raise", "cancel", "close"])
+@pytest.mark.parametrize("outcome", ["raise", "cancel", "close", "close_raise", "close_cancel"])
 def test_owner_commit_then_failure_reconciles_exact_live_tail(sampled: int, outcome: str) -> None:
     async def scenario() -> None:
         native = FakeNative(
@@ -235,11 +235,12 @@ def test_owner_commit_then_failure_reconciles_exact_live_tail(sampled: int, outc
                     eos = TranscriptReplacement((FAKE_EOS,), (Segment(0, 1, "eos", {}),))
                     replacement = TranscriptReplacement.concat(rendered, transcript.slice(prefix.start), eos)
                     commit_compaction(binder, messages, [summary], replacement)
-                    if outcome == "close":
+                    if outcome.startswith("close"):
                         committed.set()
                         await release.wait()
-                        return RoomResult(True)
-                    if outcome == "cancel":
+                        if outcome == "close":
+                            return RoomResult(True)
+                    if outcome in {"cancel", "close_cancel"}:
                         raise asyncio.CancelledError
                     raise RuntimeError("owner failed after commit")
 
@@ -254,14 +255,19 @@ def test_owner_commit_then_failure_reconciles_exact_live_tail(sampled: int, outc
                     async for _ in stream:
                         pass
 
-                if outcome == "close":
+                if outcome.startswith("close"):
                     consumer = asyncio.create_task(consume())
                     try:
                         await asyncio.wait_for(committed.wait(), 5)
                         await asyncio.wait_for(stream.close_stream(), 5)
                     finally:
                         release.set()
-                        await asyncio.wait_for(consumer, 5)
+                        if outcome == "close":
+                            await asyncio.wait_for(consumer, 5)
+                        else:
+                            error = asyncio.CancelledError if outcome == "close_cancel" else RuntimeError
+                            with pytest.raises(error):
+                                await asyncio.wait_for(consumer, 5)
                 else:
                     error = asyncio.CancelledError if outcome == "cancel" else RuntimeError
                     with pytest.raises(error):

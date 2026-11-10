@@ -607,8 +607,11 @@ class DS4StreamedResponse(StreamedResponse):
                         if not primary:
                             raise
         except BaseException:
-            event.fail()
+            if not self._reconciled:
+                event.fail()
             raise
+        if self._reconciled:
+            return
         self._summary_tokens += room.generated_tokens
         if not room.made_room:
             event.fail()

@@ -601,6 +601,8 @@ class Session:
 
         def decide(action: str, reserve: int = 0) -> None:
             with self._lock:
+                if self._reserve_event is not pause:
+                    raise EngineError("reserve pause has expired")
                 self._revoke_reserve()
                 self._reserve_event = None
                 decision.update(action=action, reserve=reserve)
