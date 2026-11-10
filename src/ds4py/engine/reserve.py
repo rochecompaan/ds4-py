@@ -19,7 +19,7 @@ from ds4py.errors import EngineError
 from .lifecycle import in_listener
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator
+    from collections.abc import Generator
 
     from .compaction import SummaryResult
     from .plan import Plan
@@ -60,6 +60,7 @@ class ReserveOperations:
         self._tickets: set[ReserveAuthority] = set()
 
     def revoke(self) -> None:
+        """Revoke this window; Session holds its mutation lock."""
         self._active = False
         self._tickets.clear()
 
@@ -67,16 +68,31 @@ class ReserveOperations:
         if not self._active or in_listener.get() or current_task() is not self._task or get_ident() != self._thread:
             raise EngineError("reserve operations require the selected live owner")
 
-    def _authority(self, operation: ReserveOperation) -> ReserveAuthority:
+    def issue_authority(self, operation: ReserveOperation) -> ReserveAuthority:
+        """Issue one operation ticket on the selected owner's loop/thread.
+
+        Custom retained executors must call this factory before submission and
+        pass the ticket explicitly to the matching Session ``authority=``
+        keyword. It is session/window/operation-bound, consumed once at claim,
+        and revoked on window exit or decision. Prefer the handle's sync/async
+        methods unless publication requires a separate executor callable.
+        """
         self._validate_owner()
         ticket = ReserveAuthority(self, operation)
         self._tickets.add(ticket)
         return ticket
 
     def consume(self, authority: ReserveAuthority, operation: ReserveOperation) -> bool:
-        if not self._active or authority not in self._tickets or authority._operation != operation:
+        """Claim a matching ticket; Session holds its mutation lock."""
+        if (
+            not self._active
+            or in_listener.get()
+            or authority._owner is not self
+            or authority not in self._tickets
+            or authority._operation != operation
+        ):
             return False
-        self._tickets.remove(authority)
+        self._tickets.discard(authority)
         return True
 
     def legacy_allows(self) -> bool:
@@ -90,24 +106,24 @@ class ReserveOperations:
         )
 
     def prepare_summary(self, bottom: int) -> SummaryResult:
-        return self._session.prepare_summary(bottom, authority=self._authority("summary"))
-
-    def _replacement_operation(self, replacement: TranscriptReplacement, *, reason: str) -> Callable[[], Plan]:
-        authority = self._authority("replacement")
-        return lambda: self._session.replace_transcript(replacement, reason=reason, authority=authority)
+        return self._session.prepare_summary(bottom, authority=self.issue_authority("summary"))
 
     def replace_transcript(self, replacement: TranscriptReplacement, *, reason: str) -> Plan:
-        return self._replacement_operation(replacement, reason=reason)()
+        return self._session.replace_transcript(
+            replacement, reason=reason, authority=self.issue_authority("replacement")
+        )
 
     async def prepare_summary_async(self, bottom: int) -> SummaryResult:
-        authority = self._authority("summary")
+        authority = self.issue_authority("summary")
         return await run_session_operation(
             self._session, lambda: self._session.prepare_summary(bottom, authority=authority)
         )
 
     async def replace_transcript_async(self, replacement: TranscriptReplacement, *, reason: str) -> Plan:
-        operation = self._replacement_operation(replacement, reason=reason)
-        return await run_session_operation(self._session, operation)
+        authority = self.issue_authority("replacement")
+        return await run_session_operation(
+            self._session, lambda: self._session.replace_transcript(replacement, reason=reason, authority=authority)
+        )
 
 
 @contextmanager

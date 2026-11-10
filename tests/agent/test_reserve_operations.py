@@ -1,8 +1,10 @@
 """Strict handles authorize selected owners, not inherited execution contexts."""
 
 import asyncio
+import threading
 from collections.abc import Generator
 from contextlib import contextmanager
+from typing import override
 
 import pytest
 from pydantic_ai.messages import ModelMessage
@@ -12,7 +14,8 @@ from test_context_strategy import RecordingOwner, fake_engine, make_model, respo
 import ds4py
 from ds4py import ThinkMode
 from ds4py._native.fake import FakeNative
-from ds4py.capabilities.context import ContextRequest
+from ds4py.capabilities.compaction import LLMCompaction
+from ds4py.capabilities.context import ContextRequest, RoomResult
 from ds4py.engine.events import Event, ReserveReached
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.session import Session
@@ -82,6 +85,24 @@ def test_strict_listener_cannot_use_deliberately_supplied_handle() -> None:
             assert denied == [True]
 
 
+def test_strict_listener_cannot_consume_deliberately_supplied_ticket() -> None:
+    with paused() as (session, pause, _), session.reserve_window(pause, strict=True) as operations:
+        replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
+        ticket = operations.issue_authority("replacement")
+        denied = []
+
+        def listener(event: object) -> None:
+            with pytest.raises(EngineError):
+                session.replace_transcript(replacement, reason="listener ticket", authority=ticket)
+            denied.append(True)
+
+        session.on_event(listener, kinds={"probe"})
+        session.emit("probe")
+        assert denied == [True]
+        # Listener denial must not consume the selected owner's ticket.
+        session.replace_transcript(replacement, reason="owner ticket", authority=ticket)
+
+
 def test_tickets_are_session_operation_and_one_shot_bound() -> None:
     with (
         paused() as (session, pause, _),
@@ -89,7 +110,7 @@ def test_tickets_are_session_operation_and_one_shot_bound() -> None:
         session.reserve_window(pause, strict=True) as operations,
     ):
         replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
-        ticket = operations._authority("replacement")
+        ticket = operations.issue_authority("replacement")
         with pytest.raises(EngineError):
             other.replace_transcript(replacement, reason="wrong session", authority=ticket)
         with pytest.raises(EngineError):
@@ -104,7 +125,7 @@ def test_strict_ticket_expires_with_pause(decision: str) -> None:
     with paused() as (session, pause, _):
         with session.reserve_window(pause, strict=True) as operations:
             replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
-            ticket = operations._authority("replacement")
+            ticket = operations.issue_authority("replacement")
             if decision == "resume":
                 pause.resume(1)
             elif decision == "fail":
@@ -150,7 +171,7 @@ def test_previous_window_ticket_cannot_authorize_or_revoke_current_window() -> N
         with paused() as (session, pause, _):
             replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
             with session.reserve_window(pause, strict=True) as expired:
-                stale = expired._authority("replacement")
+                stale = expired.issue_authority("replacement")
             with session.reserve_window(pause, strict=True) as current:
                 with pytest.raises(EngineError):
                     await asyncio.to_thread(session.replace_transcript, replacement, reason="stale", authority=stale)
@@ -160,7 +181,15 @@ def test_previous_window_ticket_cannot_authorize_or_revoke_current_window() -> N
 
 
 @pytest.mark.parametrize("retained", [False, True])
-def test_opted_in_owner_uses_explicit_operations(retained: bool) -> None:
+def test_opted_in_owner_uses_explicit_operations(retained: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    selections = []
+
+    def select_strict(owner: RecordingOwner) -> bool:
+        selections.append(True)
+        return len(selections) == 1
+
+    monkeypatch.setattr(RecordingOwner, "reserve_operations", property(select_strict))
+
     async def scenario() -> None:
         with fake_engine(script=sequential_text("abc")) as engine:
             session = engine.session()
@@ -178,7 +207,6 @@ def test_opted_in_owner_uses_explicit_operations(retained: bool) -> None:
                     request.operations.replace_transcript(replacement, reason="custom")
 
             owner = RecordingOwner(model.binder, on_room=on_room)
-            owner.reserve_operations = True
             model.context_owner = owner
             async with model.request_stream([user()], None, ModelRequestParameters()) as stream:
                 prefix = len(PromptBuilder(engine).assistant_prefix(session.transcript.tokens))
@@ -192,5 +220,71 @@ def test_opted_in_owner_uses_explicit_operations(retained: bool) -> None:
             assert operations is not None
             with pytest.raises(EngineError):
                 operations.prepare_summary(0)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_raw_call_compaction_subclass_requires_explicit_legacy_opt_out(legacy: bool) -> None:
+    class RawCompactor(LLMCompaction):
+        @override
+        async def make_room(self, messages: list[ModelMessage], request: ContextRequest) -> RoomResult:
+            session = self.binder.session
+            replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
+            session.replace_transcript(replacement, reason="raw subclass")
+            session._worker.call(lambda e, n: setattr(n, "_ctx", 4096)).result()
+            return RoomResult(True)
+
+    async def scenario() -> None:
+        with fake_engine(script=sequential_text("abc")) as engine:
+            session = engine.session()
+            model = make_model(session)
+            owner = RawCompactor(model.binder)
+            if legacy:
+                owner.reserve_operations = False
+            model.context_owner = owner
+            async with model.request_stream([user()], None, ModelRequestParameters()) as stream:
+                prefix = len(PromptBuilder(engine).assistant_prefix(session.transcript.tokens))
+                capacity = len(session.transcript) + prefix + 2
+                session._worker.call(lambda e, n: setattr(n, "_ctx", capacity)).result()
+
+                async def consume() -> None:
+                    async for _ in stream:
+                        pass
+
+                if legacy:
+                    await consume()
+                    assert response_text(stream.get()) == "abc"
+                else:
+                    with pytest.raises(EngineError, match="round is open"):
+                        await consume()
+
+    asyncio.run(scenario())
+
+
+def test_round_close_revokes_retained_executor_ticket_before_claim() -> None:
+    async def scenario() -> None:
+        with paused() as (session, pause, round_), session.reserve_window(pause, strict=True) as operations:
+            replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
+            ticket = operations.issue_authority("replacement")
+            entered = asyncio.Event()
+            release = threading.Event()
+            loop = asyncio.get_running_loop()
+
+            def execute() -> None:
+                loop.call_soon_threadsafe(entered.set)
+                assert release.wait(5)
+                with pytest.raises(EngineError):
+                    session.replace_transcript(replacement, reason="closed round", authority=ticket)
+
+            pending = asyncio.create_task(asyncio.to_thread(execute))
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                await asyncio.to_thread(round_.close)
+                closed_tokens = session.transcript.tokens
+            finally:
+                release.set()
+                await pending
+            assert session.transcript.tokens == closed_tokens
 
     asyncio.run(scenario())

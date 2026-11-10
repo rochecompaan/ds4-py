@@ -173,6 +173,19 @@ validate the selected task on its owning loop **before** executor submission;
 do not use naked `asyncio.to_thread(handle.method, ...)` in strict mode.
 Threshold/manual idle compaction continues without a handle.
 
+`LLMCompaction` subclasses inherit `reserve_operations = True`; inheriting the
+built-in is itself an opt-in. Subclasses overriding `make_room` with raw Session
+calls must migrate to `request.operations`, or explicitly set
+`reserve_operations = False` to retain the legacy adapter and its limitations.
+
+For custom retained executors that must publish a successful native result even
+on cancellation, `operations.issue_authority("summary")` or
+`operations.issue_authority("replacement")` is the public loop-side ticket
+factory. Issue before executor submission and pass the
+result to the matching Session `authority=` keyword. Prefer the handle's normal
+methods otherwise. The ticket cannot be consumed by listeners, even when
+deliberately supplied; listener denial leaves it usable by the selected owner.
+
 Strict windows deny raw Session native operations even for the owner. Each
 handle call issues a session/window/operation-bound, one-shot execution ticket,
 consumed under the Session lock. Children and listeners cannot issue tickets.

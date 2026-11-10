@@ -102,9 +102,12 @@ def test_expired_pause_and_nested_windows_reject() -> None:
 
 
 @pytest.mark.parametrize("strict", [False, True])
-@pytest.mark.parametrize("stale_action", ["fail", "resume", "close"])
+@pytest.mark.parametrize("stale_action", ["fail", "resume", "window_exit"])
 def test_expired_round_cannot_revoke_another_rounds_reserve_window(stale_action: str, strict: bool) -> None:
     with paused() as (session, expired_pause, expired_round):
+        expired_window = session.reserve_window(expired_pause, strict=strict)
+        with expired_window:
+            pass
         expired_round.close()
         session.append_user("next")
         prefix = PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens)
@@ -116,8 +119,11 @@ def test_expired_round_cannot_revoke_another_rounds_reserve_window(stale_action:
             with session.reserve_window(current_pause, strict=strict) as operations:
                 replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
                 operations.replace_transcript(replacement, reason="current owner")
-                if stale_action == "close":
-                    expired_round.close()
+                ticket = operations.issue_authority("replacement")
+                if stale_action == "window_exit":
+                    # Re-exiting the expired window, not re-closing its round,
+                    # must leave an already-issued live ticket consumable.
+                    expired_window.__exit__(None, None, None)
                 elif stale_action == "fail":
                     with pytest.raises(EngineError, match="expired"):
                         expired_pause.fail()
@@ -126,7 +132,7 @@ def test_expired_round_cannot_revoke_another_rounds_reserve_window(stale_action:
                         expired_pause.resume(1)
                 # A stale handle must neither revoke permission nor consume the
                 # live decision: native replacement and that decision still work.
-                operations.replace_transcript(replacement, reason="still current owner")
+                session.replace_transcript(replacement, reason="still current owner", authority=ticket)
                 current_pause.fail()
             assert list(current_round) == [Stopped("context_exhausted")]
         finally:

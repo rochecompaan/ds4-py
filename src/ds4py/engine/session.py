@@ -193,7 +193,7 @@ class Session:
         self._summary_active = False
         self._replacement_active = False
         self._reserve_event: ReserveReached | None = None
-        self._reserve_permission: ReserveOperations | None = None
+        self._reserve_operations: ReserveOperations | None = None
         self._decode_step: DecodeStep | None = None
         self._logits_hooks: list[Callable[[LogitsView], None]] = []
         self._paused_stream: RoundStream | None = None
@@ -430,6 +430,11 @@ class Session:
         valid checkpoint or rebuilds from token zero; only a completed sync
         commits the new tokens and provenance. Checkpoints beyond the new end and
         a paused round are discarded.
+
+        ``authority`` is an opaque one-shot replacement ticket issued on the
+        selected reserve owner's loop by ``ReserveOperations.issue_authority``.
+        Strict paused callers require it; idle callers leave it as None. A
+        supplied invalid, stale or listener-delivered ticket always rejects.
         """
         with self._lock:
             self._require_open()
@@ -457,16 +462,16 @@ class Session:
                 self._replacement_active = False
 
     def _reserve_allowed(self, authority: ReserveAuthority | None, operation: ReserveOperation) -> bool:
-        permission = self._reserve_permission
-        if self._reserve_event is None or permission is None:
+        operations = self._reserve_operations
+        if self._reserve_event is None or operations is None:
             return False
         if authority is not None:
-            return permission.consume(authority, operation)
-        return permission.legacy_allows()
+            return operations.consume(authority, operation)
+        return operations.legacy_allows()
 
     def _revoke_reserve(self) -> None:
-        if self._reserve_permission is not None:
-            self._reserve_permission.revoke()
+        if self._reserve_operations is not None:
+            self._reserve_operations.revoke()
 
     @contextmanager
     def reserve_window(self, event: ReserveReached, *, strict: bool = False) -> Generator[ReserveOperations]:
@@ -476,18 +481,18 @@ class Session:
         """
         with self._lock:
             self._require_open()
-            if event is not self._reserve_event or in_listener.get() or self._reserve_permission is not None:
+            if event is not self._reserve_event or in_listener.get() or self._reserve_operations is not None:
                 raise EngineError("reserve window requires an unclaimed live pause")
-            permission = ReserveOperations(self, strict=strict)
-            self._reserve_permission = permission
+            operations = ReserveOperations(self, strict=strict)
+            self._reserve_operations = operations
         try:
-            with legacy_context(permission, enabled=not strict):
-                yield permission
+            with legacy_context(operations, enabled=not strict):
+                yield operations
         finally:
             with self._lock:
-                permission.revoke()
-                if self._reserve_permission is permission:
-                    self._reserve_permission = None
+                operations.revoke()
+                if self._reserve_operations is operations:
+                    self._reserve_operations = None
 
     def open_assistant_start(self) -> int | None:
         """Observe the sampled start of the trailing unkeyed assistant structure."""
@@ -514,6 +519,11 @@ class Session:
 
         Runs between rounds (including reserve-paused continuations). Private
         output emits SummaryToken, never response Token/TextDelta events.
+
+        ``authority`` is an opaque one-shot summary ticket issued on the
+        selected reserve owner's loop by ``ReserveOperations.issue_authority``.
+        Strict paused callers require it; idle callers leave it as None. A
+        supplied invalid, stale or listener-delivered ticket always rejects.
         """
         with self._lock:
             self._require_open()
@@ -633,8 +643,9 @@ class Session:
             self._publish(pause)
             yield pause
         finally:
-            self._revoke_reserve()
-            self._reserve_event = None
+            with self._lock:
+                self._revoke_reserve()
+                self._reserve_event = None
         if not decision:
             raise EngineError("reserve pause requires a decision before advancing")
         if decision["action"] == "fail":

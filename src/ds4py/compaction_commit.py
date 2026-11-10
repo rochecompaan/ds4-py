@@ -40,14 +40,14 @@ async def commit_compaction(
     )
     committed: list[Plan] = []
     # Validate the strict owner on its loop, not inside an inherited executor.
-    operation = (
-        operations._replacement_operation(replacement, reason="compaction")
-        if operations is not None
-        else lambda: binder.session.replace_transcript(replacement, reason="compaction")
-    )
+    authority = operations.issue_authority("replacement") if operations is not None else None
 
     def replace() -> Plan:
-        plan = operation()
+        plan = (
+            binder.session.replace_transcript(replacement, reason="compaction", authority=authority)
+            if authority is not None
+            else binder.session.replace_transcript(replacement, reason="compaction")
+        )
         committed.append(plan)
         return plan
 

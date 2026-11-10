@@ -620,11 +620,12 @@ class DS4StreamedResponse(StreamedResponse):
         unsubscribe = self._session.on_event(observe_owner_work, kinds={"Synced", "SummaryToken"})
         try:
             try:
-                with self._session.reserve_window(event, strict=owner.reserve_operations) as operations:
+                strict = owner.reserve_operations
+                with self._session.reserve_window(event, strict=strict) as operations:
                     messages = owner.reserve_messages(self._messages, self._run_context)
                     room = await owner.make_room(
                         messages,
-                        ContextRequest(event.needed, "reserve", operations if owner.reserve_operations else None),
+                        ContextRequest(event.needed, "reserve", operations if strict else None),
                     )
             finally:
                 unsubscribe()

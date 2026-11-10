@@ -61,6 +61,13 @@ class ContextStrategy(AbstractCapability, ABC):
     selects an existing authority (the request view by default); persistent
     owners may instead select canonical harness history. Neither creates a
     second canonical history or changes the other owner's selection.
+
+    Set ``reserve_operations = True`` to receive strict operations through
+    ``ContextRequest.operations`` during reserve recovery. Raw Session calls
+    then reject mid-round; use the handle's sync/retained async methods instead.
+    False preserves the legacy direct/naked-to_thread adapter and its documented
+    child-executor ambiguity. LLMCompaction subclasses inherit True and must
+    explicitly opt out with False if they still use raw Session calls.
     """
 
     reserve_operations: bool = False
