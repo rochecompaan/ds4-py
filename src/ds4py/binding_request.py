@@ -25,7 +25,8 @@ def count_bound_request(binder: MessageBinder, scratch: _ScratchSession, message
     The scratch target has the current request's rendered system preamble.
     Everything after the first changed message uses the ordinary renderer.
     """
-    candidates = binder.adopt(deepcopy(messages))
+    candidates = binder.canonicalize(deepcopy(list(messages)))
+    binder._keyed(candidates)
     records = binder.records()
     common = 0
     for message, record in zip(candidates, records):
@@ -39,6 +40,12 @@ def count_bound_request(binder: MessageBinder, scratch: _ScratchSession, message
         for segment in transcript.segments:
             if segment.start >= preamble_end and segment.end <= end:
                 scratch.append_tokens(transcript.tokens[segment.start : segment.end], segment.kind, segment.meta)
+    if common == len(records) and common < len(candidates) and binder.session._paused_stream is not None:
+        # prepare() retires a paused response only when appending a suffix to
+        # the complete binding. Unchanged/resliced histories do not take that path.
+        ending = PromptBuilder(binder.session.engine).append_assistant_end()
+        if ending:
+            scratch.append_tokens(ending, "eos")
     renderer = MessageRenderer(binder.session.engine)
     for index, message in enumerate(candidates[common:], common):
         if isinstance(message, ModelRequest) and binder.note_provider is not None:
