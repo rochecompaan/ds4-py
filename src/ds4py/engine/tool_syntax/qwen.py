@@ -23,22 +23,28 @@ def _parse_number(value: str) -> float | int:
     return float(value) if any(marker in value for marker in ".eE") else int(value)
 
 
-def value_is_json(value: bytes) -> bool:
-    """Classify a Qwen value using the pinned C numeric and container rules."""
+def _reject_json_constant(value: str) -> Never:
+    raise ValueError(f"invalid JSON constant: {value}")
+
+
+def value_is_json(value: str) -> bool:
+    """Classify complete non-string JSON values, preserving the C numeric guard."""
     start = 0
     end = len(value)
-    while start < end and value[start] in b" \t":
+    while start < end and value[start] in " \t":
         start += 1
-    while end > start and value[end - 1] in b" \t\n":
+    while end > start and value[end - 1] in " \t\n":
         end -= 1
     trimmed = value[start:end]
     if not trimmed:
         return False
-    if (trimmed.startswith(b"{") and trimmed.endswith(b"}")) or (trimmed.startswith(b"[") and trimmed.endswith(b"]")):
-        return True
-    if trimmed in (b"true", b"false", b"null"):
-        return True
-    return len(trimmed) < _MAX_JSON_NUMBER_LENGTH and _NUMBER.fullmatch(trimmed) is not None
+    if _NUMBER.fullmatch(trimmed.encode()) is not None:
+        return len(trimmed.encode()) < _MAX_JSON_NUMBER_LENGTH
+    try:
+        parsed = json.loads(trimmed, parse_constant=_reject_json_constant)
+    except ValueError, RecursionError:
+        return False
+    return not isinstance(parsed, str)
 
 
 class Qwen(DelimiterParser):
@@ -119,17 +125,13 @@ class Qwen(DelimiterParser):
         text = self._decode(value_bytes, f"Qwen parameter {self._param_name!r}")
         if text is None:
             return True
-        is_json = value_is_json(value_bytes)
+        is_json = value_is_json(text)
         if is_json:
-            try:
-                number = text.strip()
-                if len(number) < _MAX_JSON_NUMBER_LENGTH and _NUMBER.fullmatch(number.encode()):
-                    value = _parse_number(number)
-                else:
-                    value = json.loads(text, parse_constant=self._reject_json_constant)
-            except json.JSONDecodeError, ValueError:
-                self._fail(f"Qwen parameter {self._param_name!r} contains malformed JSON")
-                return True
+            number = text.strip()
+            if len(number) < _MAX_JSON_NUMBER_LENGTH and _NUMBER.fullmatch(number.encode()):
+                value = _parse_number(number)
+            else:
+                value = json.loads(text, parse_constant=_reject_json_constant)
         else:
             value = unescape_tool_text(text, _PARAMETER_CLOSE.decode())
         param_name = self._param_name
@@ -140,7 +142,3 @@ class Qwen(DelimiterParser):
         self.parse_pos = close_start + len(_PARAMETER_CLOSE)
         self.state = "STRUCTURAL"
         return True
-
-    @staticmethod
-    def _reject_json_constant(value: str) -> Never:
-        raise ValueError(f"invalid JSON constant: {value}")

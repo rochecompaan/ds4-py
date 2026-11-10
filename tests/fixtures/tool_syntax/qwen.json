@@ -51,10 +51,83 @@
     ]
   },
   {
-    "source": "spec: malformed bracketed JSON is ERROR",
+    "source": "issue #29: Jinja template stays text",
+    "input": "<tool_call>\n<function=write_file>\n<parameter=path>\nt.html\n</parameter>\n<parameter=content>\n{% extends \"base.html\" %}\n{% block content %}x{% endblock %}\n</parameter>\n</function>\n</tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "write_file",
+        "args": {
+          "path": "t.html",
+          "content": "{% extends \"base.html\" %}\n{% block content %}x{% endblock %}"
+        }
+      }
+    ]
+  },
+  {
+    "source": "issue #29: TOML stays text",
+    "input": "<tool_call><function=write_file><parameter=content>[tool.ruff]\nline-length = 120\n\n[tool.ty]</parameter></function></tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "write_file",
+        "args": {
+          "content": "[tool.ruff]\nline-length = 120\n\n[tool.ty]"
+        }
+      }
+    ]
+  },
+  {
+    "source": "issue #29: CSS stays text",
+    "input": "<tool_call><function=write_file><parameter=content>body {\n  color: red;\n}</parameter></function></tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "write_file",
+        "args": {
+          "content": "body {\n  color: red;\n}"
+        }
+      }
+    ]
+  },
+  {
+    "source": "issue #29: HTML stays text",
+    "input": "<tool_call><function=write_file><parameter=content><section>\n  <h1>{{ title }}</h1>\n</section></parameter></function></tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "write_file",
+        "args": {
+          "content": "<section>\n  <h1>{{ title }}</h1>\n</section>"
+        }
+      }
+    ]
+  },
+  {
+    "source": "ds4-server: BOM-prefixed value stays text",
+    "input": "<tool_call><function=echo><parameter=value>﻿42</parameter></function></tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "echo",
+        "args": {
+          "value": "﻿42"
+        }
+      }
+    ]
+  },
+  {
+    "source": "ds4-server: malformed bracketed JSON stays text",
     "input": "<tool_call><function=json><parameter=value>\n{\"x\":}\n</parameter></function></tool_call>",
-    "state": "ERROR",
-    "calls": []
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "json",
+        "args": {
+          "value": "{\"x\":}"
+        }
+      }
+    ]
   },
   {
     "source": "C test_agent_qwen_tool_parser_two_calls_and_error two calls plus trailing whitespace",

@@ -70,6 +70,60 @@ def test_ordinary_text_is_not_json_decoded_by_experiment() -> None:
     assert snapshot.calls[0].args == {"a": "001x", "b": "True", "c": '"hello"'}
 
 
+def test_issue_29_jinja_write_file_repro_stays_text() -> None:
+    content = '{% extends "base.html" %}\n{% block content %}x{% endblock %}'
+    parser = Qwen()
+    parser.feed(
+        b"<tool_call>\n<function=write_file>\n<parameter=path>\nt.html\n</parameter>\n"
+        + f"<parameter=content>\n{content}\n</parameter>\n".encode()
+        + b"</function>\n</tool_call>"
+    )
+
+    snapshot = parser.finish()
+
+    assert snapshot.state == "DONE", snapshot.error
+    assert snapshot.calls[0].args == {"path": "t.html", "content": content}
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        '{"x":}',
+        "[1,]",
+        '{"x":1} trailing',
+        '"hello"',
+        "NaN",
+        "Infinity",
+        "\ufeff42",
+        "\x00[\x001\x00]",
+    ],
+)
+def test_incomplete_or_string_json_values_stay_text(value: Any) -> None:
+    snapshot = parse(f"<tool_call><function=echo><parameter=value>{value}</parameter></function></tool_call>")
+
+    assert snapshot.state == "DONE", snapshot.error
+    assert snapshot.calls[0].args == {"value": value}
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("42", 42),
+        ("-2.5", -2.5),
+        ("true", True),
+        ("false", False),
+        ("null", None),
+        ('{"a":1}', {"a": 1}),
+        ("[1,2]", [1, 2]),
+    ],
+)
+def test_complete_non_string_json_values_still_parse(text: Any, expected: Any) -> None:
+    snapshot = parse(f"<tool_call><function=echo><parameter=value>{text}</parameter></function></tool_call>")
+
+    assert snapshot.state == "DONE", snapshot.error
+    assert snapshot.calls[0].args == {"value": expected}
+
+
 def test_qwen_closing_delimiter_requests_greedy_sampling() -> None:
     parser = Qwen()
     parser.feed(b"<tool_call><function=bash><parameter=command>printf hi")

@@ -92,10 +92,10 @@ def _qwen(name: str, args: Mapping[str, object]) -> str:
     for key, value in args.items():
         value_text = value if isinstance(value, str) else _json(value)
         if isinstance(value, str):
-            if value_is_json(value.encode()):
+            if value_is_json(value):
                 raise ValueError(f"Qwen cannot preserve JSON-looking string argument {key!r}")
             value_text = escape_tool_text(value_text, "</parameter>")
-        elif not value_is_json(value_text.encode()):
+        elif not value_is_json(value_text):
             raise ValueError(f"Qwen cannot preserve non-JSON argument {key!r}")
         lines.extend(
             [
