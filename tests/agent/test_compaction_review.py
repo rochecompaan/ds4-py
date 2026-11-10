@@ -111,7 +111,7 @@ def test_close_rejects_followon_compaction_from_terminal_event(
                 with pytest.raises(EngineError, match=r"runtime is (closing|closed)"):
                     await attempts[0]
                 assert sum(e.kind == "before_compact" for e in events) == 1
-                assert runtime._manual_task is None
+                assert runtime._active is None
                 assert session._closed
                 await runtime.close()
                 assert close_calls == 1

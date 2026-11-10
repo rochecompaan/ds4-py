@@ -117,7 +117,7 @@ def test_real_prompt_paints_compacting_and_keeps_one_input_owner(
                     else:
                         input_.send_text("continue\n")
                         assert await asyncio.wait_for(starts.get(), 1) == 3
-                        assert not runtime._running
+                        assert runtime._active is None or runtime._active.kind != "run"
                     gate.release.set()
                     await asyncio.wait_for(compact_done.wait(), 5)
                     if not cancel:

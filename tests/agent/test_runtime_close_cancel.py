@@ -70,7 +70,7 @@ def test_cancelled_close_retains_one_teardown_until_run_drains(
                 assert not second.done(), "concurrent close returned before teardown"
                 assert not first.done(), "cancelled close abandoned its teardown owner"
                 assert not run.done() and not session._closed
-                assert runtime._closing
+                assert runtime._active is not None and runtime._active.kind == "close"
                 with pytest.raises(EngineError, match="runtime is closing"):
                     await runtime.compact()
                 gate.release.set()
@@ -82,7 +82,7 @@ def test_cancelled_close_retains_one_teardown_until_run_drains(
                 await asyncio.wait_for(second, 5)
                 result = await asyncio.gather(run, return_exceptions=True)
                 assert isinstance(result[0], asyncio.CancelledError)
-                assert not runtime._running and not runtime._closing
+                assert runtime._active is None
                 assert runtime._closed and runtime.status == "closed" and session._closed
                 assert len(closed_tokens) == 1
                 assert session.transcript.tokens[: len(closed_tokens[0])] == closed_tokens[0]
