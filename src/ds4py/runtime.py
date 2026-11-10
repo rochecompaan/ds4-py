@@ -175,6 +175,8 @@ class AgentRuntime:
         self._title = ""
         self._status = "idle"
         self._closed = False
+        self._closing = False
+        self._close_done: asyncio.Future[None] | None = None
         self._running = False
         self._manual_task: asyncio.Task[object] | None = None
         self._manual_done: asyncio.Future[None] | None = None
@@ -252,6 +254,8 @@ class AgentRuntime:
     def _require_open(self) -> None:
         if self._closed:
             raise EngineError("the runtime is closed")
+        if self._closing:
+            raise EngineError("the runtime is closing")
         if self._manual_task is not None:
             raise EngineError("a compaction is already active")
 
@@ -684,11 +688,22 @@ class AgentRuntime:
         """Stop active work, then close the session and everything scoped to it."""
         if self._closed:
             return
-        done = self._manual_done
-        if done is not None:
-            self.cancel()
-            await drain_operation(done)
-        await self._stop_active()
-        self._closed = True
-        self._status = "closed"
-        self._session.close()
+        closing = self._close_done
+        if closing is not None:
+            await drain_operation(closing)
+            return
+        self._closing = True
+        closing = self._close_done = asyncio.get_running_loop().create_future()
+        try:
+            done = self._manual_done
+            if done is not None:
+                self.cancel()
+                await drain_operation(done)
+            await self._stop_active()
+            self._closed = True
+            self._status = "closed"
+            self._session.close()
+        finally:
+            self._closing = False
+            self._close_done = None
+            closing.set_result(None)

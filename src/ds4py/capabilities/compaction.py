@@ -157,6 +157,7 @@ class LLMCompaction(ContextStrategy):
         self, ctx: RunContext[object], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         if self.should_compact():
-            result = await self.compact_messages(ctx.messages, reason="threshold")
-            ctx.usage.output_tokens += result.generated_tokens
+            with self._summary_usage(ctx) as account:
+                result = await self.compact_messages(ctx.messages, reason="threshold")
+                account(result.generated_tokens)
         return await super().before_model_request(ctx, request_context)

@@ -96,10 +96,11 @@ requests. When a response reaches its reserve boundary, generation pauses,
 compaction attempts to make room, and generation resumes in the same
 `ModelResponse`. Already delivered response text is not emitted again. Summary
 tokens count once as output usage for automatic compaction, but never become
-response text. Reserve recovery counts successfully emitted `SummaryToken`
-output even if the owner subsequently fails or is cancelled. On success, only
-the unobserved remainder of `RoomResult.generated_tokens` is added, so emitted
-summary output is never charged twice; a failure before emission adds nothing.
+response text. Threshold, tool-overflow, and reserve recovery count successfully
+emitted `SummaryToken` output even if the owner subsequently fails or is
+cancelled. On success, only the unobserved remainder of
+`RoomResult.generated_tokens` is added, so emitted summary output is never
+charged twice; a failure before emission adds nothing.
 Custom owners that emit no summary events retain their result-based accounting.
 If a tool result still does not fit, the owner returns a tool
 error instead of inserting that oversized result. If reserve recovery cannot
@@ -141,9 +142,11 @@ One compaction attempt owns its entire drain. Overlapping attempts reject
 before emitting progress. While a runtime manual compaction is active,
 run/compact/save/new/switch/fork reject immediately rather than queue or cancel
 it. `runtime.cancel()` signals that operation; `runtime.close()` cancels and
-awaits its drain before closing session state. Cancellation, including repeated
-`Task.cancel()` or AnyIO deadlines, never abandons the executor work. A native
-replacement that already succeeded publishes its matching prepared Python
+rejects new operations from the start of closing and awaits its drain before
+closing session state. Concurrent closes share that teardown boundary.
+Cancellation, including repeated `Task.cancel()` or AnyIO deadlines, never
+abandons the executor work. A native replacement that already succeeded
+publishes its matching prepared Python
 state before cancellation propagates; a failed replacement publishes nothing.
 The terminal event follows drain/publication and still reports cancellation,
 not a fabricated successful compaction.
@@ -195,8 +198,10 @@ the only fallible mutation, then installs the prepared binder and message
 state. A failed native replacement leaves the previous history and transcript
 intact. An interrupted or failed replacement sync restores the prior native
 prefix, preserving any not-yet-evaluated transcript suffix, without emitting
-another usage-accounting sync;
-there is no Python-history rollback protocol. Summary preparation restores the
+another usage-accounting sync. Restoration must complete successfully; an
+exception or interrupted restoration poisons the worker, retaining the original
+replacement failure as exception context, so mismatched state cannot be reused.
+There is no Python-history rollback protocol. Summary preparation restores the
 borrowed native state before replacement. A summary restoration failure is
 surfaced and poisons the worker rather than continuing with private summary
 state.

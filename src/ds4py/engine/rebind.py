@@ -6,6 +6,7 @@ segments only after the worker has restored a checkpoint or rebuilt from zero.
 
 from typing import TYPE_CHECKING
 
+from ds4py._native.protocol import SyncStatus
 from ds4py.errors import EngineError
 
 from .events import Synced
@@ -37,15 +38,19 @@ def replace_transcript(
         lambda e, native: (tuple(native.tokens()), native.checkpoint_valid())
     ).result()
     try:
-        plan: Plan | None = None
-        for event in session._job_events(SyncJob(replacement.tokens)):
-            if isinstance(event, Synced):
-                plan = event.plan
+        plan = _sync_replacement(session, replacement, reason=reason)
     except BaseException:
         _restore_native(session, original, valid=valid)
         raise
+    return plan
+
+
+def _sync_replacement(session: Session, replacement: TranscriptReplacement, *, reason: str) -> Plan:
+    plan: Plan | None = None
+    for event in session._job_events(SyncJob(replacement.tokens)):
+        if isinstance(event, Synced):
+            plan = event.plan
     if plan is None:
-        _restore_native(session, original, valid=valid)
         raise EngineError(f"transcript replacement ({reason}) did not complete")
     return plan
 
@@ -55,14 +60,24 @@ def _restore_native(session: Session, original: tuple[int, ...], *, valid: bool)
     # prior native prefix, not necessarily all Python tokens: a pending EOS may
     # not have been evaluated yet. Ignore cancellation and emit no usage sync.
     def restore(native: SessionHandle) -> None:
-        if not original:
-            native.rewind(0)
-        elif len(original) == native.ctx():
-            native.sync(original[:-1])
-            native.eval(original[-1])
-        else:
-            native.sync(original)
-        if not valid:
-            native.invalidate()
+        try:
+            _restore_tokens(native, original, valid=valid)
+        except BaseException as error:
+            session._worker._poison(error)
+            raise
 
     session._worker.call(lambda e, native: restore(native)).result()
+
+
+def _restore_tokens(native: SessionHandle, original: tuple[int, ...], *, valid: bool) -> None:
+    if not original:
+        native.rewind(0)
+    else:
+        full = len(original) == native.ctx()
+        status = native.sync(original[:-1] if full else original)
+        if status is not SyncStatus.DONE:
+            raise EngineError("transcript replacement restoration did not complete")
+        if full:
+            native.eval(original[-1])
+    if not valid:
+        native.invalidate()
