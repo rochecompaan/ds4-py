@@ -40,6 +40,7 @@ from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.tool_prompt import ToolDefinition
 from ds4py.engine.transcript import TranscriptReplacement
 from ds4py.message_rendering import MessageRenderer
+from ds4py.store import SegmentProvenance
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -47,21 +48,10 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestParameters
 
     from ds4py.binding_plan import BindingBoundary
-    from ds4py.binding_provenance import PreparedProvenance, _Provenance
+    from ds4py.binding_provenance import PreparedProvenance
     from ds4py.capabilities.system_notes import DS4SystemNotes
     from ds4py.engine.session import Session
     from ds4py.engine.session_operations import BindingTransaction
-
-
-@dataclass(frozen=True)
-class SegmentProvenance:
-    start: int
-    end: int
-    kind: str
-    key: str
-    content_hash: str
-    source: str
-    text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -156,13 +146,13 @@ class MessageBinder:
         self._restored = False
         self._restored_notes = {}
 
-    def restore_notes(self, segments: Sequence[_Provenance]) -> None:
+    def restore_notes(self, segments: Sequence[SegmentProvenance]) -> None:
         """Schedule exact saved notes before the message keys that followed them."""
         restored: dict[str, list[tuple[str, str | None]]] = {}
         pending: list[tuple[str, str | None]] = []
         for segment in segments:
             if segment.kind == "system_note" or segment.kind.startswith("system_note:"):
-                text = getattr(segment, "text", None)
+                text = segment.text
                 if not isinstance(text, str):
                     raise ValueError("saved note text is required for rendered restore")
                 subtype = segment.kind.partition(":")[2] or None
@@ -292,7 +282,7 @@ class MessageBinder:
     def validate_restore(
         self,
         messages: Sequence[ModelMessage],
-        segments: Sequence[_Provenance],
+        segments: Sequence[SegmentProvenance],
     ) -> None:
         """Validate saved history without installing a native transcript."""
         prepare_provenance(messages, segments, loaded=None)
@@ -300,18 +290,17 @@ class MessageBinder:
     def restore(
         self,
         messages: Sequence[ModelMessage],
-        segments: Sequence[_Provenance],
+        segments: Sequence[SegmentProvenance],
     ) -> None:
         """Bind a loaded native payload to a saved message history.
 
-        ``segments`` is a save record's provenance (values with ``start``,
-        ``end``, ``kind``, ``key``, ``content_hash`` and ``source``). The
-        transcript already holds the loaded tokens, so preparation rebuilds the
-        prefix records without rendering anything, the session installs the
-        saved ranges, and the binder then assigns the prepared records. Snapshot
-        messages are matched to keyed ranges in order and by content hash: a
-        record and its snapshot are written by one save, so the order is fixed,
-        and the hash proves the snapshot still describes the tokens.
+        ``segments`` is a save record's provenance. The transcript already holds
+        the loaded tokens, so preparation rebuilds the prefix records without
+        rendering anything, the session installs the saved ranges, and the
+        binder then assigns the prepared records. Snapshot messages are matched
+        to keyed ranges in order and by content hash: a record and its snapshot
+        are written by one save, so the order is fixed, and the hash proves the
+        snapshot still describes the tokens.
         """
         prepared = prepare_provenance(
             messages,

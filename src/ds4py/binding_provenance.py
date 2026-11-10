@@ -7,7 +7,7 @@ import json
 from copy import deepcopy
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, NotRequired, Protocol, TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 from pydantic_ai.messages import (
     InstructionBaselinePart,
@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
 
     from ds4py._json import JsonValue
+    from ds4py.store import SegmentProvenance
 
 
 class _ProjectionPart(TypedDict, total=False):
@@ -51,23 +52,6 @@ class _MessageProjection(TypedDict):
     kind: str
     parts: list[_ProjectionPart]
     instructions: NotRequired[str]
-
-
-class _Provenance(Protocol):
-    @property
-    def start(self) -> int: ...
-    @property
-    def end(self) -> int: ...
-    @property
-    def kind(self) -> str: ...
-    @property
-    def key(self) -> str: ...
-    @property
-    def content_hash(self) -> str: ...
-    @property
-    def source(self) -> str: ...
-    @property
-    def text(self) -> str | None: ...
 
 
 @dataclass(frozen=True)
@@ -181,7 +165,7 @@ def _validate(messages: Sequence[ModelMessage]) -> None:
                 raise EngineError(f"unsupported harness response part: {type(part).__name__}")
 
 
-def _installed_segment(provenance: _Provenance) -> Segment:
+def _installed_segment(provenance: SegmentProvenance) -> Segment:
     kind = provenance.kind
     meta = {
         "key": provenance.key,
@@ -192,14 +176,13 @@ def _installed_segment(provenance: _Provenance) -> Segment:
         subtype = kind.split(":", 1)[1] if ":" in kind else ""
         if subtype:
             meta["subtype"] = subtype
-        text = getattr(provenance, "text", None)
-        if text is not None:
-            meta["text"] = text
+        if provenance.text is not None:
+            meta["text"] = provenance.text
         kind = "note"
     return Segment(provenance.start, provenance.end, kind, MappingProxyType(meta))
 
 
-def _installable(provenance: Segment | _Provenance) -> tuple[Segment, str, str]:
+def _installable(provenance: Segment | SegmentProvenance) -> tuple[Segment, str, str]:
     """Return the installable segment and the message identity it names."""
     if isinstance(provenance, Segment):
         return (
@@ -212,24 +195,23 @@ def _installable(provenance: Segment | _Provenance) -> tuple[Segment, str, str]:
 
 def prepare_provenance(  # noqa: C901, PLR0912, PLR0915 - Restore validation covers each persisted contract.
     messages: Sequence[ModelMessage],
-    segments: Sequence[Segment | _Provenance],
+    segments: Sequence[Segment | SegmentProvenance],
     *,
     loaded: int | None,
 ) -> PreparedProvenance:
     """Validate saved provenance against a snapshot and copy the state to install.
 
-    ``segments`` is save-record provenance (values with ``start``, ``end``,
-    ``kind``, ``key``, ``content_hash`` and ``source``) or transcript segments
-    whose metadata carries the same identity. Snapshot messages are matched to
-    keyed ranges in order and by content hash: a record and its snapshot are
-    written by one save, so the order is fixed, and the hash proves the snapshot
-    still describes the tokens. ``loaded`` is the length of a payload already
+    ``segments`` is save-record provenance or transcript segments whose metadata
+    carries the same identity. Snapshot messages are matched to keyed ranges in
+    order and by content hash: a record and its snapshot are written by one
+    save, so the order is fixed, and the hash proves the snapshot still
+    describes the tokens. ``loaded`` is the length of a payload already
     installed in the transcript, or ``None`` to skip that check.
     """
     snapshot = list(messages)
     _validate(snapshot)
     installed = []
-    entries: list[tuple[Segment | _Provenance, str]] = []
+    entries: list[tuple[Segment | SegmentProvenance, str]] = []
     ranges: dict[str, list[int]] = {}
     keys: list[str] = []
     hashes: dict[str, str] = {}

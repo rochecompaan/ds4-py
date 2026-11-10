@@ -19,6 +19,7 @@ from ds4py.engine.session import Session
 from ds4py.engine.transcript import TranscriptReplacement
 from ds4py.engine.worker import SyncJob
 from ds4py.errors import EngineError
+from ds4py.store import SegmentProvenance
 
 
 def snapshot(binder: MessageBinder, messages: list[ModelMessage]) -> object:
@@ -509,3 +510,13 @@ def test_empty_replacement_projection_and_prepare_match_fresh_session() -> None:
                 native == control.session._worker.call(lambda e, n: (tuple(n.tokens()), n.checkpoint_valid())).result()
             )
             assert session.plan() == control.session.plan()
+
+
+def test_exported_provenance_is_the_persisted_value() -> None:
+    with fake_engine() as engine:
+        binder = MessageBinder(engine.session())
+        binder.prepare([user("one")])
+        exported = binder.export_segments()
+        assert exported
+        assert {type(segment) for segment in exported} == {SegmentProvenance}
+        assert tuple(SegmentProvenance.from_dict(segment.to_dict()) for segment in exported) == exported

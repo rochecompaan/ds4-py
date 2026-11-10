@@ -10,7 +10,7 @@ from test_compaction_persistence import collect_syncs, compact_history, dump
 
 from ds4py.errors import EngineError, StoreError
 from ds4py.runtime import AgentRuntime
-from ds4py.store import KV_HEADER
+from ds4py.store import KV_HEADER, SegmentProvenance
 
 runtime = persistence.runtime  # Share the isolated real-runtime fixture.
 
@@ -51,6 +51,30 @@ def test_load_payload_and_binder_restore_install_summary_request_provenance(runt
         assert len(session.transcript) == len(tokens) + 43
         assert binder.records()[:3] == records
         assert len(runtime.messages) == len(binder.records()) == 5
+
+    asyncio.run(scenario())
+
+
+def test_save_record_holds_the_canonical_exported_provenance(
+    runtime: AgentRuntime,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        await compact_history(runtime)
+        binder = runtime.model.binder
+        exported: list[tuple[SegmentProvenance, ...]] = []
+        export_segments = binder.export_segments
+
+        def capture() -> tuple[SegmentProvenance, ...]:
+            segments = export_segments()
+            exported.append(segments)
+            return segments
+
+        monkeypatch.setattr(binder, "export_segments", capture)
+        saved = await runtime.save()
+        assert exported
+        assert {type(segment) for segment in saved.segments} == {SegmentProvenance}
+        assert saved.segments is exported[-1]
 
     asyncio.run(scenario())
 

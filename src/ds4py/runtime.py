@@ -63,7 +63,6 @@ from ds4py.store import (
     KV_MAGIC,
     KV_VERSION,
     SaveRecord,
-    SegmentProvenance,
     SessionStore,
     token_digest,
 )
@@ -557,18 +556,7 @@ class AgentRuntime:
             payload_bytes=payload_bytes,
             tokens=len(tokens),
             tokens_sha256=token_digest(tokens),
-            segments=tuple(
-                SegmentProvenance(
-                    segment.start,
-                    segment.end,
-                    segment.kind,
-                    segment.key,
-                    segment.content_hash,
-                    segment.source,
-                    text=segment.text,
-                )
-                for segment in self.model.binder.export_segments()
-            ),
+            segments=self.model.binder.export_segments(),
         )
         self.store.write_record_atomic(session_dir / "save.json", record)
         self._session.emit("saved", record=record.to_dict(), payload_bytes=payload_bytes)
