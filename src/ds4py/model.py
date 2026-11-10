@@ -130,9 +130,19 @@ class DS4Model(Model):
         self.sampling = sampling
         self.max_tokens = max_tokens
         self.stop_sequences = stop_sequences
-        self.note_provider = note_provider
+        if note_provider is not None:
+            self.note_provider = note_provider
         # Composition selects the one automatic strategy; it is not session state.
         self.context_owner: ContextStrategy | None = None
+
+    @property
+    def note_provider(self) -> DS4SystemNotes | None:
+        """Share the effective provider between counting and actual preparation."""
+        return self.binder.note_provider
+
+    @note_provider.setter
+    def note_provider(self, provider: DS4SystemNotes | None) -> None:
+        self.binder.note_provider = provider
 
     @property
     @override
