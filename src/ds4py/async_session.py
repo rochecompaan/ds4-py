@@ -85,9 +85,19 @@ async def await_retained[T](future: asyncio.Future[T], *, on_cancel: Callable[[]
     try:
         return await asyncio.shield(future)
     except asyncio.CancelledError as cancelled:
+        if future.cancelled():
+            # The retained future itself ended with cancellation: preserve
+            # that surface instead of replacing it with the caller's signal.
+            raise
         if future.done():
-            # The retained future itself ended with cancellation, or the caller
-            # cancelled an already-completed future: preserve that surface.
+            # The retained future completed with a result or failure while the
+            # caller's cancellation was being delivered. A failure must still
+            # be chained under the caller's cancellation; a result leaves the
+            # caller's cancellation as the primary surface.
+            try:
+                future.result()
+            except BaseException as failure:
+                raise cancelled from failure
             raise
         if on_cancel is not None:
             on_cancel()

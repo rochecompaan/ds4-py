@@ -301,7 +301,11 @@ class AgentRuntime:
         self.cancel()
         if task is not None and task is not asyncio.current_task():
             waiter = asyncio.create_task(asyncio.wait([task]))
-            await await_retained(waiter, on_cancel=self.cancel)
+            # _stop_active already signalled cancellation before retaining the
+            # waiter. Re-signalling from a caller cancellation could re-arm the
+            # worker event after reconcile_round() cleared it and leak into the
+            # next run.
+            await await_retained(waiter)
 
     async def _latest(self, run_id: str) -> ContinuableSnapshot | None:
         """Return the newest snapshot; propagate storage failures to the run."""

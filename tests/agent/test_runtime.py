@@ -28,12 +28,13 @@ from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.capabilities.compaction import LLMCompaction
 from ds4py.capabilities.context import ContextComposition, ContextRequest, RoomResult
+from ds4py.engine.lifecycle import SessionEvent
 from ds4py.engine.prefix import PrefixTurn
 from ds4py.engine.replay import read_replay
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.session import Engine
 from ds4py.errors import EngineError
-from ds4py.model import DS4Model
+from ds4py.model import DS4Model, DS4StreamedResponse
 from ds4py.noninteractive import run_noninteractive
 from ds4py.prefill_trace import PrefillTraceWriter
 from ds4py.runtime import AgentRuntime
@@ -533,6 +534,34 @@ class BlockingModel(DS4Model):
             yield stream
 
 
+class BlockingAfterStartModel(DS4Model):
+    """Start the round, then hold its event stream until the test releases it."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.entered: asyncio.Event | None = None
+        self.release: asyncio.Event | None = None
+
+    @asynccontextmanager
+    @override
+    async def request_stream(
+        self,
+        messages: Any,
+        model_settings: Any,
+        model_request_parameters: Any,
+        run_context: Any = None,
+    ) -> AsyncGenerator[Any]:
+        async with super().request_stream(
+            messages,
+            model_settings,
+            model_request_parameters,
+            run_context,
+        ) as stream:
+            cast("Any", self.entered).set()
+            await cast("Any", self.release).wait()
+            yield stream
+
+
 def test_cancelled_run_reports_interrupted_status(tmp_path: Path) -> None:
     project = project_dir(tmp_path)
     store = SessionStore(tmp_path / "home")
@@ -600,6 +629,68 @@ def test_runtime_cancel_finishes_run_without_native_release(tmp_path: Path) -> N
     events = read_events(store.session_dir(session_id) / "events.jsonl")
     terminal = [line for line in events if line["kind"] == "run_end"]
     assert terminal and terminal[-1]["payload"]["status"] == "interrupted"
+
+def test_cancelled_stop_does_not_rearm_cancellation_for_next_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = project_dir(tmp_path)
+    store = SessionStore(tmp_path / "home")
+    with fake_engine(script=scripted_rounds("first", "second")) as engine:
+        model = BlockingAfterStartModel(engine.session(), sampling=SamplingPolicy(seed=1))
+        runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
+        session = model.session
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        reached_reconcile = asyncio.Event()
+        release_reconcile = asyncio.Event()
+        original_cleanup = DS4StreamedResponse._cleanup
+
+        async def gated_cleanup(response: Any) -> None:
+            await original_cleanup(response)
+            reached_reconcile.set()
+            await release_reconcile.wait()
+
+        monkeypatch.setattr(DS4StreamedResponse, "_cleanup", gated_cleanup)
+        cancel_calls: list[str] = []
+        original_cancel = runtime.cancel
+
+        def tracked_cancel() -> None:
+            cancel_calls.append("cancel")
+            original_cancel()
+
+        monkeypatch.setattr(runtime, "cancel", tracked_cancel)
+
+        async def scenario() -> None:
+            model.entered = entered
+            model.release = release
+            run = asyncio.create_task(runtime.run("first"))
+            await asyncio.wait_for(entered.wait(), 10)
+            stop = asyncio.create_task(runtime._stop_active())
+            await asyncio.sleep(0)
+            release.set()
+            await asyncio.wait_for(reached_reconcile.wait(), 10)
+            stop.cancel()
+            await asyncio.sleep(0)
+            assert not stop.done(), "cancelled stop abandoned the retained run"
+            release_reconcile.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(stop, 5)
+            await asyncio.gather(run, return_exceptions=True)
+            assert cancel_calls == ["cancel"], "cancelled stop re-armed the worker signal"
+            assert not session._worker.cancel_event.is_set(), "cancelled stop left a stale signal"
+            events: list[SessionEvent] = []
+            runtime.on_event(events.append)
+            model.entered = asyncio.Event()
+            next_release = asyncio.Event()
+            next_release.set()
+            model.release = next_release
+            await asyncio.wait_for(runtime.run("second"), 10)
+            assert not [event for event in events if event.kind == "Interrupted"]
+
+        try:
+            asyncio.run(scenario())
+        finally:
+            asyncio.run(runtime.close())
 
 
 def test_load_prefix_seeds_history_the_next_run_renders(tmp_path: Path) -> None:

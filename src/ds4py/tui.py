@@ -167,9 +167,17 @@ class TUI:
     async def _operation_with_controls[T](self, task: asyncio.Task[T]) -> T:
         try:
             return await self._consume_controls(task)
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as cancelled:
+            # The outer cancellation has already been consumed here, so the
+            # shared shield cannot deliver it to the operation. Signal the
+            # original operation explicitly, then retain and drain that same
+            # task before returning the caller's cancellation.
             if not task.done():
-                await await_retained(task, on_cancel=task.cancel)
+                task.cancel()
+                try:
+                    await await_retained(task)
+                except BaseException as failure:
+                    raise cancelled from failure
             raise
 
     async def _consume_controls[T](self, operation: asyncio.Task[T]) -> T:

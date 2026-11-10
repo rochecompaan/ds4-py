@@ -1,6 +1,6 @@
 import asyncio
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, cast, override
 
 import pytest
 from prompt_toolkit.input import create_pipe_input
@@ -58,6 +58,49 @@ def test_prompt_loop_accepts_pipe_input_and_exit() -> None:
 
     assert ("run", "hello") in runtime.calls
     assert tui.exiting
+
+
+def test_outer_cancellation_cancels_and_drains_operation() -> None:
+    async def scenario() -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+        cancelled = asyncio.Event()
+        finished = asyncio.Event()
+
+        class BlockingRuntime(FakeRuntime):
+            @override
+            async def run(self, prompt: str) -> None:
+                self.calls.append(("run", prompt))
+                started.set()
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+                finally:
+                    finished.set()
+
+        runtime = BlockingRuntime()
+        with create_pipe_input() as input_:
+            input_.send_text("hello\n")
+            tui = TUI(cast("Any", runtime), input=input_, output=DummyOutput())
+            task = asyncio.create_task(tui.run())
+            try:
+                await asyncio.wait_for(started.wait(), 2)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 2)
+                assert task.cancelled()
+                assert cancelled.is_set(), "the retained operation did not receive cancellation"
+                assert finished.is_set(), "the retained operation was not drained"
+                assert not release.is_set()
+            finally:
+                release.set()
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                tui.close()
+
+    asyncio.run(scenario())
 
 
 def test_model_question_uses_active_prompt_and_returns_typed_answer() -> None:

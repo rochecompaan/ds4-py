@@ -373,6 +373,9 @@ class DS4StreamedResponse(StreamedResponse):
         response = self.get()
         key = (response.metadata or {}).get("ds4.key")
         if key is None:
+            # Defensive only: the binder initializes a stable key for every
+            # bound response. A keyless response cannot be deduplicated safely,
+            # so keep it out of canonical history rather than append a duplicate.
             return
         if any((message.metadata or {}).get("ds4.key") == key for message in run_context.messages):
             return
