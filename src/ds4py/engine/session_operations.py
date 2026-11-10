@@ -96,6 +96,15 @@ class OperationState:
     def kind(self) -> OperationKind | None:
         return None if self._claim is None else self._claim.kind
 
+    @property
+    def live_window(self) -> bool:
+        """Whether a live pause and its installed window are both present."""
+        return self._reserve_event is not None and self._reserve_operations is not None
+
+    def paused(self, authority: ReserveAuthority | None = None) -> bool:
+        """Whether a caller is a paused round or a ticket-bearing continuation."""
+        return self._active_round or authority is not None
+
     def close(self) -> None:
         """Terminally close admission and expire any reserve pause or window."""
         self._closed = True
@@ -173,11 +182,21 @@ def blocked_reason(
     if policy == "idle":
         admitted = (binding is not None and binding.live(state)) or not (state.active_round or state.kind is not None)
         return None if admitted else _MESSAGES["busy"]
-    window = state.reserve_event is not None and state.reserve_operations is not None
-    busy = state.kind is not None or ((state.active_round or authority is not None) and not window)
+    busy = state.kind is not None or (state.paused(authority) and not state.live_window)
     # Only a live reserve window can admit paused native work; the window itself
     # verifies the supplied ticket for the caller's operation.
     return _MESSAGES["busy"] if busy else None
+
+
+def require_reserve_window(state: OperationState, event: ReserveReached) -> None:
+    """Reject a window request that is not the unclaimed live pause."""
+    if (
+        in_listener.get()
+        or event is not state.reserve_event
+        or state.reserve_operations is not None
+        or state.kind is not None
+    ):
+        raise EngineError(_MESSAGES["window"])
 
 
 def open_reserve_window(
@@ -186,9 +205,7 @@ def open_reserve_window(
     operations: ReserveOperations,
 ) -> None:
     """Install the one window for an unclaimed live pause; listeners get none."""
-    unclaimed = event is state.reserve_event and state.reserve_operations is None and state.kind is None
-    if in_listener.get() or not unclaimed:
-        raise EngineError(_MESSAGES["window"])
+    require_reserve_window(state, event)
     state.install_reserve(operations)
 
 
@@ -206,7 +223,7 @@ def exclusive(
         reason = blocked_reason(state, policy, authority=authority)
         if reason is not None:
             raise EngineError(reason)
-        paused = state.active_round or authority is not None
+        paused = state.paused(authority)
         if (
             reserve_operation is not None
             and paused

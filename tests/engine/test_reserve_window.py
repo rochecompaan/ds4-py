@@ -343,3 +343,13 @@ def test_legacy_admission_requires_an_active_window_context() -> None:
         state.end_reserve()
         with legacy_context(operations, enabled=True):
             assert not state.consume_reserve_authority(None, "replacement")
+
+
+def test_require_reserve_rejects_an_expired_pause() -> None:
+    state = OperationState()
+    live = pause_event()
+    state.begin_reserve(live)
+    state.require_reserve(live)
+    state.end_reserve()
+    with pytest.raises(EngineError, match="expired"):
+        state.require_reserve(live)

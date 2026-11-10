@@ -19,6 +19,7 @@ from ds4py._native.fake import FakeNative, FakeSession
 from ds4py.capabilities.compaction import CompactionResult
 from ds4py.capabilities.context import RoomResult
 from ds4py.engine.lifecycle import SessionEvent
+from ds4py.engine.reserve import ReserveAuthority
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.transcript import TranscriptReplacement
 from ds4py.errors import EngineError
@@ -153,11 +154,13 @@ def test_automatic_summary_usage_survives_failure_and_cancel(
             replace = model.session.replace_transcript
             gate = Gate()
 
-            def terminate(value: TranscriptReplacement, *, reason: str) -> object:
+            def terminate(
+                value: TranscriptReplacement, *, reason: str, authority: ReserveAuthority | None = None
+            ) -> object:
                 if outcome == "failure":
                     raise EngineError("replacement failed")
                 gate.hold()
-                return replace(value, reason=reason)
+                return replace(value, reason=reason, authority=authority)
 
             if outcome != "success":
                 monkeypatch.setattr(model.session, "replace_transcript", terminate)

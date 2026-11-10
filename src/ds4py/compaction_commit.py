@@ -38,17 +38,13 @@ async def commit_compaction(
         replacement.segments,
         loaded=len(replacement.tokens),
     )
-    committed: list[Plan] = []
+    plan: Plan | None = None
     # Validate the strict owner on its loop, not inside an inherited executor.
     authority = operations.issue_authority("replacement") if operations is not None else None
 
     def replace() -> Plan:
-        plan = (
-            binder.session.replace_transcript(replacement, reason="compaction", authority=authority)
-            if authority is not None
-            else binder.session.replace_transcript(replacement, reason="compaction")
-        )
-        committed.append(plan)
+        nonlocal plan
+        plan = binder.session.replace_transcript(replacement, reason="compaction", authority=authority)
         return plan
 
     try:
@@ -57,6 +53,6 @@ async def commit_compaction(
         # run_session_operation drains before raising cancellation. A successful
         # native commit must publish its matching prepared state even then; a
         # failed replacement publishes nothing. There is no checkpoint here.
-        if committed:
+        if plan is not None:
             binder.apply_compaction(prepared)
             messages[:] = compacted_messages

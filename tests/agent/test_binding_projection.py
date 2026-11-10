@@ -568,3 +568,13 @@ def test_exported_provenance_is_the_persisted_value() -> None:
         assert exported
         assert {type(segment) for segment in exported} == {SegmentProvenance}
         assert tuple(SegmentProvenance.from_dict(segment.to_dict()) for segment in exported) == exported
+
+
+def test_reserve_overflow_marks_the_exact_response_boundary() -> None:
+    with fake_engine() as engine:
+        binder = MessageBinder(engine.session())
+        ctx = engine.config.ctx
+        # The one-token response reserve must fit; zero is the exact fit.
+        assert binder.reserve_overflow(ctx - 2) == -1
+        assert binder.reserve_overflow(ctx - 1) == 0
+        assert binder.reserve_overflow(ctx) == 1

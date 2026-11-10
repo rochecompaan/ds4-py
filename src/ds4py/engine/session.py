@@ -435,6 +435,7 @@ class Session:
         history = self._history
         with history.mutation_lock:
             history.require_open()
+            session_operations.require_reserve_window(history.operations, event)
             operations = ReserveOperations(self, strict=strict)
             session_operations.open_reserve_window(history.operations, event, operations)
         try:
@@ -771,10 +772,15 @@ class Session:
         """
         self._worker.cancel_event.clear()
 
+    def _poison_worker(self, error: BaseException) -> None:
+        """Mark the worker poisoned from its own callback, not the facade."""
+        self._worker._poison(error)
+
     def poison(self, error: BaseException) -> None:
         """Fail the worker closed after unrecoverable native cleanup.
 
         Dispatches once through the worker queue from the consuming thread. A
-        worker callback must never call this, because it would wait on itself.
+        worker callback must never call this, because it would wait on itself;
+        worker-confined cleanup uses the private ``_poison_worker`` callback.
         """
-        self._worker.call(lambda engine, native: self._worker._poison(error)).result()
+        self._worker.call(lambda engine, native: self._poison_worker(error)).result()

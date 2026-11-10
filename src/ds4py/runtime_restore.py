@@ -107,8 +107,7 @@ def restore_snapshot(  # noqa: PLR0913 - Restoration needs the complete saved ex
             notes.restore_from_segments(session.transcript.segments)
     else:
         if any(
-            (segment.kind == "system_note" or segment.kind.startswith("system_note:"))
-            and getattr(segment, "text", None) is None
+            (segment.kind == "system_note" or segment.kind.startswith("system_note:")) and segment.text is None
             for segment in record.segments
         ):
             raise ValueError("saved note text is required for rendered restore")

@@ -13,7 +13,16 @@ from uuid import uuid4
 # The exactly pinned harness exposes canonical reserve history only through this
 # private accessor for nonstream requests. Keep it aligned with request_stream's
 # explicit RunContext; a request copy cannot preserve commit-then-raise history.
-from pydantic_ai._run_context import get_current_run_context
+try:
+    from pydantic_ai._run_context import get_current_run_context
+except ImportError as error:
+    raise ImportError(
+        "ds4py requires the private run-context accessor "
+        "pydantic_ai._run_context.get_current_run_context from the pinned "
+        "pydantic-ai 2.59.0 dependency. The installed version moved or removed it; "
+        "reinstall the locked dependencies (uv sync --frozen) or update ds4py's "
+        "nonstream run-context access before changing the pin."
+    ) from error
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.profiles import ModelProfile, ToolAdditionMode, ToolDeferralMode

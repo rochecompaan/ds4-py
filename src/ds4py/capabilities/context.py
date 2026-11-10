@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     from ds4py.binding import MessageBinder
     from ds4py.engine.reserve import ReserveOperations
 
-_RESERVE = 1
 TOOL_RESULT_DOES_NOT_FIT = "Tool error: tool result still does not fit"
 
 
@@ -131,12 +130,12 @@ class ContextStrategy(AbstractCapability, ABC):
         count = self.binder.project_request(
             messages, tools=params.declared_tool_defs.values(), instructions=request_instructions(messages, params)
         )
-        return count + _RESERVE - self.binder.session.engine.config.ctx
+        return self.binder.reserve_overflow(count)
 
     def _needed_for_chat(self, messages: Sequence[ModelMessage]) -> int:
         """Measure the strict bound projection; after-tool calls require a prepared chat."""
         count = self.binder.project_request(messages, bound=True)
-        return count + _RESERVE - self.binder.session.engine.config.ctx
+        return self.binder.reserve_overflow(count)
 
     async def _recover_room(self, ctx: RunContext[object], needed_tokens: int) -> RoomResult:
         """Run the one owner attempt and account for its summary output once."""

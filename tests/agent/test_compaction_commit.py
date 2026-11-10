@@ -12,6 +12,7 @@ import ds4py.compaction_commit as commit_module
 from ds4py._native.fake import FakeNative
 from ds4py.binding import MessageBinder
 from ds4py.compaction_commit import commit_compaction
+from ds4py.engine.reserve import ReserveAuthority
 from ds4py.engine.session import Engine, Session
 from ds4py.engine.transcript import Segment, TranscriptReplacement
 from ds4py.errors import EngineError
@@ -93,10 +94,12 @@ def test_commit_prepares_before_native_replacement(monkeypatch: pytest.MonkeyPat
 
         replace_transcript = session.replace_transcript
 
-        def record_replace(rep: TranscriptReplacement, *, reason: str) -> Any:
+        def record_replace(
+            rep: TranscriptReplacement, *, reason: str, authority: ReserveAuthority | None = None
+        ) -> Any:
             calls.append("replace")
             threads.append(threading.get_ident())
-            return replace_transcript(rep, reason=reason)
+            return replace_transcript(rep, reason=reason, authority=authority)
 
         apply_compaction = binder.apply_compaction
 

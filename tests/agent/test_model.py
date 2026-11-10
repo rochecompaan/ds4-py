@@ -1,6 +1,8 @@
 import asyncio
 import copy
 import math
+import subprocess
+import sys
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any, cast
@@ -321,3 +323,12 @@ def test_adopt_uses_stable_keys_without_collapsing_harness_history() -> None:
         assert [cast("Any", message.metadata)["ds4.key"] for message in adopted] == [
             cast("Any", message.metadata)["ds4.key"] for message in history
         ]
+
+
+def test_missing_private_run_context_accessor_names_the_pinned_version() -> None:
+    """The exactly pinned private accessor fails with actionable guidance."""
+    code = "import sys\nsys.modules['pydantic_ai._run_context'] = None\nimport ds4py.model\n"
+    completed = subprocess.run([sys.executable, "-c", code], check=False, capture_output=True, text=True)
+    assert completed.returncode != 0
+    assert "pydantic_ai._run_context.get_current_run_context" in completed.stderr
+    assert "uv sync --frozen" in completed.stderr

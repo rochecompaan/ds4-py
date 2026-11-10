@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ds4py.binding import RESPONSE_RESERVE
 from ds4py.capabilities.context import ContextRequest
 from ds4py.engine.events import ReserveReached, Synced
 from ds4py.errors import ContextExhausted, EngineError
@@ -19,8 +20,6 @@ if TYPE_CHECKING:
     from ds4py.capabilities.context import ContextStrategy
     from ds4py.engine.lifecycle import SessionEvent
     from ds4py.engine.session import Session
-
-_RESERVE = 1
 
 
 class ReserveSettlement:
@@ -54,9 +53,24 @@ class ReserveSettlement:
         self._run_context = run_context
         self._reconciled = reconciled
         self._tail_observer = observe_tail
-        self.prefilled = 0
-        self.cached = 0
-        self.summary_tokens = 0
+        self._prefilled = 0
+        self._cached = 0
+        self._summary_tokens = 0
+
+    @property
+    def prefilled(self) -> int:
+        """Tokens this response's replacement syncs prefilled."""
+        return self._prefilled
+
+    @property
+    def cached(self) -> int:
+        """Tokens this response's replacement syncs reused from cache."""
+        return self._cached
+
+    @property
+    def summary_tokens(self) -> int:
+        """Private summary output this response's owner generated."""
+        return self._summary_tokens
 
     async def recover(self, event: ReserveReached) -> None:
         """Resume only when the recovered request fits the configured context."""
@@ -65,14 +79,14 @@ class ReserveSettlement:
             if self._reconciled():
                 return
             projected = self._binder.project_request(messages, bound=True)
-            fits = projected + _RESERVE <= self._session.engine.config.ctx
+            fits = self._binder.reserve_overflow(projected) <= 0
         except BaseException:
             self.settle(event)
             raise
         if not fits:
             self.settle(event)
             raise ContextExhausted(self._exhausted_message(event.needed))
-        event.resume(_RESERVE)
+        event.resume(RESPONSE_RESERVE)
 
     def settle(self, event: ReserveReached) -> None:
         """Fail an undecided pause unless terminal cleanup already settled it."""
@@ -110,11 +124,11 @@ class ReserveSettlement:
     def _observe_sync(self, notification: SessionEvent) -> None:
         sync = notification.payload.get("event")
         if isinstance(sync, Synced):
-            self.prefilled += sync.prefilled
-            self.cached += sync.plan.reused
+            self._prefilled += sync.prefilled
+            self._cached += sync.plan.reused
 
     def _record_summary(self, tokens: int) -> None:
-        self.summary_tokens += tokens
+        self._summary_tokens += tokens
 
     def _observe_moved_tail(self, primary: BaseException | None = None) -> bool:
         """Observe a moved open tail without replacing an owner failure."""

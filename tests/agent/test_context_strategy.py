@@ -18,7 +18,7 @@ import ds4py
 from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
-from ds4py.binding import MessageBinder
+from ds4py.binding import RESPONSE_RESERVE, MessageBinder
 from ds4py.capabilities.context import ContextRequest, ContextStrategy, RoomResult
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.sampling import SamplingPolicy
@@ -57,6 +57,11 @@ class StubBinder:
         self, messages: list[ModelMessage], *, tools: object = (), instructions: str | None = None, bound: bool = False
     ) -> int:
         return next(self._counts)
+
+    def reserve_overflow(self, projected_tokens: int) -> int:
+        ctx = self.session.engine.config.ctx
+        assert isinstance(ctx, int)
+        return projected_tokens + RESPONSE_RESERVE - ctx
 
 
 class RecordingOwner(ContextStrategy):

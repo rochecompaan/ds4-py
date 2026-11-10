@@ -233,10 +233,12 @@ def test_manual_cancellation_drains_and_publishes_only_committed_replacement(
                     gate.hold()
                 return original_summary(native)
 
-            def replace(value: TranscriptReplacement, *, reason: str) -> object:
+            def replace(
+                value: TranscriptReplacement, *, reason: str, authority: ReserveAuthority | None = None
+            ) -> object:
                 if phase == "replacement_before":
                     gate.hold()
-                result = original_replace(value, reason=reason)
+                result = original_replace(value, reason=reason, authority=authority)
                 if phase == "replacement_after":
                     gate.hold()
                 return result

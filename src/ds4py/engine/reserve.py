@@ -96,14 +96,19 @@ class ReserveOperations:
         return True
 
     def legacy_allows(self) -> bool:
+        """Return True only for the unchanged legacy owner in its own task/thread."""
+        if self._strict:
+            return False
+        if not self._active:
+            return False
+        if _legacy_authority.get() is not self:
+            return False
+        if in_listener.get():
+            return False
         task = current_task()
-        return (
-            not self._strict
-            and self._active
-            and _legacy_authority.get() is self
-            and not in_listener.get()
-            and (task is self._task if task is not None else self._task is None or get_ident() != self._thread)
-        )
+        if task is not None:
+            return task is self._task
+        return self._task is None or get_ident() != self._thread
 
     def prepare_summary(self, bottom: int) -> SummaryResult:
         return self._session.prepare_summary(bottom, authority=self.issue_authority("summary"))

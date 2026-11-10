@@ -82,5 +82,5 @@ def _restore_native(session: Session, original: tuple[int, ...], *, valid: bool)
     # prior native prefix, not necessarily all Python tokens: a pending EOS may
     # not have been evaluated yet. Ignore cancellation and emit no usage sync.
     session._worker.call(
-        lambda e, native: restore_native_tokens(native, original, valid=valid, poison=session._worker._poison)
+        lambda e, native: restore_native_tokens(native, original, valid=valid, poison=session._poison_worker)
     ).result()

@@ -76,11 +76,29 @@ class _PayloadWrite(TypedDict, total=False):
     payload_bytes: int
 
 
+type _ActivityKind = Literal["run", "compact", "close"]
+
+
+class _ActivityRejection(TypedDict):
+    closed: str
+    run: str
+    compact: str
+    close: str
+
+
+_REJECTIONS: _ActivityRejection = {
+    "closed": "the runtime is closed",
+    "run": "a run is already active",
+    "compact": "a compaction is already active",
+    "close": "the runtime is closing",
+}
+
+
 @dataclass(frozen=True)
 class _Activity:
     task: asyncio.Task[object]
     done: asyncio.Future[None]
-    kind: Literal["run", "compact", "close"]
+    kind: _ActivityKind
 
 
 def _bindable(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -253,19 +271,28 @@ class AgentRuntime:
         now = self._clock()
         return now.isoformat() if isinstance(now, datetime) else str(now)
 
-    def _require_open(self) -> None:
+    def _rejection(self, *, allow_run: bool = False) -> str | None:
+        """Return the admission rejection for the current activity, or None.
+
+        An idle opener may stop a run, so it rejects only a closing or
+        compaction activity; claiming a new activity rejects any active one.
+        """
         if self._closed:
-            raise EngineError("the runtime is closed")
+            return _REJECTIONS["closed"]
         active = self._active
-        if active is not None and active.kind == "close":
-            raise EngineError("the runtime is closing")
-        if active is not None and active.kind == "compact":
-            raise EngineError("a compaction is already active")
+        if active is None or (allow_run and active.kind == "run"):
+            return None
+        return _REJECTIONS[active.kind]
+
+    def _require_open(self) -> None:
+        """Reject idle operations while closing or a compaction is active."""
+        if (reason := self._rejection(allow_run=True)) is not None:
+            raise EngineError(reason)
 
     def _claim_activity(self, kind: Literal["run", "compact"]) -> _Activity:
-        self._require_open()
-        if self._active is not None:
-            raise EngineError("a run is already active")
+        """Claim the one activity slot; any active activity rejects."""
+        if (reason := self._rejection()) is not None:
+            raise EngineError(reason)
         task = asyncio.current_task()
         if task is None:
             raise AssertionError("runtime activities require an asyncio task")

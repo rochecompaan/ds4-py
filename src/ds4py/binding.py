@@ -85,6 +85,10 @@ def _tool_digest(tools: Iterable[ToolDefinition]) -> str:
     )
 
 
+# The one response token a round keeps after the request projection.
+RESPONSE_RESERVE = 1
+
+
 class MessageBinder:
     """Longest-valid-prefix binding keyed by persistent message key and content hash.
 
@@ -127,7 +131,7 @@ class MessageBinder:
         for segment in segments:
             if segment.kind == "system_note" or segment.kind.startswith("system_note:"):
                 text = segment.text
-                if not isinstance(text, str):
+                if text is None:
                     raise ValueError("saved note text is required for rendered restore")
                 subtype = segment.kind.partition(":")[2] or None
                 pending.append((text, subtype))
@@ -517,6 +521,14 @@ class MessageBinder:
         config = self._configured_config(tools, instructions)
         plan = self._plan(prepared, config, self.note_provider, system_changed=self._system_changed(config))
         return plan.projected_tokens
+
+    def reserve_overflow(self, projected_tokens: int) -> int:
+        """Return the tokens the projection still needs to admit the response reserve.
+
+        A non-positive result means the projection plus the one-token response
+        reserve fits the configured context; zero is the exact fit.
+        """
+        return projected_tokens + RESPONSE_RESERVE - self.session.engine.config.ctx
 
     def bind_response(self, response: ModelResponse) -> None:
         key = _ensure_key(response)
