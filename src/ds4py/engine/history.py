@@ -4,6 +4,10 @@
 history mutations touch. Callers either take the mutation lock for one atomic
 edit or an explicit claim that excludes every other writer while native work
 runs without the lock.
+
+The facade reach-back is deliberately narrow: only ``Session._job_events`` and
+``Session.engine`` are used, for native jobs and rendering. Those calls are the
+sanctioned job/event boundary; history state stays in this owner.
 """
 
 from __future__ import annotations
@@ -54,7 +58,7 @@ class SessionHistory:
 
     @property
     def mutable_transcript(self) -> Transcript:
-        """The storage the decode job appends sampled tokens to."""
+        """The storage native jobs mutate directly; only those jobs need this."""
         return self._transcript
 
     @property
@@ -146,7 +150,6 @@ class SessionHistory:
             if reason is not None:
                 raise EngineError(reason)
             self._operations.close()
-            self._clear_pause()
             return True
 
     # -- pause state -------------------------------------------------------
@@ -212,6 +215,11 @@ class SessionHistory:
             return tuple(key for key, length in self._checkpoints.items() if length > position)
 
     # -- transcript mutations ---------------------------------------------
+
+    def annotate(self, start: int, *, kinds: tuple[str, ...], meta: Mapping[str, object]) -> None:
+        """Merge provenance into existing segments under the mutation lock."""
+        with self._lock:
+            self._transcript.annotate(start, kinds=kinds, meta=meta)
 
     def append_segment(self, tokens: Sequence[int], kind: str, meta: Mapping[str, object] | None = None) -> Segment:
         """Append during an owned round or an already admitted edit."""

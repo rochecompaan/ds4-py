@@ -545,7 +545,7 @@ class MessageBinder:
                 for segment in trailing
             ],
         }
-        self.session.history.mutable_transcript.annotate(
+        self.session.history.annotate(
             sampled_start,
             kinds=("assistant", "eos"),
             meta={"key": key, "content_hash": content_hash, "source": "sampled"},

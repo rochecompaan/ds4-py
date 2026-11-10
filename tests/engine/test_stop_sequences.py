@@ -285,6 +285,22 @@ def test_terminal_marker_prefix_is_matched_independently_of_display() -> None:
     assert transcript.tokens == (60,) and control.stop_sequence == b"<"
 
 
+def test_close_preserves_the_paused_stream() -> None:
+    def script(prompt: Any, generated: Any) -> Any:
+        return b"stop"[len(generated)] + 1 if len(generated) < 4 else 0
+
+    with ds4py.open("f.gguf", think=ThinkMode.NONE, native=FakeNative(script=script)) as engine:
+        session = engine.session()
+        session.append_user("first")
+        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped("stop_sequence")
+        paused = session.history.paused_stream
+        assert paused is not None
+
+        session.close()
+
+        assert session.history.paused_stream is paused
+
+
 def test_new_user_retires_paused_stream_and_starts_fresh_assistant() -> None:
     def script(prompt: Any, generated: Any) -> Any:
         return b"stop"[len(generated)] + 1 if len(generated) < 4 else 0

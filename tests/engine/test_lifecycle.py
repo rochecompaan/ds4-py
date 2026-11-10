@@ -1,6 +1,7 @@
 """Session identity, lifecycle ordering, event delivery, reset, and think changes."""
 
 import re
+import threading
 from typing import Any, Never, cast, override
 from uuid import UUID
 
@@ -202,6 +203,48 @@ def test_new_publishes_end_then_closes_state_then_resets_then_starts() -> None:
         assert session.engine._worker is worker
         replacement = session.state("jobs", CloseCounter)
         assert replacement is not state and state.closes == 1
+
+
+def test_close_is_atomic_with_session_end_delivery_and_state_closing() -> None:
+    engine, _ = reset_engine()
+    with engine:
+        session = engine.session()
+        state = CloseCounter()
+        assert session.state("jobs", lambda: state) is state
+        events: list[Any] = []
+        entered = threading.Event()
+        release = threading.Event()
+        second_started = threading.Event()
+        second_finished = threading.Event()
+
+        def listener(event: Any) -> None:
+            events.append(event)
+            entered.set()
+            if not release.wait(10):
+                events.append("listener-timeout")
+
+        def second_close() -> None:
+            second_started.set()
+            try:
+                session.close()
+            finally:
+                second_finished.set()
+
+        session.on_event(listener, kinds={"session_end"})
+        first = threading.Thread(target=session.close)
+        first.start()
+        assert entered.wait(5), "first close never delivered session_end"
+        second = threading.Thread(target=second_close)
+        second.start()
+        assert second_started.wait(5), "second close never started"
+        assert not second_finished.wait(0.2), "second close returned before session_end finished"
+
+        release.set()
+        first.join(10)
+        second.join(10)
+        assert not first.is_alive() and not second.is_alive()
+        assert kinds(events) == ["session_end"]
+        assert state.closes == 1
 
 
 @pytest.mark.parametrize("message", EMPTY_PROMPT_REJECTIONS)

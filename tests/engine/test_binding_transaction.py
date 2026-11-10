@@ -15,7 +15,7 @@ from ds4py._native.fake import FakeNative, FakeSession
 from ds4py._native.protocol import CancelFn, ProgressFn, SyncStatus
 from ds4py.binding import MessageBinder
 from ds4py.capabilities.system_notes import DS4SystemNotes, NotePreview, NoteState
-from ds4py.engine.events import Stopped
+from ds4py.engine.events import Checkpointed, Stopped
 from ds4py.engine.lifecycle import SessionEvent
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.session import Engine, Session
@@ -222,6 +222,51 @@ def test_public_start_chat_delivery_keeps_the_claim_and_does_not_deadlock() -> N
             with session.events_on_loop(asyncio.get_running_loop()):
                 await asyncio.wait_for(asyncio.to_thread(session.start_chat), 30)
             assert outcomes == ["rejected"]
+            assert session.transcript.chat
+
+    asyncio.run(scenario())
+
+
+def test_public_checkpoint_delivery_keeps_the_claim_and_does_not_deadlock() -> None:
+    # Public checkpoint snapshots with only the claim held: a loop-delivered
+    # listener is rejected instead of waiting on the producer's mutation lock,
+    # and the token is recorded only after the native snapshot completes.
+    async def scenario() -> None:
+        with fake_engine() as engine:
+            session = engine.session()
+            session.start_chat()
+            outcomes: list[str] = []
+            seen: list[str] = []
+
+            def attempt_mutation() -> None:
+                try:
+                    session.append_tokens([9], "user")
+                except EngineError:
+                    outcomes.append("rejected")
+                else:
+                    outcomes.append("appended")
+
+            def listener(event: SessionEvent) -> None:
+                checkpointed = event.payload["event"]
+                assert isinstance(checkpointed, Checkpointed)
+                seen.append(checkpointed.key)
+                done = threading.Event()
+
+                def attempt() -> None:
+                    attempt_mutation()
+                    done.set()
+
+                threading.Thread(target=attempt, daemon=True).start()
+                if not done.wait(5):
+                    outcomes.append("blocked")
+
+            session.on_event(listener, kinds={"Checkpointed"})
+            with session.events_on_loop(asyncio.get_running_loop()):
+                event = await asyncio.wait_for(asyncio.to_thread(session.checkpoint, "turn"), 30)
+            assert seen == ["turn"]
+            assert outcomes == ["rejected"]
+            assert isinstance(event, Checkpointed)
+            assert session.history.checkpoint_tokens["turn"] == event.tokens
             assert session.transcript.chat
 
     asyncio.run(scenario())

@@ -324,11 +324,16 @@ class Session:
 
     def close(self) -> None:
         """End the live session and close all state; safe to call repeatedly."""
-        if not self._history.close():
-            return
-        self._decode_step = None
-        self._lifecycle.emit("session_end", old=self.id)
-        self._lifecycle.close_states()
+        # Keep the closed transition, session_end delivery, and state closing
+        # atomic under the reentrant mutation lock: once close() returns, the
+        # lifecycle is finished. A listener on this same thread may reenter
+        # close(), which sees the closed admission and returns without emitting.
+        with self._history.mutation_lock:
+            if not self._history.close():
+                return
+            self._decode_step = None
+            self._lifecycle.emit("session_end", old=self.id)
+            self._lifecycle.close_states()
 
     def _reset(self) -> None:
         for _ in self._job_events(ResetJob()):
@@ -349,6 +354,15 @@ class Session:
         """
         self._history.start_chat(tools, instructions)
 
+    def _require_idle_before_chat(self) -> None:
+        """Preserve the busy error before a chat helper auto-initializes a preamble."""
+        # Chat helpers may auto-initialize a preamble before their own idle edit.
+        # Check admission first so a busy or claimed session reports that instead
+        # of a later chat-state error. If the edit still finds a round open, the
+        # preamble may already be committed; a retry sees the initialized chat and
+        # converges, so this race is preserved rather than papered over.
+        self._history.require_idle()
+
     def append_message(
         self,
         role: str,
@@ -358,7 +372,7 @@ class Session:
         meta: Mapping[str, object] | None = None,
     ) -> Segment:
         """Append one plain-payload chat message with optional provenance metadata."""
-        self._history.require_idle()
+        self._require_idle_before_chat()
         return chat_ops.append_message(self, role, text, images=images, meta=meta)
 
     def truncate(self, token_count: int) -> None:
@@ -489,7 +503,7 @@ class Session:
         starts a fresh assistant prefix/parser. Nonempty images require M5.
         Rendering/tokenization is dispatched to the worker.
         """
-        self._history.require_idle()
+        self._require_idle_before_chat()
         return chat_ops.append_user(self, text, images)
 
     def append_prefix(self, turns: Iterable[PrefixTurn]) -> None:
@@ -498,7 +512,7 @@ class Session:
         Retires a paused assistant and closes each supplied assistant turn using
         the family's EOS policy. Rendering is dispatched to the worker.
         """
-        self._history.require_idle()
+        self._require_idle_before_chat()
         chat_ops.append_prefix(self, turns)
 
     def append_tool_results(self, results: Iterable[str]) -> Segment:
@@ -507,7 +521,7 @@ class Session:
         Between rounds only; closes a paused assistant before appending. Worker
         rendering escapes the matching tool-result closing delimiter.
         """
-        self._history.require_idle()
+        self._require_idle_before_chat()
         return chat_ops.append_tool_results(self, results)
 
     def append_system_note(self, text: str, *, subtype: str | None = None) -> Segment:
@@ -516,7 +530,7 @@ class Session:
         Closes a paused assistant first and dispatches plain-payload rendering
         to the worker. ``subtype`` becomes save provenance metadata.
         """
-        self._history.require_idle()
+        self._require_idle_before_chat()
         return chat_ops.append_system_note(self, text, subtype)
 
     def add_logits_hook(self, hook: Callable[[LogitsView], None]) -> None:
@@ -531,10 +545,8 @@ class Session:
         history = self._history
         with history.mutation_lock:
             history.require_open()
-            try:
-                history.require_idle()
-            except EngineError as error:
-                raise EngineError("cannot add a logits hook during an active round") from error
+            if history.operations.active_round or history.operations.kind is not None:
+                raise EngineError("cannot add a logits hook during an active round")
             self._logits_hooks.append(hook)
 
     def _publish(self, event: Event) -> None:
