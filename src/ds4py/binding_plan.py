@@ -132,9 +132,14 @@ def configured_plan(
     return _transition(binder, prepared, config, provider, system_changed=changed)
 
 
-def bound_plan(binder: MessageBinder, prepared: PreparedMessages) -> BindingPlan:
+def require_bound_chat(binder: MessageBinder) -> None:
+    """Reject bound projection before any request preprocessing runs."""
     if not binder.session.transcript.chat:
         raise EngineError("bound request requires an initialized chat")
+
+
+def bound_plan(binder: MessageBinder, prepared: PreparedMessages) -> BindingPlan:
+    require_bound_chat(binder)
     return _transition(
         binder, prepared, BindingConfig((), None, binder._signature), binder.note_provider, system_changed=False
     )

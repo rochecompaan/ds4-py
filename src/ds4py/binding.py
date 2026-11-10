@@ -26,6 +26,7 @@ from ds4py.binding_plan import (
     bound_plan,
     configured_plan,
     request_instructions,
+    require_bound_chat,
 )
 from ds4py.binding_provenance import (
     BoundMessage,
@@ -446,16 +447,13 @@ class MessageBinder:
         holds the claim. Observation-only callers use the unclaimed counting and
         planning entries instead.
         """
-        provider = note_provider if note_provider is not None else self.note_provider
-        with self.session.binding_transaction() as transaction:
-            prepared = self.prepare_messages(messages)
-            plan = self.plan_prepared(
-                prepared,
-                tools=tools,
-                instructions=instructions,
-                note_provider=note_provider,
-            )
-            return self._apply_plan(transaction, plan, provider, prepared.targets)
+        _, change = self._prepare_claimed(
+            messages,
+            tools=tools,
+            instructions=instructions,
+            note_provider=note_provider,
+        )
+        return change
 
     def prepare_model_request(
         self,
@@ -470,16 +468,12 @@ class MessageBinder:
         the plan is built and published from exactly one preprocessing pass and
         its targets become the response view without a second canonicalization.
         """
-        provider = note_provider if note_provider is not None else self.note_provider
-        with self.session.binding_transaction() as transaction:
-            prepared = self.prepare_messages(messages)
-            plan = self.plan_prepared(
-                prepared,
-                tools=params.declared_tool_defs.values(),
-                instructions=request_instructions(prepared.targets, params),
-                note_provider=note_provider,
-            )
-            self._apply_plan(transaction, plan, provider, prepared.targets)
+        prepared, _ = self._prepare_claimed(
+            messages,
+            tools=params.declared_tool_defs.values(),
+            params=params,
+            note_provider=note_provider,
+        )
         canonical = prepared.targets
         if (
             isinstance(messages, list)
@@ -491,6 +485,32 @@ class MessageBinder:
             # stream reads back.
             return cast("list[ModelMessage]", messages)
         return list(canonical)
+
+    def _prepare_claimed(
+        self,
+        messages: Sequence[ModelMessage],
+        *,
+        tools: Iterable[object] = (),
+        instructions: str | None = None,
+        params: ModelRequestParameters | None = None,
+        note_provider: DS4SystemNotes | None = None,
+    ) -> tuple[PreparedMessages, BindingChange]:
+        """Canonicalize, plan and apply one request inside the Session claim.
+
+        ``params`` resolves the effective instructions from the canonical
+        targets; otherwise the explicit ``instructions`` argument is planned.
+        """
+        provider = note_provider if note_provider is not None else self.note_provider
+        with self.session.binding_transaction() as transaction:
+            prepared = self.prepare_messages(messages)
+            effective = request_instructions(prepared.targets, params) if params is not None else instructions
+            plan = self.plan_prepared(
+                prepared,
+                tools=tools,
+                instructions=effective,
+                note_provider=note_provider,
+            )
+            return prepared, self._apply_plan(transaction, plan, provider, prepared.targets)
 
     def _apply_plan(
         self,
@@ -530,6 +550,8 @@ class MessageBinder:
         end_messages: int,
     ) -> None:
         """Publish planned metadata for only the newly committed message range."""
+        if not 0 <= start_messages <= end_messages <= len(targets) or end_messages > len(plan.messages):
+            raise AssertionError("published key range must align with planned targets")
         for index in range(start_messages, end_messages):
             planned = plan.messages[index].metadata
             target = targets[index]
@@ -549,6 +571,7 @@ class MessageBinder:
 
     def count_bound_request(self, messages: Sequence[ModelMessage]) -> int:
         """Project against the initialized native preamble and sampled binding."""
+        require_bound_chat(self)
         return bound_plan(self, self.prepare_messages(messages)).count(self.session.engine)
 
     def count_tokens(

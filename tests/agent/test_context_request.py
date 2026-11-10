@@ -120,11 +120,13 @@ def test_model_prepare_canonicalizes_once(monkeypatch: pytest.MonkeyPatch) -> No
             messages: list[ModelMessage] = [ModelRequest([UserPromptPart("go")])]
             await model.request(messages, None, ModelRequestParameters())
             assert calls == [1]
+            binder.prepare(messages)
+            assert calls == [1, 1]
             published = messages[0].metadata
             assert published is not None
             assert binder.count_rendered_request(messages) > 0
-            assert messages[0].metadata == published
-            assert calls == [1, 1]
+            assert messages[0].metadata is published
+            assert calls == [1, 1, 1]
 
     asyncio.run(scenario())
 

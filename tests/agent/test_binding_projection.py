@@ -168,7 +168,7 @@ def test_partial_append_rolls_back_to_last_completed_message(fail_at: int) -> No
         ]
 
 
-def test_binding_key_publication_visits_each_committed_message_once(
+def test_binding_key_publication_copies_each_committed_message_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Only publication copies planned metadata onto request targets: the old
@@ -188,7 +188,9 @@ def test_binding_key_publication_visits_each_committed_message_once(
             binder = MessageBinder(engine.session())
             messages: list[ModelMessage] = [user(f"message {index}") for index in range(count)]
             binder.prepare(messages)
-        assert len(copies) == count
+            assert len(copies) == count
+            binder.prepare(messages)
+            assert len(copies) == count
 
 
 def test_published_metadata_is_not_aliased_to_bound_copies() -> None:
@@ -215,6 +217,18 @@ def test_unchanged_processed_prefix_recovers_missing_keys_once() -> None:
         change = binder.prepare(processed)
         assert change.kind == "unchanged"
         assert [cast("Any", message.metadata)["ds4.key"] for message in processed] == keys
+
+
+def test_bound_projection_rejects_before_preprocessing(monkeypatch: pytest.MonkeyPatch) -> None:
+    with fake_engine() as engine:
+        binder = MessageBinder(engine.session())
+
+        def unused(messages: Sequence[ModelMessage]) -> object:
+            raise AssertionError("bound projection must guard before preprocessing")
+
+        monkeypatch.setattr(binder, "prepare_messages", unused)
+        with pytest.raises(EngineError, match="initialized chat"):
+            binder.count_bound_request([user("go")])
 
 
 def test_bound_projection_requires_initialized_chat_but_accepts_zero_records() -> None:
