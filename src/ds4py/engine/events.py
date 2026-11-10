@@ -72,7 +72,8 @@ class Token:
 
 @dataclass(frozen=True)
 class SummaryToken:
-    """Private summary output, never response text or a parser input.
+    """Internal summary-generation events; excluded from response/parser output,
+    but observable on the session bus and in diagnostic run records.
 
     At a control boundary, text_bytes may be a sanitized prefix of the token's
     full text; the id is retained when that token contributed plain text.
