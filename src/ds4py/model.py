@@ -10,8 +10,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar, SupportsFloat, SupportsIndex, cast, override
 from uuid import uuid4
 
-import anyio
-
 # The exactly pinned harness exposes canonical reserve history only through this
 # private accessor for nonstream requests. Keep it aligned with request_stream's
 # explicit RunContext; a request copy cannot preserve commit-then-raise history.
@@ -23,7 +21,7 @@ from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.usage import RequestUsage
 from typing_extensions import sentinel
 
-from ds4py.async_session import cancel_session_operation, drain_operation
+from ds4py.async_session import await_retained, cancel_session_operation, drain_operation
 from ds4py.binding import MessageBinder
 from ds4py.binding_plan import request_instructions
 from ds4py.capabilities.context import ContextRequest
@@ -243,12 +241,7 @@ class DS4Model(Model):
             except BaseException:
                 # Like the harness's streamed path, publish the finalized partial
                 # response to canonical history even when the request raises.
-                await stream._finish()
-                response = stream.get()
-                if run_context is not None and stream._sampled_start is not None:
-                    key = (response.metadata or {}).get("ds4.key")
-                    if not any((message.metadata or {}).get("ds4.key") == key for message in run_context.messages):
-                        run_context.messages.append(response)
+                await stream.publish_partial(run_context)
                 raise
             return stream.get()
 
@@ -309,6 +302,7 @@ class DS4StreamedResponse(StreamedResponse):
         self._pull_lock = asyncio.Lock()
         self._pending_pull: asyncio.Future[Event | _END] | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
+        self._partial_published = False
         self._reserve_needed: int | None = None
         self._compaction_drain: asyncio.Future[None] | None = None
 
@@ -370,6 +364,32 @@ class DS4StreamedResponse(StreamedResponse):
         if self._sampled_start is not None:
             self._binder.bind_response(self.get())
         self._bound = True
+
+    def _publish(self, run_context: RunContext[object] | None) -> None:
+        """Append the finalized response to canonical history exactly once."""
+        if run_context is None or self._sampled_start is None or self._partial_published:
+            return
+        self._partial_published = True
+        response = self.get()
+        key = (response.metadata or {}).get("ds4.key")
+        if key is None:
+            return
+        if any((message.metadata or {}).get("ds4.key") == key for message in run_context.messages):
+            return
+        run_context.messages.append(response)
+
+    async def publish_partial(self, run_context: RunContext[object] | None) -> None:
+        """Finalize this round, then publish its partial response once.
+
+        Publication is canonical history only: a round without a sampled start
+        has no response to publish, and an already-published stable key is never
+        appended twice. A teardown failure is still surfaced to the caller after
+        the partial response has been published.
+        """
+        try:
+            await self._finish()
+        finally:
+            self._publish(run_context)
 
     @override
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -541,26 +561,13 @@ class DS4StreamedResponse(StreamedResponse):
         task = self._cleanup_task
         if task is None:
             task = self._cleanup_task = asyncio.create_task(self._cleanup())
-        # AnyIO propagates request-deadline/level cancellation into every
-        # checkpoint. Shield the whole teardown, not just the executor future,
-        # so cleanup cannot be interrupted halfway through reconciliation.
+        # A timeout/cancellation already unwinding keeps its own surface; a
+        # teardown failure must not replace the original exception. The retained
+        # wait shields and drains the whole teardown, not just one executor step.
         primary = sys.exc_info()[0] is not None
         try:
-            with anyio.CancelScope(shield=True):
-                await asyncio.shield(task)
-        except asyncio.CancelledError as cancelled:
-            # asyncio edge cancellation can pierce AnyIO's level shield. Retain
-            # the same cleanup owner through repeated cancel() calls as well.
-            try:
-                await drain_operation(task)
-            except BaseException as error:
-                if not primary:
-                    raise cancelled from error
-            if not primary:
-                raise
+            await await_retained(task)
         except BaseException:
-            # A timeout/cancellation already unwinding keeps its own surface;
-            # a teardown failure must not replace the original exception.
             if not primary:
                 raise
 

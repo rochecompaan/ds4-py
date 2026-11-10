@@ -70,6 +70,36 @@ async def drain_operation[T](future: asyncio.Future[T]) -> T:
     return future.result()
 
 
+async def await_retained[T](future: asyncio.Future[T], *, on_cancel: Callable[[], object] | None = None) -> T:
+    """Await retained work under shield, then drain it to its real result.
+
+    A caller cancellation is delivered once to ``on_cancel``. The same future is
+    then drained to completion even if the caller is cancelled again, and the
+    caller's cancellation is re-raised after completion, chained onto a
+    completion failure. ``on_cancel`` is a signal and must not await the future.
+
+    This primitive does not choose whether a caller suppresses an error or
+    publishes a result: ``drain_operation`` remains the no-rethrow-until-result
+    primitive, and each caller keeps its own error and ownership policy.
+    """
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError as cancelled:
+        if future.done():
+            # The retained future itself ended with cancellation, or the caller
+            # cancelled an already-completed future: preserve that surface.
+            raise
+        if on_cancel is not None:
+            on_cancel()
+        # drain_operation owns the shield and the repeated-cancellation spin, so
+        # a level deadline cannot interrupt the retained completion.
+        try:
+            await drain_operation(future)
+        except BaseException as failure:
+            raise cancelled from failure
+        raise
+
+
 async def run_session_operation[T](session: Session, operation: Callable[[], T]) -> T:
     """Offload one Session call without abandoning it.
 
@@ -115,16 +145,13 @@ async def _run_operation[T](session: Session, operation: Callable[[], T]) -> T:
         None, context.run, execute
     )
     try:
-        result = await asyncio.shield(future)
+        result = await await_retained(future, on_cancel=session.cancel)
     except asyncio.CancelledError as cancelled:
-        session.cancel()
-        try:
-            result = await drain_operation(future)
-            if isinstance(result, _Failed):
-                raise cancelled from result.error
-            raise
-        finally:
-            session.clear_cancellation()
+        session.clear_cancellation()
+        failure = future.result()
+        if isinstance(failure, _Failed):
+            raise cancelled from failure.error
+        raise
     if isinstance(result, _Failed):
         session.clear_cancellation()
         raise result.error

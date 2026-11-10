@@ -33,7 +33,7 @@ from pydantic_ai_harness.step_persistence import (
 )
 
 from ds4py.agent import QuestionAnswerer, build_agent_components
-from ds4py.async_session import drain_operation
+from ds4py.async_session import await_retained, drain_operation
 from ds4py.capabilities.context import ContextComposition
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.system_notes import DS4SystemNotes
@@ -301,11 +301,7 @@ class AgentRuntime:
         self.cancel()
         if task is not None and task is not asyncio.current_task():
             waiter = asyncio.create_task(asyncio.wait([task]))
-            try:
-                await asyncio.shield(waiter)
-            except asyncio.CancelledError:
-                await drain_operation(waiter)
-                raise
+            await await_retained(waiter, on_cancel=self.cancel)
 
     async def _latest(self, run_id: str) -> ContinuableSnapshot | None:
         """Return the newest snapshot; propagate storage failures to the run."""

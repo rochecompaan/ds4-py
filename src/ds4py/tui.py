@@ -12,7 +12,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import PromptSession, print_formatted_text
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse
 
-from ds4py.async_session import drain_operation
+from ds4py.async_session import await_retained
 from ds4py.question_answers import selected_labels
 
 if TYPE_CHECKING:
@@ -167,14 +167,9 @@ class TUI:
     async def _operation_with_controls[T](self, task: asyncio.Task[T]) -> T:
         try:
             return await self._consume_controls(task)
-        except asyncio.CancelledError as cancelled:
+        except asyncio.CancelledError:
             if not task.done():
-                task.cancel()
-                try:
-                    await drain_operation(task)
-                except BaseException as error:
-                    # Preserve cancellation, retaining any teardown failure.
-                    raise cancelled from error
+                await await_retained(task, on_cancel=task.cancel)
             raise
 
     async def _consume_controls[T](self, operation: asyncio.Task[T]) -> T:
