@@ -12,6 +12,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import PromptSession, print_formatted_text
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse
 
+from ds4py.async_session import drain_operation
 from ds4py.question_answers import selected_labels
 
 if TYPE_CHECKING:
@@ -155,22 +156,36 @@ class TUI:
                 self._prompt_task = None
 
     async def _run_with_controls(self, prompt: str) -> None:
-        run_task = asyncio.create_task(self.runtime.run(prompt))
+        try:
+            await self._operation_with_controls(asyncio.create_task(self.runtime.run(prompt)))
+        except asyncio.CancelledError:
+            if self.runtime.status != "interrupted":
+                raise
+        except Exception as error:
+            self.show_message(f"error: {error}")
+
+    async def _operation_with_controls[T](self, task: asyncio.Task[T]) -> T:
+        try:
+            return await self._consume_controls(task)
+        except asyncio.CancelledError as cancelled:
+            if not task.done():
+                task.cancel()
+                try:
+                    await drain_operation(task)
+                except BaseException as error:
+                    # Preserve cancellation, retaining any teardown failure.
+                    raise cancelled from error
+            raise
+
+    async def _consume_controls[T](self, operation: asyncio.Task[T]) -> T:
         while True:
             prompt_task = self._ensure_prompt()
             done, _ = await asyncio.wait(
-                {run_task, prompt_task},
+                {operation, prompt_task},
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if run_task in done:
-                try:
-                    run_task.result()
-                except asyncio.CancelledError:
-                    if self.runtime.status != "interrupted":
-                        raise
-                except Exception as error:
-                    self.show_message(f"error: {error}")
-                return
+            if operation in done:
+                return operation.result()
             if prompt_task in done:
                 try:
                     line = self._take_prompt(prompt_task)
@@ -183,14 +198,7 @@ class TUI:
                 except EOFError:
                     self.exiting = True
                     self.runtime.cancel()
-                    try:
-                        await run_task
-                    except asyncio.CancelledError:
-                        if self.runtime.status != "interrupted":
-                            raise
-                    except Exception as error:
-                        self.show_message(f"error: {error}")
-                    return
+                    return await operation
 
     async def ask(self, request: AskUserRequest) -> AskUserResponse:
         """Answer model questions through the active prompt, never raw stdin."""
@@ -236,7 +244,17 @@ class TUI:
 
     async def _dispatch_command(self, line: str) -> None:
         try:
-            result = await self.commands.execute(line)
+            if self._in_loop:
+                # Keep the input application alive to paint progress and accept
+                # controls while an async command owns its separate operation.
+                result = await self._operation_with_controls(asyncio.create_task(self.commands.execute(line)))
+            else:
+                result = await self.commands.execute(line)
+        except asyncio.CancelledError:
+            caller = asyncio.current_task()
+            if caller is not None and caller.cancelling():
+                raise
+            # runtime.cancel() cancelled the command, not the input loop.
         except Exception as error:
             self.show_message(f"error: {error}")
         else:

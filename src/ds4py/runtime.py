@@ -33,6 +33,7 @@ from pydantic_ai_harness.step_persistence import (
 )
 
 from ds4py.agent import QuestionAnswerer, build_agent_components
+from ds4py.async_session import drain_operation
 from ds4py.capabilities.context import ContextComposition
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.system_notes import DS4SystemNotes
@@ -146,6 +147,9 @@ class AgentRuntime:
     rejects an overlapping prompt. ``save``, ``switch``, ``new``, ``fork``, and
     ``close`` cancel and await an active run before changing state. ``cancel``
     requests agent and native cancellation without waiting for the run to finish.
+    Manual compaction is a separate operation: competing calls reject
+    immediately, ``cancel`` signals it, and ``close`` awaits its drain before
+    teardown.
     """
 
     def __init__(  # noqa: PLR0913 - Runtime composition mirrors the agent feature set.
@@ -172,6 +176,8 @@ class AgentRuntime:
         self._status = "idle"
         self._closed = False
         self._running = False
+        self._manual_task: asyncio.Task[object] | None = None
+        self._manual_done: asyncio.Future[None] | None = None
         self._run_task: asyncio.Task[AgentRunResult[object]] | None = None
         self._interrupted = False
         self._trace_failure: OSError | None = None
@@ -246,6 +252,8 @@ class AgentRuntime:
     def _require_open(self) -> None:
         if self._closed:
             raise EngineError("the runtime is closed")
+        if self._manual_task is not None:
+            raise EngineError("a compaction is already active")
 
     def _step_store(self, session_id: str) -> FileStepStore:
         return FileStepStore(self.store.session_dir(session_id) / "steps")
@@ -425,11 +433,21 @@ class AgentRuntime:
         self._require_open()
         if self._running:
             raise EngineError("a run is already active")
-        return await self.components.compactor.compact_messages(self._messages, reason="manual")
+        self._manual_task = asyncio.current_task()
+        done = self._manual_done = asyncio.get_running_loop().create_future()
+        try:
+            return await self.components.compactor.compact_messages(self._messages, reason="manual")
+        finally:
+            self._manual_task = None
+            self._manual_done = None
+            done.set_result(None)
 
     def cancel(self) -> None:
-        """Cancel the active agent run and its engine work; a no-op while idle."""
-        if self._status == "running":
+        """Signal an active run or manual compaction; a no-op while idle."""
+        if self._manual_task is not None:
+            self._session.cancel()
+            self._manual_task.cancel()
+        elif self._status == "running":
             self._session.cancel()
             if self._run_task is not None:
                 self._run_task.cancel()
@@ -666,6 +684,10 @@ class AgentRuntime:
         """Stop active work, then close the session and everything scoped to it."""
         if self._closed:
             return
+        done = self._manual_done
+        if done is not None:
+            self.cancel()
+            await drain_operation(done)
         await self._stop_active()
         self._closed = True
         self._status = "closed"

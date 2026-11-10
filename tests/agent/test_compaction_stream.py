@@ -234,7 +234,7 @@ def test_owner_commit_then_failure_reconciles_exact_live_tail(sampled: int, outc
                     # by error/cancellation reconciliation, not counted backwards.
                     eos = TranscriptReplacement((FAKE_EOS,), (Segment(0, 1, "eos", {}),))
                     replacement = TranscriptReplacement.concat(rendered, transcript.slice(prefix.start), eos)
-                    commit_compaction(binder, messages, [summary], replacement)
+                    await commit_compaction(binder, messages, [summary], replacement)
                     if outcome.startswith("close"):
                         committed.set()
                         await release.wait()
@@ -398,7 +398,7 @@ def test_tail_keeps_note_before_retained_message_and_pending_request() -> None:
         original = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
         note = TranscriptReplacement((101, 102), (Segment(0, 2, "note", {"text": "remember"}),))
         replacement = TranscriptReplacement.concat(original.slice(0, note_start), note, original.slice(note_start))
-        commit_compaction(binder, messages, list(messages), replacement)
+        asyncio.run(commit_compaction(binder, messages, list(messages), replacement))
         pending = ModelRequest([UserPromptPart("pending")])
         messages.append(pending)
         tail = plan_tail(binder, messages)

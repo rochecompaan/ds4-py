@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from asyncio import CancelledError
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, override
@@ -9,11 +10,13 @@ from uuid import uuid4
 
 from pydantic_ai.messages import InstructionPart, ModelRequest, SystemPromptPart, UserPromptPart
 
+from ds4py.async_session import run_session_operation, session_operation_owner
 from ds4py.capabilities.compaction_tail import plan_tail
 from ds4py.capabilities.context import ContextRequest, ContextStrategy, RoomResult
 from ds4py.compaction_commit import commit_compaction
 from ds4py.engine.compaction import SUMMARY_PROMPT, summary_budget, summary_suffix
 from ds4py.engine.transcript import TranscriptReplacement
+from ds4py.errors import EngineError
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
@@ -47,6 +50,7 @@ class LLMCompaction(ContextStrategy):
     def __init__(self, binder: MessageBinder, *, soft: float = TRIGGER_SOFT_THRESHOLD) -> None:
         super().__init__(binder)
         self.soft = soft
+        self._attempt: asyncio.Task[object] | None = None
 
     @override
     def reserve_messages(
@@ -73,16 +77,29 @@ class LLMCompaction(ContextStrategy):
         )
 
     async def compact_messages(self, messages: list[ModelMessage], *, reason: CompactionReason) -> CompactionResult:
+        if self._attempt is not None:
+            raise EngineError("a compaction is already active")
+        self._attempt = asyncio.current_task()
+        session = self.binder.session
+        try:
+            with session.events_on_loop(asyncio.get_running_loop()), session_operation_owner(session):
+                return await self._compact_messages(messages, reason=reason)
+        finally:
+            self._attempt = None
+
+    async def _compact_messages(self, messages: list[ModelMessage], *, reason: CompactionReason) -> CompactionResult:
         session = self.binder.session
         old = len(session.transcript)
         outcome: CompactionOutcome = "failed"
         try:
             session.emit("before_compact", reason=reason, old_tokens=old)
+            # Let queued consumers paint the status before starting native work.
+            await asyncio.sleep(0)
             tail = plan_tail(self.binder, messages)
             if not tail.cut_messages or tail.bottom_tokens <= tail.system_end_tokens:
                 outcome = "noop"
                 return CompactionResult("", 0, len(messages), 0)
-            summary = session.prepare_summary(tail.bottom_tokens)
+            summary = await run_session_operation(session, lambda: session.prepare_summary(tail.bottom_tokens))
             parts = [
                 part
                 for message in tail.snapshot[: tail.cut_messages]
@@ -108,7 +125,7 @@ class LLMCompaction(ContextStrategy):
             )
             rendered = self.binder.render_request(request, prefix=prefix)
             replacement = TranscriptReplacement.concat(rendered, tail.retained)
-            commit_compaction(self.binder, messages, [request, *tail.messages], replacement)
+            await commit_compaction(self.binder, messages, [request, *tail.messages], replacement)
             generated = len(summary.tokens)
             session.emit(
                 "compacted",
@@ -120,6 +137,10 @@ class LLMCompaction(ContextStrategy):
             outcome = "compacted"
             return CompactionResult(summary.summary, tail.cut_messages, len(tail.messages), generated)
         except CancelledError:
+            # Cancellation can arrive at the paint checkpoint before a native
+            # operation exists to consume it. All submitted work is drained by
+            # this point, so clear that signal before releasing attempt ownership.
+            session._worker.cancel_event.clear()
             outcome = "cancelled"
             raise
         finally:

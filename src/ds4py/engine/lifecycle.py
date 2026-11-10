@@ -76,6 +76,7 @@ class SessionLifecycle:
         self._error_handler = error_handler
         self._loop: AbstractEventLoop | None = None
         self._loop_thread: int | None = None
+        self._loop_depth = 0
 
     @property
     def id(self) -> str:
@@ -102,17 +103,20 @@ class SessionLifecycle:
         """Deliver emissions from other threads on ``loop``'s owning thread."""
         owner = get_ident()
         with self._lock:
-            if self._loop is not None:
+            if self._loop is not None and (self._loop is not loop or self._loop_thread != owner):
                 raise RuntimeError("session event delivery already has an owning loop")
             self._loop = loop
             self._loop_thread = owner
+            self._loop_depth += 1
         try:
             yield
         finally:
             with self._lock:
                 if self._loop is loop and self._loop_thread == owner:
-                    self._loop = None
-                    self._loop_thread = None
+                    self._loop_depth -= 1
+                    if not self._loop_depth:
+                        self._loop = None
+                        self._loop_thread = None
 
     def emit(self, kind: str, **payload: object) -> None:
         event = SessionEvent(kind, self._id, dict(payload))

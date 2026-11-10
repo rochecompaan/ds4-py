@@ -11,6 +11,10 @@ from typing import TYPE_CHECKING, ClassVar, SupportsFloat, SupportsIndex, cast, 
 from uuid import uuid4
 
 import anyio
+
+# The exactly pinned harness exposes canonical reserve history only through this
+# private accessor for nonstream requests. Keep it aligned with request_stream's
+# explicit RunContext; a request copy cannot preserve commit-then-raise history.
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.native_tools import AbstractNativeTool
@@ -19,6 +23,7 @@ from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.usage import RequestUsage
 from typing_extensions import sentinel
 
+from ds4py.async_session import cancel_session_operation, drain_operation
 from ds4py.binding import MessageBinder
 from ds4py.binding_plan import request_instructions
 from ds4py.capabilities.context import ContextRequest
@@ -27,6 +32,7 @@ from ds4py.engine.events import (
     Interrupted,
     ReserveReached,
     Stopped,
+    SummaryToken,
     Synced,
     TextDelta,
     Token,
@@ -304,6 +310,7 @@ class DS4StreamedResponse(StreamedResponse):
         self._pending_pull: asyncio.Future[Event | _END] | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
         self._reserve_needed: int | None = None
+        self._compaction_drain: asyncio.Future[None] | None = None
 
     @property
     @override
@@ -514,6 +521,9 @@ class DS4StreamedResponse(StreamedResponse):
     async def _cleanup(self) -> None:
         """Terminal drain, close, reconcile, and finalization in one owner."""
         try:
+            done = self._compaction_drain
+            if done is not None:
+                await drain_operation(done)
             async with self._pull_lock:
                 pending, self._pending_pull = self._pending_pull, None
                 if pending is not None:
@@ -538,6 +548,16 @@ class DS4StreamedResponse(StreamedResponse):
         try:
             with anyio.CancelScope(shield=True):
                 await asyncio.shield(task)
+        except asyncio.CancelledError as cancelled:
+            # asyncio edge cancellation can pierce AnyIO's level shield. Retain
+            # the same cleanup owner through repeated cancel() calls as well.
+            try:
+                await drain_operation(task)
+            except BaseException as error:
+                if not primary:
+                    raise cancelled from error
+            if not primary:
+                raise
         except BaseException:
             # A timeout/cancellation already unwinding keeps its own surface;
             # a teardown failure must not replace the original exception.
@@ -582,14 +602,22 @@ class DS4StreamedResponse(StreamedResponse):
             event.fail()
             raise ContextExhausted(self._context_exhausted_message(event.needed))
 
-        def synced(notification: SessionEvent) -> None:
+        observed_summary_tokens = 0
+
+        def observe_owner_work(notification: SessionEvent) -> None:
+            nonlocal observed_summary_tokens
             sync = notification.payload.get("event")
             if isinstance(sync, Synced):
                 self._dispatch(sync)
+            elif isinstance(sync, SummaryToken):
+                # A failed/cancelled owner may never return RoomResult. Count
+                # emitted private output now, without exposing response text.
+                observed_summary_tokens += 1
+                self._summary_tokens += 1
 
         # Replacement syncs are ordered native work, but are not yielded by the
         # suspended round. Observe only this owner's work to avoid double counts.
-        unsubscribe = self._session.on_event(synced, kinds={"Synced"})
+        unsubscribe = self._session.on_event(observe_owner_work, kinds={"Synced", "SummaryToken"})
         try:
             try:
                 with self._session.reserve_window(event):
@@ -612,7 +640,7 @@ class DS4StreamedResponse(StreamedResponse):
             raise
         if self._reconciled:
             return
-        self._summary_tokens += room.generated_tokens
+        self._summary_tokens += max(0, room.generated_tokens - observed_summary_tokens)
         if not room.made_room:
             event.fail()
             raise ContextExhausted(self._context_exhausted_message(event.needed))
@@ -625,6 +653,9 @@ class DS4StreamedResponse(StreamedResponse):
     async def close_stream(self) -> None:
         self._cancelled = True
         self._interrupted()
+        done = cancel_session_operation(self._session)
+        if done is not None:
+            self._compaction_drain = done
         if self._round_started and not self._round_exhausted:
             self._session.cancel()
         await self._finish()

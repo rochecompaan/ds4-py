@@ -197,6 +197,7 @@ class Session:
         self._lock = threading.RLock()
         self._active_round = False
         self._summary_active = False
+        self._replacement_active = False
         self._reserve_event: ReserveReached | None = None
         self._reserve_permission: ReservePermission | None = None
         self._decode_step: DecodeStep | None = None
@@ -341,6 +342,8 @@ class Session:
         with self._lock:
             if self._closed:
                 return
+            if self._summary_active or self._replacement_active:
+                raise EngineError("a native operation is active; drain before closing")
             self._revoke_reserve()
             self._reserve_event = None
             self._closed = True
@@ -354,7 +357,7 @@ class Session:
 
     def _require_idle(self) -> None:
         self._require_open()
-        if self._active_round or self._summary_active:
+        if self._active_round or self._summary_active or self._replacement_active:
             raise EngineError("a round is open")
 
     def _reset(self) -> None:
@@ -434,16 +437,25 @@ class Session:
         """
         with self._lock:
             self._require_open()
-            if self._summary_active or (self._active_round and not self._reserve_allowed()):
+            if self._summary_active or self._replacement_active or (self._active_round and not self._reserve_allowed()):
                 raise EngineError("a round is open")
+            self._replacement_active = True
+        try:
+            # Event delivery can synchronously wait for the loop. Never retain
+            # the mutation lock across worker emissions; ownership rejects writes.
             plan = rebind.replace_transcript(self, replacement, reason=reason)
-            self._transcript.replace(replacement.tokens, replacement.segments)
             for key, length in tuple(self._checkpoint_tokens.items()):
                 if length > len(replacement.tokens):
                     list(self._job_events(CheckpointJob(key, drop=True)))
                     self._checkpoint_tokens.pop(key, None)
-            self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
-            return plan
+            with self._lock:
+                self._require_open()
+                self._transcript.replace(replacement.tokens, replacement.segments)
+                self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
+                return plan
+        finally:
+            with self._lock:
+                self._replacement_active = False
 
     def _reserve_allowed(self) -> bool:
         permission = self._reserve_permission
@@ -503,7 +515,7 @@ class Session:
         """
         with self._lock:
             self._require_open()
-            if self._summary_active or (self._active_round and not self._reserve_allowed()):
+            if self._summary_active or self._replacement_active or (self._active_round and not self._reserve_allowed()):
                 raise EngineError("a round is open")
             bottom = operator.index(bottom)
             if not 0 <= bottom <= len(self._transcript):
@@ -584,7 +596,7 @@ class Session:
         """
         with self._lock:
             self._require_open()
-            if self._active_round or self._summary_active:
+            if self._active_round or self._summary_active or self._replacement_active:
                 raise EngineError("cannot add a logits hook during an active round")
             self._logits_hooks.append(hook)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ds4py.async_session import run_session_operation
 from ds4py.binding_provenance import prepare_provenance
 
 if TYPE_CHECKING:
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
     from ds4py.engine.transcript import TranscriptReplacement
 
 
-def commit_compaction(
+async def commit_compaction(
     binder: MessageBinder,
     messages: list[ModelMessage],
     compacted_messages: Sequence[ModelMessage],
@@ -34,7 +35,19 @@ def commit_compaction(
         replacement.segments,
         loaded=len(replacement.tokens),
     )
-    plan = binder.session.replace_transcript(replacement, reason="compaction")
-    binder.apply_compaction(prepared)
-    messages[:] = compacted_messages
-    return plan
+    committed: list[Plan] = []
+
+    def replace() -> Plan:
+        plan = binder.session.replace_transcript(replacement, reason="compaction")
+        committed.append(plan)
+        return plan
+
+    try:
+        return await run_session_operation(binder.session, replace)
+    finally:
+        # run_session_operation drains before raising cancellation. A successful
+        # native commit must publish its matching prepared state even then; a
+        # failed replacement publishes nothing. There is no checkpoint here.
+        if committed:
+            binder.apply_compaction(prepared)
+            messages[:] = compacted_messages

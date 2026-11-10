@@ -14,6 +14,8 @@ from .transcript import validate_segment_coverage
 from .worker import ResetJob, SyncJob
 
 if TYPE_CHECKING:
+    from ds4py._native.protocol import SessionHandle
+
     from .session import Session
     from .transcript import TranscriptReplacement
 
@@ -31,10 +33,36 @@ def replace_transcript(
         list(session._job_events(ResetJob()))
         session._checkpoint_tokens.clear()
         return Plan("rebuild", 0, 0, fits=True, checkpoint=None)
-    plan: Plan | None = None
-    for event in session._job_events(SyncJob(replacement.tokens)):
-        if isinstance(event, Synced):
-            plan = event.plan
+    original, valid = session._worker.call(
+        lambda e, native: (tuple(native.tokens()), native.checkpoint_valid())
+    ).result()
+    try:
+        plan: Plan | None = None
+        for event in session._job_events(SyncJob(replacement.tokens)):
+            if isinstance(event, Synced):
+                plan = event.plan
+    except BaseException:
+        _restore_native(session, original, valid=valid)
+        raise
     if plan is None:
+        _restore_native(session, original, valid=valid)
         raise EngineError(f"transcript replacement ({reason}) did not complete")
     return plan
+
+
+def _restore_native(session: Session, original: tuple[int, ...], *, valid: bool) -> None:
+    # A failed sync may already have invalidated/rebuilt part of KV. Restore the
+    # prior native prefix, not necessarily all Python tokens: a pending EOS may
+    # not have been evaluated yet. Ignore cancellation and emit no usage sync.
+    def restore(native: SessionHandle) -> None:
+        if not original:
+            native.rewind(0)
+        elif len(original) == native.ctx():
+            native.sync(original[:-1])
+            native.eval(original[-1])
+        else:
+            native.sync(original)
+        if not valid:
+            native.invalidate()
+
+    session._worker.call(lambda e, native: restore(native)).result()

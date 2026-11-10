@@ -1,5 +1,7 @@
 """Ordered compaction: prepare provenance, replace natively, then commit records and messages."""
 
+import asyncio
+import threading
 from typing import Any, override
 
 import pytest
@@ -77,6 +79,7 @@ def test_commit_prepares_before_native_replacement(monkeypatch: pytest.MonkeyPat
         replacement = replacement_for(session, compacted_messages)
         calls.clear()
         prepared_records: list[tuple[object, ...]] = []
+        threads: list[int] = []
 
         prepare = commit_module.prepare_provenance
 
@@ -85,18 +88,21 @@ def test_commit_prepares_before_native_replacement(monkeypatch: pytest.MonkeyPat
             assert list(snapshot) == compacted_messages
             assert segments == replacement.segments
             calls.append("prepare")
+            threads.append(threading.get_ident())
             return prepare(snapshot, segments, loaded=loaded)
 
         replace_transcript = session.replace_transcript
 
         def record_replace(rep: TranscriptReplacement, *, reason: str) -> Any:
             calls.append("replace")
+            threads.append(threading.get_ident())
             return replace_transcript(rep, reason=reason)
 
         apply_compaction = binder.apply_compaction
 
         def record_apply(prepared: Any) -> None:
             calls.append("apply_compaction")
+            threads.append(threading.get_ident())
             prepared_records.append(prepared.records)
             apply_compaction(prepared)
 
@@ -104,9 +110,11 @@ def test_commit_prepares_before_native_replacement(monkeypatch: pytest.MonkeyPat
         monkeypatch.setattr(session, "replace_transcript", record_replace)
         monkeypatch.setattr(binder, "apply_compaction", record_apply)
 
-        plan = commit_compaction(binder, messages, compacted_messages, replacement)
+        plan = asyncio.run(commit_compaction(binder, messages, compacted_messages, replacement))
 
         assert calls == ["prepare", "replace", "apply_compaction", "messages"]
+        assert threads[0] == threads[2] == threading.get_ident()
+        assert threads[1] != threading.get_ident()
         assert plan.reused + plan.to_prefill == len(replacement.tokens)
         assert messages == compacted_messages
         assert session.transcript.tokens == replacement.tokens
@@ -128,7 +136,7 @@ def test_native_failure_needs_no_rollback() -> None:
         session.cancel()
 
         with pytest.raises(EngineError, match="transcript replacement"):
-            commit_compaction(binder, messages, compacted_messages, replacement)
+            asyncio.run(commit_compaction(binder, messages, compacted_messages, replacement))
 
         assert messages == original_messages
         assert binder.export_segments() == original_segments

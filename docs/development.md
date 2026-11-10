@@ -96,7 +96,12 @@ requests. When a response reaches its reserve boundary, generation pauses,
 compaction attempts to make room, and generation resumes in the same
 `ModelResponse`. Already delivered response text is not emitted again. Summary
 tokens count once as output usage for automatic compaction, but never become
-response text. If a tool result still does not fit, the owner returns a tool
+response text. Reserve recovery counts successfully emitted `SummaryToken`
+output even if the owner subsequently fails or is cancelled. On success, only
+the unobserved remainder of `RoomResult.generated_tokens` is added, so emitted
+summary output is never charged twice; a failure before emission adds nothing.
+Custom owners that emit no summary events retain their result-based accounting.
+If a tool result still does not fit, the owner returns a tool
 error instead of inserting that oversized result. If reserve recovery cannot
 make room, the response fails with `ContextExhausted`.
 
@@ -120,7 +125,34 @@ service, even when a custom automatic owner is selected. Its
 `compact_messages(messages, reason="manual")` method operates on the supplied
 history in place. The runtime's manual entry point uses this service, not the
 custom owner. Replacing the automatic owner does not register a second
-automatic compactor. Use the runtime entry point for its active-run guard.
+automatic compactor. Use the runtime entry point for its operation guard.
+
+Summary preparation and native replacement run off the event loop through
+retained, shielded executor operations; all native calls still go through the
+single engine worker. Provenance preparation and binder/message publication
+stay on the loop. Session listeners (including manual-compaction progress) run
+on that same loop. The TUI keeps one input application running while an async
+slash command executes, so the compacting footer actually paints, Ctrl-C can
+signal the operation, and registry-marked immediate commands still busy-reject.
+Other input retains the existing queue/answer routing; cancelling the command
+does not cancel the input loop or create a competing prompt.
+
+One compaction attempt owns its entire drain. Overlapping attempts reject
+before emitting progress. While a runtime manual compaction is active,
+run/compact/save/new/switch/fork reject immediately rather than queue or cancel
+it. `runtime.cancel()` signals that operation; `runtime.close()` cancels and
+awaits its drain before closing session state. Cancellation, including repeated
+`Task.cancel()` or AnyIO deadlines, never abandons the executor work. A native
+replacement that already succeeded publishes its matching prepared Python
+state before cancellation propagates; a failed replacement publishes nothing.
+The terminal event follows drain/publication and still reports cancellation,
+not a fabricated successful compaction.
+
+Nonstream reserve recovery uses the private `get_current_run_context` accessor
+from the exactly pinned harness to select canonical history. This is the
+nonstream equivalent of `request_stream`'s explicit context, not another history
+store: a request-only copy cannot preserve a commit followed by an owner error.
+No custom-owner method signature or dependency version changes are required.
 
 ### Compaction session events
 
@@ -161,8 +193,11 @@ an extra summary appended to otherwise unchanged history.
 The commit prepares message provenance first, performs native replacement as
 the only fallible mutation, then installs the prepared binder and message
 state. A failed native replacement leaves the previous history and transcript
-intact; there is no rollback protocol. Summary preparation restores the
-borrowed native state before replacement. A native restoration failure is
+intact. An interrupted or failed replacement sync restores the prior native
+prefix, preserving any not-yet-evaluated transcript suffix, without emitting
+another usage-accounting sync;
+there is no Python-history rollback protocol. Summary preparation restores the
+borrowed native state before replacement. A summary restoration failure is
 surfaced and poisons the worker rather than continuing with private summary
 state.
 
