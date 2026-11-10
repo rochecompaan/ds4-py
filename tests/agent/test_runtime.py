@@ -630,6 +630,7 @@ def test_runtime_cancel_finishes_run_without_native_release(tmp_path: Path) -> N
     terminal = [line for line in events if line["kind"] == "run_end"]
     assert terminal and terminal[-1]["payload"]["status"] == "interrupted"
 
+
 def test_cancelled_stop_does_not_rearm_cancellation_for_next_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -23,8 +23,8 @@ from pydantic_ai.tools import ToolDefinition
 import ds4py
 from ds4py import ThinkMode
 from ds4py._native.fake import FakeNative
-from ds4py.binding import MessageBinder, _BoundMessage, _content_hash
-from ds4py.binding_provenance import prepare_provenance
+from ds4py.binding import MessageBinder
+from ds4py.binding_provenance import BoundMessage, _content_hash, prepare_provenance
 from ds4py.engine.session import Engine, Session
 from ds4py.errors import EngineError
 
@@ -87,7 +87,7 @@ def test_adopt_preserves_sampled_record_in_serialized_snapshot(native_reason: st
     bound.metadata = dict(bound.metadata or {})
     bound.metadata["ds4.sampled"] = sampled
     binder = MessageBinder.__new__(MessageBinder)
-    binder._records = [_BoundMessage("response", content_hash, 0, 3)]
+    binder._records = [BoundMessage("response", content_hash, 0, 3)]
     binder._bound_messages = [bound]
 
     adopted = cast("ModelResponse", binder.adopt([candidate])[0])
