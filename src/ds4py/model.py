@@ -23,7 +23,6 @@ from typing_extensions import sentinel
 
 from ds4py.async_session import await_retained, cancel_session_operation, drain_operation
 from ds4py.binding import MessageBinder
-from ds4py.capabilities.context import ContextRequest
 from ds4py.engine.events import (
     Event,
     Interrupted,
@@ -36,8 +35,8 @@ from ds4py.engine.events import (
     ToolSyntax,
 )
 from ds4py.engine.sampling import SamplingPolicy
-from ds4py.errors import ContextExhausted, EngineError
-from ds4py.summary_usage import summary_usage
+from ds4py.errors import EngineError
+from ds4py.reserve_settlement import ReserveSettlement
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator, Iterator, Sequence
@@ -53,7 +52,6 @@ if TYPE_CHECKING:
 
     from ds4py.capabilities.context import ContextStrategy
     from ds4py.capabilities.system_notes import DS4SystemNotes
-    from ds4py.engine.lifecycle import SessionEvent
     from ds4py.engine.session import Session
 
 _END = sentinel("_END")
@@ -289,14 +287,21 @@ class DS4StreamedResponse(StreamedResponse):
         self._prefilled = 0
         self._cached = 0
         self._output_tokens = 0
-        self._summary_tokens = 0
         self._tool_index = 0
         self._in_tool_syntax = False
         self._pull_lock = asyncio.Lock()
         self._pending_pull: asyncio.Future[Event | _END] | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
         self._partial_published = False
-        self._reserve_needed: int | None = None
+        self._settlement = ReserveSettlement(
+            session=self._session,
+            binder=self._binder,
+            owner=model.context_owner,
+            messages=messages,
+            run_context=run_context,
+            reconciled=lambda: self._reconciled,
+            observe_tail=self._observe_sampled_start,
+        )
         self._compaction_drain: asyncio.Future[None] | None = None
 
     @property
@@ -344,11 +349,13 @@ class DS4StreamedResponse(StreamedResponse):
     def _finalize(self) -> None:
         if self._bound:
             return
+        settlement = self._settlement
+        prefilled = self._prefilled + settlement.prefilled
         self._usage = RequestUsage(
-            input_tokens=self._prefilled,
-            cache_read_tokens=self._cached,
-            output_tokens=self._output_tokens + self._summary_tokens,
-            details={"prefill_tokens": self._prefilled},
+            input_tokens=prefilled,
+            cache_read_tokens=self._cached + settlement.cached,
+            output_tokens=self._output_tokens + settlement.summary_tokens,
+            details={"prefill_tokens": prefilled},
         )
         # A round that never reached its first sync never opened a response: its
         # assistant prefix (if any) was rolled back, so the only assistant/eos
@@ -407,14 +414,10 @@ class DS4StreamedResponse(StreamedResponse):
 
         return iterate()
 
-    def _dispatch(  # noqa: PLR0912 - Each facade event has a distinct harness translation.
-        self, event: Event
-    ) -> list[ModelResponseStreamEvent]:
+    def _dispatch(self, event: Event) -> list[ModelResponseStreamEvent]:
         """Apply one facade event; return harness stream events to publish."""
         outputs: list[ModelResponseStreamEvent] = []
-        if isinstance(event, ReserveReached):
-            self._reserve_needed = event.needed
-        elif isinstance(event, ToolSyntax):
+        if isinstance(event, ToolSyntax):
             self._in_tool_syntax = event.state != "DONE"
         elif isinstance(event, TextDelta):
             if not self._in_tool_syntax:
@@ -500,7 +503,7 @@ class DS4StreamedResponse(StreamedResponse):
                 return
             self._dispatch(event)
             if isinstance(event, ReserveReached):
-                self._settle_reserve(event)
+                self._settlement.settle(event)
             if isinstance(event, (Stopped, Interrupted)):
                 return
 
@@ -523,7 +526,7 @@ class DS4StreamedResponse(StreamedResponse):
             if event is not _END:
                 self._dispatch(event)
                 if isinstance(event, ReserveReached):
-                    self._settle_reserve(event)
+                    self._settlement.settle(event)
         await asyncio.to_thread(self._round.close)
         if self._sampled_start is not None:
             self._observe_sampled_start()
@@ -585,7 +588,7 @@ class DS4StreamedResponse(StreamedResponse):
                     self._reconciled = True
                     break
                 if isinstance(event, ReserveReached):
-                    await self._make_room_for_reserve(event)
+                    await self._settlement.recover(event)
                     continue
                 for part_event in self._dispatch(event):
                     yield part_event
@@ -596,79 +599,6 @@ class DS4StreamedResponse(StreamedResponse):
                     raise ResponseTerminalError(event.reason)
         finally:
             await self._finish()
-
-    def _charge_summary_token(self, tokens: int) -> None:
-        self._summary_tokens += tokens
-
-    def _settle_reserve(self, event: ReserveReached) -> None:
-        """Fail an undecided pause unless terminal cleanup already settled it."""
-        if not self._reconciled:
-            event.fail()
-
-    def _observe_recovered_tail(self, primary: BaseException | None = None) -> bool:
-        """Observe a moved open tail without replacing an owner failure."""
-        if self._reconciled:
-            return False
-        try:
-            self._observe_sampled_start()
-        except EngineError:
-            if primary is None:
-                raise
-        return True
-
-    async def _recover_reserve(self, event: ReserveReached) -> list[ModelMessage]:
-        """Run the selected owner and account for its work in one unit."""
-        owner = self._model.context_owner
-        if owner is None:
-            raise ContextExhausted(self._context_exhausted_message(event.needed))
-
-        def observe_synced(notification: SessionEvent) -> None:
-            sync = notification.payload.get("event")
-            if isinstance(sync, Synced):
-                self._dispatch(sync)
-
-        # Replacement syncs are ordered native work, but are not yielded by the
-        # suspended round. Observe only this owner's work to avoid double counts.
-        unsubscribe = self._session.on_event(observe_synced, kinds={"Synced"})
-        try:
-            with summary_usage(self._session, self._charge_summary_token) as attempt:
-                try:
-                    strict = owner.reserve_operations
-                    with self._session.reserve_window(event, strict=strict) as operations:
-                        messages = owner.reserve_messages(self._messages, self._run_context)
-                        room = await owner.make_room(
-                            messages,
-                            ContextRequest(event.needed, "reserve", operations if strict else None),
-                        )
-                except BaseException as error:
-                    # Commit-then-raise owners can still move the open tail.
-                    self._observe_recovered_tail(error)
-                    raise
-                if self._observe_recovered_tail():
-                    attempt.report_legacy(room.generated_tokens)
-                return messages
-        finally:
-            unsubscribe()
-
-    async def _make_room_for_reserve(self, event: ReserveReached) -> None:
-        """Resume only when the recovered request fits the configured context."""
-        self._reserve_needed = event.needed
-        try:
-            messages = await self._recover_reserve(event)
-            if self._reconciled:
-                return
-            projected = self._model.binder.project_request(messages, bound=True)
-            fits = projected + 1 <= self._session.engine.config.ctx
-        except BaseException:
-            self._settle_reserve(event)
-            raise
-        if not fits:
-            self._settle_reserve(event)
-            raise ContextExhausted(self._context_exhausted_message(event.needed))
-        event.resume(1)
-
-    def _context_exhausted_message(self, needed: int | None) -> str:
-        return f"context reserve reached with {needed} token(s) needed and no room was made"
 
     @override
     async def close_stream(self) -> None:
