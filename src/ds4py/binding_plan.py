@@ -179,7 +179,7 @@ def _transition(  # noqa: PLR0912, PLR0915 - One traversal owns every binding tr
         else:
             start = len(transcript)
             kind = "append"
-            retire = binder.session._paused_stream is not None
+            retire = binder.session.paused
         end = truncate if truncate is not None else len(transcript)
         scratch._transcript.replace(transcript.tokens, transcript.segments)
         scratch._transcript.truncate(end)

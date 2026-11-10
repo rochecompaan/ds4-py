@@ -33,6 +33,32 @@ def _append(
     return session._transcript.append(tokens, kind, meta)
 
 
+def stage_chat(
+    session: Session,
+    tools: Iterable[ToolDefinition] = (),
+    instructions: str | None = None,
+) -> None:
+    """Append the rendered system preamble; the caller holds the mutation lock."""
+    if session._transcript.chat:
+        raise EngineError("chat is already initialized")
+    for segment in PromptBuilder(session._engine).begin(tools, instructions):
+        _append(session, segment.tokens, segment.kind)
+
+
+def sync_chat(session: Session) -> None:
+    """Sync the staged preamble and hold the ``system`` checkpoint.
+
+    Runs without the Session mutation lock: the caller retains an exclusive
+    claim, so event delivery never waits on this thread's lock.
+    """
+    tokens = session._transcript.tokens
+    if not tokens:
+        return
+    if any(isinstance(event, Interrupted) for event in session._job_events(SyncJob(tokens))):
+        raise EngineError("chat start was interrupted")
+    session._checkpoint_native(SYSTEM)
+
+
 def start_chat(
     session: Session,
     tools: Iterable[ToolDefinition] = (),
@@ -43,16 +69,8 @@ def start_chat(
     User tokens therefore enter the native session after the checkpoint exists,
     so a later rewrite restores the system prefix instead of rebuilding it.
     """
-    if session._transcript.chat:
-        raise EngineError("chat is already initialized")
-    segments = PromptBuilder(session._engine).begin(tools, instructions)
-    for segment in segments:
-        _append(session, segment.tokens, segment.kind)
-    tokens = session._transcript.tokens
-    if tokens:
-        if any(isinstance(event, Interrupted) for event in session._job_events(SyncJob(tokens))):
-            raise EngineError("chat start was interrupted")
-        session.checkpoint(SYSTEM)
+    stage_chat(session, tools, instructions)
+    sync_chat(session)
     session._transcript.set_chat()
 
 

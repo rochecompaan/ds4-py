@@ -88,7 +88,7 @@ def test_cancelled_close_retains_one_teardown_until_run_drains(
                 assert session.transcript.tokens[: len(closed_tokens[0])] == closed_tokens[0]
                 assert [e.payload["outcome"] for e in events if e.kind == "compaction_finished"] == ["failed"]
                 assert len([e for e in events if e.kind == "run_end"]) == 1
-                assert not session._active_round and not session._summary_active and not session._replacement_active
+                assert not session._active_round and session._operations.kind is None
                 assert session._worker._poisoned_by is None
                 stable = session.transcript.tokens, list(runtime.messages), len(events), list(closed_tokens)
                 await runtime.close()

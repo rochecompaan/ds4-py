@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -354,12 +355,39 @@ class MessageBinder:
         provider = note_provider if note_provider is not None else self.note_provider
         return configured_plan(self, messages, BindingConfig(definitions, instructions, signature), provider)
 
-    def _apply_boundary(self, boundary: BindingBoundary, provider: DS4SystemNotes | None) -> None:
-        self._records = list(boundary.records)
-        self._bound_messages = list(boundary.bound_messages)
-        self._restored_notes = {key: list(notes) for key, notes in boundary.restored_notes}
-        if provider is not None and boundary.notes is not None:
-            provider.apply_preview(boundary.notes)
+    def _publish_boundary(
+        self,
+        boundary: BindingBoundary,
+        provider: DS4SystemNotes | None,
+        originals: Sequence[ModelMessage],
+        plan: BindingPlan,
+    ) -> None:
+        """Install one boundary's records, provider notes and keys, or restore it.
+
+        Publication runs inside the Session-owned transaction, so a failure here
+        restores this boundary's binder/provider/harness state and the Session
+        restores the group tokens together. Earlier boundaries stay committed.
+        """
+        previous_state = (self._records, self._bound_messages, self._restored_notes)
+        previous_notes = provider.checkpoint() if provider is not None else None
+        published = [(message, message.metadata) for message in originals[: len(boundary.records)]]
+        try:
+            self._records = list(boundary.records)
+            self._bound_messages = list(boundary.bound_messages)
+            self._restored_notes = {key: list(notes) for key, notes in boundary.restored_notes}
+            if provider is not None and boundary.notes is not None:
+                provider.apply_preview(boundary.notes)
+            self._publish_keys(originals, plan)
+        except BaseException as error:
+            self._records, self._bound_messages, self._restored_notes = previous_state
+            for message, metadata in published:
+                message.metadata = metadata
+            if provider is not None and previous_notes is not None:
+                try:
+                    provider.apply_preview(previous_notes)
+                except BaseException as nested:  # noqa: BLE001 - Keep the publication error primary.
+                    error.add_note(f"system notes could not be restored: {nested}")
+            raise
 
     def prepare(
         self,
@@ -369,42 +397,31 @@ class MessageBinder:
         instructions: str | None = None,
         note_provider: DS4SystemNotes | None = None,
     ) -> BindingChange:
-        originals = self.canonicalize(list(messages))
-        plan = self.plan_request(originals, tools=tools, instructions=instructions, note_provider=note_provider)
+        """Apply one planned transition inside a claimed Session transaction."""
         provider = note_provider if note_provider is not None else self.note_provider
-        if plan.truncate_to is not None:
-            self.session.truncate(plan.truncate_to)
-        if plan.reset_chat:
-            self._signature = None
+        with self.session.binding_transaction() as transaction:
+            originals = self.canonicalize(list(messages))
+            plan = self.plan_request(originals, tools=tools, instructions=instructions, note_provider=note_provider)
+            if plan.truncate_to is not None:
+                transaction.truncate(plan.truncate_to)
+            if plan.reset_chat:
+                self._signature = None
+                self._restored = False
+            transaction.apply_appends(
+                plan.initial.appends,
+                publish=partial(self._publish_boundary, plan.initial, provider, originals, plan),
+            )
+            if plan.reset_chat:
+                transaction.start_chat(plan.definitions, plan.instructions)
+            self._signature = plan.signature
             self._restored = False
-            self._apply_boundary(plan.initial, provider)
-            try:
-                self.session.start_chat(plan.definitions, plan.instructions)
-            except BaseException:
-                # start_chat can append a preamble before native sync fails.
-                self.session.truncate(0)
-                raise
-        self._signature = plan.signature
-        self._restored = False
-        self._apply_boundary(plan.initial, provider)
-        self._publish_keys(originals, plan)
-        for boundary in plan.boundaries:
-            start = len(self.session.transcript)
-            paused = (self.session._paused_stream, self.session._paused_control, self.session._paused_sampled_tokens)
-            try:
-                for segment in boundary.appends.segments:
-                    self.session.append_tokens(
-                        boundary.appends.tokens[segment.start : segment.end], segment.kind, segment.meta
-                    )
-            except BaseException:
-                self.session.truncate(start)
-                self.session._paused_stream, self.session._paused_control, self.session._paused_sampled_tokens = paused
-                raise
-            if boundary.retire_paused:
-                self.session._paused_stream = self.session._paused_control = None
-            self._apply_boundary(boundary, provider)
-            self._publish_keys(originals, plan)
-        return plan.change
+            for boundary in plan.boundaries:
+                transaction.apply_appends(
+                    boundary.appends,
+                    retire_paused=boundary.retire_paused,
+                    publish=partial(self._publish_boundary, boundary, provider, originals, plan),
+                )
+            return plan.change
 
     def _publish_keys(self, originals: Sequence[ModelMessage], plan: BindingPlan) -> None:
         for original, planned in zip(originals[: len(self._records)], plan.messages):

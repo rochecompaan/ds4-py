@@ -61,7 +61,7 @@ def _restore_after_cleanup_failure(
     _restore_native(session, original, valid=valid)
     # Disposal may already have removed checkpoints or failed to release a
     # native resource. Restored tokens alone do not make that worker reusable.
-    session._worker.call(lambda e, native: session._worker._poison(error)).result()
+    session.poison(error)
 
 
 def _sync_replacement(session: Session, replacement: TranscriptReplacement, *, reason: str) -> Plan:

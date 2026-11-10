@@ -124,8 +124,8 @@ async def _run_operation[T](session: Session, operation: Callable[[], T]) -> T:
                 raise cancelled from result.error
             raise
         finally:
-            session._worker.cancel_event.clear()
+            session.clear_cancellation()
     if isinstance(result, _Failed):
-        session._worker.cancel_event.clear()
+        session.clear_cancellation()
         raise result.error
     return result.value

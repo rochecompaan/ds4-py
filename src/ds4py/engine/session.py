@@ -19,7 +19,7 @@ from ds4py._native.protocol import EngineConfig, Native, ThinkMode
 from ds4py.errors import EngineError
 
 from . import chat as chat_ops
-from . import rebind
+from . import rebind, session_operations
 from .compaction import SummaryJob, SummaryResult, summary_suffix
 from .decode import DecodeStep, GenerateJob
 from .events import (
@@ -190,8 +190,7 @@ class Session:
         self._rng = Rng(engine.sampling_defaults.seed)
         self._lock = threading.RLock()
         self._active_round = False
-        self._summary_active = False
-        self._replacement_active = False
+        self._operations = session_operations.OperationState()
         self._reserve_event: ReserveReached | None = None
         self._reserve_operations: ReserveOperations | None = None
         self._decode_step: DecodeStep | None = None
@@ -217,6 +216,11 @@ class Session:
     def transcript(self) -> TranscriptView:
         """Read-only history; append_tokens is the guarded caller mutation path."""
         return self._transcript_view
+
+    @property
+    def paused(self) -> bool:
+        """True while a stop-sequence-paused assistant may be retired."""
+        return self._paused_stream is not None
 
     @property
     def ctx_used(self) -> int:
@@ -336,8 +340,9 @@ class Session:
         with self._lock:
             if self._closed:
                 return
-            if self._summary_active or self._replacement_active:
-                raise EngineError("a native operation is active; drain before closing")
+            reason = self._blocked_reason("close")
+            if reason is not None:
+                raise EngineError(reason)
             self._revoke_reserve()
             self._reserve_event = None
             self._closed = True
@@ -345,14 +350,32 @@ class Session:
             self._lifecycle.emit("session_end", old=self.id)
             self._lifecycle.close_states()
 
+    def _blocked_reason(
+        self,
+        policy: session_operations.GuardPolicy,
+        *,
+        authority: ReserveAuthority | None = None,
+        binding: session_operations.BindingTransaction | None = None,
+    ) -> str | None:
+        return session_operations.blocked_reason(self, policy, authority=authority, binding=binding)
+
+    def _exclusive(
+        self,
+        kind: session_operations.OperationKind,
+        *,
+        authority: ReserveAuthority | None = None,
+    ) -> AbstractContextManager[None]:
+        return session_operations.exclusive(self, kind, authority=authority)
+
     def _require_open(self) -> None:
-        if self._closed:
-            raise EngineError("session is closed")
+        reason = self._blocked_reason("open")
+        if reason is not None:
+            raise EngineError(reason)
 
     def _require_idle(self) -> None:
-        self._require_open()
-        if self._active_round or self._summary_active or self._replacement_active:
-            raise EngineError("a round is open")
+        reason = self._blocked_reason("idle")
+        if reason is not None:
+            raise EngineError(reason)
 
     def _reset(self) -> None:
         for _ in self._job_events(ResetJob()):
@@ -401,14 +424,67 @@ class Session:
         """Truncate between rounds and invalidate checkpoints beyond the new end."""
         with self._lock:
             self._require_idle()
-            token_count = operator.index(token_count)
-            if not 0 <= token_count <= len(self._transcript):
-                raise ValueError("truncate position is outside the transcript")
-            for key, length in tuple(self._checkpoint_tokens.items()):
-                if length > token_count:
-                    self.drop_checkpoint(key)
+            self._truncate_locked(token_count)
+
+    def _truncate_locked(self, token_count: int) -> None:
+        # Admission is already granted: the caller holds the mutation lock.
+        token_count = operator.index(token_count)
+        if not 0 <= token_count <= len(self._transcript):
+            raise ValueError("truncate position is outside the transcript")
+        for key, length in tuple(self._checkpoint_tokens.items()):
+            if length > token_count:
+                self._drop_checkpoint_locked(key)
+        self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
+        self._transcript.truncate(token_count)
+
+    def apply_appends(self, replacement: TranscriptReplacement, *, retire_paused: bool = False) -> None:
+        """Append one validated group of segments atomically between rounds.
+
+        Python-only: appends never synchronize native state. Kinds, coverage and
+        resulting offsets are checked before one publication, so invalid input
+        changes neither history, chat flag nor Session-owned pause state.
+        """
+        with self._lock:
+            self._commit_appends(replacement, retire_paused=retire_paused)
+
+    @contextmanager
+    def binding_transaction(self) -> Generator[session_operations.BindingTransaction]:
+        """Claim all binding boundaries of one real preparation plan.
+
+        The claim begins before planning and excludes every other round,
+        mutation or close until it is released in ``finally``. Native preamble
+        work releases the mutation lock but never the claim.
+        """
+        with self._exclusive("binding"):
+            transaction = session_operations.BindingTransaction(self)
+            try:
+                yield transaction
+            finally:
+                transaction.close()
+
+    def _commit_appends(
+        self,
+        replacement: TranscriptReplacement,
+        *,
+        retire_paused: bool = False,
+        publish: Callable[[], None] | None = None,
+        binding: session_operations.BindingTransaction | None = None,
+    ) -> None:
+        # The lock is held; admission is granted here so every caller shares it.
+        reason = self._blocked_reason("idle", binding=binding)
+        if reason is not None:
+            raise EngineError(reason)
+        self._transcript.append_group(replacement)
+        paused = (self._paused_stream, self._paused_control, self._paused_sampled_tokens)
+        if retire_paused:
             self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
-            self._transcript.truncate(token_count)
+        try:
+            if publish is not None:
+                publish()
+        except BaseException:
+            self._transcript.rollback(len(self._transcript) - len(replacement.tokens))
+            self._paused_stream, self._paused_control, self._paused_sampled_tokens = paused
+            raise
 
     def install_segments(self, segments: Sequence[Segment]) -> None:
         """Install saved provenance over tokens an already-loaded payload set.
@@ -436,32 +512,17 @@ class Session:
         Strict paused callers require it; idle callers leave it as None. A
         supplied invalid, stale or listener-delivered ticket always rejects.
         """
-        with self._lock:
-            self._require_open()
-            if (
-                self._summary_active
-                or self._replacement_active
-                or (
-                    (self._active_round or authority is not None)
-                    and not self._reserve_allowed(authority, "replacement")
-                )
-            ):
-                raise EngineError("a round is open")
-            self._replacement_active = True
-        try:
+        with self._exclusive("replacement", authority=authority):
             # Event delivery can synchronously wait for the loop. Never retain
-            # the mutation lock across worker emissions; ownership rejects writes.
+            # the mutation lock across worker emissions; the claim rejects writes.
             plan = rebind.replace_transcript(self, replacement, reason=reason)
             with self._lock:
                 self._require_open()
                 self._transcript.replace(replacement.tokens, replacement.segments)
                 self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
                 return plan
-        finally:
-            with self._lock:
-                self._replacement_active = False
 
-    def _reserve_allowed(self, authority: ReserveAuthority | None, operation: ReserveOperation) -> bool:
+    def _reserve_authorized(self, authority: ReserveAuthority | None, operation: ReserveOperation) -> bool:
         operations = self._reserve_operations
         if self._reserve_event is None or operations is None:
             return False
@@ -481,7 +542,12 @@ class Session:
         """
         with self._lock:
             self._require_open()
-            if event is not self._reserve_event or in_listener.get() or self._reserve_operations is not None:
+            if (
+                event is not self._reserve_event
+                or in_listener.get()
+                or self._reserve_operations is not None
+                or self._operations.kind is not None
+            ):
                 raise EngineError("reserve window requires an unclaimed live pause")
             operations = ReserveOperations(self, strict=strict)
             self._reserve_operations = operations
@@ -525,28 +591,15 @@ class Session:
         Strict paused callers require it; idle callers leave it as None. A
         supplied invalid, stale or listener-delivered ticket always rejects.
         """
-        with self._lock:
-            self._require_open()
-            if (
-                self._summary_active
-                or self._replacement_active
-                or ((self._active_round or authority is not None) and not self._reserve_allowed(authority, "summary"))
-            ):
-                raise EngineError("a round is open")
+        with self._exclusive("summary", authority=authority):
             bottom = operator.index(bottom)
             if not 0 <= bottom <= len(self._transcript):
                 raise ValueError("summary position is outside the transcript")
-            # The outer round owns its flags and may close during event delivery.
-            self._summary_active = True
-        try:
             prefix = self._transcript.tokens[:bottom]
             job = SummaryJob(prefix + summary_suffix(self._engine, prefix))
             for _ in self._job_events(job):
                 pass
             return job.result.result()
-        finally:
-            with self._lock:
-                self._summary_active = False
 
     def reconcile_round(self, token_count: int) -> None:
         """Rewind native state and transcript to one closed round's sampled end.
@@ -558,7 +611,7 @@ class Session:
             self._require_idle()
             self.truncate(token_count)
             self._worker.call(lambda engine, native: native.rewind(token_count)).result()
-            self._worker.cancel_event.clear()
+            self.clear_cancellation()
 
     def append_user(self, text: str, images: Sequence[object] = ()) -> Segment:
         """Append a user turn between rounds, initializing an empty chat if needed.
@@ -612,7 +665,7 @@ class Session:
         """
         with self._lock:
             self._require_open()
-            if self._active_round or self._summary_active or self._replacement_active:
+            if self._blocked_reason("idle") is not None:
                 raise EngineError("cannot add a logits hook during an active round")
             self._logits_hooks.append(hook)
 
@@ -698,7 +751,7 @@ class Session:
                             interrupted = True
                 finally:
                     if not interrupted:
-                        self._worker.cancel_event.clear()
+                        self.clear_cancellation()
         return interrupted
 
     def _raw_round(
@@ -774,19 +827,27 @@ class Session:
     def checkpoint(self, key: str) -> Checkpointed:
         with self._lock:
             self._require_idle()
-            event = next(iter(self._job_events(CheckpointJob(key))))
-            if not isinstance(event, Checkpointed):
-                raise AssertionError(  # noqa: TRY004 - Preserve the impossible-event assertion contract.
-                    "checkpoint job returned a non-checkpoint event"
-                )
-            self._checkpoint_tokens[key] = event.tokens
-            return event
+            return self._checkpoint_native(key)
+
+    def _checkpoint_native(self, key: str) -> Checkpointed:
+        # Admission is already granted. The binding transaction runs this with
+        # only its claim held, so delivery never waits on this thread's lock.
+        event = next(iter(self._job_events(CheckpointJob(key))))
+        if not isinstance(event, Checkpointed):
+            raise AssertionError(  # noqa: TRY004 - Preserve the impossible-event assertion contract.
+                "checkpoint job returned a non-checkpoint event"
+            )
+        self._checkpoint_tokens[key] = event.tokens
+        return event
 
     def drop_checkpoint(self, key: str) -> None:
         with self._lock:
             self._require_idle()
-            list(self._job_events(CheckpointJob(key, drop=True)))
-            self._checkpoint_tokens.pop(key, None)
+            self._drop_checkpoint_locked(key)
+
+    def _drop_checkpoint_locked(self, key: str) -> None:
+        list(self._job_events(CheckpointJob(key, drop=True)))
+        self._checkpoint_tokens.pop(key, None)
 
     def save_payload(self, file: BinaryIO, *, header: bytes) -> Saved:
         """Sync the transcript and write the header plus staged native payload.
@@ -844,3 +905,19 @@ class Session:
     def cancel(self) -> None:
         """Request worker cancellation from any thread without closing the round."""
         self._worker.cancel_event.set()
+
+    def clear_cancellation(self) -> None:
+        """Release the worker cancellation signal once its work has drained.
+
+        Call only after retained native/summary/replacement work has finished;
+        no operation may still be waiting to observe the signal.
+        """
+        self._worker.cancel_event.clear()
+
+    def poison(self, error: BaseException) -> None:
+        """Fail the worker closed after unrecoverable native cleanup.
+
+        Dispatches once through the worker queue from the consuming thread. A
+        worker callback must never call this, because it would wait on itself.
+        """
+        self._worker.call(lambda engine, native: self._worker._poison(error)).result()

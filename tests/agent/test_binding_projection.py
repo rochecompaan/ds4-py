@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from copy import deepcopy
-from typing import Any
+from typing import Any, override
 
 import pytest
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
@@ -113,30 +113,37 @@ def test_clock_failure_leaves_binding_messages_and_provider_untouched() -> None:
         assert snapshot(binder, messages) == before
 
 
-@pytest.mark.parametrize("fail_at", [1, 2, 3, 4])
-def test_partial_append_rolls_back_to_last_completed_message(fail_at: int, monkeypatch: pytest.MonkeyPatch) -> None:
+class _FailingPublication(DS4SystemNotes):
+    """Fail the publication that installs one already dated note checkpoint."""
+
+    def __init__(self, session: Session, *, at: int) -> None:
+        super().__init__(session, hints=True, clock=lambda: "fixed")
+        self.seen = 0
+        self._at = at
+
+    @override
+    def apply_preview(self, state: Any) -> None:
+        if state.date_emitted:
+            self.seen += 1
+            if self.seen == self._at:
+                raise EngineError("append failed")
+        super().apply_preview(state)
+
+
+@pytest.mark.parametrize("fail_at", [1, 2])
+def test_partial_append_rolls_back_to_last_completed_message(fail_at: int) -> None:
+    # Appends publish whole groups: a rejected group leaves no partial tokens.
     with fake_engine() as engine:
         session = engine.session()
         binder = MessageBinder(session)
-        notes = DS4SystemNotes(session, hints=True, clock=lambda: "fixed")
+        notes = _FailingPublication(session, at=fail_at)
         binder.note_provider = notes
         messages: list[ModelMessage] = [user("one"), user("two")]
         session.start_chat()
         preamble = session.transcript.tokens
-        calls = 0
-
-        def fail_append(self: Session, tokens: Any, kind: str, meta: Any = None) -> Any:
-            nonlocal calls
-            calls += 1
-            result = Session.append_tokens(self, tokens, kind, meta)
-            if calls == fail_at:
-                raise EngineError("append failed")
-            return result
-
-        monkeypatch.setattr(session, "append_tokens", fail_append.__get__(session))
         with pytest.raises(EngineError, match="append failed"):
             binder.prepare(messages)
-        if fail_at <= 3:
+        if fail_at == 1:
             assert session.transcript.tokens == preamble
             assert binder.records() == ()
             assert not notes._date_emitted
@@ -152,7 +159,6 @@ def test_partial_append_rolls_back_to_last_completed_message(fail_at: int, monke
             assert notes._date_emitted and notes._hints_full_emitted
             assert messages[0].metadata is not None
             assert messages[1].metadata is None
-        monkeypatch.undo()
         binder.prepare(messages)
         assert len(binder.records()) == 2
         assert [s.meta.get("subtype") for s in session.transcript.segments if s.kind == "note"] == [

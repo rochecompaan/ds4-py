@@ -153,7 +153,7 @@ class LLMCompaction(ContextStrategy):
             # Cancellation can arrive at the paint checkpoint before a native
             # operation exists to consume it. All submitted work is drained by
             # this point, so clear that signal before releasing attempt ownership.
-            session._worker.cancel_event.clear()
+            session.clear_cancellation()
             outcome = "cancelled"
             raise
         finally:
