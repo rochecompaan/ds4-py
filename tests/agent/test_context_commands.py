@@ -11,6 +11,7 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai_harness import HarnessDeprecationWarning
 from test_compaction_capability import script
 from test_context_strategy import RecordingOwner
+from test_runtime import fake_engine, scripted_rounds
 
 import ds4py
 from ds4py import ThinkMode
@@ -153,6 +154,87 @@ def test_manual_compact_rejects_active_run_without_progress_or_cancellation(tmp_
             await runtime.close()
             with pytest.raises(EngineError, match="closed"):
                 await runtime.compact()
+
+        asyncio.run(scenario())
+
+
+def test_pending_question_busy_command_emits_no_events_and_later_answer_completes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
+
+    question_call = (
+        "<tool_call><function=ask_user_question><parameter=questions>"
+        '[{"header":"next","question":"What next?","options":[{"label":"one"},{"label":"two"}]}]'
+        "</parameter></function></tool_call>"
+    )
+    with fake_engine(script=scripted_rounds(question_call, "done")) as engine:
+
+        async def scenario() -> None:
+            question_pending = asyncio.Event()
+            busy_reported = asyncio.Event()
+            run_done = asyncio.Event()
+            responses: list[AskUserResponse] = []
+
+            async def answer(request: AskUserRequest) -> AskUserResponse:
+                question_pending.set()
+                response = await tui.ask(request)
+                responses.append(response)
+                return response
+
+            with pytest.warns(HarnessDeprecationWarning, match="deprecated and ignored: commands/paths start"):
+                runtime = AgentRuntime(
+                    DS4Model(engine.session(), sampling=SamplingPolicy(seed=1)),
+                    tmp_path,
+                    store=SessionStore(tmp_path / "store"),
+                    interactive=True,
+                    question_answerer=answer,
+                )
+            events: list[SessionEvent] = []
+
+            def record(event: SessionEvent) -> None:
+                events.append(event)
+                if event.kind == "run_end":
+                    run_done.set()
+
+            runtime.on_event(record)
+            messages: list[str] = []
+
+            def show(text: object) -> None:
+                messages.append(str(text))
+                if str(text).startswith(("error:", "Invalid choice")):
+                    busy_reported.set()
+
+            with create_pipe_input() as input_:
+                tui = TUI(runtime, input=input_, output=DummyOutput())
+                monkeypatch.setattr(tui, "show_message", show)
+                task = asyncio.create_task(tui.run("ask me"))
+                try:
+                    await asyncio.wait_for(question_pending.wait(), 2)
+                    before = list(events)
+                    messages.clear()
+                    input_.send_text("  /compact\n")
+                    await asyncio.wait_for(busy_reported.wait(), 2)
+                    assert messages == ["error: a run is already active"]
+                    assert events == before
+                    assert tui._answers.empty()
+                    assert not run_done.is_set()
+                    assert responses == []
+                    input_.send_text("2\n")
+                    await asyncio.wait_for(run_done.wait(), 2)
+                    assert responses[0].answers[0].selected == ("two",)
+                    assert not responses[0].cancelled
+                    assert sum(event.kind == "run_start" for event in events) == 1
+                    assert not {"before_compact", "compacted", "compaction_finished", "SummaryToken", "Interrupted"} & {
+                        event.kind for event in events
+                    }
+                    assert runtime.status == "success"
+                finally:
+                    if not run_done.is_set():
+                        input_.send_text("2\n")
+                    input_.send_text("/exit\n")
+                    await asyncio.wait_for(task, 2)
+                    await runtime.close()
 
         asyncio.run(scenario())
 

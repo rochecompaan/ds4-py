@@ -174,8 +174,8 @@ class TUI:
             if prompt_task in done:
                 try:
                     line = self._take_prompt(prompt_task)
-                    if line.strip().split(maxsplit=1)[:1] == ["/compact"]:
-                        await self.dispatch(line)
+                    if self.commands.is_immediate(line):
+                        await self._dispatch_command(line)
                     elif self._answering:
                         self._answers.put_nowait(line)
                     else:
@@ -234,18 +234,21 @@ class TUI:
             while not self._answers.empty():
                 self._queued.append(self._answers.get_nowait())
 
+    async def _dispatch_command(self, line: str) -> None:
+        try:
+            result = await self.commands.execute(line)
+        except Exception as error:
+            self.show_message(f"error: {error}")
+        else:
+            if result is not None:
+                self.show_message(result)
+
     async def dispatch(self, line: str) -> None:
         """Execute one submitted prompt or command without escaping the loop."""
         if not line.strip():
             return
         if line.lstrip().startswith("/"):
-            try:
-                result = await self.commands.execute(line.strip())
-            except Exception as error:
-                self.show_message(f"error: {error}")
-            else:
-                if result is not None:
-                    self.show_message(result)
+            await self._dispatch_command(line.strip())
             return
         if self._in_loop:
             await self._run_with_controls(line)

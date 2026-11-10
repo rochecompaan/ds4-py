@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.output import DummyOutput
@@ -93,7 +94,19 @@ def test_model_question_uses_active_prompt_and_returns_typed_answer() -> None:
     assert runtime.calls == [("run", "ask")]
 
 
-def test_compact_reports_busy_without_consuming_a_pending_question_answer() -> None:
+@pytest.mark.parametrize(
+    ("command", "feedback", "command_calls"),
+    [
+        ("/compact", "error: a run is already active", [("compact",)]),
+        ("  /compact  ", "error: a run is already active", [("compact",)]),
+        ("/compact extra", "error: usage: /compact", []),
+        ('  /probe "two words"', "probe: two words", []),
+        ('"/probe" "two words"', "probe: two words", []),
+    ],
+)
+def test_immediate_command_does_not_consume_a_pending_question_answer(
+    command: str, feedback: str, command_calls: list[tuple[str]]
+) -> None:
     from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse, Question, QuestionOption
 
     async def scenario() -> None:
@@ -117,7 +130,7 @@ def test_compact_reports_busy_without_consuming_a_pending_question_answer() -> N
 
             def show(text: object) -> None:
                 messages.append(str(text))
-                if str(text).startswith(("error:", "Invalid choice")):
+                if str(text).startswith(("error:", "Invalid choice", "probe:")):
                     feedback_received.set()
 
             async def ask_during_run(prompt: str) -> None:
@@ -130,6 +143,9 @@ def test_compact_reports_busy_without_consuming_a_pending_question_answer() -> N
                 runtime.calls.append(("compact",))
                 raise EngineError("a run is already active")
 
+            tui.commands.register(
+                "probe", lambda text: f"probe: {text}", description="Probe", immediate_while_running=True
+            )
             cast("Any", runtime).run = ask_during_run
             cast("Any", runtime).compact = compact
             cast("Any", tui).show_message = show
@@ -137,10 +153,11 @@ def test_compact_reports_busy_without_consuming_a_pending_question_answer() -> N
             try:
                 await asyncio.wait_for(question_pending.wait(), 2)
                 messages.clear()
-                input_.send_text("/compact\n")
+                input_.send_text(f"{command}\n")
                 await asyncio.wait_for(feedback_received.wait(), 2)
-                assert messages == ["error: a run is already active"]
-                assert runtime.calls == [("run", "ask"), ("compact",)]
+                assert messages == [feedback]
+                assert runtime.calls == [("run", "ask"), *command_calls]
+                assert tui._answers.empty()
                 assert not question_done.is_set()
                 assert responses == []
                 assert tui.footer.status != "compacting"
@@ -151,6 +168,83 @@ def test_compact_reports_busy_without_consuming_a_pending_question_answer() -> N
             finally:
                 if not question_done.is_set():
                     input_.send_text("1\n")
+                input_.send_text("/exit\n")
+                await asyncio.wait_for(task, 2)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("answer", ["/cancel", "/unknown", "/new", '/compact "unfinished'])
+def test_non_immediate_slash_input_keeps_question_answer_handling(answer: str) -> None:
+    from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse, Question, QuestionOption
+
+    runtime: Any = FakeRuntime()
+    request = AskUserRequest(
+        questions=(
+            Question(
+                header="next", question="What next?", options=(QuestionOption(label="one"), QuestionOption(label="two"))
+            ),
+        )
+    )
+    responses: list[AskUserResponse] = []
+    messages: list[object] = []
+    with create_pipe_input() as input_:
+        tui = TUI(runtime, input=input_, output=DummyOutput())
+        cast("Any", tui).show_message = messages.append
+
+        async def ask_during_run(prompt: str) -> None:
+            runtime.calls.append(("run", prompt))
+            responses.append(await tui.ask(request))
+            tui.exiting = True
+
+        runtime.run = ask_during_run
+        input_.send_text(f"{answer}\n" + ("" if answer == "/cancel" else "1\n"))
+        asyncio.run(asyncio.wait_for(tui.run("ask"), 2))
+
+    assert runtime.calls == [("run", "ask")]
+    assert responses[0].cancelled is (answer == "/cancel")
+    if answer != "/cancel":
+        assert responses[0].answers[0].selected == ("one",)
+        assert messages[-1] == "Invalid choice; try again or enter /cancel."
+
+
+def test_unmarked_command_stays_queued_until_the_active_run_finishes() -> None:
+    async def scenario() -> None:
+        started = asyncio.Event()
+        finish = asyncio.Event()
+        immediate_done = asyncio.Event()
+        queued_done = asyncio.Event()
+        calls: list[str] = []
+        runtime: Any = FakeRuntime()
+
+        async def run(prompt: str) -> None:
+            calls.append(prompt)
+            started.set()
+            await finish.wait()
+
+        def later() -> None:
+            calls.append("later")
+            queued_done.set()
+
+        runtime.run = run
+        with create_pipe_input() as input_:
+            tui = TUI(runtime, input=input_, output=DummyOutput())
+            tui.commands.register("later", later, description="Queued command")
+            tui.commands.register(
+                "probe", immediate_done.set, description="Immediate barrier", immediate_while_running=True
+            )
+            task = asyncio.create_task(tui.run("hello"))
+            try:
+                await asyncio.wait_for(started.wait(), 2)
+                input_.send_text("/later\n/probe\n")
+                await asyncio.wait_for(immediate_done.wait(), 2)
+                assert calls == ["hello"]
+                assert not queued_done.is_set()
+                finish.set()
+                await asyncio.wait_for(queued_done.wait(), 2)
+                assert calls == ["hello", "later"]
+            finally:
+                finish.set()
                 input_.send_text("/exit\n")
                 await asyncio.wait_for(task, 2)
 

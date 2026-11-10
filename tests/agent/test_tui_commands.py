@@ -145,6 +145,64 @@ def test_extension_command_uses_the_same_execution_path() -> None:
     assert asyncio.run(registry.execute("/hello world")) == "hello world"
 
 
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("/compact", True),
+        ("  /compact  ", True),
+        ("\t/compact extra", True),
+        ('/compact "two words"', True),
+        ('"/compact"', True),
+        ("", False),
+        ("ordinary answer", False),
+        ("compact", False),
+        ("/", False),
+        ("//compact", False),
+        ("/unknown", False),
+        ("/cancel", False),
+        ("/new", False),
+        ("/save", False),
+        ("/switch prefix", False),
+        ("/hints on", False),
+        ("/exit", False),
+        ('/compact "unfinished', False),
+        ("/compact trailing\\", False),
+    ],
+)
+def test_immediate_query_classifies_without_executing(line: str, expected: bool) -> None:
+    runtime = FakeRuntime()
+    tui = make_tui(runtime)
+    try:
+        assert tui.commands.is_immediate(line) is expected
+        assert runtime.calls == []
+        assert not tui.exiting
+    finally:
+        tui.close()
+
+
+def test_extension_immediate_metadata_uses_the_execution_parser() -> None:
+    registry = SlashCommandRegistry()
+    calls: list[str] = []
+    registry.register("probe", calls.append, description="Probe", immediate_while_running=True)
+    registry.register("later", calls.append, description="Later")
+    line = '  "/probe" "two words"  '
+    assert registry.is_immediate(line)
+    assert not registry.is_immediate("/later answer")
+    assert calls == []
+    asyncio.run(registry.execute(line))
+    assert calls == ["two words"]
+
+
+@pytest.mark.parametrize("line", [' /compact "unfinished', "/compact trailing\\", "ordinary answer", "/"])
+def test_execution_still_reports_parse_and_lookup_errors(line: str) -> None:
+    tui = make_tui()
+    try:
+        with pytest.raises(CommandError):
+            asyncio.run(tui.commands.execute(line))
+    finally:
+        tui.close()
+
+
 def test_compaction_lifecycle_updates_footer_without_response_text() -> None:
     runtime = FakeRuntime()
     with create_pipe_input() as input_:
