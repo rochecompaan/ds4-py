@@ -7,12 +7,11 @@ State factories and ``close()`` are orchestration concerns, not worker callbacks
 they may acquire ordinary Python resources, but the facade decides when they run.
 """
 
-import asyncio
 import sys
 from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import Future
 from contextlib import contextmanager, suppress
-from contextvars import ContextVar, copy_context
+from contextvars import ContextVar
 from dataclasses import dataclass
 from threading import RLock, get_ident
 from typing import TYPE_CHECKING, cast
@@ -22,35 +21,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 from uuid import uuid4
 
-# Listener delivery must not inherit a paused owner's native-operation authority.
-reserve_authority: ContextVar[ReservePermission | None] = ContextVar("reserve_authority", default=None)
 in_listener: ContextVar[bool] = ContextVar("in_session_listener", default=False)
-
-
-def current_task() -> asyncio.Task[object] | None:
-    """Executor threads have no running asyncio task."""
-    try:
-        return asyncio.current_task()
-    except RuntimeError:
-        return None
-
-
-@dataclass
-class ReservePermission:
-    """Revocable owner identity, also usable in that owner's executor context."""
-
-    task: asyncio.Task[object] | None
-    thread: int
-    active: bool = True
-
-    def allows(self) -> bool:
-        task = current_task()
-        return (
-            self.active
-            and reserve_authority.get() is self
-            and not in_listener.get()
-            and (task is self.task if task is not None else self.task is None or get_ident() != self.thread)
-        )
 
 
 Listener = Callable[["SessionEvent"], None]
@@ -135,9 +106,7 @@ class SessionLifecycle:
                 else:
                     delivered.set_result(None)
 
-            context = copy_context()
-            context.run(reserve_authority.set, None)
-            loop.call_soon_threadsafe(deliver, context=context)
+            loop.call_soon_threadsafe(deliver)
             # Keep event order and finish listeners before the producer proceeds.
             delivered.result()
             return
@@ -151,7 +120,6 @@ class SessionLifecycle:
         for listener, allowed in listeners:
             if allowed is not None and event.kind not in allowed:
                 continue
-            authority = reserve_authority.set(None)
             delivery = in_listener.set(True)
             try:
                 listener(event)
@@ -159,7 +127,6 @@ class SessionLifecycle:
                 self._report(error)
             finally:
                 in_listener.reset(delivery)
-                reserve_authority.reset(authority)
 
     def _report(self, error: Exception) -> None:
         if self._error_handler is not None:

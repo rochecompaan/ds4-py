@@ -71,7 +71,11 @@ async def drain_operation[T](future: asyncio.Future[T]) -> T:
 
 
 async def run_session_operation[T](session: Session, operation: Callable[[], T]) -> T:
-    """Offload one Session call, preserving scoped authority but never abandoning it.
+    """Offload one Session call without abandoning it.
+
+    Strict reserve callers validate on-loop and capture an explicit ticket in
+    ``operation``. Context copying below serves legacy owners and other ambient
+    application state; it is not the source of strict reserve authority.
 
     This boundary owns no response pull lock. A cancelled caller does not regain
     control until the facade (including native restoration and event delivery)

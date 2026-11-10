@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
     from ds4py.binding import MessageBinder
     from ds4py.engine.plan import Plan
+    from ds4py.engine.reserve import ReserveOperations
     from ds4py.engine.transcript import TranscriptReplacement
 
 
@@ -22,6 +23,8 @@ async def commit_compaction(
     messages: list[ModelMessage],
     compacted_messages: Sequence[ModelMessage],
     replacement: TranscriptReplacement,
+    *,
+    operations: ReserveOperations | None = None,
 ) -> Plan:
     """Commit one compaction so a native failure needs no rollback.
 
@@ -36,9 +39,15 @@ async def commit_compaction(
         loaded=len(replacement.tokens),
     )
     committed: list[Plan] = []
+    # Validate the strict owner on its loop, not inside an inherited executor.
+    operation = (
+        operations._replacement_operation(replacement, reason="compaction")
+        if operations is not None
+        else lambda: binder.session.replace_transcript(replacement, reason="compaction")
+    )
 
     def replace() -> Plan:
-        plan = binder.session.replace_transcript(replacement, reason="compaction")
+        plan = operation()
         committed.append(plan)
         return plan
 

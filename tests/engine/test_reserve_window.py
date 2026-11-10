@@ -101,8 +101,9 @@ def test_expired_pause_and_nested_windows_reject() -> None:
             pass
 
 
+@pytest.mark.parametrize("strict", [False, True])
 @pytest.mark.parametrize("stale_action", ["fail", "resume", "close"])
-def test_expired_round_cannot_revoke_another_rounds_reserve_window(stale_action: str) -> None:
+def test_expired_round_cannot_revoke_another_rounds_reserve_window(stale_action: str, strict: bool) -> None:
     with paused() as (session, expired_pause, expired_round):
         expired_round.close()
         session.append_user("next")
@@ -112,8 +113,9 @@ def test_expired_round_cannot_revoke_another_rounds_reserve_window(stale_action:
         current_round = session.run_round()
         try:
             current_pause = next(event for event in current_round if isinstance(event, ReserveReached))
-            with session.reserve_window(current_pause):
-                replace(session)
+            with session.reserve_window(current_pause, strict=strict) as operations:
+                replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
+                operations.replace_transcript(replacement, reason="current owner")
                 if stale_action == "close":
                     expired_round.close()
                 elif stale_action == "fail":
@@ -124,7 +126,7 @@ def test_expired_round_cannot_revoke_another_rounds_reserve_window(stale_action:
                         expired_pause.resume(1)
                 # A stale handle must neither revoke permission nor consume the
                 # live decision: native replacement and that decision still work.
-                replace(session)
+                operations.replace_transcript(replacement, reason="still current owner")
                 current_pause.fail()
             assert list(current_round) == [Stopped("context_exhausted")]
         finally:

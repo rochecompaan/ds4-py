@@ -25,6 +25,7 @@ from ds4py.capabilities.compaction import CompactionReason, LLMCompaction
 from ds4py.capabilities.context import ContextRequest
 from ds4py.engine.events import Synced
 from ds4py.engine.lifecycle import SessionEvent
+from ds4py.engine.reserve import ReserveAuthority
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.transcript import TranscriptReplacement
 from ds4py.errors import EngineError
@@ -366,10 +367,12 @@ def test_reserve_cancellation_drains_before_response_reconciliation(
                     gate.hold()
                 return argmax(handle)
 
-            def gated_replace(value: TranscriptReplacement, *, reason: str) -> object:
+            def gated_replace(
+                value: TranscriptReplacement, *, reason: str, authority: ReserveAuthority | None = None
+            ) -> object:
                 if phase == "replacement_before":
                     gate.hold()
-                result = replacement(value, reason=reason)
+                result = replacement(value, reason=reason, authority=authority)
                 if phase == "replacement_after":
                     gate.hold()
                 return result
@@ -581,7 +584,9 @@ def test_reserve_failure_accounts_only_emitted_summary_output(
             events: list[SessionEvent] = []
             session.on_event(events.append)
 
-            def fail_replace(value: TranscriptReplacement, *, reason: str) -> object:
+            def fail_replace(
+                value: TranscriptReplacement, *, reason: str, authority: ReserveAuthority | None = None
+            ) -> object:
                 raise EngineError("replacement native failure")
 
             if phase == "replacement":

@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
     from ds4py.binding import MessageBinder
     from ds4py.engine.lifecycle import SessionEvent
+    from ds4py.engine.reserve import ReserveOperations
 
 _RESERVE = 1
 TOOL_RESULT_DOES_NOT_FIT = "Tool error: tool result still does not fit"
@@ -34,6 +35,7 @@ class ContextRequest:
 
     needed_tokens: int
     reason: Literal["tool_result", "reserve"]
+    operations: ReserveOperations | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,8 @@ class ContextStrategy(AbstractCapability, ABC):
     owners may instead select canonical harness history. Neither creates a
     second canonical history or changes the other owner's selection.
     """
+
+    reserve_operations: bool = False
 
     def __init__(self, binder: MessageBinder) -> None:
         self.binder = binder

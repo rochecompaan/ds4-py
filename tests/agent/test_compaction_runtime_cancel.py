@@ -14,6 +14,7 @@ from test_runtime import fake_engine, fixed_clock, make_model
 from ds4py._native.fake import FAKE_EOS, FakeSession
 from ds4py.engine.events import Synced
 from ds4py.engine.lifecycle import SessionEvent
+from ds4py.engine.reserve import ReserveAuthority
 from ds4py.engine.transcript import TranscriptReplacement
 from ds4py.runtime import AgentRuntime
 from ds4py.store import SessionStore
@@ -71,10 +72,12 @@ def test_runtime_reserve_cancellation_adopts_and_roundtrips(
                     gate.hold()
                 return argmax(native)
 
-            def replacement(value: TranscriptReplacement, *, reason: str) -> object:
+            def replacement(
+                value: TranscriptReplacement, *, reason: str, authority: ReserveAuthority | None = None
+            ) -> object:
                 if phase == "replacement_before":
                     gate.hold()
-                result = replace(value, reason=reason)
+                result = replace(value, reason=reason, authority=authority)
                 if phase == "replacement_after":
                     gate.hold()
                 return result

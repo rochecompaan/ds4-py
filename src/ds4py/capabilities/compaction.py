@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from pydantic_ai.tools import RunContext
 
     from ds4py.binding import MessageBinder
+    from ds4py.engine.reserve import ReserveOperations
 
 
 type CompactionReason = Literal["threshold", "tool_result", "reserve", "manual"]
@@ -46,6 +47,8 @@ class CompactionResult:
 
 class LLMCompaction(ContextStrategy):
     """Automatic and manual compaction share one ordered, in-place commit."""
+
+    reserve_operations: bool = True
 
     def __init__(self, binder: MessageBinder, *, soft: float = TRIGGER_SOFT_THRESHOLD) -> None:
         super().__init__(binder)
@@ -76,18 +79,22 @@ class LLMCompaction(ContextStrategy):
             min(8192, size // 8), self.summary_reserve() + TRIGGER_THRESHOLD_MARGIN
         )
 
-    async def compact_messages(self, messages: list[ModelMessage], *, reason: CompactionReason) -> CompactionResult:
+    async def compact_messages(
+        self, messages: list[ModelMessage], *, reason: CompactionReason, operations: ReserveOperations | None = None
+    ) -> CompactionResult:
         if self._attempt is not None:
             raise EngineError("a compaction is already active")
         self._attempt = asyncio.current_task()
         session = self.binder.session
         try:
             with session.events_on_loop(asyncio.get_running_loop()), session_operation_owner(session):
-                return await self._compact_messages(messages, reason=reason)
+                return await self._compact_messages(messages, reason=reason, operations=operations)
         finally:
             self._attempt = None
 
-    async def _compact_messages(self, messages: list[ModelMessage], *, reason: CompactionReason) -> CompactionResult:
+    async def _compact_messages(
+        self, messages: list[ModelMessage], *, reason: CompactionReason, operations: ReserveOperations | None = None
+    ) -> CompactionResult:
         session = self.binder.session
         old = len(session.transcript)
         outcome: CompactionOutcome = "failed"
@@ -99,7 +106,11 @@ class LLMCompaction(ContextStrategy):
             if not tail.cut_messages or tail.bottom_tokens <= tail.system_end_tokens:
                 outcome = "noop"
                 return CompactionResult("", 0, len(messages), 0)
-            summary = await run_session_operation(session, lambda: session.prepare_summary(tail.bottom_tokens))
+            summary = (
+                await operations.prepare_summary_async(tail.bottom_tokens)
+                if operations is not None
+                else await run_session_operation(session, lambda: session.prepare_summary(tail.bottom_tokens))
+            )
             parts = [
                 part
                 for message in tail.snapshot[: tail.cut_messages]
@@ -125,7 +136,9 @@ class LLMCompaction(ContextStrategy):
             )
             rendered = self.binder.render_request(request, prefix=prefix)
             replacement = TranscriptReplacement.concat(rendered, tail.retained)
-            await commit_compaction(self.binder, messages, [request, *tail.messages], replacement)
+            await commit_compaction(
+                self.binder, messages, [request, *tail.messages], replacement, operations=operations
+            )
             generated = len(summary.tokens)
             session.emit(
                 "compacted",
@@ -149,7 +162,7 @@ class LLMCompaction(ContextStrategy):
     @override
     async def make_room(self, messages: list[ModelMessage], request: ContextRequest) -> RoomResult:
         old = len(self.binder.session.transcript)
-        result = await self.compact_messages(messages, reason=request.reason)
+        result = await self.compact_messages(messages, reason=request.reason, operations=request.operations)
         return RoomResult(old - len(self.binder.session.transcript) >= request.needed_tokens, result.generated_tokens)
 
     @override

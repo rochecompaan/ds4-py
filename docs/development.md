@@ -161,6 +161,34 @@ nonstream equivalent of `request_stream`'s explicit context, not another history
 store: a request-only copy cannot preserve a commit followed by an owner error.
 No custom-owner method signature or dependency version changes are required.
 
+### Reserve owner operations and legacy compatibility
+
+`ContextRequest.operations` is optional and defaults to `None`, preserving
+existing positional requests and `make_room` signatures. Owners opt in with
+`reserve_operations = True`; built-in `LLMCompaction` does so. During reserve
+recovery they use `request.operations.prepare_summary(bottom)` and
+`replace_transcript(replacement, reason=...)`, or the corresponding retained
+`prepare_summary_async` / `replace_transcript_async` methods. Async methods
+validate the selected task on its owning loop **before** executor submission;
+do not use naked `asyncio.to_thread(handle.method, ...)` in strict mode.
+Threshold/manual idle compaction continues without a handle.
+
+Strict windows deny raw Session native operations even for the owner. Each
+handle call issues a session/window/operation-bound, one-shot execution ticket,
+consumed under the Session lock. Children and listeners cannot issue tickets.
+Exit, reserve decisions and close revoke unused tickets; a stale window cannot
+revoke a newer one. Cancellation drains native work and publishes committed
+Python provenance before window revocation, decision and round reconciliation.
+These handles do not authorize ordinary append/truncate/checkpoint mutations.
+
+Unchanged custom owners default to the localized legacy adapter in
+`engine.reserve`: direct Session calls and naked `asyncio.to_thread` retain their
+behavior. Its `legacy_reserve_authority` ContextVar cannot distinguish owner and
+child executors (both inherit the same context). This is compatibility, **not
+security isolation**. There is no claim of total ContextVar removal. Generic
+lifecycle delivery retains only its `in_session_listener` reentrancy marker and
+same-loop nesting; it no longer copies or clears reserve-specific authority.
+
 ### Compaction session events
 
 Every started attempt emits `before_compact(reason, old_tokens)` before tail

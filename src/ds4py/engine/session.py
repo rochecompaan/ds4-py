@@ -32,15 +32,9 @@ from .events import (
     Stopped,
     Synced,
 )
-from .lifecycle import (
-    ReservePermission,
-    SessionEvent,
-    SessionLifecycle,
-    current_task,
-    in_listener,
-    reserve_authority,
-)
+from .lifecycle import SessionEvent, SessionLifecycle, in_listener
 from .pause import ControlSpan, resolve_control
+from .reserve import ReserveAuthority, ReserveOperation, ReserveOperations, legacy_context
 
 if TYPE_CHECKING:
     from .logits import LogitsView
@@ -199,7 +193,7 @@ class Session:
         self._summary_active = False
         self._replacement_active = False
         self._reserve_event: ReserveReached | None = None
-        self._reserve_permission: ReservePermission | None = None
+        self._reserve_permission: ReserveOperations | None = None
         self._decode_step: DecodeStep | None = None
         self._logits_hooks: list[Callable[[LogitsView], None]] = []
         self._paused_stream: RoundStream | None = None
@@ -426,7 +420,9 @@ class Session:
             self._require_idle()
             self._transcript.install(segments)
 
-    def replace_transcript(self, replacement: TranscriptReplacement, *, reason: str) -> Plan:
+    def replace_transcript(
+        self, replacement: TranscriptReplacement, *, reason: str, authority: ReserveAuthority | None = None
+    ) -> Plan:
         """Replace history between rounds or at the explicit reserve decision.
 
         Segments must cover the tokens without gaps or overlap, so invalid input
@@ -437,7 +433,14 @@ class Session:
         """
         with self._lock:
             self._require_open()
-            if self._summary_active or self._replacement_active or (self._active_round and not self._reserve_allowed()):
+            if (
+                self._summary_active
+                or self._replacement_active
+                or (
+                    (self._active_round or authority is not None)
+                    and not self._reserve_allowed(authority, "replacement")
+                )
+            ):
                 raise EngineError("a round is open")
             self._replacement_active = True
         try:
@@ -453,35 +456,38 @@ class Session:
             with self._lock:
                 self._replacement_active = False
 
-    def _reserve_allowed(self) -> bool:
+    def _reserve_allowed(self, authority: ReserveAuthority | None, operation: ReserveOperation) -> bool:
         permission = self._reserve_permission
-        return self._reserve_event is not None and permission is not None and permission.allows()
+        if self._reserve_event is None or permission is None:
+            return False
+        if authority is not None:
+            return permission.consume(authority, operation)
+        return permission.legacy_allows()
 
     def _revoke_reserve(self) -> None:
         if self._reserve_permission is not None:
-            self._reserve_permission.active = False
+            self._reserve_permission.revoke()
 
     @contextmanager
-    def reserve_window(self, event: ReserveReached) -> Generator[None]:
-        """Authorize this live pause's selected owner, including its executor work.
+    def reserve_window(self, event: ReserveReached, *, strict: bool = False) -> Generator[ReserveOperations]:
+        """Select explicit operations, or the legacy naked-to_thread adapter.
 
-        Direct child tasks and listener callbacks are excluded. This is an
-        internal lifecycle guard, not isolation from deliberate context copying.
+        Legacy child executors remain ambiguous; this is not security isolation.
         """
         with self._lock:
             self._require_open()
             if event is not self._reserve_event or in_listener.get() or self._reserve_permission is not None:
                 raise EngineError("reserve window requires an unclaimed live pause")
-            permission = ReservePermission(current_task(), threading.get_ident())
+            permission = ReserveOperations(self, strict=strict)
             self._reserve_permission = permission
-            token = reserve_authority.set(permission)
         try:
-            yield
+            with legacy_context(permission, enabled=not strict):
+                yield permission
         finally:
             with self._lock:
-                permission.active = False
-                self._reserve_permission = None
-                reserve_authority.reset(token)
+                permission.revoke()
+                if self._reserve_permission is permission:
+                    self._reserve_permission = None
 
     def open_assistant_start(self) -> int | None:
         """Observe the sampled start of the trailing unkeyed assistant structure."""
@@ -503,7 +509,7 @@ class Session:
                 raise EngineError("invalid open assistant structure: missing unkeyed prefix")
             return None
 
-    def prepare_summary(self, bottom: int) -> SummaryResult:
+    def prepare_summary(self, bottom: int, *, authority: ReserveAuthority | None = None) -> SummaryResult:
         """Summarize only the caller's token prefix without changing live history.
 
         Runs between rounds (including reserve-paused continuations). Private
@@ -511,7 +517,11 @@ class Session:
         """
         with self._lock:
             self._require_open()
-            if self._summary_active or self._replacement_active or (self._active_round and not self._reserve_allowed()):
+            if (
+                self._summary_active
+                or self._replacement_active
+                or ((self._active_round or authority is not None) and not self._reserve_allowed(authority, "summary"))
+            ):
                 raise EngineError("a round is open")
             bottom = operator.index(bottom)
             if not 0 <= bottom <= len(self._transcript):
