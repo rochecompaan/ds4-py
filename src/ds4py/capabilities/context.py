@@ -38,7 +38,7 @@ class ContextRequest:
 
 @dataclass(frozen=True)
 class RoomResult:
-    """Whether the owner made enough room and how many summary tokens it generated."""
+    """Owner diagnostics and legacy usage; callers verify the exact projection."""
 
     made_room: bool
     generated_tokens: int = 0
@@ -84,7 +84,7 @@ class ContextStrategy(AbstractCapability, ABC):
 
     @abstractmethod
     async def make_room(self, messages: list[ModelMessage], request: ContextRequest) -> RoomResult:
-        """Make room inside the live request messages and report the post-move fit."""
+        """Mutate the selected history; the caller measures whether it now fits."""
 
     @override
     async def before_model_request(

@@ -500,7 +500,7 @@ class DS4StreamedResponse(StreamedResponse):
                 return
             self._dispatch(event)
             if isinstance(event, ReserveReached):
-                event.fail()
+                self._settle_reserve(event)
             if isinstance(event, (Stopped, Interrupted)):
                 return
 
@@ -523,7 +523,7 @@ class DS4StreamedResponse(StreamedResponse):
             if event is not _END:
                 self._dispatch(event)
                 if isinstance(event, ReserveReached):
-                    event.fail()
+                    self._settle_reserve(event)
         await asyncio.to_thread(self._round.close)
         if self._sampled_start is not None:
             self._observe_sampled_start()
@@ -600,12 +600,26 @@ class DS4StreamedResponse(StreamedResponse):
     def _charge_summary_token(self, tokens: int) -> None:
         self._summary_tokens += tokens
 
-    async def _make_room_for_reserve(self, event: ReserveReached) -> None:
-        """Await the selected owner after ``_pull`` has released ``_pull_lock``."""
-        self._reserve_needed = event.needed
+    def _settle_reserve(self, event: ReserveReached) -> None:
+        """Fail an undecided pause unless terminal cleanup already settled it."""
+        if not self._reconciled:
+            event.fail()
+
+    def _observe_recovered_tail(self, primary: BaseException | None = None) -> bool:
+        """Observe a moved open tail without replacing an owner failure."""
+        if self._reconciled:
+            return False
+        try:
+            self._observe_sampled_start()
+        except EngineError:
+            if primary is None:
+                raise
+        return True
+
+    async def _recover_reserve(self, event: ReserveReached) -> list[ModelMessage]:
+        """Run the selected owner and account for its work in one unit."""
         owner = self._model.context_owner
         if owner is None:
-            event.fail()
             raise ContextExhausted(self._context_exhausted_message(event.needed))
 
         def observe_synced(notification: SessionEvent) -> None:
@@ -626,28 +640,30 @@ class DS4StreamedResponse(StreamedResponse):
                             messages,
                             ContextRequest(event.needed, "reserve", operations if strict else None),
                         )
-                finally:
-                    # Even commit-then-raise owners can move the verbatim open tail.
-                    # Observe its structure, never summary length or a missing result.
-                    if not self._reconciled:
-                        primary = sys.exc_info()[0] is not None
-                        try:
-                            self._observe_sampled_start()
-                        except EngineError:
-                            if not primary:
-                                raise
-                if not self._reconciled:
+                except BaseException as error:
+                    # Commit-then-raise owners can still move the open tail.
+                    self._observe_recovered_tail(error)
+                    raise
+                if self._observe_recovered_tail():
                     attempt.report_legacy(room.generated_tokens)
-        except BaseException:
-            if not self._reconciled:
-                event.fail()
-            raise
+                return messages
         finally:
             unsubscribe()
-        if self._reconciled:
-            return
-        if not room.made_room:
-            event.fail()
+
+    async def _make_room_for_reserve(self, event: ReserveReached) -> None:
+        """Resume only when the recovered request fits the configured context."""
+        self._reserve_needed = event.needed
+        try:
+            messages = await self._recover_reserve(event)
+            if self._reconciled:
+                return
+            projected = self._model.binder.count_bound_request(messages)
+            fits = projected + 1 <= self._session.engine.config.ctx
+        except BaseException:
+            self._settle_reserve(event)
+            raise
+        if not fits:
+            self._settle_reserve(event)
             raise ContextExhausted(self._context_exhausted_message(event.needed))
         event.resume(1)
 

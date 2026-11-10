@@ -357,6 +357,34 @@ def test_reserve_uses_same_owner_without_pull_lock() -> None:
     assert kinds.count("assistant") == 1
 
 
+def test_reserve_verifies_exact_fit_even_when_owner_claims_success() -> None:
+    async def scenario() -> None:
+        with fake_engine(script=sequential_text("abc")) as engine:
+            session = engine.session()
+            model = make_model(session)
+
+            async def enlarge_native_context(_messages: list[ModelMessage], _request: ContextRequest) -> None:
+                session._worker.call(lambda _engine, native: setattr(native, "_ctx", 4096)).result()
+
+            owner = RecordingOwner(
+                model.binder,
+                room=RoomResult(made_room=True),
+                on_room=enlarge_native_context,
+            )
+            model.context_owner = owner
+            async with model.request_stream([user()], None, ModelRequestParameters()) as stream:
+                projected = len(session.transcript) + len(
+                    PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens)
+                )
+                engine.config = replace(engine.config, ctx=projected)
+                session._worker.call(lambda _engine, native: setattr(native, "_ctx", projected + 2)).result()
+                with pytest.raises(ContextExhausted):
+                    async for _ in stream:
+                        pass
+
+    asyncio.run(scenario())
+
+
 def test_failed_reserve_room_raises_context_exhausted_and_keeps_summary_usage() -> None:
     async def scenario() -> tuple[RecordingOwner, Any]:
         with fake_engine(script=sequential_text("abc")) as engine:
@@ -370,6 +398,7 @@ def test_failed_reserve_room_raises_context_exhausted_and_keeps_summary_usage() 
             async with model.request_stream([user()], None, ModelRequestParameters()) as stream:
                 prompt_length = len(session.transcript)
                 prefix = len(PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens))
+                engine.config = replace(engine.config, ctx=prompt_length + prefix)
                 session._worker.call(
                     lambda engine, native: setattr(native, "_ctx", prompt_length + prefix + 2)
                 ).result()
@@ -444,6 +473,7 @@ def test_reserve_owner_gets_the_real_request_message_list_once() -> None:
             async with model.request_stream(messages, None, ModelRequestParameters()) as stream:
                 prompt_length = len(session.transcript)
                 prefix = len(PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens))
+                engine.config = replace(engine.config, ctx=prompt_length + prefix)
                 session._worker.call(
                     lambda engine, native: setattr(native, "_ctx", prompt_length + prefix + 2)
                 ).result()

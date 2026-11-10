@@ -338,6 +338,7 @@ def test_reserve_owner_receives_the_request_message_list() -> None:
             async with model.request_stream(messages, None, ModelRequestParameters()) as stream:
                 prompt_length = len(session.transcript)
                 prefix = len(PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens))
+                engine.config = replace(engine.config, ctx=prompt_length + prefix)
                 session._worker.call(
                     lambda engine, native: setattr(native, "_ctx", prompt_length + prefix + 2)
                 ).result()
