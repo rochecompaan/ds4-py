@@ -32,7 +32,6 @@ from ds4py.engine.events import (
     Interrupted,
     ReserveReached,
     Stopped,
-    SummaryToken,
     Synced,
     TextDelta,
     Token,
@@ -41,6 +40,7 @@ from ds4py.engine.events import (
 )
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.errors import ContextExhausted, EngineError
+from ds4py.summary_usage import summary_usage
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator, Iterator, Sequence
@@ -594,6 +594,9 @@ class DS4StreamedResponse(StreamedResponse):
         finally:
             await self._finish()
 
+    def _charge_summary_token(self, tokens: int) -> None:
+        self._summary_tokens += tokens
+
     async def _make_room_for_reserve(self, event: ReserveReached) -> None:
         """Await the selected owner after ``_pull`` has released ``_pull_lock``."""
         self._reserve_needed = event.needed
@@ -602,49 +605,44 @@ class DS4StreamedResponse(StreamedResponse):
             event.fail()
             raise ContextExhausted(self._context_exhausted_message(event.needed))
 
-        observed_summary_tokens = 0
-
-        def observe_owner_work(notification: SessionEvent) -> None:
-            nonlocal observed_summary_tokens
+        def observe_synced(notification: SessionEvent) -> None:
             sync = notification.payload.get("event")
             if isinstance(sync, Synced):
                 self._dispatch(sync)
-            elif isinstance(sync, SummaryToken):
-                # A failed/cancelled owner may never return RoomResult. Count
-                # emitted private output now, without exposing response text.
-                observed_summary_tokens += 1
-                self._summary_tokens += 1
 
         # Replacement syncs are ordered native work, but are not yielded by the
         # suspended round. Observe only this owner's work to avoid double counts.
-        unsubscribe = self._session.on_event(observe_owner_work, kinds={"Synced", "SummaryToken"})
+        unsubscribe = self._session.on_event(observe_synced, kinds={"Synced"})
         try:
-            try:
-                strict = owner.reserve_operations
-                with self._session.reserve_window(event, strict=strict) as operations:
-                    messages = owner.reserve_messages(self._messages, self._run_context)
-                    room = await owner.make_room(
-                        messages,
-                        ContextRequest(event.needed, "reserve", operations if strict else None),
-                    )
-            finally:
-                unsubscribe()
-                # Even commit-then-raise owners can move the verbatim open tail.
-                # Observe its structure, never summary length or a missing result.
+            with summary_usage(self._session, self._charge_summary_token) as attempt:
+                try:
+                    strict = owner.reserve_operations
+                    with self._session.reserve_window(event, strict=strict) as operations:
+                        messages = owner.reserve_messages(self._messages, self._run_context)
+                        room = await owner.make_room(
+                            messages,
+                            ContextRequest(event.needed, "reserve", operations if strict else None),
+                        )
+                finally:
+                    # Even commit-then-raise owners can move the verbatim open tail.
+                    # Observe its structure, never summary length or a missing result.
+                    if not self._reconciled:
+                        primary = sys.exc_info()[0] is not None
+                        try:
+                            self._observe_sampled_start()
+                        except EngineError:
+                            if not primary:
+                                raise
                 if not self._reconciled:
-                    primary = sys.exc_info()[0] is not None
-                    try:
-                        self._observe_sampled_start()
-                    except EngineError:
-                        if not primary:
-                            raise
+                    attempt.report_legacy(room.generated_tokens)
         except BaseException:
             if not self._reconciled:
                 event.fail()
             raise
+        finally:
+            unsubscribe()
         if self._reconciled:
             return
-        self._summary_tokens += max(0, room.generated_tokens - observed_summary_tokens)
         if not room.made_room:
             event.fail()
             raise ContextExhausted(self._context_exhausted_message(event.needed))

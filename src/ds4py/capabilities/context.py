@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, override
 
@@ -11,18 +10,17 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, ToolReturn, ToolReturnPart
 
 from ds4py.binding_plan import request_instructions
-from ds4py.engine.events import SummaryToken
 from ds4py.errors import ContextExhausted, EngineError
+from ds4py.summary_usage import summary_usage
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Sequence
+    from collections.abc import Callable, Sequence
 
     from pydantic_ai.messages import ModelMessage, ToolCallPart
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.tools import RunContext, ToolDefinition
 
     from ds4py.binding import MessageBinder
-    from ds4py.engine.lifecycle import SessionEvent
     from ds4py.engine.reserve import ReserveOperations
 
 _RESERVE = 1
@@ -53,6 +51,15 @@ class ContextComposition:
     owner: ContextStrategy | None = None
 
 
+def usage_charge(ctx: RunContext[object]) -> Callable[[int], None]:
+    """Charge private summary output to the harness request usage."""
+
+    def charge(tokens: int) -> None:
+        ctx.usage.output_tokens += tokens
+
+    return charge
+
+
 class ContextStrategy(AbstractCapability, ABC):
     """One capability owns the shared tool fit check and the reserve response hook.
 
@@ -74,26 +81,6 @@ class ContextStrategy(AbstractCapability, ABC):
 
     def __init__(self, binder: MessageBinder) -> None:
         self.binder = binder
-
-    @contextmanager
-    def _summary_usage(self, ctx: RunContext[object]) -> Generator[Callable[[int], None]]:
-        """Charge emitted private output even if the owner never returns a result."""
-        observed = 0
-
-        def observe(event: SessionEvent) -> None:
-            nonlocal observed
-            if isinstance(event.payload.get("event"), SummaryToken):
-                observed += 1
-                ctx.usage.output_tokens += 1
-
-        def report(generated: int) -> None:
-            ctx.usage.output_tokens += max(0, generated - observed)
-
-        unsubscribe = self.binder.session.on_event(observe, kinds={"SummaryToken"})
-        try:
-            yield report
-        finally:
-            unsubscribe()
 
     @abstractmethod
     async def make_room(self, messages: list[ModelMessage], request: ContextRequest) -> RoomResult:
@@ -122,9 +109,9 @@ class ContextStrategy(AbstractCapability, ABC):
         overflow = needed()
         if overflow <= 0:
             return
-        with self._summary_usage(ctx) as account:
+        with summary_usage(self.binder.session, usage_charge(ctx)) as attempt:
             room = await self.make_room(ctx.messages, ContextRequest(overflow, "tool_result"))
-            account(room.generated_tokens)
+            attempt.report_legacy(room.generated_tokens)
         # Compaction may replace the message objects, so select from live history.
         pending = ctx.messages[-1]
         results = [part for part in pending.parts if isinstance(part, ToolReturnPart)]
@@ -174,9 +161,9 @@ class ContextStrategy(AbstractCapability, ABC):
         needed = self._needed_tokens([*ctx.messages, candidate])
         if needed <= 0:
             return result
-        with self._summary_usage(ctx) as account:
+        with summary_usage(self.binder.session, usage_charge(ctx)) as attempt:
             room = await self.make_room(ctx.messages, ContextRequest(needed, "tool_result"))
-            account(room.generated_tokens)
+            attempt.report_legacy(room.generated_tokens)
         if not room.made_room or self._needed_tokens([*ctx.messages, candidate]) > 0:
             return TOOL_RESULT_DOES_NOT_FIT
         return result

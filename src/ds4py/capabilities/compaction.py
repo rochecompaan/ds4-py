@@ -12,11 +12,12 @@ from pydantic_ai.messages import InstructionPart, ModelRequest, SystemPromptPart
 
 from ds4py.async_session import run_session_operation, session_operation_owner
 from ds4py.capabilities.compaction_tail import plan_tail
-from ds4py.capabilities.context import ContextRequest, ContextStrategy, RoomResult
+from ds4py.capabilities.context import ContextRequest, ContextStrategy, RoomResult, usage_charge
 from ds4py.compaction_commit import commit_compaction
 from ds4py.engine.compaction import SUMMARY_PROMPT, summary_budget, summary_suffix
 from ds4py.engine.transcript import TranscriptReplacement
 from ds4py.errors import EngineError
+from ds4py.summary_usage import summary_usage
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
@@ -170,7 +171,7 @@ class LLMCompaction(ContextStrategy):
         self, ctx: RunContext[object], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         if self.should_compact():
-            with self._summary_usage(ctx) as account:
+            with summary_usage(self.binder.session, usage_charge(ctx)) as attempt:
                 result = await self.compact_messages(ctx.messages, reason="threshold")
-                account(result.generated_tokens)
+                attempt.report_legacy(result.generated_tokens)
         return await super().before_model_request(ctx, request_context)
