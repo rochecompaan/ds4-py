@@ -6,17 +6,15 @@ segments only after the worker has restored a checkpoint or rebuilt from zero.
 
 from typing import TYPE_CHECKING
 
-from ds4py._native.protocol import SyncStatus
 from ds4py.errors import EngineError
 
 from .events import Synced
+from .native_restore import restore_native_tokens
 from .plan import Plan
 from .transcript import validate_segment_coverage
 from .worker import CheckpointJob, ResetJob, SyncJob
 
 if TYPE_CHECKING:
-    from ds4py._native.protocol import SessionHandle
-
     from .session import Session
     from .transcript import TranscriptReplacement
 
@@ -80,25 +78,6 @@ def _restore_native(session: Session, original: tuple[int, ...], *, valid: bool)
     # A failed sync may already have invalidated/rebuilt part of KV. Restore the
     # prior native prefix, not necessarily all Python tokens: a pending EOS may
     # not have been evaluated yet. Ignore cancellation and emit no usage sync.
-    def restore(native: SessionHandle) -> None:
-        try:
-            _restore_tokens(native, original, valid=valid)
-        except BaseException as error:
-            session._worker._poison(error)
-            raise
-
-    session._worker.call(lambda e, native: restore(native)).result()
-
-
-def _restore_tokens(native: SessionHandle, original: tuple[int, ...], *, valid: bool) -> None:
-    if not original:
-        native.rewind(0)
-    else:
-        full = len(original) == native.ctx()
-        status = native.sync(original[:-1] if full else original)
-        if status is not SyncStatus.DONE:
-            raise EngineError("transcript replacement restoration did not complete")
-        if full:
-            native.eval(original[-1])
-    if not valid:
-        native.invalidate()
+    session._worker.call(
+        lambda e, native: restore_native_tokens(native, original, valid=valid, poison=session._worker._poison)
+    ).result()

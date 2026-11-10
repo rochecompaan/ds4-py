@@ -10,6 +10,7 @@ from ds4py.errors import EngineError
 
 from .decode import PlainStep, Verdict
 from .events import SummaryToken
+from .native_restore import restore_native_tokens
 from .prompt import PromptBuilder
 
 if TYPE_CHECKING:
@@ -185,25 +186,14 @@ def summarize(  # noqa: PLR0913 - Summary execution needs native handles and wor
         PlainStep().run(session, ctx)
         return ctx.result(emit)
     finally:
-        try:
-            if snapshot is not None:
-                session.load_snapshot(snapshot)
-            else:
-                # Invalid/empty states cannot be snapshotted. Rebuild without
-                # cancellation, then reinstate invalid semantics, never private KV.
-                session.invalidate()
-                if len(prior) == session.ctx():
-                    # Sync requires spare room, but eval may fill the last slot.
-                    session.sync(prior[:-1])
-                    session.eval(prior[-1])
-                elif prior:
-                    session.sync(prior)
-                else:
-                    session.rewind(0)
-                session.invalidate()
-        except BaseException as error:
-            poison(error)
-            raise
-        finally:
-            if snapshot is not None:
-                snapshot.close()
+        if snapshot is None:
+            restore_native_tokens(session, prior, valid=False, poison=poison)
+        else:
+            try:
+                try:
+                    session.load_snapshot(snapshot)
+                finally:
+                    snapshot.close()
+            except BaseException as error:
+                poison(error)
+                raise
