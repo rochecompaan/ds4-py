@@ -325,10 +325,58 @@ def test_adopt_uses_stable_keys_without_collapsing_harness_history() -> None:
         ]
 
 
-def test_missing_private_run_context_accessor_names_the_pinned_version() -> None:
-    """The exactly pinned private accessor fails with actionable guidance."""
-    code = "import sys\nsys.modules['pydantic_ai._run_context'] = None\nimport ds4py.model\n"
-    completed = subprocess.run([sys.executable, "-c", code], check=False, capture_output=True, text=True)
+ACCESSOR = "pydantic_ai._run_context.get_current_run_context"
+HARNESS_HINT = "uv sync --frozen --extra agent"
+# The optional harness extra is absent, so every pydantic_ai import fails.
+ABSENT_HARNESS = (
+    "class _Block:\n"
+    "    def find_spec(self, name, path=None, target=None):\n"
+    "        if name == 'pydantic_ai' or name.startswith('pydantic_ai.'):\n"
+    "            raise ModuleNotFoundError(\"No module named 'pydantic_ai'\", name='pydantic_ai')\n"
+    "sys.meta_path.insert(0, _Block())\n"
+)
+# The private module survives but no longer exposes the accessor.
+ACCESSOR_REMOVED = "import pydantic_ai._run_context\ndel pydantic_ai._run_context.get_current_run_context\n"
+# The private module raises an unrelated missing dependency of its own.
+UNRELATED_INNER_IMPORT = (
+    "import types\n"
+    "def _missing(name):\n"
+    "    raise ModuleNotFoundError(\"No module named 'unrelated_dep'\", name='unrelated_dep')\n"
+    "module = types.ModuleType('pydantic_ai._run_context')\n"
+    "module.__getattr__ = _missing\n"
+    "sys.modules['pydantic_ai._run_context'] = module\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("setup", "expected", "forbidden"),
+    [
+        pytest.param(ABSENT_HARNESS, (HARNESS_HINT, "not installed"), (ACCESSOR,), id="extra-not-installed"),
+        pytest.param(
+            "sys.modules['pydantic_ai._run_context'] = None\n",
+            (ACCESSOR, "uv sync --frozen"),
+            (),
+            id="module-moved",
+        ),
+        pytest.param(ACCESSOR_REMOVED, (ACCESSOR, "uv sync --frozen"), (), id="accessor-moved"),
+        pytest.param(
+            UNRELATED_INNER_IMPORT,
+            ("No module named 'unrelated_dep'",),
+            ("uv sync",),
+            id="unrelated-inner-error",
+        ),
+    ],
+)
+def test_import_reports_the_private_accessor_contract(
+    setup: str, expected: tuple[str, ...], forbidden: tuple[str, ...]
+) -> None:
+    """Each import failure mode gets accurate guidance or is left untouched."""
+    completed = subprocess.run(
+        [sys.executable, "-c", f"import sys\n{setup}import ds4py.model\n"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
     assert completed.returncode != 0
-    assert "pydantic_ai._run_context.get_current_run_context" in completed.stderr
-    assert "uv sync --frozen" in completed.stderr
+    assert [fragment for fragment in expected if fragment not in completed.stderr] == []
+    assert [fragment for fragment in forbidden if fragment in completed.stderr] == []

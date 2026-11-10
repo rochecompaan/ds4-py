@@ -435,9 +435,10 @@ class Session:
         history = self._history
         with history.mutation_lock:
             history.require_open()
+            # Validate the live pause before allocating the window's operations.
             session_operations.require_reserve_window(history.operations, event)
             operations = ReserveOperations(self, strict=strict)
-            session_operations.open_reserve_window(history.operations, event, operations)
+            history.operations.install_reserve(operations)
         try:
             with legacy_context(operations, enabled=not strict):
                 yield operations

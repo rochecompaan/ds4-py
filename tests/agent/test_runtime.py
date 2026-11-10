@@ -592,6 +592,36 @@ def test_cancelled_run_reports_interrupted_status(tmp_path: Path) -> None:
     assert terminal and terminal[-1]["payload"]["status"] == "interrupted"
 
 
+def test_held_run_rejects_new_cli_activities_by_the_holding_kind(tmp_path: Path) -> None:
+    """A held run reports its own kind when a CLI run or compaction is admitted."""
+    project = project_dir(tmp_path)
+    with fake_engine(script=scripted_rounds("answer")) as engine:
+        model = BlockingModel(engine.session(), sampling=SamplingPolicy(seed=1))
+        runtime = AgentRuntime(model, project, store=SessionStore(tmp_path / "home"), clock=fixed_clock)
+
+        async def scenario() -> None:
+            entered = asyncio.Event()
+            release = asyncio.Event()
+            model.entered = entered
+            model.release = release
+            task = asyncio.create_task(runtime.run("hello"))
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=10)
+                assert runtime._active is not None and runtime._active.kind == "run"
+                with pytest.raises(EngineError, match=r"^a run is already active$"):
+                    await runtime.run("again")
+                with pytest.raises(EngineError, match=r"^a run is already active$"):
+                    await runtime.compact()
+            finally:
+                release.set()
+            await asyncio.wait_for(task, timeout=10)
+
+        try:
+            asyncio.run(scenario())
+        finally:
+            asyncio.run(runtime.close())
+
+
 def test_runtime_cancel_finishes_run_without_native_release(tmp_path: Path) -> None:
     """Cancelling native work alone must not leave the outer agent run alive."""
     project = project_dir(tmp_path)

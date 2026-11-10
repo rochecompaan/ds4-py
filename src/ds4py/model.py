@@ -13,16 +13,30 @@ from uuid import uuid4
 # The exactly pinned harness exposes canonical reserve history only through this
 # private accessor for nonstream requests. Keep it aligned with request_stream's
 # explicit RunContext; a request copy cannot preserve commit-then-raise history.
+_MOVED_ACCESSOR = (
+    "ds4py requires the private run-context accessor "
+    "pydantic_ai._run_context.get_current_run_context from the pinned "
+    "pydantic-ai 2.59.0 dependency. The installed version moved or removed it; "
+    "reinstall the locked dependencies (uv sync --frozen) or update ds4py's "
+    "nonstream run-context access before changing the pin."
+)
 try:
-    from pydantic_ai._run_context import get_current_run_context
-except ImportError as error:
-    raise ImportError(
-        "ds4py requires the private run-context accessor "
-        "pydantic_ai._run_context.get_current_run_context from the pinned "
-        "pydantic-ai 2.59.0 dependency. The installed version moved or removed it; "
-        "reinstall the locked dependencies (uv sync --frozen) or update ds4py's "
-        "nonstream run-context access before changing the pin."
-    ) from error
+    import pydantic_ai._run_context as run_context_module
+except ModuleNotFoundError as error:
+    # The agent extra is optional, so an absent harness needs the install hint.
+    if error.name == "pydantic_ai":
+        raise ImportError(
+            "ds4py's model adapter requires the optional pydantic-ai harness, which is not "
+            "installed. Install the locked agent extra: uv sync --frozen --extra agent"
+        ) from error
+    # Any other missing module comes from inside the harness; leave it untouched.
+    if error.name != "pydantic_ai._run_context":
+        raise
+    raise ImportError(_MOVED_ACCESSOR) from error
+try:
+    get_current_run_context = run_context_module.get_current_run_context
+except AttributeError:
+    raise ImportError(_MOVED_ACCESSOR) from None
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.profiles import ModelProfile, ToolAdditionMode, ToolDeferralMode

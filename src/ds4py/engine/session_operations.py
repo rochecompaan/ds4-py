@@ -199,16 +199,6 @@ def require_reserve_window(state: OperationState, event: ReserveReached) -> None
         raise EngineError(_MESSAGES["window"])
 
 
-def open_reserve_window(
-    state: OperationState,
-    event: ReserveReached,
-    operations: ReserveOperations,
-) -> None:
-    """Install the one window for an unclaimed live pause; listeners get none."""
-    require_reserve_window(state, event)
-    state.install_reserve(operations)
-
-
 @contextmanager
 def exclusive(
     state: OperationState,

@@ -78,16 +78,16 @@ class _PayloadWrite(TypedDict, total=False):
 
 type _ActivityKind = Literal["run", "compact", "close"]
 
+_CLOSED_MESSAGE = "the runtime is closed"
+
 
 class _ActivityRejection(TypedDict):
-    closed: str
     run: str
     compact: str
     close: str
 
 
 _REJECTIONS: _ActivityRejection = {
-    "closed": "the runtime is closed",
     "run": "a run is already active",
     "compact": "a compaction is already active",
     "close": "the runtime is closing",
@@ -278,7 +278,7 @@ class AgentRuntime:
         compaction activity; claiming a new activity rejects any active one.
         """
         if self._closed:
-            return _REJECTIONS["closed"]
+            return _CLOSED_MESSAGE
         active = self._active
         if active is None or (allow_run and active.kind == "run"):
             return None
