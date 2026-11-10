@@ -53,10 +53,9 @@ class StubBinder:
             engine=SimpleNamespace(config=SimpleNamespace(ctx=ctx)),
         )
 
-    def count_bound_request(self, messages: list[ModelMessage]) -> int:
-        return next(self._counts)
-
-    def count_rendered_request(self, messages: list[ModelMessage], **kwargs: object) -> int:
+    def project_request(
+        self, messages: list[ModelMessage], *, tools: object = (), instructions: str | None = None, bound: bool = False
+    ) -> int:
         return next(self._counts)
 
 

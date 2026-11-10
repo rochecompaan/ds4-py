@@ -36,9 +36,9 @@ def test_paused_retirement_guards_the_one_token_request_boundary(family: str, pa
             messages.extend([response, pending])
             needs_eos = family == "qwen" and paused
             before = (session.transcript.tokens, model.binder.records())
-            count = model.binder.count_bound_request(messages)
+            count = model.binder.project_request(messages, bound=True)
             assert count == (8192 if needs_eos else 8191)
-            assert model.binder.count_bound_request(messages) == count
+            assert model.binder.project_request(messages, bound=True) == count
             assert (session.transcript.tokens, model.binder.records()) == before
             assert pending.metadata is None
             assert session._paused_stream is paused_stream
@@ -58,7 +58,7 @@ def test_paused_retirement_guards_the_one_token_request_boundary(family: str, pa
             part = pending.parts[0]
             assert isinstance(part, ToolReturnPart)
             assert part.content == (TOOL_RESULT_DOES_NOT_FIT if needs_eos else body)
-            fitted = model.binder.count_bound_request(messages)
+            fitted = model.binder.project_request(messages, bound=True)
             async with model.request_stream(messages, None, ModelRequestParameters()):
                 prefix = 17 if family == "qwen" else 3
                 assert len(session.transcript) + prefix == fitted
@@ -66,7 +66,7 @@ def test_paused_retirement_guards_the_one_token_request_boundary(family: str, pa
                 assert session._paused_stream is None
                 assert sum(s.kind == "eos" for s in session.transcript.segments) == (1 if family == "qwen" else 0)
                 # Retirement is already included in binding now: never add it twice.
-                assert model.binder.count_bound_request(messages) == fitted
+                assert model.binder.project_request(messages, bound=True) == fitted
 
     asyncio.run(scenario())
 
@@ -93,7 +93,7 @@ def test_unchanged_or_rewritten_paused_history_does_not_get_retirement_eos(rewri
                 for message in messages:
                     message.metadata = {k: v for k, v in (message.metadata or {}).items() if k != "ds4.key"}
             before = (session.transcript.tokens, model.binder.records())
-            count = model.binder.count_bound_request(messages)
+            count = model.binder.project_request(messages, bound=True)
             assert (session.transcript.tokens, model.binder.records()) == before
             assert session._paused_stream is paused_stream
             if rewrite == "unkeyed":

@@ -181,7 +181,7 @@ def test_think_change_rebuilds_system_prefix() -> None:
         assert b"Reasoning Effort" in b"".join(engine.token_text(token) for token in session.transcript.tokens)
 
 
-def test_count_tokens_does_not_mutate_or_sync() -> None:
+def test_projection_does_not_mutate_or_sync() -> None:
     messages = [user("first")]
     with fake_engine() as engine:
         session = engine.session()
@@ -191,7 +191,7 @@ def test_count_tokens_does_not_mutate_or_sync() -> None:
         before_segments = session.transcript.segments
         before_calls = native_calls(session)
 
-        count = binder.count_tokens([*messages, user("next")], tools=[tool("read")], instructions="rules")
+        count = binder.project_request([*messages, user("next")], tools=[tool("read")], instructions="rules")
 
         builder = PromptBuilder(engine)
         user_delta = builder.message(before, "user", "next")
@@ -199,7 +199,7 @@ def test_count_tokens_does_not_mutate_or_sync() -> None:
         assert count == len(before) + len(user_delta) + len(prefix)
         assert session.transcript.tokens == before
         assert session.transcript.segments == before_segments
-        # Preparing the chat synced only the system prefix; count_tokens itself
+        # Preparing the chat synced only the system prefix; projection itself
         # adds no native work.
         system_end = next(segment.start for segment in before_segments if segment.kind != "system")
         assert before_calls == [("sync", system_end)]

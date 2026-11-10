@@ -12,6 +12,7 @@ from ds4py import binding as binding_module
 from ds4py._native.fake import FakeSession, FakeSnapshot
 from ds4py._native.protocol import CancelFn, ProgressFn, SyncStatus
 from ds4py.binding import MessageBinder
+from ds4py.binding_plan import BindingConfig, BindingState, plan_transition
 from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.engine.lifecycle import SessionEvent
 from ds4py.engine.prompt import PromptBuilder
@@ -19,6 +20,7 @@ from ds4py.engine.session import Session
 from ds4py.engine.transcript import TranscriptReplacement
 from ds4py.engine.worker import SyncJob
 from ds4py.errors import EngineError
+from ds4py.message_rendering import MessageRenderer
 from ds4py.store import SegmentProvenance
 
 
@@ -52,8 +54,7 @@ def snapshot(binder: MessageBinder, messages: list[ModelMessage]) -> object:
 
 def assert_projection(binder: MessageBinder, messages: list[ModelMessage], expected: int, *, bound: bool) -> None:
     before = snapshot(binder, messages)
-    count = binder.count_bound_request if bound else binder.count_rendered_request
-    counts = [count(messages) for _ in range(2)]
+    counts = [binder.project_request(messages, bound=bound) for _ in range(2)]
     assert snapshot(binder, messages) == before
     binder.prepare(messages)
     actual = len(binder.session.transcript) + len(
@@ -63,15 +64,26 @@ def assert_projection(binder: MessageBinder, messages: list[ModelMessage], expec
     assert counts == [expected, expected]
 
 
-def test_plan_stores_exact_projected_token_count() -> None:
+def test_plan_transition_from_explicit_state_matches_preparation() -> None:
     with fake_engine() as engine:
         session = engine.session()
         binder = MessageBinder(session)
+        binder.note_provider = DS4SystemNotes(session, hints=True, clock=lambda: "fixed")
         messages = [user("request")]
-        plan = binder.plan_request(messages)
+        # The snapshot comes from the real session, not from a second binder.
+        state = BindingState((), (), None, False, {}, session, MessageRenderer(engine))
+        prepared = binder.prepare_messages(messages)
+        plan = plan_transition(
+            state,
+            prepared,
+            BindingConfig((), None, None),
+            binder.note_provider,
+            system_changed=True,
+        )
+        projected = binder.project_request(messages)
         binder.prepare(messages)
         expected = len(session.transcript) + len(PromptBuilder(engine).assistant_prefix(session.transcript.tokens))
-        assert plan.projected_tokens == expected
+        assert plan.projected_tokens == projected == expected
 
 
 def test_pending_note_rewrites_unchanged_bound_request() -> None:
@@ -240,7 +252,7 @@ def test_bound_projection_rejects_before_preprocessing(monkeypatch: pytest.Monke
 
         monkeypatch.setattr(binder, "prepare_messages", unused)
         with pytest.raises(EngineError, match="initialized chat"):
-            binder.count_bound_request([user("go")])
+            binder.project_request([user("go")], bound=True)
 
 
 def test_bound_projection_requires_initialized_chat_but_accepts_zero_records() -> None:
@@ -248,14 +260,14 @@ def test_bound_projection_requires_initialized_chat_but_accepts_zero_records() -
         session = engine.session()
         binder = MessageBinder(session)
         with pytest.raises(EngineError, match="initialized chat"):
-            binder.count_bound_request([user("go")])
+            binder.project_request([user("go")], bound=True)
         session.start_chat()
         binder.note_provider = DS4SystemNotes(session, hints=True, clock=lambda: "fixed")
-        assert binder.count_bound_request([user("request")]) == 1440
+        assert binder.project_request([user("request")], bound=True) == 1440
         session.new()
         binder.forget()
         with pytest.raises(EngineError, match="initialized chat"):
-            binder.count_bound_request([user("go")])
+            binder.project_request([user("go")], bound=True)
 
 
 @pytest.mark.parametrize(
@@ -307,7 +319,7 @@ def test_projection_tracks_binding_transitions_without_live_mutation(transition:
             notes.sync_from_segments([])
         messages.extend([user("three"), user("four")])
         before = snapshot(binder, messages)
-        counts = [binder.count_rendered_request(messages, tools=tools, instructions=instructions) for _ in range(2)]
+        counts = [binder.project_request(messages, tools=tools, instructions=instructions) for _ in range(2)]
         assert snapshot(binder, messages) == before
         binder.prepare(messages, tools=tools, instructions=instructions)
         actual = len(session.transcript) + len(PromptBuilder(engine).assistant_prefix(session.transcript.tokens))
@@ -491,8 +503,8 @@ def test_empty_replacement_projection_and_prepare_match_fresh_session() -> None:
         session.replace_transcript(TranscriptReplacement((), ()), reason="empty")
         messages: list[ModelMessage] = [ModelRequest([UserPromptPart("go")], metadata={"ds4.key": "go"})]
         before = snapshot(binder, messages)
-        assert binder.count_rendered_request(messages) == 671
-        assert binder.count_rendered_request(messages) == 671
+        assert binder.project_request(messages) == 671
+        assert binder.project_request(messages) == 671
         assert snapshot(binder, messages) == before
         binder.prepare(messages)
         assert session.transcript.chat

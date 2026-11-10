@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, NotRequired, TypedDict
+from uuid import uuid4
 
 from pydantic_ai.messages import (
     InstructionBaselinePart,
@@ -129,6 +130,46 @@ def _digest(value: object) -> str:
         )
     ).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _ensure_key(message: ModelMessage) -> str:
+    """Return the message's stable key, assigning one when absent."""
+    metadata = dict(message.metadata or {})
+    key = metadata.get("ds4.key")
+    if key is not None and not isinstance(key, str):
+        raise TypeError("message ds4.key must be a string or None")
+    if key is None or key == "":
+        key = uuid4().hex
+        metadata["ds4.key"] = key
+    message.metadata = metadata
+    return key
+
+
+def keyed_messages(
+    messages: Sequence[ModelMessage],
+    records: Sequence[BoundMessage],
+) -> list[tuple[str, str]]:
+    """Pair each message with its key and content hash.
+
+    The harness renders requests from processed copies, so a key written on
+    an earlier request can be missing from the message handed back here. The
+    transcript records are the authority: a message at the same position with
+    the same content is the message they were rendered from, so it keeps
+    their key instead of forcing a rewrite.
+    """
+    keyed = []
+    for index, message in enumerate(messages):
+        content_hash = _content_hash(message)
+        key = (message.metadata or {}).get("ds4.key")
+        if key is None and index < len(records) and records[index].content_hash == content_hash:
+            key = records[index].key
+            metadata = dict(message.metadata or {})
+            metadata["ds4.key"] = key
+            message.metadata = metadata
+        else:
+            key = _ensure_key(message)
+        keyed.append((key, content_hash))
+    return keyed
 
 
 def _content_hash(message: ModelMessage) -> str:

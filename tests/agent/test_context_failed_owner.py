@@ -149,7 +149,7 @@ def test_error_only_replacement_that_still_overflows_raises_context_exhausted(en
                 assert isinstance(rejected, ToolReturnPart)
                 assert rejected.content == TOOL_RESULT_DOES_NOT_FIT
                 error_result = ModelRequest([owner._tool_return_part(call, TOOL_RESULT_DOES_NOT_FIT)])
-                assert model.binder.count_rendered_request(history) == 8119
+                assert model.binder.project_request(history) == 8119
                 assert owner._needed_for_request([*history, error_result], request) == 24
             else:
                 model.binder.prepare(history)
@@ -163,7 +163,7 @@ def test_error_only_replacement_that_still_overflows_raises_context_exhausted(en
                         result="x" * 9000,
                     )
                 error_result = ModelRequest([owner._tool_return_part(call, TOOL_RESULT_DOES_NOT_FIT)])
-                assert model.binder.count_bound_request(history) == 8119
+                assert model.binder.project_request(history, bound=True) == 8119
                 assert owner._needed_for_chat([*history, error_result]) == 24
             assert len(owner.requests) == 1 and owner.requests[0].needed_tokens == 8982
 

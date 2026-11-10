@@ -3,18 +3,14 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
 from functools import partial
+from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
-from uuid import uuid4
 
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
-    ToolReturnPart,
-    UserPromptPart,
 )
 
 from ds4py._json import is_string_key_mapping
@@ -22,23 +18,26 @@ from ds4py.binding_plan import (
     BindingChange,
     BindingConfig,
     BindingPlan,
+    BindingState,
+    PreparedMessages,
     ScratchSession,
-    bound_plan,
-    configured_plan,
+    plan_transition,
     request_instructions,
-    require_bound_chat,
 )
 from ds4py.binding_provenance import (
     BoundMessage,
     _content_hash,
     _digest,
+    _ensure_key,
     _key_recovery_hash,
     _validate,
+    keyed_messages,
     prepare_provenance,
 )
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.tool_prompt import ToolDefinition
 from ds4py.engine.transcript import TranscriptReplacement
+from ds4py.errors import EngineError
 from ds4py.message_rendering import MessageRenderer
 from ds4py.store import SegmentProvenance
 
@@ -52,19 +51,6 @@ if TYPE_CHECKING:
     from ds4py.capabilities.system_notes import DS4SystemNotes
     from ds4py.engine.session import Session
     from ds4py.engine.session_operations import BindingTransaction
-
-
-@dataclass(frozen=True)
-class PreparedMessages:
-    """One canonicalized request: publication targets and planning copies.
-
-    ``targets`` receives published keys and is the response view handed back to
-    the harness. ``candidates`` are independent copies because the plan writes
-    recovered keys and rendered notes without mutating the request targets.
-    """
-
-    targets: tuple[ModelMessage, ...]
-    candidates: tuple[ModelMessage, ...]
 
 
 def _definitions(tools: Iterable[object]) -> tuple[ToolDefinition, ...]:
@@ -97,18 +83,6 @@ def _tool_digest(tools: Iterable[ToolDefinition]) -> str:
             for tool in tools
         ]
     )
-
-
-def _ensure_key(message: ModelMessage) -> str:
-    metadata = dict(message.metadata or {})
-    key = metadata.get("ds4.key")
-    if key is not None and not isinstance(key, str):
-        raise TypeError("message ds4.key must be a string or None")
-    if key is None or key == "":
-        key = uuid4().hex
-        metadata["ds4.key"] = key
-    message.metadata = metadata
-    return key
 
 
 class MessageBinder:
@@ -198,7 +172,7 @@ class MessageBinder:
                     metadata["ds4.sampled"] = deepcopy(sampled)
                     adopted_candidate.metadata = metadata
             adopted.append(adopted_candidate)
-        self._keyed(adopted)
+        keyed_messages(adopted, self._records)
         return adopted
 
     def adopt_failed(self, messages: Sequence[ModelMessage]) -> list[ModelMessage]:
@@ -310,78 +284,47 @@ class MessageBinder:
         self.session.install_segments(prepared.installed)
         self.apply_restore(prepared)
 
-    @staticmethod
-    def _trailing_request(messages: Sequence[ModelMessage]) -> bool:
-        if not messages or not isinstance(messages[-1], ModelRequest):
-            return False
-        return any(isinstance(part, (UserPromptPart, ToolReturnPart, RetryPromptPart)) for part in messages[-1].parts)
-
-    @staticmethod
-    def _continuation(messages: Sequence[ModelMessage]) -> bool:
-        return bool(
-            messages
-            and isinstance(messages[-1], ModelRequest)
-            and messages[-1].parts
-            and isinstance(messages[-1].parts[-1], (ToolReturnPart, RetryPromptPart))
-        )
-
-    def _keyed(self, messages: Sequence[ModelMessage]) -> list[tuple[str, str]]:
-        """Pair each message with its key and content hash.
-
-        The harness renders requests from processed copies, so a key written on
-        an earlier request can be missing from the message handed back here. The
-        transcript records are the authority: a message at the same position with
-        the same content is the message they were rendered from, so it keeps
-        their key instead of forcing a rewrite.
-        """
-        keyed = []
-        for index, message in enumerate(messages):
-            content_hash = _content_hash(message)
-            key = (message.metadata or {}).get("ds4.key")
-            if key is None and index < len(self._records) and self._records[index].content_hash == content_hash:
-                key = self._records[index].key
-                metadata = dict(message.metadata or {})
-                metadata["ds4.key"] = key
-                message.metadata = metadata
-            else:
-                key = _ensure_key(message)
-            keyed.append((key, content_hash))
-        return keyed
-
     def prepare_messages(self, messages: Sequence[ModelMessage]) -> PreparedMessages:
         """Canonicalize one request and isolate the copies used for planning."""
         targets = tuple(self.canonicalize(list(messages)))
         return PreparedMessages(targets, tuple(deepcopy(message) for message in targets))
 
-    def plan_prepared(
+    def _binding_state(self) -> BindingState:
+        """Snapshot the persisted planner state without exposing the binder."""
+        return BindingState(
+            tuple(self._records),
+            tuple(self._bound_messages),
+            self._signature,
+            self._restored,
+            MappingProxyType({key: tuple(notes) for key, notes in self._restored_notes.items()}),
+            self.session,
+            self._renderer,
+        )
+
+    def _system_changed(self, config: BindingConfig) -> bool:
+        changed = self._signature != config.signature or not self.session.transcript.chat
+        if self._restored and self._restored_preamble(config.definitions, config.instructions):
+            return False
+        return changed
+
+    def _plan(
         self,
         prepared: PreparedMessages,
+        config: BindingConfig,
+        provider: DS4SystemNotes | None,
         *,
-        tools: Iterable[object] = (),
-        instructions: str | None = None,
-        note_provider: DS4SystemNotes | None = None,
+        system_changed: bool,
     ) -> BindingPlan:
-        """Plan configured preparation from one canonicalized request."""
+        return plan_transition(self._binding_state(), prepared, config, provider, system_changed=system_changed)
+
+    def _configured_config(
+        self,
+        tools: Iterable[object],
+        instructions: str | None,
+    ) -> BindingConfig:
         definitions = _definitions(tools)
         signature = (_tool_digest(definitions), instructions, int(self.session.engine.think))
-        provider = note_provider if note_provider is not None else self.note_provider
-        return configured_plan(self, prepared, BindingConfig(definitions, instructions, signature), provider)
-
-    def plan_request(
-        self,
-        messages: Sequence[ModelMessage],
-        *,
-        tools: Iterable[object] = (),
-        instructions: str | None = None,
-        note_provider: DS4SystemNotes | None = None,
-    ) -> BindingPlan:
-        """Plan configured preparation without changing any live state."""
-        return self.plan_prepared(
-            self.prepare_messages(messages),
-            tools=tools,
-            instructions=instructions,
-            note_provider=note_provider,
-        )
+        return BindingConfig(definitions, instructions, signature)
 
     def _publish_boundary(
         self,
@@ -493,12 +436,8 @@ class MessageBinder:
         with self.session.binding_transaction() as transaction:
             prepared = self.prepare_messages(messages)
             effective = request_instructions(prepared.targets, params) if params is not None else instructions
-            plan = self.plan_prepared(
-                prepared,
-                tools=tools,
-                instructions=effective,
-                note_provider=note_provider,
-            )
+            config = self._configured_config(tools, effective)
+            plan = self._plan(prepared, config, provider, system_changed=self._system_changed(config))
             return prepared, self._apply_plan(transaction, plan, provider, prepared.targets)
 
     def _apply_plan(
@@ -548,30 +487,30 @@ class MessageBinder:
                 continue
             target.metadata = deepcopy(planned)
 
-    def count_rendered_request(
+    def project_request(
         self,
         messages: Sequence[ModelMessage],
         *,
         tools: Iterable[object] = (),
         instructions: str | None = None,
+        bound: bool = False,
     ) -> int:
-        """Project configured preparation, retaining exact matching native spans."""
-        return self.plan_request(messages, tools=tools, instructions=instructions).projected_tokens
+        """Project the exact request preparation would apply, without live mutation.
 
-    def count_bound_request(self, messages: Sequence[ModelMessage]) -> int:
-        """Project against the initialized native preamble and sampled binding."""
-        require_bound_chat(self)
-        return bound_plan(self, self.prepare_messages(messages)).projected_tokens
-
-    def count_tokens(
-        self,
-        messages: Sequence[ModelMessage],
-        *,
-        tools: Iterable[object] = (),
-        instructions: str | None = None,
-    ) -> int:
-        """Compatibility facade for configured request projection."""
-        return self.count_rendered_request(messages, tools=tools, instructions=instructions)
+        ``bound`` projects against the initialized native preamble and sampled
+        binding, rejecting before preprocessing when no chat exists. The
+        configured form projects the request that ``prepare`` would apply.
+        """
+        if bound and not self.session.transcript.chat:
+            raise EngineError("bound request requires an initialized chat")
+        prepared = self.prepare_messages(messages)
+        if bound:
+            config = BindingConfig((), None, self._signature)
+            plan = self._plan(prepared, config, self.note_provider, system_changed=False)
+            return plan.projected_tokens
+        config = self._configured_config(tools, instructions)
+        plan = self._plan(prepared, config, self.note_provider, system_changed=self._system_changed(config))
+        return plan.projected_tokens
 
     def bind_response(self, response: ModelResponse) -> None:
         key = _ensure_key(response)

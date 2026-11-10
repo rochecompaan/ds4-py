@@ -657,7 +657,7 @@ class DS4StreamedResponse(StreamedResponse):
             messages = await self._recover_reserve(event)
             if self._reconciled:
                 return
-            projected = self._model.binder.count_bound_request(messages)
+            projected = self._model.binder.project_request(messages, bound=True)
             fits = projected + 1 <= self._session.engine.config.ctx
         except BaseException:
             self._settle_reserve(event)

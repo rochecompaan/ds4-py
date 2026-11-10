@@ -62,7 +62,7 @@ def test_effective_pending_notes_guard_the_complete_request_boundary(
             messages.extend([response, pending])
             pending_notes = notes.pending(messages)
             before = (session.transcript.tokens, model.binder.records())
-            count = model.binder.count_bound_request(messages)
+            count = model.binder.project_request(messages, bound=True)
             assert count == (8191 if configuration == "cleared" else 8285)
             assert notes.pending(messages) == pending_notes
             assert (session.transcript.tokens, model.binder.records()) == before
@@ -83,7 +83,7 @@ def test_effective_pending_notes_guard_the_complete_request_boundary(
             assert isinstance(part, ToolReturnPart)
             assert part.content == ("x" * 7954 if configuration == "cleared" else TOOL_RESULT_DOES_NOT_FIT)
             assert notes.pending(messages) == pending_notes
-            fitted = model.binder.count_bound_request(messages)
+            fitted = model.binder.project_request(messages, bound=True)
             async with model.request_stream(messages, None, ModelRequestParameters()):
                 assert len(session.transcript) + 3 == fitted  # GLM assistant prefix.
                 assert fitted + 1 <= 8192

@@ -10,7 +10,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, ToolReturn, ToolReturnPart
 
 from ds4py.binding_plan import request_instructions
-from ds4py.errors import ContextExhausted, EngineError
+from ds4py.errors import ContextExhausted
 from ds4py.summary_usage import summary_usage
 
 if TYPE_CHECKING:
@@ -128,16 +128,14 @@ class ContextStrategy(AbstractCapability, ABC):
     def _needed_for_request(self, messages: Sequence[ModelMessage], request_context: ModelRequestContext) -> int:
         """Measure the effective configured projection, not the old bound chat."""
         params = request_context.model_request_parameters
-        count = self.binder.count_rendered_request(
+        count = self.binder.project_request(
             messages, tools=params.declared_tool_defs.values(), instructions=request_instructions(messages, params)
         )
         return count + _RESERVE - self.binder.session.engine.config.ctx
 
     def _needed_for_chat(self, messages: Sequence[ModelMessage]) -> int:
         """Measure the strict bound projection; after-tool calls require a prepared chat."""
-        if not self.binder.session.transcript.chat:
-            raise EngineError("after-tool fit requires an initialized chat")
-        count = self.binder.count_bound_request(messages)
+        count = self.binder.project_request(messages, bound=True)
         return count + _RESERVE - self.binder.session.engine.config.ctx
 
     async def _recover_room(self, ctx: RunContext[object], needed_tokens: int) -> RoomResult:

@@ -131,8 +131,8 @@ def test_initialized_chat_fit_uses_changed_config_before_and_after_owner(
             ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=messages)
             # The old 7721-token preamble projection fits; either new configuration
             # overflows. Real configured preparation is 9721/9803 + 2 prefix.
-            assert model.binder.count_bound_request(messages) == 7721
-            assert model.binder.count_rendered_request(messages, tools=definitions, instructions=instructions) == (
+            assert model.binder.project_request(messages, bound=True) == 7721
+            assert model.binder.project_request(messages, tools=definitions, instructions=instructions) == (
                 9723 if configuration == "instructions" else 9805
             )
             await owner.before_model_request(ctx, request)

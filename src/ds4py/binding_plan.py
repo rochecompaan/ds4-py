@@ -6,13 +6,12 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from pydantic_ai.messages import ModelRequest
+from pydantic_ai.messages import ModelRequest, RetryPromptPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import Model
 
-from ds4py.binding_provenance import BoundMessage, _validate
+from ds4py.binding_provenance import BoundMessage, _validate, keyed_messages
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.transcript import Segment, Transcript, TranscriptReplacement, TranscriptView
-from ds4py.errors import EngineError
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -20,13 +19,15 @@ if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
     from pydantic_ai.models import ModelRequestParameters
 
-    from ds4py.binding import MessageBinder, PreparedMessages
-    from ds4py.capabilities.system_notes import DS4SystemNotes, NoteState
-    from ds4py.engine.session import Engine
+    from ds4py.capabilities.system_notes import DS4SystemNotes, NotePreview, NoteState
+    from ds4py.engine.session import Engine, Session
     from ds4py.engine.tool_prompt import ToolDefinition
+    from ds4py.message_rendering import MessageRenderer
 
 type Signature = tuple[str, str | None, int]
 type SavedNotes = tuple[tuple[str, tuple[tuple[str, str | None], ...]], ...]
+
+_RESERVE_CONTINUATION = (ToolReturnPart, RetryPromptPart)
 
 
 def request_instructions(messages: Sequence[ModelMessage], params: ModelRequestParameters) -> str | None:
@@ -62,6 +63,32 @@ class ScratchSession:
 
 
 @dataclass(frozen=True)
+class PreparedMessages:
+    """One canonicalized request: publication targets and planning copies.
+
+    ``targets`` receives published keys and is the response view handed back to
+    the harness. ``candidates`` are independent copies because the plan writes
+    recovered keys and rendered notes without mutating the request targets.
+    """
+
+    targets: tuple[ModelMessage, ...]
+    candidates: tuple[ModelMessage, ...]
+
+
+@dataclass(frozen=True)
+class BindingState:
+    """One immutable observation of the binder state used for planning."""
+
+    records: tuple[BoundMessage, ...]
+    bound_messages: tuple[ModelMessage, ...]
+    signature: Signature | None
+    restored: bool
+    restored_notes: Mapping[str, Sequence[tuple[str, str | None]]]
+    session: Session
+    renderer: MessageRenderer
+
+
+@dataclass(frozen=True)
 class BindingBoundary:
     """An atomic append group and the state valid only after its complete apply.
 
@@ -94,17 +121,6 @@ class BindingPlan:
     projected_tokens: int
 
 
-def _replacement(scratch: ScratchSession, start: int = 0) -> TranscriptReplacement:
-    return TranscriptReplacement(
-        scratch.transcript.tokens[start:],
-        tuple(
-            replace(s, start=s.start - start, end=s.end - start)
-            for s in scratch.transcript.segments
-            if s.start >= start
-        ),
-    )
-
-
 @dataclass(frozen=True)
 class BindingConfig:
     definitions: tuple[ToolDefinition, ...]
@@ -112,150 +128,228 @@ class BindingConfig:
     signature: Signature | None
 
 
-def configured_plan(
-    binder: MessageBinder,
-    prepared: PreparedMessages,
-    config: BindingConfig,
-    provider: DS4SystemNotes | None,
-) -> BindingPlan:
-    changed = binder._signature != config.signature or not binder.session.transcript.chat
-    if binder._restored and binder._restored_preamble(config.definitions, config.instructions):
-        changed = False
-    return _transition(binder, prepared, config, provider, system_changed=changed)
+@dataclass(frozen=True)
+class _SelectedPrefix:
+    scratch: ScratchSession
+    common: int
+    start: int
+    truncate: int | None
+    retire: bool
+    kind: str
 
 
-def require_bound_chat(binder: MessageBinder) -> None:
-    """Reject bound projection before any request preprocessing runs."""
-    if not binder.session.transcript.chat:
-        raise EngineError("bound request requires an initialized chat")
+def _replacement(scratch: ScratchSession, start: int = 0) -> TranscriptReplacement:
+    return TranscriptReplacement(scratch.transcript.tokens, scratch.transcript.segments).slice(start)
 
 
-def bound_plan(binder: MessageBinder, prepared: PreparedMessages) -> BindingPlan:
-    require_bound_chat(binder)
-    return _transition(
-        binder, prepared, BindingConfig((), None, binder._signature), binder.note_provider, system_changed=False
+class _BoundaryBuilder:
+    """Build consecutive boundaries over one accumulating scratch transcript."""
+
+    def __init__(
+        self,
+        scratch: ScratchSession,
+        records: list[BoundMessage],
+        bound: list[ModelMessage],
+        preview: NotePreview | None,
+        restored: dict[str, list[tuple[str, str | None]]],
+    ) -> None:
+        self.scratch = scratch
+        self.records = records
+        self.bound = bound
+        self.preview = preview
+        self.restored = restored
+        self._published = 0
+
+    def initial(self) -> BindingBoundary:
+        return self.build(len(self.scratch.transcript))
+
+    def build(self, start: int, *, retire: bool = False) -> BindingBoundary:
+        boundary = BindingBoundary(
+            _replacement(self.scratch, start),
+            tuple(self.records),
+            tuple(self.bound),
+            self.preview.checkpoint() if self.preview is not None else None,
+            tuple((key, tuple(notes)) for key, notes in self.restored.items()),
+            self._published,
+            len(self.records),
+            retire,
+        )
+        self._published = len(self.records)
+        return boundary
+
+
+def _trailing_request(messages: Sequence[ModelMessage]) -> bool:
+    if not messages or not isinstance(messages[-1], ModelRequest):
+        return False
+    return any(isinstance(part, (UserPromptPart, ToolReturnPart, RetryPromptPart)) for part in messages[-1].parts)
+
+
+def _continuation(messages: Sequence[ModelMessage]) -> bool:
+    return bool(
+        messages
+        and isinstance(messages[-1], ModelRequest)
+        and messages[-1].parts
+        and isinstance(messages[-1].parts[-1], _RESERVE_CONTINUATION)
     )
 
 
-def _transition(  # noqa: PLR0912, PLR0915 - One traversal owns every binding transition.
-    binder: MessageBinder,
+def _system_prefix(
+    state: BindingState,
+    config: BindingConfig,
+    candidates: Sequence[ModelMessage],
+    scratch: ScratchSession,
+) -> _SelectedPrefix:
+    transcript = state.session.transcript
+    state.renderer.preflight(candidates)
+    scratch.start_chat(config.definitions, config.instructions)
+    truncate = 0 if len(transcript) or transcript.chat else None
+    kind = "rewrite" if state.signature is not None else "append"
+    return _SelectedPrefix(scratch, 0, 0, truncate, retire=False, kind=kind)
+
+
+def _incremental_prefix(
+    state: BindingState,
+    scratch: ScratchSession,
+    candidates: Sequence[ModelMessage],
+    keyed: Sequence[tuple[str, str]],
+    preview: NotePreview | None,
+) -> _SelectedPrefix:
+    transcript = state.session.transcript
+    records = state.records
+    common = 0
+    while (
+        common < len(candidates)
+        and common < len(records)
+        and keyed[common] == (records[common].key, records[common].content_hash)
+    ):
+        common += 1
+    unchanged = common == len(candidates) == len(records)
+    if unchanged and preview is not None and _trailing_request(candidates) and preview.pending(candidates):
+        common -= 1
+        unchanged = False
+    state.renderer.preflight(candidates[common:])
+    if unchanged:
+        prefix = _SelectedPrefix(scratch, common, len(transcript), None, retire=False, kind="unchanged")
+    elif common < len(records):
+        prefix = _SelectedPrefix(
+            scratch,
+            common,
+            records[common].start,
+            records[common].start,
+            retire=False,
+            kind="rewrite",
+        )
+    else:
+        prefix = _SelectedPrefix(
+            scratch,
+            common,
+            len(transcript),
+            None,
+            retire=state.session.paused,
+            kind="append",
+        )
+    end = len(transcript) if prefix.truncate is None else prefix.truncate
+    scratch._transcript.replace(transcript.tokens, transcript.segments)
+    scratch._transcript.truncate(end)
+    return prefix
+
+
+def _append_notes(
+    state: BindingState,
+    builder: _BoundaryBuilder,
+    key: str,
+    preceding: Sequence[ModelMessage],
+) -> None:
+    notes = list(builder.restored.pop(key, ()))
+    if builder.preview is not None:
+        notes.extend(builder.preview.notes(preceding))
+    for text, subtype in notes:
+        tokens = PromptBuilder(state.session.engine).message(builder.scratch.transcript.tokens, "system", "\n" + text)
+        meta = {"text": text}
+        if bool(subtype):
+            meta["subtype"] = subtype
+        builder.scratch.append_tokens(tokens, "note", meta)
+
+
+def _append_message(
+    state: BindingState,
+    builder: _BoundaryBuilder,
+    candidates: Sequence[ModelMessage],
+    keyed: Sequence[tuple[str, str]],
+    index: int,
+) -> BindingBoundary:
+    message = candidates[index]
+    key, content_hash = keyed[index]
+    boundary_start = len(builder.scratch.transcript)
+    if isinstance(message, ModelRequest):
+        _append_notes(state, builder, key, candidates[: index + 1])
+    message_start, end = state.renderer.append(builder.scratch, message, key, content_hash)
+    builder.records.append(BoundMessage(key, content_hash, message_start, end))
+    builder.bound.append(message)
+    return builder.build(boundary_start)
+
+
+def _retire_response(builder: _BoundaryBuilder, engine: Engine, previous: BoundMessage) -> BoundMessage:
+    tokens = PromptBuilder(engine).append_assistant_end()
+    if tokens:
+        builder.scratch.append_tokens(
+            tokens,
+            "eos",
+            {
+                "key": previous.key,
+                "content_hash": previous.content_hash,
+                "source": "sampled",
+            },
+        )
+    return replace(previous, end=len(builder.scratch.transcript))
+
+
+def plan_transition(
+    state: BindingState,
     prepared: PreparedMessages,
     config: BindingConfig,
     provider: DS4SystemNotes | None,
     *,
     system_changed: bool,
 ) -> BindingPlan:
+    """Plan one transition from an immutable binder snapshot."""
     candidates = list(prepared.candidates)
     _validate(candidates)
-    keyed = binder._keyed(candidates)
+    keyed = keyed_messages(candidates, state.records)
     preview = provider.preview() if provider is not None else None
-    restored = deepcopy(binder._restored_notes)
-    transcript = binder.session.transcript
-    scratch = ScratchSession(binder.session.engine)
-    common = 0
-    truncate = None
-    retire = False
+    restored = {key: list(notes) for key, notes in state.restored_notes.items()}
+    scratch = ScratchSession(state.session.engine)
     if system_changed:
-        binder._renderer.preflight(candidates)
-        start = 0
-        truncate = 0 if len(transcript) or transcript.chat else None
-        scratch.start_chat(config.definitions, config.instructions)
-        kind = "rewrite" if binder._signature is not None else "append"
+        prefix = _system_prefix(state, config, candidates, scratch)
     else:
-        records = binder.records()
-        while (
-            common < len(candidates)
-            and common < len(records)
-            and keyed[common] == (records[common].key, records[common].content_hash)
-        ):
-            common += 1
-        unchanged = common == len(candidates) == len(records)
-        if unchanged and preview is not None and binder._trailing_request(candidates) and preview.pending(candidates):
-            common -= 1
-            unchanged = False
-        binder._renderer.preflight(candidates[common:])
-        if unchanged:
-            start = len(transcript)
-            kind = "unchanged"
-        elif common < len(records):
-            start = truncate = records[common].start
-            kind = "rewrite"
-        else:
-            start = len(transcript)
-            kind = "append"
-            retire = binder.session.paused
-        end = truncate if truncate is not None else len(transcript)
-        scratch._transcript.replace(transcript.tokens, transcript.segments)
-        scratch._transcript.truncate(end)
-    if preview is not None and any(
-        s.kind == "note" and s.end > (truncate if truncate is not None else len(transcript))
-        for s in transcript.segments
-    ):
-        preview.resync_from_segments(scratch.transcript.segments)
-    records = list(binder.records()[:common])
-    bound = deepcopy(binder._bound_messages[:common])
-
-    published = 0
-
-    def boundary(start: int, *, retire: bool = False) -> BindingBoundary:
-        nonlocal published
-        appended = BindingBoundary(
-            _replacement(scratch, start),
-            tuple(records),
-            tuple(bound),
-            preview.checkpoint() if preview is not None else None,
-            tuple((key, tuple(notes)) for key, notes in restored.items()),
-            published,
-            len(records),
-            retire,
-        )
-        published = len(records)
-        return appended
-
-    initial = boundary(len(scratch.transcript))
-    boundaries = []
-    if retire:
-        previous = records[-1]
-        tokens = PromptBuilder(binder.session.engine).append_assistant_end()
-        if tokens:
-            scratch.append_tokens(
-                tokens,
-                "eos",
-                {
-                    "key": previous.key,
-                    "content_hash": previous.content_hash,
-                    "source": "sampled",
-                },
-            )
-        records[-1] = replace(previous, end=len(scratch.transcript))
-        boundaries.append(boundary(start, retire=True))
-    for index in range(common, len(candidates)):
-        message = candidates[index]
-        key, content_hash = keyed[index]
-        boundary_start = len(scratch.transcript)
-        if isinstance(message, ModelRequest):
-            notes = list(restored.pop(key, ()))
-            if preview is not None:
-                notes.extend(preview.notes(candidates[: index + 1]))
-            for text, subtype in notes:
-                tokens = PromptBuilder(binder.session.engine).message(scratch.transcript.tokens, "system", "\n" + text)
-                meta = {"text": text}
-                if bool(subtype):
-                    meta["subtype"] = subtype
-                scratch.append_tokens(tokens, "note", meta)
-        message_start, end = binder._renderer.append(scratch, message, key, content_hash)
-        records.append(BoundMessage(key, content_hash, message_start, end))
-        bound.append(message)
-        boundaries.append(boundary(boundary_start))
+        prefix = _incremental_prefix(state, scratch, candidates, keyed, preview)
+    transcript = state.session.transcript
+    end = len(transcript) if prefix.truncate is None else prefix.truncate
+    if preview is not None and any(s.kind == "note" and s.end > end for s in transcript.segments):
+        preview.resync_from_segments(prefix.scratch.transcript.segments)
+    records = list(state.records[: prefix.common])
+    bound = list(deepcopy(state.bound_messages[: prefix.common]))
+    builder = _BoundaryBuilder(prefix.scratch, records, bound, preview, restored)
+    initial = builder.initial()
+    boundaries: list[BindingBoundary] = []
+    if prefix.retire:
+        records[-1] = _retire_response(builder, state.session.engine, records[-1])
+        boundaries.append(builder.build(prefix.start, retire=True))
+    for index in range(prefix.common, len(candidates)):
+        boundaries.append(_append_message(state, builder, candidates, keyed, index))
+    engine = state.session.engine
+    projected = len(prefix.scratch.transcript) + len(
+        PromptBuilder(engine).assistant_prefix(prefix.scratch.transcript.tokens)
+    )
     return BindingPlan(
-        BindingChange(kind, start, binder._continuation(candidates)),
+        BindingChange(prefix.kind, prefix.start, _continuation(candidates)),
         tuple(candidates),
         initial,
         tuple(boundaries),
         config.signature,
         system_changed,
-        truncate,
+        prefix.truncate,
         config.definitions,
         config.instructions,
-        len(scratch.transcript) + len(PromptBuilder(binder.session.engine).assistant_prefix(scratch.transcript.tokens)),
+        projected,
     )
