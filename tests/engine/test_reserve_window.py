@@ -12,6 +12,7 @@ from ds4py import ThinkMode
 from ds4py._native.fake import FakeNative
 from ds4py.engine.events import Event, ReserveReached, Stopped
 from ds4py.engine.prompt import PromptBuilder
+from ds4py.engine.reserve import ReserveOperations
 from ds4py.engine.session import Session
 from ds4py.engine.transcript import TranscriptReplacement
 from ds4py.errors import EngineError
@@ -102,12 +103,9 @@ def test_expired_pause_and_nested_windows_reject() -> None:
 
 
 @pytest.mark.parametrize("strict", [False, True])
-@pytest.mark.parametrize("stale_action", ["fail", "resume", "window_exit"])
+@pytest.mark.parametrize("stale_action", ["fail", "resume"])
 def test_expired_round_cannot_revoke_another_rounds_reserve_window(stale_action: str, strict: bool) -> None:
     with paused() as (session, expired_pause, expired_round):
-        expired_window = session.reserve_window(expired_pause, strict=strict)
-        with expired_window:
-            pass
         expired_round.close()
         session.append_user("next")
         prefix = PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens)
@@ -120,11 +118,7 @@ def test_expired_round_cannot_revoke_another_rounds_reserve_window(stale_action:
                 replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
                 operations.replace_transcript(replacement, reason="current owner")
                 ticket = operations.issue_authority("replacement")
-                if stale_action == "window_exit":
-                    # Re-exiting the expired window, not re-closing its round,
-                    # must leave an already-issued live ticket consumable.
-                    expired_window.__exit__(None, None, None)
-                elif stale_action == "fail":
+                if stale_action == "fail":
                     with pytest.raises(EngineError, match="expired"):
                         expired_pause.fail()
                 else:
@@ -137,6 +131,73 @@ def test_expired_round_cannot_revoke_another_rounds_reserve_window(stale_action:
             assert list(current_round) == [Stopped("context_exhausted")]
         finally:
             current_round.close()
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_closed_round_retains_window_claim_until_first_exit(strict: bool) -> None:
+    with paused() as (session, expired_pause, expired_round):
+        expired_window = session.reserve_window(expired_pause, strict=strict)
+        expired_window.__enter__()
+        try:
+            expired_round.close()
+            session.append_user("next")
+            prefix = PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens)
+            capacity = len(session.transcript) + len(prefix) + 1
+            session._worker.call(lambda e, n: setattr(n, "_ctx", capacity)).result()
+            current_round = session.run_round()
+            try:
+                current_pause = next(event for event in current_round if isinstance(event, ReserveReached))
+                with (
+                    pytest.raises(EngineError, match="unclaimed live pause"),
+                    session.reserve_window(current_pause, strict=strict),
+                ):
+                    pass
+                # This is the old window's FIRST exit: round close revokes its
+                # authority but does not release its retained Session claim.
+                expired_window.__exit__(None, None, None)
+                with session.reserve_window(current_pause, strict=strict) as operations:
+                    replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
+                    operations.replace_transcript(replacement, reason="released old claim")
+                    current_pause.fail()
+                assert list(current_round) == [Stopped("context_exhausted")]
+            finally:
+                current_round.close()
+        finally:
+            expired_window.__exit__(None, None, None)
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_synthetic_stale_first_exit_preserves_newer_window_identity(strict: bool) -> None:
+    """Defensive identity branch, not a publicly reachable window interleaving."""
+    with paused() as (session, expired_pause, expired_round):
+        expired_window = session.reserve_window(expired_pause, strict=strict)
+        expired_window.__enter__()
+        try:
+            expired_round.close()
+            session.append_user("next")
+            prefix = PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens)
+            capacity = len(session.transcript) + len(prefix) + 1
+            session._worker.call(lambda e, n: setattr(n, "_ctx", capacity)).result()
+            current_round = session.run_round()
+            try:
+                current_pause = next(event for event in current_round if isinstance(event, ReserveReached))
+                # Public admission forbids this replacement while the old
+                # context remains entered. Install a newer handle explicitly to
+                # cover the defensive identity guard in that context's finally.
+                operations = ReserveOperations(session, strict=strict)
+                with session._lock:
+                    session._reserve_operations = operations
+                replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
+                ticket = operations.issue_authority("replacement")
+                expired_window.__exit__(None, None, None)
+                session.replace_transcript(replacement, reason="newer ticket survived", authority=ticket)
+                operations.replace_transcript(replacement, reason="newer handle survived")
+                current_pause.fail()
+                assert list(current_round) == [Stopped("context_exhausted")]
+            finally:
+                current_round.close()
+        finally:
+            expired_window.__exit__(None, None, None)
 
 
 @pytest.mark.parametrize("sampled", [0, 3])
