@@ -713,11 +713,12 @@ class AgentRuntime:
         try:
             if previous is not None:
                 self._cancel_activity(previous)
-                try:
-                    await await_retained(previous.done)
-                except asyncio.CancelledError as error:
-                    # The close caller keeps its cancellation surface after teardown.
-                    cancelled = error
+                if previous.task is not task:
+                    try:
+                        await await_retained(previous.done)
+                    except asyncio.CancelledError as error:
+                        # The close caller keeps its cancellation surface after teardown.
+                        cancelled = error
             self._closed = True
             self._status = "closed"
             try:
