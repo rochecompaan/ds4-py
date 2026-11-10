@@ -367,6 +367,8 @@ class MessageBinder:
         Publication runs inside the Session-owned transaction, so a failure here
         restores this boundary's binder/provider/harness state and the Session
         restores the group tokens together. Earlier boundaries stay committed.
+        Captured and restored metadata covers the whole prefix today; a
+        range-restricted key publication must narrow both to the same range.
         """
         previous_state = (self._records, self._bound_messages, self._restored_notes)
         previous_notes = provider.checkpoint() if provider is not None else None
@@ -397,7 +399,14 @@ class MessageBinder:
         instructions: str | None = None,
         note_provider: DS4SystemNotes | None = None,
     ) -> BindingChange:
-        """Apply one planned transition inside a claimed Session transaction."""
+        """Apply one planned transition inside a claimed Session transaction.
+
+        The claim is taken before planning, so preparation is admitted only
+        between rounds: it rejects while a round is open, while another
+        exclusive operation is active, and while a binding transaction already
+        holds the claim. Observation-only callers use the unclaimed counting and
+        planning entries instead.
+        """
         provider = note_provider if note_provider is not None else self.note_provider
         with self.session.binding_transaction() as transaction:
             originals = self.canonicalize(list(messages))

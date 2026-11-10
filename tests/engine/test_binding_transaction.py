@@ -14,12 +14,13 @@ from ds4py import ThinkMode
 from ds4py._native.fake import FakeNative, FakeSession
 from ds4py._native.protocol import CancelFn, ProgressFn, SyncStatus
 from ds4py.binding import MessageBinder
-from ds4py.capabilities.system_notes import DS4SystemNotes, NoteState
+from ds4py.capabilities.system_notes import DS4SystemNotes, NotePreview, NoteState
 from ds4py.engine.events import Stopped
+from ds4py.engine.lifecycle import SessionEvent
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.session import Engine, Session
 from ds4py.engine.transcript import Segment, TranscriptReplacement
-from ds4py.errors import EngineError
+from ds4py.errors import CheckpointError, EngineError
 
 
 def fake_engine(*, cancel: threading.Event | None = None) -> Engine:
@@ -41,8 +42,8 @@ def decode(engine: Engine, tokens: Sequence[int]) -> str:
     return b"".join(engine.token_text(token) for token in tokens).decode()
 
 
-class GatedNotes(DS4SystemNotes):
-    """Suspend the first dated publication until the external attempt settles."""
+class PlanningGate(DS4SystemNotes):
+    """Hold planning open so a second thread's mutation races the claimed plan."""
 
     def __init__(self, session: Session) -> None:
         super().__init__(session, clock=lambda: "fixed")
@@ -51,13 +52,14 @@ class GatedNotes(DS4SystemNotes):
         self._gated = False
 
     @override
-    def apply_preview(self, state: NoteState) -> None:
-        if state.date_emitted and not self._gated:
+    def preview(self) -> NotePreview:
+        if not self._gated:
             self._gated = True
             self.entered.set()
-            # A transaction that still owns its claim defers the writer instead.
-            self.settled.wait(1)
-        super().apply_preview(state)
+            # The publisher holds only its claim here, never the mutation lock,
+            # so waiting for the other thread is a bounded deadlock guard.
+            assert self.settled.wait(10), "the external mutation attempt never settled"
+        return super().preview()
 
 
 class FailingNotes(DS4SystemNotes):
@@ -83,12 +85,12 @@ def test_binding_boundary_cannot_interleave_external_append() -> None:
     with fake_engine() as engine:
         session = engine.session()
         binder = MessageBinder(session)
-        notes = GatedNotes(session)
+        notes = PlanningGate(session)
         binder.note_provider = notes
         rejected: list[str] = []
 
         def intruder() -> None:
-            assert notes.entered.wait(10), "binding publication never started"
+            assert notes.entered.wait(10), "binding planning never started"
             try:
                 session.append_system_note("intruder")
             except EngineError as error:
@@ -103,16 +105,12 @@ def test_binding_boundary_cannot_interleave_external_append() -> None:
         finally:
             notes.settled.set()
             thread.join(10)
+        # The claim covers planning through publication, so the concurrent
+        # writer is refused instead of landing between planned boundaries.
         written = [segment for segment in session.transcript.segments if segment.meta.get("text") == "intruder"]
-        if rejected:
-            assert rejected == ["a round is open"]
-            assert not written
-            assert binder.records()[-1].end == len(session.transcript)
-        else:
-            # A deferred writer lands only after the wholly published transaction.
-            assert len(written) == 1
-            assert binder.records()[-1].end == written[0].start
-            assert len(session.transcript) == written[0].end
+        assert rejected == ["a round is open"]
+        assert not written
+        assert binder.records()[-1].end == len(session.transcript)
 
 
 def test_native_preamble_work_keeps_the_binding_claim(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -190,6 +188,78 @@ def test_preamble_event_delivery_does_not_deadlock_a_mutation_attempt() -> None:
             assert outcomes == ["rejected"]
 
     asyncio.run(scenario())
+
+
+def test_checkpoint_drop_does_not_deadlock_a_listener_mutation_attempt() -> None:
+    # Checkpoint disposal during the transaction runs with only the claim held,
+    # so a loop-delivered listener can never wait on the producer's lock.
+    async def scenario() -> None:
+        with fake_engine() as engine:
+            session = engine.session()
+            session.start_chat()
+            session.checkpoint("turn")
+            stale = len(session._checkpoint_tokens)
+            assert stale == 2
+            dropped: list[str] = []
+            observed: list[int] = []
+            outcomes: list[str] = []
+
+            def attempt_mutation() -> None:
+                try:
+                    session.append_tokens([9], "user")
+                except EngineError:
+                    outcomes.append("rejected")
+                else:
+                    outcomes.append("appended")
+
+            def listener(event: SessionEvent) -> None:
+                dropped.append(event.kind)
+                observed.append(len(session.transcript))
+                done = threading.Event()
+
+                def attempt() -> None:
+                    attempt_mutation()
+                    done.set()
+
+                threading.Thread(target=attempt, daemon=True).start()
+                if not done.wait(5):
+                    outcomes.append("blocked")
+
+            session.on_event(listener, kinds={"Dropped"})
+
+            def truncate() -> None:
+                with session.binding_transaction() as transaction:
+                    transaction.truncate(0)
+
+            with session.events_on_loop(asyncio.get_running_loop()):
+                await asyncio.wait_for(asyncio.to_thread(truncate), 30)
+            assert dropped == ["Dropped"] * stale
+            assert outcomes == ["rejected"] * stale
+            # The Python truncation committed before disposal was dispatched, and
+            # the refused writer never interleaved with the transaction.
+            assert observed == [0] * stale
+            assert session.transcript.tokens == ()
+            assert session._checkpoint_tokens == {}
+
+    asyncio.run(scenario())
+
+
+def test_failed_checkpoint_drop_propagates_and_keeps_the_session_usable() -> None:
+    with fake_engine() as engine:
+        session = engine.session()
+        session.start_chat()
+        # A key Python lists but the worker never snapshotted: disposal rejects
+        # from the native job, after the locked Python truncation committed.
+        session._checkpoint_tokens["ghost"] = len(session.transcript)
+        with session.binding_transaction() as transaction:
+            with pytest.raises(CheckpointError, match="ghost"):
+                transaction.truncate(0)
+            assert session.transcript.tokens == ()
+            assert session._checkpoint_tokens == {}
+        # The rejected disposal releases the claim and later admission still works.
+        assert session._operations.kind is None
+        session.append_tokens([9], "user")
+        assert session.transcript.tokens == (9,)
 
 
 def test_binding_plan_cannot_apply_against_changed_prefix() -> None:
@@ -297,6 +367,10 @@ def test_later_publication_failure_retains_the_completed_prefix(after: bool) -> 
         assert messages[0].metadata is not None
         assert messages[1].metadata is None
         assert notes._date_emitted and not notes._hints_full_emitted
+        # The failed publication released its claim, so an idle operation is
+        # admitted again before the retry.
+        assert session._operations.kind is None
+        session.checkpoint("after-failure")
         binder.prepare(messages)
         assert len(binder.records()) == 2
         assert binder.records()[-1].end == len(session.transcript)

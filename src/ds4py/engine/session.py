@@ -364,7 +364,7 @@ class Session:
         kind: session_operations.OperationKind,
         *,
         authority: ReserveAuthority | None = None,
-    ) -> AbstractContextManager[None]:
+    ) -> AbstractContextManager[session_operations.Claim]:
         return session_operations.exclusive(self, kind, authority=authority)
 
     def _require_open(self) -> None:
@@ -428,14 +428,31 @@ class Session:
 
     def _truncate_locked(self, token_count: int) -> None:
         # Admission is already granted: the caller holds the mutation lock.
-        token_count = operator.index(token_count)
-        if not 0 <= token_count <= len(self._transcript):
+        position = self._truncate_position(token_count)
+        for key in self._stale_checkpoints(position):
+            self._drop_checkpoint_locked(key)
+        self._truncate_python(position)
+
+    def _truncate_position(self, token_count: int) -> int:
+        position = operator.index(token_count)
+        if not 0 <= position <= len(self._transcript):
             raise ValueError("truncate position is outside the transcript")
-        for key, length in tuple(self._checkpoint_tokens.items()):
-            if length > token_count:
-                self._drop_checkpoint_locked(key)
+        return position
+
+    def _stale_checkpoints(self, position: int) -> tuple[str, ...]:
+        return tuple(key for key, length in self._checkpoint_tokens.items() if length > position)
+
+    def _truncate_python(self, position: int) -> None:
+        """Commit one truncation of history, pause state and stale checkpoint keys.
+
+        Native checkpoint disposal is not part of this step: the binding
+        transaction dispatches those drops with only its claim held, so event
+        delivery never waits on the mutation lock.
+        """
+        for key in self._stale_checkpoints(position):
+            del self._checkpoint_tokens[key]
         self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
-        self._transcript.truncate(token_count)
+        self._transcript.truncate(position)
 
     def apply_appends(self, replacement: TranscriptReplacement, *, retire_paused: bool = False) -> None:
         """Append one validated group of segments atomically between rounds.
@@ -453,10 +470,11 @@ class Session:
 
         The claim begins before planning and excludes every other round,
         mutation or close until it is released in ``finally``. Native preamble
-        work releases the mutation lock but never the claim.
+        work and native checkpoint disposal release the mutation lock but never
+        the claim.
         """
-        with self._exclusive("binding"):
-            transaction = session_operations.BindingTransaction(self)
+        with self._exclusive("binding") as claim:
+            transaction = session_operations.BindingTransaction(self, claim)
             try:
                 yield transaction
             finally:
@@ -846,8 +864,13 @@ class Session:
             self._drop_checkpoint_locked(key)
 
     def _drop_checkpoint_locked(self, key: str) -> None:
-        list(self._job_events(CheckpointJob(key, drop=True)))
+        self._drop_checkpoint(key)
         self._checkpoint_tokens.pop(key, None)
+
+    def _drop_checkpoint(self, key: str) -> None:
+        # Admission is already granted; the caller may hold the mutation lock or
+        # only its operation claim, so a delivered event never waits on it.
+        list(self._job_events(CheckpointJob(key, drop=True)))
 
     def save_payload(self, file: BinaryIO, *, header: bytes) -> Saved:
         """Sync the transcript and write the header plus staged native payload.

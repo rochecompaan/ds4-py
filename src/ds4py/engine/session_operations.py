@@ -9,6 +9,7 @@ counting or planning carries no claim at all.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
 from ds4py.errors import EngineError
@@ -33,24 +34,36 @@ _MESSAGES = {
 }
 
 
+@dataclass(frozen=True)
+class Claim:
+    """Identity of one admitted exclusive operation."""
+
+    kind: OperationKind
+
+
 class OperationState:
     """At most one exclusive Session operation at a time."""
 
     def __init__(self) -> None:
-        self._kind: OperationKind | None = None
+        self._claim: Claim | None = None
 
     @property
     def kind(self) -> OperationKind | None:
-        return self._kind
+        return None if self._claim is None else self._claim.kind
 
-    def claim(self, kind: OperationKind) -> None:
-        if self._kind is not None:
+    def claim(self, kind: OperationKind) -> Claim:
+        if self._claim is not None:
             raise EngineError(_MESSAGES["busy"])
-        self._kind = kind
+        self._claim = Claim(kind)
+        return self._claim
 
-    def release(self, kind: OperationKind) -> None:
-        if self._kind == kind:
-            self._kind = None
+    def owns(self, claim: Claim) -> bool:
+        """Return True only while ``claim`` is the live admitted operation."""
+        return self._claim is claim
+
+    def release(self, claim: Claim) -> None:
+        if self._claim is claim:
+            self._claim = None
 
 
 def policy_for(kind: OperationKind) -> GuardPolicy:
@@ -89,7 +102,7 @@ def exclusive(
     kind: OperationKind,
     *,
     authority: ReserveAuthority | None = None,
-) -> Generator[None]:
+) -> Generator[Claim]:
     """Admit, claim and release one exclusive operation; the lock excludes writers."""
     policy = policy_for(kind)
     with session._lock:
@@ -99,36 +112,37 @@ def exclusive(
         native_paused = policy == "native" and (session._active_round or authority is not None)
         if native_paused and not session._reserve_authorized(authority, cast("ReserveOperation", kind)):
             raise EngineError(_MESSAGES["busy"])
-        session._operations.claim(kind)
+        claim = session._operations.claim(kind)
     try:
-        yield
+        yield claim
     finally:
         with session._lock:
-            session._operations.release(kind)
+            session._operations.release(claim)
 
 
 class BindingTransaction:
     """One claimed binding boundary sequence over Session-owned history.
 
     The handle admits only the planned truncate/start/append sequence. Native
-    preamble work releases the mutation lock but never the claim, and every
-    operation re-checks the prefix revision its plan observed.
+    preamble work and native checkpoint disposal release the mutation lock but
+    never the claim, and every operation re-checks the prefix revision its plan
+    observed.
     """
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, claim: Claim) -> None:
         self._session = session
+        self._claim = claim
         self._active = True
-        self._revision, self._length = self._observed()
+        self._revision, self._length = session._transcript.snapshot()
 
     def close(self) -> None:
         self._active = False
 
     def _observed(self) -> tuple[int, int]:
-        transcript = self._session._transcript
-        return transcript.revision, len(transcript)
+        return self._session._transcript.snapshot()
 
     def _live(self, session: Session) -> bool:
-        return self._active and session._operations.kind == "binding"
+        return self._active and session._operations.owns(self._claim)
 
     def _check_current(self) -> None:
         revision, length = self._observed()
@@ -141,11 +155,24 @@ class BindingTransaction:
         self._revision, self._length = self._observed()
 
     def truncate(self, token_count: int) -> None:
-        """Truncate history and invalidate later checkpoints inside the claim."""
-        with self._session._lock:
+        """Truncate history and invalidate later checkpoints inside the claim.
+
+        The Python truncation commits under the mutation lock, then each stale
+        native checkpoint is disposed with only the claim held: a dispatched
+        drop can wait on cross-thread event delivery, and the claim already
+        excludes every writer and every idle checkpoint reader from the gap.
+        """
+        session = self._session
+        with session._lock:
             self._check_current()
-            self._session._truncate_locked(token_count)
+            position = session._truncate_position(token_count)
+            stale = session._stale_checkpoints(position)
+            session._truncate_python(position)
             self._committed()
+        for key in stale:
+            session._drop_checkpoint(key)
+        with session._lock:
+            self._check_current()
 
     def start_chat(
         self,

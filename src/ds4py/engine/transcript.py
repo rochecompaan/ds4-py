@@ -116,6 +116,11 @@ class Transcript:
         with self._lock:
             return self._revision
 
+    def snapshot(self) -> tuple[int, int]:
+        """Return one coherent ``(revision, length)`` observation."""
+        with self._lock:
+            return self._revision, len(self._tokens)
+
     @property
     def tokens(self) -> tuple[int, ...]:
         with self._lock:
