@@ -17,6 +17,14 @@ from pydantic_ai.messages import (
 )
 
 from ds4py._json import is_string_key_mapping
+from ds4py.binding_plan import (
+    BindingChange,
+    BindingConfig,
+    BindingPlan,
+    ScratchSession,
+    bound_plan,
+    configured_plan,
+)
 from ds4py.binding_provenance import (
     BoundMessage,
     _arguments,  # noqa: F401 - Re-exported for tool rendering tests.
@@ -26,26 +34,21 @@ from ds4py.binding_provenance import (
     _validate,
     prepare_provenance,
 )
-from ds4py.binding_request import count_bound_request
-from ds4py.engine import chat as chat_ops
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.tool_prompt import ToolDefinition
-from ds4py.engine.transcript import Segment, Transcript, TranscriptView
 from ds4py.message_rendering import MessageRenderer
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Iterable, Sequence
 
+    from ds4py.binding_plan import BindingBoundary
     from ds4py.binding_provenance import PreparedProvenance, _Provenance
     from ds4py.capabilities.system_notes import DS4SystemNotes
-    from ds4py.engine.session import Engine, Session
+    from ds4py.engine.session import Session
 
 
-@dataclass(frozen=True)
-class BindingChange:
-    kind: str
-    start: int
-    continuation: bool
+# Kept for the existing summary renderer until its public rendering seam moves.
+_ScratchSession = ScratchSession
 
 
 @dataclass(frozen=True)
@@ -57,32 +60,6 @@ class SegmentProvenance:
     content_hash: str
     source: str
     text: str | None = None
-
-
-class _ScratchSession:
-    """Rendering target with no native session/KV state."""
-
-    def __init__(self, engine: Engine) -> None:
-        self._engine = engine
-        self._transcript = Transcript()
-        self.transcript = TranscriptView(self._transcript)
-
-    def start_chat(
-        self,
-        tools: Iterable[ToolDefinition] = (),
-        instructions: str | None = None,
-    ) -> None:
-        for segment in PromptBuilder(self._engine).begin(tools, instructions):
-            self._transcript.append(segment.tokens, segment.kind)
-        self._transcript.set_chat()
-
-    def append_tokens(
-        self,
-        tokens: Sequence[int],
-        kind: str,
-        meta: Mapping[str, object] | None = None,
-    ) -> Segment:
-        return self._transcript.append(tokens, kind, meta)
 
 
 def _definitions(tools: Iterable[object]) -> tuple[ToolDefinition, ...]:
@@ -335,36 +312,6 @@ class MessageBinder:
             and isinstance(messages[-1].parts[-1], (ToolReturnPart, RetryPromptPart))
         )
 
-    def _retire_paused(self) -> None:
-        if self.session._paused_stream is None:
-            return
-        previous = self._records[-1]
-        start = len(self.session.transcript)
-        chat_ops.retire_paused(self.session)
-        end = len(self.session.transcript)
-        self.session._transcript.annotate(
-            start,
-            kinds=("eos",),
-            meta={
-                "key": previous.key,
-                "content_hash": previous.content_hash,
-                "source": "sampled",
-            },
-        )
-        self._records[-1] = BoundMessage(
-            previous.key,
-            previous.content_hash,
-            previous.start,
-            end,
-        )
-
-    def _sync_notes(self, provider: DS4SystemNotes | None) -> None:
-        sync = getattr(provider, "resync_from_segments", None)
-        if sync is None:
-            sync = getattr(provider, "sync_from_segments", None)
-        if sync is not None:
-            sync(self.session.transcript.segments)
-
     def _keyed(self, messages: Sequence[ModelMessage]) -> list[tuple[str, str]]:
         """Pair each message with its key and content hash.
 
@@ -388,7 +335,28 @@ class MessageBinder:
             keyed.append((key, content_hash))
         return keyed
 
-    def prepare(  # noqa: C901, PLR0912, PLR0915 - Binding coordinates each history transition.
+    def plan_request(
+        self,
+        messages: Sequence[ModelMessage],
+        *,
+        tools: Iterable[object] = (),
+        instructions: str | None = None,
+        note_provider: DS4SystemNotes | None = None,
+    ) -> BindingPlan:
+        """Plan configured preparation without changing any live state."""
+        definitions = _definitions(tools)
+        signature = (_tool_digest(definitions), instructions, int(self.session.engine.think))
+        provider = note_provider if note_provider is not None else self.note_provider
+        return configured_plan(self, messages, BindingConfig(definitions, instructions, signature), provider)
+
+    def _apply_boundary(self, boundary: BindingBoundary, provider: DS4SystemNotes | None) -> None:
+        self._records = list(boundary.records)
+        self._bound_messages = list(boundary.bound_messages)
+        self._restored_notes = {key: list(notes) for key, notes in boundary.restored_notes}
+        if provider is not None and boundary.notes is not None:
+            provider.apply_preview(boundary.notes)
+
+    def prepare(
         self,
         messages: Sequence[ModelMessage],
         *,
@@ -396,95 +364,60 @@ class MessageBinder:
         instructions: str | None = None,
         note_provider: DS4SystemNotes | None = None,
     ) -> BindingChange:
-        messages = list(messages)
-        _validate(messages)
-        keyed = self._keyed(messages)
-        definitions = _definitions(tools)
-        signature = (
-            _tool_digest(definitions),
-            instructions,
-            int(self.session.engine.think),
-        )
-        had_binding = self._signature is not None
-        system_changed = self._signature != signature or not self.session.transcript.chat
+        originals = self.canonicalize(list(messages))
+        plan = self.plan_request(originals, tools=tools, instructions=instructions, note_provider=note_provider)
         provider = note_provider if note_provider is not None else self.note_provider
-        if self._restored:
-            # A restore adopts a loaded KV without knowing the request that will
-            # extend it; adopt the signature only when the preamble really is the
-            # one already loaded, otherwise fall back to a rewrite.
-            if system_changed and self._restored_preamble(definitions, instructions):
-                self._signature = signature
-                system_changed = False
+        if plan.truncate_to is not None:
+            self.session.truncate(plan.truncate_to)
+        if plan.reset_chat:
+            self._signature = None
             self._restored = False
-
-        if system_changed:
-            self._renderer.preflight(messages)
-            start = 0
-            removed_notes = any(segment.kind == "note" for segment in self.session.transcript.segments)
-            if len(self.session.transcript):
+            self._apply_boundary(plan.initial, provider)
+            try:
+                self.session.start_chat(plan.definitions, plan.instructions)
+            except BaseException:
+                # start_chat can append a preamble before native sync fails.
                 self.session.truncate(0)
-            self._records = []
-            self._bound_messages = []
-            self.session.start_chat(definitions, instructions)
-            self._signature = signature
-            if removed_notes:
-                self._sync_notes(provider)
-            common = 0
-            kind = "rewrite" if had_binding else "append"
-        else:
-            common = 0
-            while (
-                common < len(messages)
-                and common < len(self._records)
-                and keyed[common] == (self._records[common].key, self._records[common].content_hash)
-            ):
-                common += 1
-            if common == len(messages) == len(self._records):
-                pending = getattr(provider, "pending", None)
-                if not (pending is not None and self._trailing_request(messages) and pending(messages)):
-                    return BindingChange(
-                        "unchanged",
-                        len(self.session.transcript),
-                        self._continuation(messages),
+                raise
+        self._signature = plan.signature
+        self._restored = False
+        self._apply_boundary(plan.initial, provider)
+        self._publish_keys(originals, plan)
+        for boundary in plan.boundaries:
+            start = len(self.session.transcript)
+            paused = (self.session._paused_stream, self.session._paused_control, self.session._paused_sampled_tokens)
+            try:
+                for segment in boundary.appends.segments:
+                    self.session.append_tokens(
+                        boundary.appends.tokens[segment.start : segment.end], segment.kind, segment.meta
                     )
-                # A required note is pending; rewrite the trailing request so the
-                # note lands at its boundary instead of returning unchanged.
-                common = len(messages) - 1
-            self._renderer.preflight(messages[common:])
-            if common < len(self._records):
-                start = self._records[common].start
-                removed_notes = any(
-                    segment.kind == "note" and segment.end > start for segment in self.session.transcript.segments
-                )
+            except BaseException:
                 self.session.truncate(start)
-                self._records = self._records[:common]
-                self._bound_messages = self._bound_messages[:common]
-                kind = "rewrite"
-                if removed_notes:
-                    self._sync_notes(provider)
-            else:
-                self._retire_paused()
-                start = len(self.session.transcript)
-                kind = "append"
+                self.session._paused_stream, self.session._paused_control, self.session._paused_sampled_tokens = paused
+                raise
+            if boundary.retire_paused:
+                self.session._paused_stream = self.session._paused_control = None
+            self._apply_boundary(boundary, provider)
+            self._publish_keys(originals, plan)
+        return plan.change
 
-        for offset, (message, (key, content_hash)) in enumerate(
-            zip(messages[common:], keyed[common:]),
-        ):
-            if isinstance(message, ModelRequest):
-                for text, subtype in self._restored_notes.get(key, ()):
-                    chat_ops.append_system_note(self.session, text, subtype)
-                if provider is not None:
-                    for text, subtype in provider.notes(messages[: common + offset + 1]):
-                        chat_ops.append_system_note(self.session, text, subtype)
-            message_start, end = self._renderer.append(
-                self.session,
-                message,
-                key,
-                content_hash,
-            )
-            self._records.append(BoundMessage(key, content_hash, message_start, end))
-            self._bound_messages.append(deepcopy(message))
-        return BindingChange(kind, start, self._continuation(messages))
+    def _publish_keys(self, originals: Sequence[ModelMessage], plan: BindingPlan) -> None:
+        for original, planned in zip(originals[: len(self._records)], plan.messages):
+            original.metadata = deepcopy(planned.metadata)
+
+    def count_rendered_request(
+        self,
+        messages: Sequence[ModelMessage],
+        *,
+        tools: Iterable[object] = (),
+        instructions: str | None = None,
+    ) -> int:
+        """Project configured preparation, retaining exact matching native spans."""
+        return self.plan_request(messages, tools=tools, instructions=instructions).count(self.session.engine)
+
+    def count_bound_request(self, messages: Sequence[ModelMessage]) -> int:
+        """Project against the initialized native preamble and sampled binding."""
+        return bound_plan(self, messages).count(self.session.engine)
 
     def count_tokens(
         self,
@@ -492,32 +425,9 @@ class MessageBinder:
         *,
         tools: Iterable[object] = (),
         instructions: str | None = None,
-        preserve_bound: bool = False,
     ) -> int:
-        """Count a request, including its assistant prefix, without native sync.
-
-        ``preserve_bound`` uses the current native preamble and exact sampled
-        spans for pending results; the default renders the supplied configuration.
-        """
-        messages = list(messages)
-        _validate(messages)
-        scratch = _ScratchSession(self.session.engine)
-        if preserve_bound and self._records:
-            end = self._records[0].start
-            for segment in self.session.transcript.segments:
-                if segment.end <= end:
-                    scratch.append_tokens(
-                        self.session.transcript.tokens[segment.start : segment.end], segment.kind, segment.meta
-                    )
-            return count_bound_request(self, scratch, messages)
-        scratch.start_chat(_definitions(tools), instructions)
-        for message in messages:
-            key = (message.metadata or {}).get("ds4.key", "")
-            self._renderer.append(scratch, message, key, _content_hash(message))
-        prefix = PromptBuilder(self.session.engine).assistant_prefix(scratch.transcript.tokens)
-        if prefix:
-            scratch.append_tokens(prefix, "assistant_prefix")
-        return len(scratch.transcript)
+        """Compatibility facade for configured request projection."""
+        return self.count_rendered_request(messages, tools=tools, instructions=instructions)
 
     def bind_response(self, response: ModelResponse) -> None:
         key = _ensure_key(response)

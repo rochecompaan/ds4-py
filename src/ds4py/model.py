@@ -20,6 +20,7 @@ from pydantic_ai.usage import RequestUsage
 from typing_extensions import sentinel
 
 from ds4py.binding import MessageBinder
+from ds4py.binding_plan import request_instructions
 from ds4py.capabilities.context import ContextRequest
 from ds4py.engine.events import (
     Event,
@@ -40,7 +41,6 @@ if TYPE_CHECKING:
 
     from pydantic_ai.messages import (
         FinishReason,
-        InstructionPart,
         ModelMessage,
         ModelResponse,
         ModelResponseStreamEvent,
@@ -95,12 +95,6 @@ def _finite(value: object, name: str) -> float:
     if not math.isfinite(value):
         raise ValueError(f"{name} must be a concrete finite number")
     return value
-
-
-def _instructions(parts: Sequence[InstructionPart] | None) -> str | None:
-    if not bool(parts):
-        return None
-    return "\n\n".join(part.content for part in parts) or None
 
 
 class DS4Model(Model):
@@ -205,11 +199,10 @@ class DS4Model(Model):
     ) -> AsyncGenerator[DS4StreamedResponse]:
         policy, max_tokens, stop_sequences = self._request_config(settings)
         messages = self.binder.canonicalize(messages)
-        instruction_parts = self._get_instruction_parts(messages, params)
         self.binder.prepare(
             messages,
             tools=params.declared_tool_defs.values(),
-            instructions=_instructions(instruction_parts),
+            instructions=request_instructions(messages, params),
             note_provider=self.note_provider,
         )
         response = DS4StreamedResponse(

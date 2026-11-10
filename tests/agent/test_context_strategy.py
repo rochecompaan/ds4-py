@@ -36,6 +36,7 @@ TOOL_ERROR = "Tool error: tool result still does not fit"
 class _TranscriptView:
     def __init__(self, length: int) -> None:
         self.length = length
+        self.chat = True
 
     def __len__(self) -> int:
         return self.length
@@ -51,7 +52,10 @@ class StubBinder:
             engine=SimpleNamespace(config=SimpleNamespace(ctx=ctx)),
         )
 
-    def count_tokens(self, messages: list[ModelMessage], **kwargs: object) -> int:
+    def count_bound_request(self, messages: list[ModelMessage]) -> int:
+        return next(self._counts)
+
+    def count_rendered_request(self, messages: list[ModelMessage], **kwargs: object) -> int:
         return next(self._counts)
 
 
@@ -165,38 +169,45 @@ def _tool_return(result: Any) -> ToolReturnPart:
     )
 
 
+def prepared_tool_binder(session: Any) -> MessageBinder:
+    binder = MessageBinder(session)
+    binder.prepare([user("go"), ModelResponse([ToolCallPart("read_big", {}, tool_call_id="call-1")])])
+    return binder
+
+
 def test_registered_owner_receives_tool_overflow() -> None:
-    binder = StubBinder([90, 100, 99], transcript_tokens=90, ctx=100)
-    owner = RecordingOwner(binder)
+    with fake_engine() as engine:
+        binder = prepared_tool_binder(engine.session())
 
-    result = asyncio.run(_tool_agent(owner, "x" * 100).run("go"))
+        async def make_room(messages: list[ModelMessage], request: ContextRequest) -> None:
+            first = cast("ModelRequest", messages[0])
+            cast("UserPromptPart", first.parts[0]).content = "g"
 
-    assert owner.requests == [ContextRequest(1, "tool_result")]
-    assert owner.message_lists == [list(result.all_messages()[:2])]
-    assert _tool_return(result).content == "x" * 100
+        owner = RecordingOwner(binder, on_room=make_room)
+        result = asyncio.run(_tool_agent(owner, "x" * 7399).run("go"))
+
+        assert owner.requests == [ContextRequest(1, "tool_result")]
+        assert owner.message_lists == [list(result.all_messages()[:2])]
+        assert _tool_return(result).content == "x" * 7399
 
 
 def test_fitting_tool_result_does_not_ask_the_owner() -> None:
-    binder = StubBinder([90, 95, 95], transcript_tokens=90, ctx=1000)
-    owner = RecordingOwner(binder)
-
-    result = asyncio.run(_tool_agent(owner, "small").run("go"))
-
-    assert owner.requests == []
-    assert _tool_return(result).content == "small"
+    with fake_engine() as engine:
+        owner = RecordingOwner(prepared_tool_binder(engine.session()))
+        result = asyncio.run(_tool_agent(owner, "small").run("go"))
+        assert owner.requests == []
+        assert _tool_return(result).content == "small"
 
 
 def test_failed_tool_room_returns_the_still_does_not_fit_error() -> None:
-    binder = StubBinder([90, 100, 99], transcript_tokens=90, ctx=100)
-    owner = RecordingOwner(binder, room=RoomResult(made_room=False))
-
-    result = asyncio.run(_tool_agent(owner, "x" * 100).run("go"))
-
-    assert owner.requests == [ContextRequest(1, "tool_result")]
-    assert _tool_return(result).content == TOOL_ERROR
+    with fake_engine() as engine:
+        owner = RecordingOwner(prepared_tool_binder(engine.session()), room=RoomResult(made_room=False))
+        result = asyncio.run(_tool_agent(owner, "x" * 7399).run("go"))
+        assert owner.requests == [ContextRequest(1, "tool_result")]
+        assert _tool_return(result).content == TOOL_ERROR
 
 
-def test_tool_fit_check_uses_the_live_prompt_and_rendered_delta() -> None:
+def test_tool_fit_check_preserves_sampled_spans_and_counts_assistant_prefix() -> None:
     """The fit base is the live transcript, not a scratch render of the request list."""
 
     async def scenario() -> tuple[RecordingOwner, int, int, list[ModelMessage], Any]:
@@ -243,10 +254,11 @@ def test_tool_fit_check_uses_the_live_prompt_and_rendered_delta() -> None:
 
     assert _tool_return(result).content == TOOL_ERROR
     # Hand-checked counts: live prompt 545, wrong scratch base 358, rendered tool
-    # message 20038, and a 8192 context, so the required room is 545+20038+1-8192.
+    # message 20038, assistant prefix 17, and an 8192 context. The old delta
+    # calculation omitted that prefix (12392 instead of the exact 12409).
     assert (base, before, rendered, ctx) == (545, 358, 20038, 8192)
-    assert owner.requests == [ContextRequest(base + rendered + 1 - ctx, "tool_result")]
-    assert owner.requests[0].needed_tokens == 12392
+    assert owner.requests == [ContextRequest(base + rendered + 17 + 1 - ctx, "tool_result")]
+    assert owner.requests[0].needed_tokens == 12409
 
 
 def test_reserve_without_owner_raises_context_exhausted() -> None:

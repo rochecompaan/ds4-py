@@ -4,9 +4,9 @@ import asyncio
 from copy import deepcopy
 
 import pytest
-from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
 from test_context_strategy import RecordingOwner, fake_engine, sequential_text
 from test_runtime import make_model
@@ -36,9 +36,9 @@ def test_paused_retirement_guards_the_one_token_request_boundary(family: str, pa
             messages.extend([response, pending])
             needs_eos = family == "qwen" and paused
             before = (session.transcript.tokens, model.binder.records())
-            count = model.binder.count_tokens(messages, preserve_bound=True)
+            count = model.binder.count_bound_request(messages)
             assert count == (8192 if needs_eos else 8191)
-            assert model.binder.count_tokens(messages, preserve_bound=True) == count
+            assert model.binder.count_bound_request(messages) == count
             assert (session.transcript.tokens, model.binder.records()) == before
             assert pending.metadata is None
             assert session._paused_stream is paused_stream
@@ -58,7 +58,7 @@ def test_paused_retirement_guards_the_one_token_request_boundary(family: str, pa
             part = pending.parts[0]
             assert isinstance(part, ToolReturnPart)
             assert part.content == (TOOL_RESULT_DOES_NOT_FIT if needs_eos else body)
-            fitted = model.binder.count_tokens(messages, preserve_bound=True)
+            fitted = model.binder.count_bound_request(messages)
             async with model.request_stream(messages, None, ModelRequestParameters()):
                 prefix = 17 if family == "qwen" else 3
                 assert len(session.transcript) + prefix == fitted
@@ -66,7 +66,7 @@ def test_paused_retirement_guards_the_one_token_request_boundary(family: str, pa
                 assert session._paused_stream is None
                 assert sum(s.kind == "eos" for s in session.transcript.segments) == (1 if family == "qwen" else 0)
                 # Retirement is already included in binding now: never add it twice.
-                assert model.binder.count_tokens(messages, preserve_bound=True) == fitted
+                assert model.binder.count_bound_request(messages) == fitted
 
     asyncio.run(scenario())
 
@@ -93,7 +93,7 @@ def test_unchanged_or_rewritten_paused_history_does_not_get_retirement_eos(rewri
                 for message in messages:
                     message.metadata = {k: v for k, v in (message.metadata or {}).items() if k != "ds4.key"}
             before = (session.transcript.tokens, model.binder.records())
-            count = model.binder.count_tokens(messages, preserve_bound=True)
+            count = model.binder.count_bound_request(messages)
             assert (session.transcript.tokens, model.binder.records()) == before
             assert session._paused_stream is paused_stream
             if rewrite == "unkeyed":
@@ -105,5 +105,35 @@ def test_unchanged_or_rewritten_paused_history_does_not_get_retirement_eos(rewri
                 ["rendered"] if rewrite == "same-key-with-suffix" else []
             )
             assert (session._paused_stream is None) is changed
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("paused", [False, True])
+def test_after_tool_counts_paused_qwen_retirement_and_next_prefix(paused: bool) -> None:
+    async def scenario() -> None:
+        with fake_engine(family="qwen", script=sequential_text("stop")) as engine:
+            model = make_model(engine)
+            session = model.session
+            messages: list[ModelMessage] = [ModelRequest([UserPromptPart("go")])]
+            response = await model.request(
+                messages, {"stop_sequences": ["stop"]} if paused else None, ModelRequestParameters()
+            )
+            messages.append(response)
+            body = "x" * (8191 - len(session.transcript) - 55)
+            before = (session.transcript.tokens, model.binder.records(), session._paused_stream)
+            owner = RecordingOwner(model.binder, room=RoomResult(True, 5))
+            ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=messages)
+            result = await owner.after_tool_execute(
+                ctx,
+                call=ToolCallPart("read_big", {}, tool_call_id="one"),
+                tool_def=ToolDefinition(name="read_big"),
+                args={},
+                result=body,
+            )
+            assert result == (TOOL_RESULT_DOES_NOT_FIT if paused else body)
+            assert owner.requests == ([ContextRequest(1, "tool_result")] if paused else [])
+            assert ctx.usage.output_tokens == (5 if paused else 0)
+            assert (session.transcript.tokens, model.binder.records(), session._paused_stream) == before
 
     asyncio.run(scenario())

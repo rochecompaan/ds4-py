@@ -96,7 +96,7 @@ def test_pending_count_keeps_native_sampled_prefix_and_grouped_wrappers(pending_
             before = (model.session.transcript.tokens, model.binder.records())
             # Pending hints-off: 92 body bytes + leading newline + system marker.
             expected = 404 if pending_note else 310
-            assert model.binder.count_tokens([*messages, response, pending], preserve_bound=True) == expected
+            assert model.binder.count_bound_request([*messages, response, pending]) == expected
             assert (model.session.transcript.tokens, model.binder.records()) == before
             model.binder.prepare([*messages, response, pending])
             assert len(model.session.transcript) == expected - 3  # Assistant prefix belongs to run_round.

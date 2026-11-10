@@ -1,5 +1,6 @@
 """System-note provider for the ds4-py default agent."""
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, override
 
@@ -44,23 +45,31 @@ _UNSET = sentinel("_UNSET")
 _UNKNOWN = sentinel("_UNKNOWN")
 
 
-class DS4SystemNotes(AbstractCapability):
-    """Tracks date and hints notes and asks the binder to append them."""
+@dataclass(frozen=True)
+class NoteState:
+    """Prepared note state at one successfully applied binding boundary."""
+
+    hints_enabled: bool
+    date_emitted: bool
+    hints_full_emitted: bool
+    hints_applied: bool | _UNSET | _UNKNOWN
+
+
+class NotePreview:
+    """Isolated date/hints cursor; owns no Session or event subscriptions."""
 
     def __init__(
         self,
-        session: Session,
         *,
         clock: Callable[[], datetime | str] | None = None,
         hints: bool = False,
     ) -> None:
-        self.session = session
         self.clock = clock or (lambda: datetime.now().astimezone())
         self.hints_enabled = hints
         self._date_emitted = False
+        self._date_text: str | None = None
         self._hints_full_emitted = False
         self._hints_applied: bool | _UNSET | _UNKNOWN = _UNSET
-        self._compaction_subscribed = False
 
     def pending(self, messages: Sequence[ModelMessage]) -> list[tuple[str, str]]:
         """Return notes that would be emitted without mutating provider state."""
@@ -77,9 +86,11 @@ class DS4SystemNotes(AbstractCapability):
 
         result: list[tuple[str, str]] = []
         if is_user and not self._date_emitted:
-            now = self.clock()
-            when = now.strftime("%Y-%m-%d %H:%M:%S %Z") if isinstance(now, datetime) else str(now)
-            result.append((f"{DATE_PREFIX}{when}{DATE_SUFFIX}", "date"))
+            if self._date_text is None:
+                now = self.clock()
+                when = now.strftime("%Y-%m-%d %H:%M:%S %Z") if isinstance(now, datetime) else str(now)
+                self._date_text = f"{DATE_PREFIX}{when}{DATE_SUFFIX}"
+            result.append((self._date_text, "date"))
 
         if self.hints_enabled and not self._hints_full_emitted:
             result.append((HINTS_FULL, "hints_full"))
@@ -109,20 +120,15 @@ class DS4SystemNotes(AbstractCapability):
                 self._hints_applied = False
         return result
 
-    @override
-    async def before_model_request(
-        self, ctx: RunContext[object], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        if not self._compaction_subscribed:
-            if hasattr(self.session, "on_event"):
-                self.session.on_event(self._on_compacted, kinds="compacted")
-            self._compaction_subscribed = True
-        return request_context
+    def checkpoint(self) -> NoteState:
+        return NoteState(self.hints_enabled, self._date_emitted, self._hints_full_emitted, self._hints_applied)
 
-    def _on_compacted(self, event: SessionEvent) -> None:
-        if self._hints_applied is not _UNSET:
-            self._hints_applied = _UNKNOWN
-        self._hints_full_emitted = False
+    def apply_preview(self, state: NoteState) -> None:
+        """Assign a checkpoint without callbacks or clock reads."""
+        self.hints_enabled = state.hints_enabled
+        self._date_emitted = state.date_emitted
+        self._hints_full_emitted = state.hints_full_emitted
+        self._hints_applied = state.hints_applied
 
     def _segment_subtype(self, segment: object) -> object:
         kind = getattr(segment, "kind", segment)
@@ -171,3 +177,43 @@ class DS4SystemNotes(AbstractCapability):
                 self.hints_enabled = True
             elif subtype == "hints_off":
                 self.hints_enabled = False
+
+
+class DS4SystemNotes(NotePreview, AbstractCapability):
+    """Live note provider with explicit preview publication and subscriptions."""
+
+    def __init__(
+        self,
+        session: Session,
+        *,
+        clock: Callable[[], datetime | str] | None = None,
+        hints: bool = False,
+    ) -> None:
+        super().__init__(clock=clock, hints=hints)
+        self.session = session
+        self._compaction_subscribed = False
+
+    @override
+    def pending(self, messages: Sequence[ModelMessage]) -> list[tuple[str, str]]:
+        """Observe through a fresh cursor, without caching on the live provider."""
+        return self.preview().pending(messages)
+
+    def preview(self) -> NotePreview:
+        cursor = NotePreview(clock=self.clock)
+        cursor.apply_preview(self.checkpoint())
+        return cursor
+
+    @override
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if not self._compaction_subscribed:
+            if hasattr(self.session, "on_event"):
+                self.session.on_event(self._on_compacted, kinds="compacted")
+            self._compaction_subscribed = True
+        return request_context
+
+    def _on_compacted(self, event: SessionEvent) -> None:
+        if self._hints_applied is not _UNSET:
+            self._hints_applied = _UNKNOWN
+        self._hints_full_emitted = False

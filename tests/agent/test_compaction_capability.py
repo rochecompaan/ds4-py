@@ -15,7 +15,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from test_context_strategy import RecordingOwner, StubBinder, _tool_agent
+from test_context_strategy import RecordingOwner, _tool_agent, fake_engine, prepared_tool_binder
 
 import ds4py
 from ds4py import ThinkMode
@@ -208,10 +208,11 @@ def test_make_room_checks_actual_freed_tokens(needed: int, want: bool) -> None:
 
 def test_tool_overflow_adds_summary_usage_once() -> None:
     async def run(generated: int) -> int:
-        binder = StubBinder([90, 100, 99], transcript_tokens=90, ctx=100)
-        owner = RecordingOwner(binder, room=RoomResult(True, generated))
-        result = await _tool_agent(owner, "large").run("go")
-        return result.usage.output_tokens
+        with fake_engine() as engine:
+            binder = prepared_tool_binder(engine.session())
+            owner = RecordingOwner(binder, room=RoomResult(False, generated))
+            result = await _tool_agent(owner, "x" * 7399).run("go")
+            return result.usage.output_tokens
 
     assert asyncio.run(run(13)) - asyncio.run(run(0)) == 13
 

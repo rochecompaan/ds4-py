@@ -9,9 +9,12 @@ from typing import TYPE_CHECKING, Literal, override
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, ToolReturn, ToolReturnPart
 
-from ds4py.errors import ContextExhausted
+from ds4py.binding_plan import request_instructions
+from ds4py.errors import ContextExhausted, EngineError
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pydantic_ai.messages import ModelMessage, ToolCallPart
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.tools import RunContext, ToolDefinition
@@ -65,20 +68,19 @@ class ContextStrategy(AbstractCapability, ABC):
     ) -> ModelRequestContext:
         """Keep keyed canonical boundaries instead of the harness's merged view."""
         request_context.messages = ctx.messages
-        await self._fit_pending_results(ctx)
+        await self._fit_pending_results(ctx, request_context)
         return request_context
 
-    async def _fit_pending_results(self, ctx: RunContext[object]) -> None:
+    async def _fit_pending_results(self, ctx: RunContext[object], request_context: ModelRequestContext) -> None:
         """Check the complete grouped request before it can enter the transcript."""
         if not ctx.messages or not isinstance(pending := ctx.messages[-1], ModelRequest):
             return
         results: list[ToolReturnPart] = [part for part in pending.parts if isinstance(part, ToolReturnPart)]
         if not results:
             return
-        size = self.binder.session.engine.config.ctx
 
         def needed() -> int:
-            return self.binder.count_tokens(ctx.messages, preserve_bound=True) + _RESERVE - size
+            return self._needed_tokens(ctx.messages, request_context=request_context)
 
         overflow = needed()
         if overflow <= 0:
@@ -105,11 +107,19 @@ class ContextStrategy(AbstractCapability, ABC):
         content = result.return_value if isinstance(result, ToolReturn) else result
         return ModelRequest([ToolReturnPart(call.tool_name, content, tool_call_id=call.tool_call_id)])
 
-    def _needed_tool_tokens(self, messages: list[ModelMessage], candidate: ModelRequest) -> int:
-        current = self.binder.count_tokens(messages)
-        added = self.binder.count_tokens([*messages, candidate]) - current
-        session = self.binder.session
-        return len(session.transcript) + added + _RESERVE - session.engine.config.ctx
+    def _needed_tokens(
+        self, messages: Sequence[ModelMessage], *, request_context: ModelRequestContext | None = None
+    ) -> int:
+        if self.binder.session.transcript.chat:
+            count = self.binder.count_bound_request(messages)
+        elif request_context is not None:
+            params = request_context.model_request_parameters
+            count = self.binder.count_rendered_request(
+                messages, tools=params.declared_tool_defs.values(), instructions=request_instructions(messages, params)
+            )
+        else:
+            raise EngineError("after-tool fit requires an initialized chat")
+        return count + _RESERVE - self.binder.session.engine.config.ctx
 
     @override
     async def after_tool_execute(
@@ -122,11 +132,12 @@ class ContextStrategy(AbstractCapability, ABC):
         result: object,
     ) -> object:
         """Ask this owner for room before an oversized tool result enters history."""
-        needed = self._needed_tool_tokens(ctx.messages, self._tool_return_message(call, result))
+        candidate = self._tool_return_message(call, result)
+        needed = self._needed_tokens([*ctx.messages, candidate])
         if needed <= 0:
             return result
         room = await self.make_room(ctx.messages, ContextRequest(needed, "tool_result"))
         ctx.usage.output_tokens += room.generated_tokens
-        if not room.made_room:
+        if not room.made_room or self._needed_tokens([*ctx.messages, candidate]) > 0:
             return TOOL_RESULT_DOES_NOT_FIT
         return result
