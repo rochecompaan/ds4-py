@@ -165,6 +165,10 @@ def test_compaction_lifecycle_updates_footer_without_response_text() -> None:
                     },
                 )
             )
+            assert tui.footer.status == "compacting"
+            tui.footer.handle_event(
+                SessionEvent("compaction_finished", "session", {"reason": "manual", "outcome": "compacted"})
+            )
             assert tui.footer.status == "idle"
             assert tui.footer.ctx_used == 200
             assert "900 → 200 tokens, 13 generated" in "".join(fragment[1] for fragment in tui.footer.render(200))

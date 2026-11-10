@@ -25,6 +25,7 @@ from ds4py.binding import MessageBinder
 from ds4py.capabilities.compaction import LLMCompaction
 from ds4py.capabilities.compaction_tail import plan_tail, tail_boundary
 from ds4py.capabilities.context import ContextRequest, RoomResult
+from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.engine.lifecycle import SessionEvent
 from ds4py.errors import EngineError
 
@@ -57,7 +58,7 @@ def test_compaction_rewrites_live_history_and_continues_without_rewrite(monkeypa
         original = session.transcript.tokens
         bottom = binder.records()[2].start
         events: list[SessionEvent] = []
-        session.on_event(events.append, kinds={"before_compact", "compacted"})
+        session.on_event(events.append, kinds={"before_compact", "compacted", "compaction_finished"})
         prepare = session.prepare_summary
         offsets: list[int] = []
 
@@ -78,7 +79,8 @@ def test_compaction_rewrites_live_history_and_continues_without_rewrite(monkeypa
         assert messages[0].parts[0].content == "durable state"
         assert messages[1:] == tail
         assert session.transcript.tokens[-len(original[bottom:]) :] == original[bottom:]
-        assert [event.kind for event in events] == ["before_compact", "compacted"]
+        assert [event.kind for event in events] == ["before_compact", "compacted", "compaction_finished"]
+        assert events[2].payload == {"reason": "manual", "outcome": "compacted"}
         assert events[0].payload == {"reason": "manual", "old_tokens": len(original)}
         assert events[1].payload == {
             "reason": "manual",
@@ -136,7 +138,7 @@ def test_native_failure_leaves_messages_and_provenance_unchanged(phase: str, mon
         binder.prepare(messages)
         before = (deepcopy(messages), binder.records(), binder.export_segments(), session.transcript.tokens)
         events: list[SessionEvent] = []
-        session.on_event(events.append, kinds={"before_compact", "compacted"})
+        session.on_event(events.append, kinds={"before_compact", "compacted", "compaction_finished"})
         if phase == "summary":
             session.cancel()
         else:
@@ -151,7 +153,8 @@ def test_native_failure_leaves_messages_and_provenance_unchanged(phase: str, mon
         with pytest.raises(EngineError):
             asyncio.run(LLMCompaction(binder).compact_messages(messages, reason="manual"))
         assert (messages, binder.records(), binder.export_segments(), session.transcript.tokens) == before
-        assert [event.kind for event in events] == ["before_compact"]
+        assert [event.kind for event in events] == ["before_compact", "compaction_finished"]
+        assert events[1].payload == {"reason": "manual", "outcome": "failed"}
 
 
 @pytest.mark.parametrize(
@@ -271,3 +274,67 @@ def test_compaction_preserves_system_and_instruction_parts() -> None:
         assert summary.instructions == "configured instructions"
         assert binder.session.transcript.tokens[: len(preamble)] == preamble
         assert binder.prepare(messages, instructions="configured instructions").kind == "unchanged"
+
+
+@pytest.mark.parametrize("phase", ["success", "noop", "planning", "generation", "replacement", "post_commit", "cancel"])
+def test_every_attempt_terminates_and_only_success_resets_notes(phase: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    with ds4py.open("f.gguf", ctx=8192, think=ThinkMode.NONE, native=FakeNative(script=script)) as engine:
+        session = engine.session()
+        binder = MessageBinder(session)
+        messages = [user("recent")] if phase == "noop" else history()
+        binder.prepare(messages)
+        original = session.transcript.tokens
+        notes = DS4SystemNotes(session, hints=True, clock=lambda: "fixed")
+        notes.notes([user("hello")])
+
+        async def subscribe() -> None:
+            await notes.before_model_request(cast("Any", None), cast("Any", None))
+
+        asyncio.run(subscribe())
+        note_state = notes.checkpoint()
+        events: list[SessionEvent] = []
+        session.on_event(events.append, kinds={"before_compact", "compacted", "compaction_finished"})
+
+        def fail(*args: object, **kwargs: object) -> Any:
+            assert [event.kind for event in events] == ["before_compact"]
+            if phase == "cancel":
+                raise asyncio.CancelledError
+            raise RuntimeError("injected failure")
+
+        if phase == "planning":
+            monkeypatch.setattr("ds4py.capabilities.compaction.plan_tail", fail)
+        elif phase in {"generation", "cancel"}:
+            monkeypatch.setattr(session, "prepare_summary", fail)
+        elif phase == "replacement":
+            monkeypatch.setattr(session, "replace_transcript", fail)
+        elif phase == "post_commit":
+            monkeypatch.setattr(binder, "apply_compaction", fail)
+
+        async def attempt() -> None:
+            task = asyncio.create_task(LLMCompaction(binder).compact_messages(messages, reason="manual"))
+            if phase == "cancel":
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                assert task.cancelled()
+            elif phase in {"success", "noop"}:
+                await task
+            else:
+                with pytest.raises(RuntimeError, match="injected failure"):
+                    await task
+
+        asyncio.run(attempt())
+        outcome = {"success": "compacted", "noop": "noop", "cancel": "cancelled"}.get(phase, "failed")
+        expected = (
+            ["before_compact", "compacted", "compaction_finished"]
+            if phase == "success"
+            else ["before_compact", "compaction_finished"]
+        )
+        assert [event.kind for event in events] == expected
+        assert events[-1].payload == {"reason": "manual", "outcome": outcome}
+        if phase == "success":
+            assert notes.checkpoint() != note_state
+            assert [subtype for _, subtype in notes.pending([user("next")])] == ["hints_full"]
+        else:
+            assert notes.checkpoint() == note_state
+        if phase == "post_commit":
+            assert session.transcript.tokens != original  # Native commit did occur, but no success was fabricated.

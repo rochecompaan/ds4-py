@@ -80,8 +80,11 @@ def test_compact_command_rewrites_current_history_once_after_new(tmp_path: Path,
                 assert messages[0].parts[0].content == "durable state"
                 assert messages[1:] == tail
                 assert model.binder.prepare(messages).kind == "unchanged"
-                lifecycle = [event for event in events if event.kind in {"before_compact", "compacted"}]
-                assert [event.kind for event in lifecycle] == ["before_compact", "compacted"]
+                lifecycle = [
+                    event for event in events if event.kind in {"before_compact", "compacted", "compaction_finished"}
+                ]
+                assert [event.kind for event in lifecycle] == ["before_compact", "compacted", "compaction_finished"]
+                assert lifecycle[2].payload == {"reason": "manual", "outcome": "compacted"}
                 assert lifecycle[0].payload == {"reason": "manual", "old_tokens": old_tokens}
                 assert lifecycle[1].payload == {
                     "reason": "manual",
@@ -144,7 +147,9 @@ def test_manual_compact_rejects_active_run_without_progress_or_cancellation(tmp_
             assert len(attempts) == 1
             with pytest.raises(EngineError, match="active"):
                 await attempts[0]
-            assert not {"before_compact", "compacted", "Interrupted"} & {event.kind for event in events}
+            assert not {"before_compact", "compacted", "compaction_finished", "Interrupted"} & {
+                event.kind for event in events
+            }
             await runtime.close()
             with pytest.raises(EngineError, match="closed"):
                 await runtime.compact()
@@ -153,10 +158,12 @@ def test_manual_compact_rejects_active_run_without_progress_or_cancellation(tmp_
 
 
 @pytest.mark.parametrize("failure", [False, True])
+@pytest.mark.parametrize("command", ["/compact", "/shrink"])
 def test_tui_compact_clears_progress_on_noop_or_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     failure: bool,
+    command: str,
 ) -> None:
     with ds4py.open("f.gguf", ctx=8192, native=FakeNative(script=script)) as engine:
         runtime = make_runtime(DS4Model(engine.session(), sampling=SamplingPolicy(seed=1)), tmp_path)
@@ -167,15 +174,19 @@ def test_tui_compact_clears_progress_on_noop_or_failure(
             tui = TUI(runtime, input=input_, output=DummyOutput())
             messages: list[object] = []
             monkeypatch.setattr(tui, "show_message", messages.append)
+            tui.commands.register("shrink", runtime.compact, description="Compact through an alias", usage="/shrink")
             try:
-                asyncio.run(tui.dispatch("/compact"))
+                asyncio.run(tui.dispatch(command))
                 assert tui.footer.status == "idle"
                 assert len(messages) == 1
                 if failure:
                     assert str(messages[0]).startswith("error:")
                     assert "interrupted" in str(messages[0])
-                else:
+                elif command == "/compact":
                     assert "nothing" in str(messages[0]).lower()
+                else:
+                    assert isinstance(messages[0], CompactionResult)
+                    assert messages[0].dropped == 0
             finally:
                 tui.close()
                 asyncio.run(runtime.close())

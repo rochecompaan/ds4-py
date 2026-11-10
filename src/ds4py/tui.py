@@ -246,9 +246,6 @@ class TUI:
             else:
                 if result is not None:
                     self.show_message(result)
-            finally:
-                if line.strip().split(maxsplit=1)[:1] == ["/compact"]:
-                    self.footer.finish_compaction()
             return
         if self._in_loop:
             await self._run_with_controls(line)

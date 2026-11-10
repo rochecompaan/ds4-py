@@ -122,6 +122,25 @@ history in place. The runtime's manual entry point uses this service, not the
 custom owner. Replacing the automatic owner does not register a second
 automatic compactor. Use the runtime entry point for its active-run guard.
 
+### Compaction session events
+
+Every started attempt emits `before_compact(reason, old_tokens)` before tail
+planning, then exactly one `compaction_finished(reason, outcome)` in `finally`.
+The terminal outcome is `compacted`, `noop`, `failed`, or `cancelled`. A busy
+rejection starts no attempt and emits neither event.
+
+Only a successful commit emits `compacted(reason, old_tokens, new_tokens,
+generated_tokens)`, before `compaction_finished`. No-op, failure, and
+cancellation never fabricate success or reset the system-note provider. An
+internal error after native replacement also terminates with `failed`; this
+notification does not promise rollback of a replacement that already succeeded.
+
+The footer restores its previous idle/running status from the terminal event,
+not a command name or a success notification. A later `run_end` takes precedence
+so a late finish cannot revive a completed run. All three displayed success
+counts must be non-negative integers (not booleans); the footer validates the
+complete count payload and terminal outcome before mutating their state.
+
 ### History replacement and persistence
 
 Summary generation uses the session's model with thinking disabled and greedy,

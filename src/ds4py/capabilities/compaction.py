@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from asyncio import CancelledError
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, override
 from uuid import uuid4
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 
 
 type CompactionReason = Literal["threshold", "tool_result", "reserve", "manual"]
+type CompactionOutcome = Literal["compacted", "noop", "failed", "cancelled"]
 
 # C's conservative trigger reserve is deliberately not the generation request.
 TRIGGER_REASON = "context pressure before continuing the current task"
@@ -73,42 +75,55 @@ class LLMCompaction(ContextStrategy):
     async def compact_messages(self, messages: list[ModelMessage], *, reason: CompactionReason) -> CompactionResult:
         session = self.binder.session
         old = len(session.transcript)
-        session.emit("before_compact", reason=reason, old_tokens=old)
-        tail = plan_tail(self.binder, messages)
-        if not tail.cut_messages or tail.bottom_tokens <= tail.system_end_tokens:
-            return CompactionResult("", 0, len(messages), 0)
-        summary = session.prepare_summary(tail.bottom_tokens)
-        parts = [
-            part
-            for message in tail.snapshot[: tail.cut_messages]
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, (SystemPromptPart, InstructionPart))
-        ]
-        key = uuid4().hex
-        request = ModelRequest(
-            [*parts, UserPromptPart(summary.summary)],
-            instructions=next(
-                (
-                    message.instructions
-                    for message in reversed(tail.snapshot)
-                    if isinstance(message, ModelRequest) and message.instructions is not None
+        outcome: CompactionOutcome = "failed"
+        try:
+            session.emit("before_compact", reason=reason, old_tokens=old)
+            tail = plan_tail(self.binder, messages)
+            if not tail.cut_messages or tail.bottom_tokens <= tail.system_end_tokens:
+                outcome = "noop"
+                return CompactionResult("", 0, len(messages), 0)
+            summary = session.prepare_summary(tail.bottom_tokens)
+            parts = [
+                part
+                for message in tail.snapshot[: tail.cut_messages]
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, (SystemPromptPart, InstructionPart))
+            ]
+            key = uuid4().hex
+            request = ModelRequest(
+                [*parts, UserPromptPart(summary.summary)],
+                instructions=next(
+                    (
+                        message.instructions
+                        for message in reversed(tail.snapshot)
+                        if isinstance(message, ModelRequest) and message.instructions is not None
+                    ),
+                    None,
                 ),
-                None,
-            ),
-            metadata={"ds4.key": key},
-        )
-        prefix = TranscriptReplacement(session.transcript.tokens, session.transcript.segments).slice(
-            0, tail.system_end_tokens
-        )
-        rendered = self.binder.render_request(request, prefix=prefix)
-        replacement = TranscriptReplacement.concat(rendered, tail.retained)
-        commit_compaction(self.binder, messages, [request, *tail.messages], replacement)
-        generated = len(summary.tokens)
-        session.emit(
-            "compacted", reason=reason, old_tokens=old, new_tokens=len(replacement.tokens), generated_tokens=generated
-        )
-        return CompactionResult(summary.summary, tail.cut_messages, len(tail.messages), generated)
+                metadata={"ds4.key": key},
+            )
+            prefix = TranscriptReplacement(session.transcript.tokens, session.transcript.segments).slice(
+                0, tail.system_end_tokens
+            )
+            rendered = self.binder.render_request(request, prefix=prefix)
+            replacement = TranscriptReplacement.concat(rendered, tail.retained)
+            commit_compaction(self.binder, messages, [request, *tail.messages], replacement)
+            generated = len(summary.tokens)
+            session.emit(
+                "compacted",
+                reason=reason,
+                old_tokens=old,
+                new_tokens=len(replacement.tokens),
+                generated_tokens=generated,
+            )
+            outcome = "compacted"
+            return CompactionResult(summary.summary, tail.cut_messages, len(tail.messages), generated)
+        except CancelledError:
+            outcome = "cancelled"
+            raise
+        finally:
+            session.emit("compaction_finished", reason=reason, outcome=outcome)
 
     @override
     async def make_room(self, messages: list[ModelMessage], request: ContextRequest) -> RoomResult:
