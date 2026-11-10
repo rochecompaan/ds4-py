@@ -1,4 +1,8 @@
-"""A live reserve authorizes only the scoped owner, never inherited tasks/listeners."""
+"""A live reserve authorizes only the scoped owner, never inherited tasks/listeners.
+
+Admission policy is also exercised directly against ``OperationState`` so it
+provably reads that state instead of reaching back into ``Session``.
+"""
 
 import asyncio
 from collections.abc import Generator
@@ -12,10 +16,25 @@ from ds4py import ThinkMode
 from ds4py._native.fake import FakeNative
 from ds4py.engine.events import Event, ReserveReached, Stopped
 from ds4py.engine.prompt import PromptBuilder
-from ds4py.engine.reserve import ReserveOperations
+from ds4py.engine.reserve import ReserveOperations, legacy_context
 from ds4py.engine.session import Session
+from ds4py.engine.session_operations import OperationState, blocked_reason
 from ds4py.engine.transcript import TranscriptReplacement
 from ds4py.errors import EngineError
+
+
+def pause_event() -> ReserveReached:
+    return ReserveReached(1, on_resume=lambda reserve: None, on_fail=lambda: None)
+
+
+@contextmanager
+def windowed_state() -> Generator[tuple[OperationState, ReserveOperations]]:
+    with ds4py.open("f.gguf", native=FakeNative()) as engine:
+        operations = ReserveOperations(engine.session(), strict=False)
+        state = OperationState()
+        state.begin_reserve(pause_event())
+        state.install_reserve(operations)
+        yield state, operations
 
 
 @contextmanager
@@ -186,7 +205,7 @@ def test_synthetic_stale_first_exit_preserves_newer_window_identity(strict: bool
                 # cover the defensive identity guard in that context's finally.
                 operations = ReserveOperations(session, strict=strict)
                 with session._lock:
-                    session._reserve_operations = operations
+                    session._operations.install_reserve(operations)
                 replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
                 ticket = operations.issue_authority("replacement")
                 expired_window.__exit__(None, None, None)
@@ -266,3 +285,61 @@ def test_event_loop_callback_cannot_borrow_owner_permission() -> None:
                 assert await completed
 
     asyncio.run(scenario())
+
+
+def test_blocked_reason_admits_a_fresh_operation_state() -> None:
+    state = OperationState()
+    assert blocked_reason(state, "open") is None
+    assert blocked_reason(state, "idle") is None
+    assert blocked_reason(state, "native") is None
+    assert blocked_reason(state, "close") is None
+
+
+def test_closed_state_rejects_every_policy() -> None:
+    state = OperationState()
+    state.close()
+    assert blocked_reason(state, "open") == "session is closed"
+    assert blocked_reason(state, "idle") == "session is closed"
+    assert blocked_reason(state, "native") == "session is closed"
+    assert blocked_reason(state, "close") == "session is closed"
+
+
+def test_open_round_blocks_idle_work_and_unwindowed_native_work() -> None:
+    state = OperationState()
+    state.begin_round()
+    assert blocked_reason(state, "idle") == "a round is open"
+    # A pause alone installs no window, so it authorizes no native work.
+    state.begin_reserve(pause_event())
+    assert blocked_reason(state, "native") == "a round is open"
+    state.end_round()
+    assert blocked_reason(state, "idle") is None
+
+
+def test_claimed_operation_blocks_close_and_idle_work() -> None:
+    state = OperationState()
+    claim = state.claim("replacement")
+    assert blocked_reason(state, "close") == "a native operation is active; drain before closing"
+    assert blocked_reason(state, "idle") == "a round is open"
+    state.release(claim)
+    assert blocked_reason(state, "close") is None
+
+
+def test_live_window_admits_paused_native_work_and_consumes_its_ticket_once() -> None:
+    with windowed_state() as (state, operations):
+        state.begin_round()
+        assert blocked_reason(state, "native") is None
+        ticket = operations.issue_authority("summary")
+        assert state.consume_reserve_authority(ticket, "summary")
+        assert not state.consume_reserve_authority(ticket, "summary")
+        state.end_reserve()
+        assert blocked_reason(state, "native") == "a round is open"
+
+
+def test_legacy_admission_requires_an_active_window_context() -> None:
+    with windowed_state() as (state, operations):
+        assert not state.consume_reserve_authority(None, "replacement")
+        with legacy_context(operations, enabled=True):
+            assert state.consume_reserve_authority(None, "replacement")
+        state.end_reserve()
+        with legacy_context(operations, enabled=True):
+            assert not state.consume_reserve_authority(None, "replacement")

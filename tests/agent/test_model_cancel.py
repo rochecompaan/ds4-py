@@ -347,7 +347,7 @@ def test_public_request_timeout_cleans_up_round_and_preserves_partial_response()
             assert response.usage.requests == 1
             assert bindings == 1
             assert stream._bound and stream._round_exhausted
-            assert session._active_round is False
+            assert session._operations.active_round is False
             assert session.transcript.tokens == native_tokens(session)
             sampled = [p for p in binder.export_segments() if p.source == "sampled"]
             assert [p.kind for p in sampled] == ["assistant"]

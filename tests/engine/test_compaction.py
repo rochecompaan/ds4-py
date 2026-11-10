@@ -378,7 +378,7 @@ def test_summary_listener_closing_outer_round_does_not_resurrect_it() -> None:
 
             def close_outer(event: object) -> None:
                 outer.close()
-                closed.append((session._active_round, session._reserve_event is not None))
+                closed.append((session._operations.active_round, session._operations.reserve_event is not None))
 
             session.on_event(close_outer, kinds=(SummaryToken.__name__,))
             with session.reserve_window(pause):
@@ -386,7 +386,7 @@ def test_summary_listener_closing_outer_round_does_not_resurrect_it() -> None:
             assert closed and all(flags == (False, False) for flags in closed)
             # Summary cleanup must not reclaim the expired outer-round flags.
             session.append_tokens([99], "user")
-            assert (session._active_round, session._reserve_event is not None) == (False, False)
+            assert (session._operations.active_round, session._operations.reserve_event is not None) == (False, False)
         finally:
             outer.close()
 

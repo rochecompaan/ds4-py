@@ -32,9 +32,9 @@ from .events import (
     Stopped,
     Synced,
 )
-from .lifecycle import SessionEvent, SessionLifecycle, in_listener
+from .lifecycle import SessionEvent, SessionLifecycle
 from .pause import ControlSpan, resolve_control
-from .reserve import ReserveAuthority, ReserveOperation, ReserveOperations, legacy_context
+from .reserve import ReserveAuthority, ReserveOperations, legacy_context
 
 if TYPE_CHECKING:
     from .logits import LogitsView
@@ -189,10 +189,7 @@ class Session:
         self._transcript_view = TranscriptView(self._transcript)
         self._rng = Rng(engine.sampling_defaults.seed)
         self._lock = threading.RLock()
-        self._active_round = False
         self._operations = session_operations.OperationState()
-        self._reserve_event: ReserveReached | None = None
-        self._reserve_operations: ReserveOperations | None = None
         self._decode_step: DecodeStep | None = None
         self._logits_hooks: list[Callable[[LogitsView], None]] = []
         self._paused_stream: RoundStream | None = None
@@ -200,7 +197,6 @@ class Session:
         self._paused_sampled_tokens: list[int] | None = None
         self._checkpoint_tokens: dict[str, int] = {}
         self._lifecycle = SessionLifecycle()
-        self._closed = False
 
     @property
     def id(self) -> str:
@@ -338,14 +334,12 @@ class Session:
     def close(self) -> None:
         """End the live session and close all state; safe to call repeatedly."""
         with self._lock:
-            if self._closed:
+            if self._operations.closed:
                 return
             reason = self._blocked_reason("close")
             if reason is not None:
                 raise EngineError(reason)
-            self._revoke_reserve()
-            self._reserve_event = None
-            self._closed = True
+            self._operations.close()
             self._decode_step = None
             self._lifecycle.emit("session_end", old=self.id)
             self._lifecycle.close_states()
@@ -357,7 +351,7 @@ class Session:
         authority: ReserveAuthority | None = None,
         binding: session_operations.BindingTransaction | None = None,
     ) -> str | None:
-        return session_operations.blocked_reason(self, policy, authority=authority, binding=binding)
+        return session_operations.blocked_reason(self._operations, policy, authority=authority, binding=binding)
 
     def _exclusive(
         self,
@@ -532,18 +526,6 @@ class Session:
                 self._paused_stream = self._paused_control = self._paused_sampled_tokens = None
                 return plan
 
-    def _reserve_authorized(self, authority: ReserveAuthority | None, operation: ReserveOperation) -> bool:
-        operations = self._reserve_operations
-        if self._reserve_event is None or operations is None:
-            return False
-        if authority is not None:
-            return operations.consume(authority, operation)
-        return operations.legacy_allows()
-
-    def _revoke_reserve(self) -> None:
-        if self._reserve_operations is not None:
-            self._reserve_operations.revoke()
-
     @contextmanager
     def reserve_window(self, event: ReserveReached, *, strict: bool = False) -> Generator[ReserveOperations]:
         """Select explicit operations, or the legacy naked-to_thread adapter.
@@ -552,23 +534,14 @@ class Session:
         """
         with self._lock:
             self._require_open()
-            if (
-                event is not self._reserve_event
-                or in_listener.get()
-                or self._reserve_operations is not None
-                or self._operations.kind is not None
-            ):
-                raise EngineError("reserve window requires an unclaimed live pause")
             operations = ReserveOperations(self, strict=strict)
-            self._reserve_operations = operations
+            session_operations.open_reserve_window(self._operations, event, operations)
         try:
             with legacy_context(operations, enabled=not strict):
                 yield operations
         finally:
             with self._lock:
-                operations.revoke()
-                if self._reserve_operations is operations:
-                    self._reserve_operations = None
+                self._operations.release_reserve(operations)
 
     def open_assistant_start(self) -> int | None:
         """Observe the sampled start of the trailing unkeyed assistant structure."""
@@ -689,10 +662,8 @@ class Session:
 
         def decide(action: str, reserve: int = 0) -> None:
             with self._lock:
-                if self._reserve_event is not pause:
-                    raise EngineError("reserve pause has expired")
-                self._revoke_reserve()
-                self._reserve_event = None
+                self._operations.require_reserve(pause)
+                self._operations.end_reserve()
                 decision.update(action=action, reserve=reserve)
 
         pause = ReserveReached(
@@ -700,14 +671,13 @@ class Session:
             on_resume=lambda reserve: decide("resume", reserve),
             on_fail=lambda: decide("fail"),
         )
-        self._reserve_event = pause
+        self._operations.begin_reserve(pause)
         try:
             self._publish(pause)
             yield pause
         finally:
             with self._lock:
-                self._revoke_reserve()
-                self._reserve_event = None
+                self._operations.end_reserve()
         if not decision:
             raise EngineError("reserve pause requires a decision before advancing")
         if decision["action"] == "fail":
@@ -815,7 +785,7 @@ class Session:
         """
         with self._lock:
             self._require_idle()
-            self._active_round = True
+            self._operations.begin_round()
         try:
             if self._transcript.chat:
                 yield from chat_ops.run_round(
@@ -828,7 +798,7 @@ class Session:
                 yield from self._raw_round(max_tokens, sampling, stop_sequences)
         finally:
             with self._lock:
-                self._active_round = False
+                self._operations.end_round()
 
     def plan(self, tokens: Sequence[int] | None = None) -> Plan:
         return self._worker.plan(self._transcript.tokens if tokens is None else tokens)

@@ -220,7 +220,7 @@ def test_replacement_is_allowed_only_at_the_exact_reserve_boundary() -> None:
             replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
             with session.reserve_window(pause):
                 session.replace_transcript(replacement, reason="compaction")
-            assert session._active_round
+            assert session._operations.active_round
             pause.resume(1)
             next(round_)
             with pytest.raises(EngineError, match="round is open"):
@@ -228,7 +228,7 @@ def test_replacement_is_allowed_only_at_the_exact_reserve_boundary() -> None:
             assert list(round_)[-1] == Stopped("stop_token")
         finally:
             round_.close()
-        assert not session._active_round
+        assert not session._operations.active_round
         replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
         session.replace_transcript(replacement, reason="compaction")
 
@@ -253,7 +253,7 @@ def test_summary_ownership_blocks_replacement_even_if_outer_round_closes() -> No
         with session.reserve_window(pause):
             assert session.prepare_summary(0).summary == "a"
         assert rejected == [True]
-        assert not session._active_round
+        assert not session._operations.active_round
         replacement = TranscriptReplacement(session.transcript.tokens, session.transcript.segments)
         session.replace_transcript(replacement, reason="compaction")
 
@@ -269,6 +269,6 @@ def test_reserve_replacement_drops_checkpoints_beyond_the_new_end() -> None:
                 session.replace_transcript(replacement, reason="compaction")
             assert "history" not in session._checkpoint_tokens
             assert session.transcript.tokens == replacement.tokens
-            assert session._active_round
+            assert session._operations.active_round
         finally:
             outer.close()
