@@ -955,6 +955,8 @@ def test_identity_then_manual_compact_and_exact_same_model_continuation(
 
 @pytest.mark.parametrize("identity", ["new", "switch"])
 def test_custom_owner_receives_real_tool_and_reserve_hooks_after_identity(tmp_path: Path, identity: str) -> None:
+    from dataclasses import replace
+
     from pydantic_ai.models import ModelRequestParameters
 
     from ds4py.engine.prompt import PromptBuilder
@@ -1001,8 +1003,9 @@ def test_custom_owner_receives_real_tool_and_reserve_hooks_after_identity(tmp_pa
                 [*runtime.messages, ModelRequest([UserPromptPart("reserve")])], None, ModelRequestParameters()
             ) as stream:
                 prefix = len(PromptBuilder(engine).assistant_prefix(model.session.transcript.tokens))
-                limit = len(model.session.transcript) + prefix + 2
-                model.session._worker.call(lambda e, native: setattr(native, "_ctx", limit)).result()
+                projected = len(model.session.transcript) + prefix
+                engine.config = replace(engine.config, ctx=projected)
+                model.session._worker.call(lambda e, native: setattr(native, "_ctx", projected + 2)).result()
                 with pytest.raises(ContextExhausted):
                     async for _ in stream:
                         pass
