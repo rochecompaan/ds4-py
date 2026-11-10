@@ -77,8 +77,19 @@ Before a model request, it checks the bound transcript against the configured
 context size. The default soft trigger is 85 percent (`used >= int(ctx * 0.85)`).
 It also triggers when free space is no greater than the larger of
 `min(8192, ctx // 8)` and `summary_reserve() + 128`. The summary reserve includes
-the rendered private summary suffix, 64 safety tokens, and a summary budget of
-`max(256, min(ctx // 8, 4096))` tokens.
+the rendered reason-bearing summary suffix, 64 safety tokens, and a summary
+budget of `max(256, min(ctx // 8, 4096))` tokens (1024→256, 8192→1024,
+65536→4096).
+
+Trigger sizing and private summary execution share `summary_budget` and exact
+`summary_suffix` rendering, not policy. The conservative trigger appends
+`Compaction reason: context pressure before continuing the current task` to its
+reserve prompt and retains the +64 safety and +128 threshold margins. Execution
+uses the fixed, reason-free summary prompt against the caller's exact token
+prefix, followed by the no-think assistant opener. It leaves one spare native
+slot, rejects fewer than 256 remaining output slots, and caps output at
+`min(remaining_room, summary_budget(ctx))`. The trigger reserve is intentionally
+not the private generation request; no reason is passed to summary jobs.
 
 The same owner receives oversized tool-result hooks and response-reserve
 requests. When a response reaches its reserve boundary, generation pauses,

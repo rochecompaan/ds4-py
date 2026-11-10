@@ -10,13 +10,15 @@ from ds4py.errors import EngineError
 
 from .decode import PlainStep, Verdict
 from .events import SummaryToken
+from .prompt import PromptBuilder
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from ds4py._native.protocol import EngineHandle, SessionHandle
 
     from .events import Event
+    from .session import Engine
 
 # agent_compact_make_prompt, antirez/ds4 commit 5379c1c (without a reason).
 SUMMARY_PROMPT = (
@@ -36,6 +38,7 @@ SUMMARY_PROMPT = (
 _DSML_TEXT = "\uff5cDSML\uff5c"
 _DSML = _DSML_TEXT.encode()
 _MIN_SUMMARY_TOKENS = 256
+SUMMARY_SPARE_TOKENS = 1
 _QWEN_TOOL_MARKERS = ("<function=", "</function>", "<parameter=", "</parameter>")
 _TOOL_MARKERS = (
     "<tool_call>",
@@ -47,6 +50,18 @@ _TOOL_MARKERS = (
     "<tool_response>",
     "</tool_response>",
 )
+
+
+def summary_budget(ctx: int) -> int:
+    """Shared output budget, independent of trigger and execution room policy."""
+    return max(_MIN_SUMMARY_TOKENS, min(ctx // 8, 4096))
+
+
+def summary_suffix(engine: Engine, prefix: Sequence[int], *, prompt: str = SUMMARY_PROMPT) -> tuple[int, ...]:
+    """Render a private user prompt and no-think opener against the caller prefix."""
+    tokens = PromptBuilder(engine).message(prefix, "user", prompt)
+    tokens.extend(engine._assistant_prefix([*prefix, *tokens], ThinkMode.NONE))
+    return tuple(tokens)
 
 
 @dataclass(frozen=True)
@@ -157,10 +172,10 @@ def summarize(  # noqa: PLR0913 - Summary execution needs native handles and wor
     poison: Callable[[BaseException], None],
 ) -> SummaryResult:
     """Borrow native state, run the shared decoder, and restore before returning."""
-    room = session.ctx() - len(job.tokens) - 1
+    room = session.ctx() - len(job.tokens) - SUMMARY_SPARE_TOKENS
     if room < _MIN_SUMMARY_TOKENS:
         raise EngineError("not enough context left to request compaction summary")
-    limit = min(room, max(_MIN_SUMMARY_TOKENS, min(session.ctx() // 8, 4096)))
+    limit = min(room, summary_budget(session.ctx()))
     prior = session.tokens()
     snapshot = session.save_snapshot() if session.checkpoint_valid() else None
     try:

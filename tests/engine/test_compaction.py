@@ -2,6 +2,7 @@
 
 import threading
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import cast
 
 import pytest
@@ -28,6 +29,56 @@ C_PROMPT = (
     "After the summary, stop. Do not continue the user task, do not call tools, and do not output thinking tags or DSML markup.\n"
     "Output only the compact summary.\n"
 )
+
+
+@pytest.mark.parametrize(("ctx", "expected"), [(1024, 256), (8192, 1024), (65536, 4096)])
+def test_summary_budget_primitive(ctx: int, expected: int) -> None:
+    from ds4py.engine.compaction import summary_budget
+
+    assert summary_budget(ctx) == expected
+
+
+@pytest.mark.parametrize(
+    ("family", "opening", "closing"),
+    [
+        ("deepseek4", "<｜User｜>", "<｜Assistant｜></think>"),
+        ("deepseek41", "<｜User｜>", "<｜Assistant｜></think>"),
+        ("glm", "<|user|>", "<|assistant|><think></think>"),
+        ("qwen", "<|im_start|>user\n", "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+    ],
+)
+def test_summary_suffix_exact_family_fixture(
+    family: str, opening: str, closing: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ds4py._native.fake_chat import tokenize_rendered
+    from ds4py.engine.compaction import summary_suffix
+
+    info = replace(
+        FakeNative()._info,
+        family=family,
+        is_deepseek41=family == "deepseek41",
+        is_glm_dsa=family == "glm",
+        is_qwen4=family == "qwen",
+    )
+    with ds4py.open("f.gguf", ctx=4096, native=FakeNative(info=info)) as engine:
+        prefix = [11, 12]
+        contexts: list[tuple[int, ...]] = []
+        assistant_prefix = engine._assistant_prefix
+
+        def record_context(context: Sequence[int], mode: int) -> list[int]:
+            assert mode == ds4py.ThinkMode.NONE
+            contexts.append(tuple(context))
+            return assistant_prefix(context, mode)
+
+        monkeypatch.setattr(engine, "_assistant_prefix", record_context)
+        expected = tuple(tokenize_rendered(opening + C_PROMPT + closing))
+        assert summary_suffix(engine, prefix) == expected
+        assert summary_suffix(engine, prefix, prompt="custom") == tuple(tokenize_rendered(opening + "custom" + closing))
+        user_close = "<|im_end|>\n" if family == "qwen" else ""
+        assert contexts == [
+            (*prefix, *tokenize_rendered(opening + prompt + user_close)) for prompt in (C_PROMPT, "custom")
+        ]
+        assert prefix == [11, 12]
 
 
 def state(session: Session) -> tuple[tuple[int, ...], bool, int]:
@@ -271,15 +322,22 @@ def test_summary_is_allowed_only_at_reserve_boundary() -> None:
             round_.close()
 
 
-def test_summary_budget_is_bounded_by_remaining_room() -> None:
+@pytest.mark.parametrize("room", [255, 256, 300, 512, 513])
+def test_summary_budget_is_bounded_by_remaining_room(room: int) -> None:
     with ds4py.open("f.gguf", ctx=4096, native=FakeNative(script=lambda p, g: 98)) as engine:
         session = engine.session()
-        # Prefix + user marker + exact C prompt + two-token opener + reserve.
-        prefix = 4096 - len(C_PROMPT.encode()) - 3 - 1 - 300
+        # Prefix + user marker + exact C prompt + two-token opener + one spare slot.
+        prefix = 4096 - len(C_PROMPT.encode()) - 3 - 1 - room
         session.append_tokens([11] * prefix, "user")
-        result = session.prepare_summary(prefix)
-        assert result.summary == "a" * 300
-        assert result.tokens == (98,) * 300
+        before = (session.transcript.tokens, session.transcript.segments, state(session))
+        if room < 256:
+            with pytest.raises(EngineError, match="not enough context"):
+                session.prepare_summary(prefix)
+        else:
+            result = session.prepare_summary(prefix)
+            assert result.summary == "a" * min(room, 512)
+            assert result.tokens == (98,) * min(room, 512)
+        assert (session.transcript.tokens, session.transcript.segments, state(session)) == before
 
 
 @pytest.mark.parametrize("literal", [False, True])

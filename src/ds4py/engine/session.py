@@ -20,7 +20,7 @@ from ds4py.errors import EngineError
 
 from . import chat as chat_ops
 from . import rebind
-from .compaction import SUMMARY_PROMPT, SummaryJob, SummaryResult
+from .compaction import SummaryJob, SummaryResult, summary_suffix
 from .decode import DecodeStep, GenerateJob
 from .events import (
     Checkpointed,
@@ -511,10 +511,8 @@ class Session:
             # The outer round owns its flags and may close during event delivery.
             self._summary_active = True
         try:
-            tokens = list(self._transcript.tokens[:bottom])
-            tokens.extend(PromptBuilder(self._engine).message(tokens, "user", SUMMARY_PROMPT))
-            tokens.extend(self._engine._assistant_prefix(tokens, ThinkMode.NONE))
-            job = SummaryJob(tuple(tokens))
+            prefix = self._transcript.tokens[:bottom]
+            job = SummaryJob(prefix + summary_suffix(self._engine, prefix))
             for _ in self._job_events(job):
                 pass
             return job.result.result()

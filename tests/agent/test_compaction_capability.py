@@ -178,6 +178,22 @@ def test_exact_c_triggers(size: int, used: int, soft: float, reserve: int, expec
         assert compactor.should_compact() is expected
 
 
+def test_trigger_keeps_reason_bearing_reserve_and_default_soft_policy() -> None:
+    from ds4py.capabilities.compaction import TRIGGER_REASON, TRIGGER_SUMMARY_MARGIN
+    from ds4py.engine.compaction import SUMMARY_PROMPT, summary_suffix
+
+    assert TRIGGER_REASON == "context pressure before continuing the current task"
+    assert TRIGGER_SUMMARY_MARGIN == 64
+    with ds4py.open("f.gguf", ctx=8192, native=FakeNative()) as engine:
+        compactor = LLMCompaction(MessageBinder(engine.session()))
+        assert compactor.soft == 0.85
+        prompt = SUMMARY_PROMPT + "\nCompaction reason: " + TRIGGER_REASON + "\n"
+        expected = tuple(tokenize_rendered("<｜User｜>" + prompt + "<｜Assistant｜></think>"))
+        assert summary_suffix(engine, (), prompt=prompt) == expected
+        assert compactor.summary_reserve() == len(expected) + 64 + 1024
+        assert len(expected) - len(summary_suffix(engine, ())) == 72
+
+
 def test_before_request_mutates_authoritative_list_and_counts_summary_once() -> None:
     with ds4py.open("f.gguf", ctx=8192, think=ThinkMode.NONE, native=FakeNative(script=script)) as engine:
         binder = MessageBinder(engine.session())

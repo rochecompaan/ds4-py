@@ -8,12 +8,10 @@ from uuid import uuid4
 
 from pydantic_ai.messages import InstructionPart, ModelRequest, SystemPromptPart, UserPromptPart
 
-from ds4py._native.protocol import ThinkMode
 from ds4py.capabilities.compaction_tail import plan_tail
 from ds4py.capabilities.context import ContextRequest, ContextStrategy, RoomResult
 from ds4py.compaction_commit import commit_compaction
-from ds4py.engine.compaction import SUMMARY_PROMPT
-from ds4py.engine.prompt import PromptBuilder
+from ds4py.engine.compaction import SUMMARY_PROMPT, summary_budget, summary_suffix
 from ds4py.engine.transcript import TranscriptReplacement
 
 if TYPE_CHECKING:
@@ -25,6 +23,12 @@ if TYPE_CHECKING:
 
 
 type CompactionReason = Literal["threshold", "tool_result", "reserve", "manual"]
+
+# C's conservative trigger reserve is deliberately not the generation request.
+TRIGGER_REASON = "context pressure before continuing the current task"
+TRIGGER_SUMMARY_MARGIN = 64
+TRIGGER_THRESHOLD_MARGIN = 128
+TRIGGER_SOFT_THRESHOLD = 0.85
 
 
 @dataclass(frozen=True)
@@ -38,7 +42,7 @@ class CompactionResult:
 class LLMCompaction(ContextStrategy):
     """Automatic and manual compaction share one ordered, in-place commit."""
 
-    def __init__(self, binder: MessageBinder, *, soft: float = 0.85) -> None:
+    def __init__(self, binder: MessageBinder, *, soft: float = TRIGGER_SOFT_THRESHOLD) -> None:
         super().__init__(binder)
         self.soft = soft
 
@@ -50,19 +54,21 @@ class LLMCompaction(ContextStrategy):
         return run_context.messages if run_context is not None else request_messages
 
     def summary_reserve(self) -> int:
-        """Exact rendered private suffix, C's +64, and C's summary budget."""
+        """Reason-bearing trigger suffix, C's +64, and the shared summary budget."""
         engine = self.binder.session.engine
-        prompt = SUMMARY_PROMPT + "\nCompaction reason: context pressure before continuing the current task\n"
-        tokens = PromptBuilder(engine).message((), "user", prompt)
-        tokens.extend(engine._assistant_prefix(tokens, ThinkMode.NONE))
-        return len(tokens) + 64 + max(256, min(engine.config.ctx // 8, 4096))
+        prompt = SUMMARY_PROMPT + f"\nCompaction reason: {TRIGGER_REASON}\n"
+        return (
+            len(summary_suffix(engine, (), prompt=prompt)) + TRIGGER_SUMMARY_MARGIN + summary_budget(engine.config.ctx)
+        )
 
     def should_compact(self) -> bool:
         session = self.binder.session
         used, size = len(session.transcript), session.engine.config.ctx
         if not used:
             return False
-        return used >= int(size * self.soft) or size - used <= max(min(8192, size // 8), self.summary_reserve() + 128)
+        return used >= int(size * self.soft) or size - used <= max(
+            min(8192, size // 8), self.summary_reserve() + TRIGGER_THRESHOLD_MARGIN
+        )
 
     async def compact_messages(self, messages: list[ModelMessage], *, reason: CompactionReason) -> CompactionResult:
         session = self.binder.session
