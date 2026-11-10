@@ -117,8 +117,8 @@ class ContextStrategy(AbstractCapability, ABC):
         # Compaction may replace the message objects, so select from live history.
         pending = ctx.messages[-1]
         results = [part for part in pending.parts if isinstance(part, ToolReturnPart)]
-        for part in reversed(results):
-            if needed() <= 0:
+        for rejected, part in enumerate(reversed(results)):
+            if (room.made_room or rejected > 0) and needed() <= 0:
                 return
             part.content = TOOL_RESULT_DOES_NOT_FIT
         if needed() > 0:

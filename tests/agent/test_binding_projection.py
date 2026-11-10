@@ -15,6 +15,7 @@ from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.engine.lifecycle import SessionEvent
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.session import Session
+from ds4py.engine.transcript import TranscriptReplacement
 from ds4py.engine.worker import SyncJob
 from ds4py.errors import EngineError
 
@@ -397,3 +398,33 @@ def test_native_preamble_write_failure_reuses_only_system_prefix_on_retry(
         before = snapshot(binder, messages)
         binder.prepare(messages)
         assert snapshot(binder, messages) == before
+
+
+def test_empty_replacement_projection_and_prepare_match_fresh_session() -> None:
+    # Empty replacement is a valid initialized chat, not a pristine transcript.
+    # A system reset must clear that flag even though there are no tokens.
+    with fake_engine() as engine:
+        session = engine.session()
+        binder = MessageBinder(session)
+        session.replace_transcript(TranscriptReplacement((), ()), reason="empty")
+        messages: list[ModelMessage] = [ModelRequest([UserPromptPart("go")], metadata={"ds4.key": "go"})]
+        before = snapshot(binder, messages)
+        assert binder.count_rendered_request(messages) == 671
+        assert binder.count_rendered_request(messages) == 671
+        assert snapshot(binder, messages) == before
+        binder.prepare(messages)
+        assert session.transcript.chat
+        assert len(session.transcript) + len(PromptBuilder(engine).assistant_prefix(session.transcript.tokens)) == 671
+        with fake_engine() as control_engine:
+            control = MessageBinder(control_engine.session())
+            control.prepare(deepcopy(messages))
+            assert binder.records() == control.records()
+            assert binder.export_segments() == control.export_segments()
+            assert binder._bound_messages == control._bound_messages
+            assert session.transcript.tokens == control.session.transcript.tokens
+            assert session.transcript.segments == control.session.transcript.segments
+            native = session._worker.call(lambda e, n: (tuple(n.tokens()), n.checkpoint_valid())).result()
+            assert (
+                native == control.session._worker.call(lambda e, n: (tuple(n.tokens()), n.checkpoint_valid())).result()
+            )
+            assert session.plan() == control.session.plan()

@@ -300,7 +300,12 @@ class AgentRuntime:
         task = self._run_task
         self.cancel()
         if task is not None and task is not asyncio.current_task():
-            await asyncio.wait([task])
+            waiter = asyncio.create_task(asyncio.wait([task]))
+            try:
+                await asyncio.shield(waiter)
+            except asyncio.CancelledError:
+                await drain_operation(waiter)
+                raise
 
     async def _latest(self, run_id: str) -> ContinuableSnapshot | None:
         """Return the newest snapshot; propagate storage failures to the run."""
@@ -694,16 +699,29 @@ class AgentRuntime:
             return
         self._closing = True
         closing = self._close_done = asyncio.get_running_loop().create_future()
+        cancelled: asyncio.CancelledError | None = None
         try:
             done = self._manual_done
             if done is not None:
                 self.cancel()
                 await drain_operation(done)
-            await self._stop_active()
+            try:
+                await self._stop_active()
+            except asyncio.CancelledError as error:
+                # _stop_active retains and drains its waiter before raising.
+                # This close remains the sole teardown owner through publication.
+                cancelled = error
             self._closed = True
             self._status = "closed"
-            self._session.close()
+            try:
+                self._session.close()
+            except BaseException as error:
+                if cancelled is not None:
+                    raise cancelled from error
+                raise
         finally:
             self._closing = False
             self._close_done = None
             closing.set_result(None)
+        if cancelled is not None:
+            raise cancelled

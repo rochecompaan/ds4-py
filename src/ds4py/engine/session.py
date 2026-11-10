@@ -444,10 +444,6 @@ class Session:
             # Event delivery can synchronously wait for the loop. Never retain
             # the mutation lock across worker emissions; ownership rejects writes.
             plan = rebind.replace_transcript(self, replacement, reason=reason)
-            for key, length in tuple(self._checkpoint_tokens.items()):
-                if length > len(replacement.tokens):
-                    list(self._job_events(CheckpointJob(key, drop=True)))
-                    self._checkpoint_tokens.pop(key, None)
             with self._lock:
                 self._require_open()
                 self._transcript.replace(replacement.tokens, replacement.segments)

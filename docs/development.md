@@ -102,8 +102,10 @@ cancelled. On success, only the unobserved remainder of
 `RoomResult.generated_tokens` is added, so emitted summary output is never
 charged twice; a failure before emission adds nothing.
 Custom owners that emit no summary events retain their result-based accounting.
-If a tool result still does not fit, the owner returns a tool
-error instead of inserting that oversized result. If reserve recovery cannot
+If the owner reports failure, at least the trailing tool result becomes a tool
+error even if the owner reduced history enough to fit. Grouped results reject
+only as many trailing results as necessary, with an exact fit check even when
+the owner reported success. If reserve recovery cannot
 make room, the response fails with `ContextExhausted`.
 
 ### Manual compaction and custom owners
@@ -143,7 +145,9 @@ before emitting progress. While a runtime manual compaction is active,
 run/compact/save/new/switch/fork reject immediately rather than queue or cancel
 it. `runtime.cancel()` signals that operation; `runtime.close()` cancels and
 rejects new operations from the start of closing and awaits its drain before
-closing session state. Concurrent closes share that teardown boundary.
+closing session state. Concurrent closes share that teardown boundary. A
+cancelled close retains its run-drain waiter and finishes teardown before it
+re-raises cancellation or releases other close waiters.
 Cancellation, including repeated `Task.cancel()` or AnyIO deadlines, never
 abandons the executor work. A native replacement that already succeeded
 publishes its matching prepared Python
@@ -201,6 +205,9 @@ prefix, preserving any not-yet-evaluated transcript suffix, without emitting
 another usage-accounting sync. Restoration must complete successfully; an
 exception or interrupted restoration poisons the worker, retaining the original
 replacement failure as exception context, so mismatched state cannot be reused.
+Checkpoint disposal is also part of replacement before Python publication. A
+disposal failure restores prior native tokens and poisons the worker even when
+restoration succeeds, because checkpoint resources may already be removed.
 There is no Python-history rollback protocol. Summary preparation restores the
 borrowed native state before replacement. A summary restoration failure is
 surfaced and poisons the worker rather than continuing with private summary

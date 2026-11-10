@@ -154,7 +154,7 @@ def _transition(  # noqa: PLR0912, PLR0915 - One traversal owns every binding tr
     if system_changed:
         binder._renderer.preflight(candidates)
         start = 0
-        truncate = 0 if len(transcript) else None
+        truncate = 0 if len(transcript) or transcript.chat else None
         scratch.start_chat(config.definitions, config.instructions)
         kind = "rewrite" if binder._signature is not None else "append"
     else:

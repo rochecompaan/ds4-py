@@ -12,7 +12,7 @@ from ds4py.errors import EngineError
 from .events import Synced
 from .plan import Plan
 from .transcript import validate_segment_coverage
-from .worker import ResetJob, SyncJob
+from .worker import CheckpointJob, ResetJob, SyncJob
 
 if TYPE_CHECKING:
     from ds4py._native.protocol import SessionHandle
@@ -29,20 +29,41 @@ def replace_transcript(
 ) -> Plan:
     """Validate, then sync the replacement tokens; return the worker's plan."""
     validate_segment_coverage(replacement.segments, len(replacement.tokens))
-    if not replacement.tokens:
-        # Native sync rejects empty prompts; use the established reset path.
-        list(session._job_events(ResetJob()))
-        session._checkpoint_tokens.clear()
-        return Plan("rebuild", 0, 0, fits=True, checkpoint=None)
     original, valid = session._worker.call(
         lambda e, native: (tuple(native.tokens()), native.checkpoint_valid())
     ).result()
+    if not replacement.tokens:
+        # Native sync rejects empty prompts; reset also disposes checkpoints.
+        try:
+            list(session._job_events(ResetJob()))
+        except BaseException as error:
+            _restore_after_cleanup_failure(session, original, valid=valid, error=error)
+            raise
+        session._checkpoint_tokens.clear()
+        return Plan("rebuild", 0, 0, fits=True, checkpoint=None)
     try:
         plan = _sync_replacement(session, replacement, reason=reason)
     except BaseException:
         _restore_native(session, original, valid=valid)
         raise
+    try:
+        for key, length in tuple(session._checkpoint_tokens.items()):
+            if length > len(replacement.tokens):
+                list(session._job_events(CheckpointJob(key, drop=True)))
+                session._checkpoint_tokens.pop(key, None)
+    except BaseException as error:
+        _restore_after_cleanup_failure(session, original, valid=valid, error=error)
+        raise
     return plan
+
+
+def _restore_after_cleanup_failure(
+    session: Session, original: tuple[int, ...], *, valid: bool, error: BaseException
+) -> None:
+    _restore_native(session, original, valid=valid)
+    # Disposal may already have removed checkpoints or failed to release a
+    # native resource. Restored tokens alone do not make that worker reusable.
+    session._worker.call(lambda e, native: session._worker._poison(error)).result()
 
 
 def _sync_replacement(session: Session, replacement: TranscriptReplacement, *, reason: str) -> Plan:
