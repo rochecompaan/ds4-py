@@ -2,6 +2,13 @@
 
 Run commands from the repository root. Keep the existing devenv + uv workflow canonical on macOS and Linux. Do not install a second Python environment or a second hook runner.
 
+## Plans, specs and designs
+
+- **Save plans to:** `docs/plans/YYYY-MM-DD-<feature-name>.md`
+- Write the validated design (spec) to `docs/specs/YYYY-MM-DD-<topic>-design.md`
+- Treat specs and plans as the start of a new feature: create or use a task-specific git worktree before writing them, just like implementation changes.
+- If the task-specific worktree does not exist yet, create one before writing the spec or plan.
+
 ## Set up the environment
 
 Enter devenv before every project command:
