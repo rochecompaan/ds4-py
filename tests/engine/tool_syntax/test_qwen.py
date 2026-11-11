@@ -70,6 +70,42 @@ def test_ordinary_text_is_not_json_decoded_by_experiment() -> None:
     assert snapshot.calls[0].args == {"a": "001x", "b": "True", "c": '"hello"'}
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("42", (42, False)),
+        ("+1", (1, False)),
+        ("01", (1, False)),
+        ("1.", (1.0, False)),
+        (".5", (0.5, False)),
+        ("1" * 64, ("1" * 64, True)),
+        ("true", (True, False)),
+        ("null", (None, False)),
+        ('{"a":1}', ({"a": 1}, False)),
+        ("[1,2]", ([1, 2], False)),
+        ('"hello"', ('"hello"', True)),
+        ('{"x":}', ('{"x":}', True)),
+        ('{"x":1} trailing', ('{"x":1} trailing', True)),
+        ("NaN", ("NaN", True)),
+        ("Infinity", ("Infinity", True)),
+        ("", ("", True)),
+        (" \t42 \t\n", (42, False)),
+    ],
+)
+def test_parse_qwen_value(text: Any, expected: Any) -> None:
+    from ds4py.engine.tool_syntax.qwen import parse_qwen_value
+
+    assert parse_qwen_value(text) == expected
+
+
+def test_parse_qwen_value_deep_nesting_stays_text() -> None:
+    from ds4py.engine.tool_syntax.qwen import parse_qwen_value
+
+    text = "[" * 200_000 + "]" * 200_000
+
+    assert parse_qwen_value(text) == (text, True)
+
+
 def test_qwen_closing_delimiter_requests_greedy_sampling() -> None:
     parser = Qwen()
     parser.feed(b"<tool_call><function=bash><parameter=command>printf hi")

@@ -261,7 +261,7 @@ def test_canonical_arguments_preserve_types_and_json_looking_strings(family: Any
     assert dict(snapshot.calls[0].args) == args
 
 
-@pytest.mark.parametrize("value", ["{not: json}", "before&lt;/parameter>after", "\ufeff42"])
+@pytest.mark.parametrize("value", ["{not: json}", "before&lt;/parameter>after", "\ufeff42", "9" * 64])
 @pytest.mark.parametrize("bytewise", [False, True])
 def test_qwen_text_arguments_round_trip_through_history(value: Any, bytewise: Any) -> None:
     response = ModelResponse([ToolCallPart("write_file", {"content": value})])

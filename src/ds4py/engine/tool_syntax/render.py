@@ -3,7 +3,7 @@
 import json
 from collections.abc import Mapping
 
-from .qwen import value_is_json
+from .qwen import parse_qwen_value
 from .text import escape_tool_text
 
 
@@ -90,13 +90,16 @@ def _glm(name: str, args: Mapping[str, object]) -> str:
 def _qwen(name: str, args: Mapping[str, object]) -> str:
     lines = ["<tool_call>", f"<function={name}>"]
     for key, value in args.items():
-        value_text = value if isinstance(value, str) else _json(value)
         if isinstance(value, str):
-            if value_is_json(value):
+            _, is_string = parse_qwen_value(value)
+            if not is_string:
                 raise ValueError(f"Qwen cannot preserve JSON-looking string argument {key!r}")
-            value_text = escape_tool_text(value_text, "</parameter>")
-        elif not value_is_json(value_text):
-            raise ValueError(f"Qwen cannot preserve non-JSON argument {key!r}")
+            value_text = escape_tool_text(value, "</parameter>")
+        else:
+            value_text = _json(value)
+            _, is_string = parse_qwen_value(value_text)
+            if is_string:
+                raise ValueError(f"Qwen cannot preserve non-JSON argument {key!r}")
         lines.extend(
             [
                 f"<parameter={key}>",

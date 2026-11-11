@@ -16,7 +16,7 @@ _FUNCTION = b"<function="
 _FUNCTION_CLOSE = b"</function>"
 _PARAMETER = b"<parameter="
 _PARAMETER_CLOSE = b"</parameter>"
-_NUMBER = re.compile(rb"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+_NUMBER = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 
 
 def _parse_number(value: str) -> float | int:
@@ -27,24 +27,34 @@ def _reject_json_constant(value: str) -> Never:
     raise ValueError(f"invalid JSON constant: {value}")
 
 
-def value_is_json(value: str) -> bool:
-    """Classify complete non-string JSON values, preserving the C numeric guard."""
+def parse_qwen_value(text: str) -> tuple[object, bool]:
+    """Return ``(value, is_string)`` under the pinned Qwen inference rules.
+
+    After trimming leading space/tab and trailing space/tab/newline, full matches of
+    ``agent_qwen_value_is_json``'s ASCII numeric grammar use its 64-byte cap. Other inputs
+    use ``ds4_server.c:qwen_param_value_is_json``'s complete JSON rule, with strict parsing
+    that keeps trailing content, top-level strings, NaN, and Infinity as text.
+    """
     start = 0
-    end = len(value)
-    while start < end and value[start] in " \t":
+    end = len(text)
+    while start < end and text[start] in " \t":
         start += 1
-    while end > start and value[end - 1] in " \t\n":
+    while end > start and text[end - 1] in " \t\n":
         end -= 1
-    trimmed = value[start:end]
+    trimmed = text[start:end]
     if not trimmed:
-        return False
-    if _NUMBER.fullmatch(trimmed.encode()) is not None:
-        return len(trimmed.encode()) < _MAX_JSON_NUMBER_LENGTH
+        return text, True
+    if _NUMBER.fullmatch(trimmed) is not None:
+        if len(trimmed) < _MAX_JSON_NUMBER_LENGTH:
+            return _parse_number(trimmed), False
+        return text, True
     try:
         parsed = json.loads(trimmed, parse_constant=_reject_json_constant)
     except ValueError, RecursionError:
-        return False
-    return not isinstance(parsed, str)
+        return text, True
+    if isinstance(parsed, str):
+        return text, True
+    return parsed, False
 
 
 class Qwen(DelimiterParser):
@@ -125,19 +135,13 @@ class Qwen(DelimiterParser):
         text = self._decode(value_bytes, f"Qwen parameter {self._param_name!r}")
         if text is None:
             return True
-        is_json = value_is_json(text)
-        if is_json:
-            number = text.strip()
-            if len(number) < _MAX_JSON_NUMBER_LENGTH and _NUMBER.fullmatch(number.encode()):
-                value = _parse_number(number)
-            else:
-                value = json.loads(text, parse_constant=_reject_json_constant)
-        else:
+        value, is_string = parse_qwen_value(text)
+        if is_string:
             value = unescape_tool_text(text, _PARAMETER_CLOSE.decode())
         param_name = self._param_name
         if param_name is None:
             raise AssertionError("completed Qwen parameter requires a name")
-        self._args[param_name] = ToolArgument(param_name, value, not is_json)
+        self._args[param_name] = ToolArgument(param_name, value, is_string)
         self._param_name = None
         self.parse_pos = close_start + len(_PARAMETER_CLOSE)
         self.state = "STRUCTURAL"
