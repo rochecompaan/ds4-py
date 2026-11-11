@@ -104,7 +104,7 @@
     ]
   },
   {
-    "source": "ds4-server: BOM-prefixed value stays text",
+    "source": "strict JSON: BOM-prefixed value stays text",
     "input": "<tool_call><function=echo><parameter=value>﻿42</parameter></function></tool_call>",
     "state": "DONE",
     "calls": [
@@ -117,7 +117,7 @@
     ]
   },
   {
-    "source": "ds4-server: malformed bracketed JSON stays text",
+    "source": "strict JSON: malformed bracketed JSON stays text",
     "input": "<tool_call><function=json><parameter=value>\n{\"x\":}\n</parameter></function></tool_call>",
     "state": "DONE",
     "calls": [
@@ -125,6 +125,84 @@
         "name": "json",
         "args": {
           "value": "{\"x\":}"
+        }
+      }
+    ]
+  },
+  {
+    "source": "strict JSON: trailing array comma stays text",
+    "input": "<tool_call><function=echo><parameter=value>[1,]</parameter></function></tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "echo",
+        "args": {
+          "value": "[1,]"
+        }
+      }
+    ]
+  },
+  {
+    "source": "strict JSON: trailing content stays text",
+    "input": "<tool_call><function=echo><parameter=value>{\"x\":1} trailing</parameter></function></tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "echo",
+        "args": {
+          "value": "{\"x\":1} trailing"
+        }
+      }
+    ]
+  },
+  {
+    "source": "strict JSON: top-level string stays text",
+    "input": "<tool_call><function=echo><parameter=value>\"hello\"</parameter></function></tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "echo",
+        "args": {
+          "value": "\"hello\""
+        }
+      }
+    ]
+  },
+  {
+    "source": "strict JSON: NaN stays text",
+    "input": "<tool_call><function=echo><parameter=value>NaN</parameter></function></tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "echo",
+        "args": {
+          "value": "NaN"
+        }
+      }
+    ]
+  },
+  {
+    "source": "strict JSON: Infinity stays text",
+    "input": "<tool_call><function=echo><parameter=value>Infinity</parameter></function></tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "echo",
+        "args": {
+          "value": "Infinity"
+        }
+      }
+    ]
+  },
+  {
+    "source": "strict JSON: NUL-containing array stays text",
+    "input": "<tool_call><function=echo><parameter=value>\u0000[\u00001\u0000]</parameter></function></tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "echo",
+        "args": {
+          "value": "\u0000[\u00001\u0000]"
         }
       }
     ]
