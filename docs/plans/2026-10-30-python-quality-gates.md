@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.14+, devenv, uv, ty 0.0.95, Ruff 0.17.3, prek 0.5.7, typing-extensions 4.16, pytest, GitHub Actions.
 
-**Spec:** `docs/superpowers/specs/2026-10-30-python-quality-gates-design.md`
+**Spec:** `docs/specs/2026-10-30-python-quality-gates-design.md`
 
 ## Global Constraints
 
