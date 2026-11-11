@@ -70,6 +70,219 @@ unzip -l dist/*.whl
 actionlint .github/workflows/ci.yml
 ```
 
+## Context compaction
+
+The default agent registers `LLMCompaction` as its automatic context owner.
+Before a model request, it checks the bound transcript against the configured
+context size. The default soft trigger is 85 percent (`used >= int(ctx * 0.85)`).
+It also triggers when free space is no greater than the larger of
+`min(8192, ctx // 8)` and `summary_reserve() + 128`. The summary reserve includes
+the rendered reason-bearing summary suffix, 64 safety tokens, and a summary
+budget of `max(256, min(ctx // 8, 4096))` tokens (1024→256, 8192→1024,
+65536→4096).
+
+Trigger sizing and private summary execution share `summary_budget` and exact
+`summary_suffix` rendering, not policy. The conservative trigger appends
+`Compaction reason: context pressure before continuing the current task` to its
+reserve prompt and retains the +64 safety and +128 threshold margins. Execution
+uses the fixed, reason-free summary prompt against the caller's exact token
+prefix, followed by the no-think assistant opener. It leaves one spare native
+slot, rejects fewer than 256 remaining output slots, and caps output at
+`min(remaining_room, summary_budget(ctx))`. The trigger reserve is intentionally
+not the private generation request; no reason is passed to summary jobs.
+
+The same owner receives oversized tool-result hooks and response-reserve
+requests. When a response reaches its reserve boundary, generation pauses,
+compaction attempts to make room, and generation resumes in the same
+`ModelResponse`. Already delivered response text is not emitted again. Summary
+tokens count once as output usage for automatic compaction, but never become
+response text. Threshold, tool-overflow, and reserve recovery count successfully
+emitted `SummaryToken` output even if the owner subsequently fails or is
+cancelled. On success, only the unobserved remainder of
+`RoomResult.generated_tokens` is added, so emitted summary output is never
+charged twice; a failure before emission adds nothing.
+Custom owners that emit no summary events retain their result-based accounting.
+If the owner reports failure, at least the trailing tool result becomes a tool
+error even if the owner reduced history enough to fit. Grouped results reject
+only as many trailing results as necessary, with an exact fit check even when
+the owner reported success. If reserve recovery cannot
+make room, the response fails with `ContextExhausted`.
+
+### Manual compaction and custom owners
+
+In the interactive shell, `/compact` takes no arguments. It reports the token
+change on success or `Nothing to compact` when there is no removable history.
+It is rejected while a run is active, including while an interactive tool is
+waiting for an answer; it neither queues compaction nor treats the command as
+the answer. The programmatic entry point is `await runtime.compact()`, with the
+same idle-only restriction.
+
+`ContextComposition(owner=custom_strategy)` replaces the default automatic
+owner with a `ContextStrategy` capability. Exactly one automatic owner is
+registered: the selected capability receives the tool-overflow and
+response-reserve hooks as well as model-request hooks. The selection survives
+`/new` and `/switch`.
+
+`runtime.components.compactor` remains a concrete `LLMCompaction` manual
+service, even when a custom automatic owner is selected. Its
+`compact_messages(messages, reason="manual")` method operates on the supplied
+history in place. The runtime's manual entry point uses this service, not the
+custom owner. Replacing the automatic owner does not register a second
+automatic compactor. Use the runtime entry point for its operation guard.
+
+Summary preparation and native replacement run off the event loop through
+retained, shielded executor operations; all native calls still go through the
+single engine worker. Provenance preparation and binder/message publication
+stay on the loop. Session listeners (including manual-compaction progress) run
+on that same loop. The TUI keeps one input application running while an async
+slash command executes, so the compacting footer actually paints, Ctrl-C can
+signal the operation, and registry-marked immediate commands still busy-reject.
+Other input retains the existing queue/answer routing; cancelling the command
+does not cancel the input loop or create a competing prompt.
+
+One compaction attempt owns its entire drain. Overlapping attempts reject
+before emitting progress. While a runtime manual compaction is active,
+run/compact/save/new/switch/fork reject immediately rather than queue or cancel
+it. `runtime.cancel()` signals that operation; `runtime.close()` cancels and
+rejects new operations from the start of closing and awaits its drain before
+closing session state. Concurrent closes share that teardown boundary. A
+cancelled close retains its run-drain waiter and finishes teardown before it
+re-raises cancellation or releases other close waiters.
+Cancellation, including repeated `Task.cancel()` or AnyIO deadlines, never
+abandons the executor work. A native replacement that already succeeded
+publishes its matching prepared Python
+state before cancellation propagates; a failed replacement publishes nothing.
+The terminal event follows drain/publication and still reports cancellation,
+not a fabricated successful compaction.
+
+Nonstream reserve recovery uses the private `get_current_run_context` accessor
+from the exactly pinned harness to select canonical history. This is the
+nonstream equivalent of `request_stream`'s explicit context, not another history
+store: a request-only copy cannot preserve a commit followed by an owner error.
+No custom-owner method signature or dependency version changes are required.
+
+### Reserve owner operations and legacy compatibility
+
+`ContextRequest.operations` is optional and defaults to `None`, preserving
+existing positional requests and `make_room` signatures. Owners opt in with
+`reserve_operations = True`; built-in `LLMCompaction` does so. During reserve
+recovery they use `request.operations.prepare_summary(bottom)` and
+`replace_transcript(replacement, reason=...)`, or the corresponding retained
+`prepare_summary_async` / `replace_transcript_async` methods. Async methods
+validate the selected task on its owning loop **before** executor submission;
+do not use naked `asyncio.to_thread(handle.method, ...)` in strict mode.
+Threshold/manual idle compaction continues without a handle.
+
+`LLMCompaction` subclasses inherit `reserve_operations = True`; inheriting the
+built-in is itself an opt-in. Subclasses overriding `make_room` with raw Session
+calls must migrate to `request.operations`, or explicitly set
+`reserve_operations = False` to retain the legacy adapter and its limitations.
+
+For custom retained executors that must publish a successful native result even
+on cancellation, `operations.issue_authority("summary")` or
+`operations.issue_authority("replacement")` is the public loop-side ticket
+factory. Issue before executor submission and pass the
+result to the matching Session `authority=` keyword. Prefer the handle's normal
+methods otherwise. The ticket cannot be consumed by listeners, even when
+deliberately supplied; listener denial leaves it usable by the selected owner.
+
+Strict windows deny raw Session native operations even for the owner. Each
+handle call issues a session/window/operation-bound, one-shot execution ticket,
+consumed under the Session lock. Children and listeners cannot issue tickets.
+Exit, reserve decisions and close revoke unused tickets; a stale window cannot
+revoke a newer one. Cancellation drains native work and publishes committed
+Python provenance before window revocation, decision and round reconciliation.
+These handles do not authorize ordinary append/truncate/checkpoint mutations.
+
+Unchanged custom owners default to the localized legacy adapter in
+`engine.reserve`: direct Session calls and naked `asyncio.to_thread` retain their
+behavior. Its `legacy_reserve_authority` ContextVar cannot distinguish owner and
+child executors (both inherit the same context). This is compatibility, **not
+security isolation**. There is no claim of total ContextVar removal. Generic
+lifecycle delivery retains only its `in_session_listener` reentrancy marker and
+same-loop nesting; it no longer copies or clears reserve-specific authority.
+
+### Compaction session events
+
+Every started attempt emits `before_compact(reason, old_tokens)` before tail
+planning, then exactly one `compaction_finished(reason, outcome)` in `finally`.
+The terminal outcome is `compacted`, `noop`, `failed`, or `cancelled`. A busy
+rejection starts no attempt and emits neither event.
+
+Only a successful commit emits `compacted(reason, old_tokens, new_tokens,
+generated_tokens)`, before `compaction_finished`. No-op, failure, and
+cancellation never fabricate success or reset the system-note provider. An
+internal error after native replacement also terminates with `failed`; this
+notification does not promise rollback of a replacement that already succeeded.
+
+The footer restores its previous idle/running status from the terminal event,
+not a command name or a success notification. A later `run_end` takes precedence
+so a late finish cannot revive a completed run. All three displayed success
+counts must be non-negative integers (not booleans); the footer validates the
+complete count payload and terminal outcome before mutating their state.
+
+### History replacement and persistence
+
+Summary generation uses the session's model with thinking disabled and greedy,
+tool-masked decoding. The engine receives only the selected token prefix; the
+capability selects the message tail. The tail budget is
+`max(1, min(ctx // 10, 50_000))` tokens, adjusted to whole messages and complete
+tool exchanges. Retained token IDs are copied from the transcript, not
+reconstructed from message text, including an open response tail during reserve
+recovery.
+
+Compaction replaces the live canonical message list in place with one summary
+request followed by the retained messages. It preserves system instructions,
+assigns a fresh `ds4.key` to the summary request, and preserves the retained
+messages' stable keys and token provenance. The native transcript becomes the
+system prefix, rendered summary request, and verbatim retained tail. It is not
+an extra summary appended to otherwise unchanged history.
+
+The commit prepares message provenance first, performs native replacement as
+the only fallible mutation, then installs the prepared binder and message
+state. A failed native replacement leaves the previous history and transcript
+intact. An interrupted or failed replacement sync restores the prior native
+prefix, preserving any not-yet-evaluated transcript suffix, without emitting
+another usage-accounting sync. Restoration must complete successfully; an
+exception or interrupted restoration poisons the worker, retaining the original
+replacement failure as exception context, so mismatched state cannot be reused.
+Checkpoint disposal is also part of replacement before Python publication. A
+disposal failure restores prior native tokens and poisons the worker even when
+restoration succeeds, because checkpoint resources may already be removed.
+There is no Python-history rollback protocol. Summary preparation restores the
+borrowed native state before replacement. A summary restoration failure is
+surfaced and poisons the worker rather than continuing with private summary
+state.
+
+Saving writes the compacted current history and matching native payload.
+Switch and fork preserve its keys and provenance. Existing step snapshots
+retain the removed messages, so compaction is not a deletion or redaction of
+older run records. Save-record v1 and old step snapshot formats are unchanged.
+An exact compatible native KV payload is reused with no restore prefill; the
+next request extends the loaded state. With an absent, stripped, or
+incompatible payload, the compacted messages are rendered again and the next
+request performs a rebuild prefill.
+
+### Verification limits
+
+Portable agent, engine, persistence, and conformance tests use synthetic native
+contracts, including FakeNative. They do not establish native inference or live
+replay parity; full native inference and live replay parity remain deferred.
+The live setup below describes how to collect that separate evidence, not a
+completed compaction parity result.
+
+Two scope gaps remain:
+
+- There is no command-level `/strip`. Existing payload removal and restore
+  paths cover the equivalent stripped-payload behavior in portable tests.
+- C's second nearly-full restored-context `summary_bottom` cutoff and its
+  retained-unsummarized-token path are not implemented. When no history can
+  safely be removed, compaction is a no-op; when summary generation cannot fit,
+  it fails with prior state preserved instead of implementing that C fallback.
+
+The trigger rules and covered continuation behavior do not imply complete C
+parity. Other deferred milestone work is not made complete by compaction.
+
 ## Choose a backend
 
 The backend is the compute implementation that runs model inference.

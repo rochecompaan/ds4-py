@@ -166,7 +166,7 @@ def test_hook_state_tracks_only_committed_tokens() -> None:
         prompt_length = len(session.transcript.tokens)
         # run_round appends the assistant prefix before the first hook.
         assistant_prefix = session._worker.call(
-            lambda engine, native: engine.assistant_prefix(session._transcript.tokens, ThinkMode.NONE)
+            lambda engine, native: engine.assistant_prefix(session.history.transcript.tokens, ThinkMode.NONE)
         ).result()
         initial_position = prompt_length + len(assistant_prefix)
         states = []

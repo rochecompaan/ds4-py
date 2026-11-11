@@ -10,7 +10,33 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar, SupportsFloat, SupportsIndex, cast, override
 from uuid import uuid4
 
-import anyio
+# The exactly pinned harness exposes canonical reserve history only through this
+# private accessor for nonstream requests. Keep it aligned with request_stream's
+# explicit RunContext; a request copy cannot preserve commit-then-raise history.
+_MOVED_ACCESSOR = (
+    "ds4py requires the private run-context accessor "
+    "pydantic_ai._run_context.get_current_run_context from the pinned "
+    "pydantic-ai 2.59.0 dependency. The installed version moved or removed it; "
+    "reinstall the locked dependencies (uv sync --frozen) or update ds4py's "
+    "nonstream run-context access before changing the pin."
+)
+try:
+    import pydantic_ai._run_context as run_context_module
+except ModuleNotFoundError as error:
+    # The agent extra is optional, so an absent harness needs the install hint.
+    if error.name == "pydantic_ai":
+        raise ImportError(
+            "ds4py's model adapter requires the optional pydantic-ai harness, which is not "
+            "installed. Install the locked agent extra: uv sync --frozen --extra agent"
+        ) from error
+    # Any other missing module comes from inside the harness; leave it untouched.
+    if error.name != "pydantic_ai._run_context":
+        raise
+    raise ImportError(_MOVED_ACCESSOR) from error
+try:
+    get_current_run_context = run_context_module.get_current_run_context
+except AttributeError:
+    raise ImportError(_MOVED_ACCESSOR) from None
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.profiles import ModelProfile, ToolAdditionMode, ToolDeferralMode
@@ -18,6 +44,7 @@ from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.usage import RequestUsage
 from typing_extensions import sentinel
 
+from ds4py.async_session import await_retained, cancel_session_operation, drain_operation
 from ds4py.binding import MessageBinder
 from ds4py.engine.events import (
     Event,
@@ -32,13 +59,13 @@ from ds4py.engine.events import (
 )
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.errors import EngineError
+from ds4py.reserve_settlement import ReserveSettlement
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
+    from collections.abc import AsyncGenerator, AsyncIterator, Iterator, Sequence
 
     from pydantic_ai.messages import (
         FinishReason,
-        InstructionPart,
         ModelMessage,
         ModelResponse,
         ModelResponseStreamEvent,
@@ -46,14 +73,11 @@ if TYPE_CHECKING:
     from pydantic_ai.settings import ModelSettings
     from pydantic_ai.tools import RunContext
 
+    from ds4py.capabilities.context import ContextStrategy
     from ds4py.capabilities.system_notes import DS4SystemNotes
     from ds4py.engine.session import Session
 
 _END = sentinel("_END")
-
-
-class ContextReserveError(EngineError):
-    """The response hit the context reserve and no compaction strategy is installed."""
 
 
 class ResponseTerminalError(EngineError):
@@ -62,10 +86,6 @@ class ResponseTerminalError(EngineError):
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(f"model response ended with {reason}")
-
-
-def _context_reserve_message(needed: int | None) -> str:
-    return f"context reserve reached with {needed} token(s) needed; M4 compaction is not available in this build"
 
 
 def _next[T](iterator: Iterator[T]) -> T | _END:
@@ -101,12 +121,6 @@ def _finite(value: object, name: str) -> float:
     return value
 
 
-def _instructions(parts: Sequence[InstructionPart] | None) -> str | None:
-    if not bool(parts):
-        return None
-    return "\n\n".join(part.content for part in parts) or None
-
-
 class DS4Model(Model):
     """A harness model backed by one facade-owned native/sampling session.
 
@@ -127,7 +141,6 @@ class DS4Model(Model):
         max_tokens: int = 50_000,
         stop_sequences: Sequence[bytes] = (),
         note_provider: DS4SystemNotes | None = None,
-        reserve_handler: Callable[[int], int | None] | None = None,
     ) -> None:
         super().__init__()
         self.session = session
@@ -135,10 +148,19 @@ class DS4Model(Model):
         self.sampling = sampling
         self.max_tokens = max_tokens
         self.stop_sequences = stop_sequences
-        self.note_provider = note_provider
-        # No compaction strategy is installed. A handler may free space and return the new
-        # reserve budget; otherwise the default policy fails the open response.
-        self.reserve_handler = reserve_handler
+        if note_provider is not None:
+            self.note_provider = note_provider
+        # Composition selects the one automatic strategy; it is not session state.
+        self.context_owner: ContextStrategy | None = None
+
+    @property
+    def note_provider(self) -> DS4SystemNotes | None:
+        """Share the effective provider between counting and actual preparation."""
+        return self.binder.note_provider
+
+    @note_provider.setter
+    def note_provider(self, provider: DS4SystemNotes | None) -> None:
+        self.binder.note_provider = provider
 
     @property
     @override
@@ -197,21 +219,18 @@ class DS4Model(Model):
         messages: list[ModelMessage],
         settings: ModelSettings | None,
         params: ModelRequestParameters,
+        run_context: RunContext[object] | None = None,
     ) -> AsyncGenerator[DS4StreamedResponse]:
         policy, max_tokens, stop_sequences = self._request_config(settings)
-        instruction_parts = self._get_instruction_parts(messages, params)
-        self.binder.prepare(
-            messages,
-            tools=params.declared_tool_defs.values(),
-            instructions=_instructions(instruction_parts),
-            note_provider=self.note_provider,
-        )
+        messages = self.binder.prepare_model_request(messages, params, note_provider=self.note_provider)
         response = DS4StreamedResponse(
             self,
+            messages,
             params,
             policy,
             max_tokens,
             stop_sequences,
+            run_context=run_context,
         )
         with self.session.events_on_loop(asyncio.get_running_loop()):
             try:
@@ -227,9 +246,17 @@ class DS4Model(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         settings, params = self.prepare_request(model_settings, model_request_parameters)
-        async with self._open_stream(messages, settings, params) as stream:
-            async for _ in stream:
-                pass
+        # The pinned harness supplies its context implicitly for nonstream calls.
+        run_context = get_current_run_context()
+        async with self._open_stream(messages, settings, params, run_context) as stream:
+            try:
+                async for _ in stream:
+                    pass
+            except BaseException:
+                # Like the harness's streamed path, publish the finalized partial
+                # response to canonical history even when the request raises.
+                await stream.publish_partial(run_context)
+                raise
             return stream.get()
 
     @asynccontextmanager
@@ -242,23 +269,28 @@ class DS4Model(Model):
         run_context: RunContext[object] | None = None,
     ) -> AsyncGenerator[DS4StreamedResponse]:
         settings, params = self.prepare_request(model_settings, model_request_parameters)
-        async with self._open_stream(messages, settings, params) as stream:
+        async with self._open_stream(messages, settings, params, run_context) as stream:
             yield stream
 
 
 class DS4StreamedResponse(StreamedResponse):
     """Translate facade events while finalizing sampled provenance exactly once."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913, PLR0917 - The response mirrors the request and stream configuration.
         self,
         model: DS4Model,
+        messages: list[ModelMessage],
         params: ModelRequestParameters,
         sampling: SamplingPolicy,
         max_tokens: int,
         stop_sequences: Sequence[bytes],
+        *,
+        run_context: RunContext[object] | None = None,
     ) -> None:
         super().__init__(model_request_parameters=params)
         self._model = model
+        self._messages = messages
+        self._run_context = run_context
         self._session = model.session
         self._binder = model.binder
         self._timestamp = datetime.now(UTC)
@@ -276,14 +308,24 @@ class DS4StreamedResponse(StreamedResponse):
         self._round_start = len(self._session.transcript)
         self._sampled_start: int | None = None
         self._prefilled = 0
+        self._cached = 0
         self._output_tokens = 0
         self._tool_index = 0
         self._in_tool_syntax = False
         self._pull_lock = asyncio.Lock()
         self._pending_pull: asyncio.Future[Event | _END] | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
-        self._reserve_needed: int | None = None
-        self._context_exhausted = False
+        self._partial_published = False
+        self._settlement = ReserveSettlement(
+            session=self._session,
+            binder=self._binder,
+            owner=model.context_owner,
+            messages=messages,
+            run_context=run_context,
+            reconciled=lambda: self._reconciled,
+            observe_tail=self._observe_sampled_start,
+        )
+        self._compaction_drain: asyncio.Future[None] | None = None
 
     @property
     @override
@@ -330,10 +372,13 @@ class DS4StreamedResponse(StreamedResponse):
     def _finalize(self) -> None:
         if self._bound:
             return
+        settlement = self._settlement
+        prefilled = self._prefilled + settlement.prefilled
         self._usage = RequestUsage(
-            input_tokens=self._prefilled,
-            output_tokens=self._output_tokens,
-            details={"prefill_tokens": self._prefilled},
+            input_tokens=prefilled,
+            cache_read_tokens=self._cached + settlement.cached,
+            output_tokens=self._output_tokens + settlement.summary_tokens,
+            details={"prefill_tokens": prefilled},
         )
         # A round that never reached its first sync never opened a response: its
         # assistant prefix (if any) was rolled back, so the only assistant/eos
@@ -342,6 +387,35 @@ class DS4StreamedResponse(StreamedResponse):
         if self._sampled_start is not None:
             self._binder.bind_response(self.get())
         self._bound = True
+
+    def _publish(self, run_context: RunContext[object] | None) -> None:
+        """Append the finalized response to canonical history exactly once."""
+        if run_context is None or self._sampled_start is None or self._partial_published:
+            return
+        self._partial_published = True
+        response = self.get()
+        key = (response.metadata or {}).get("ds4.key")
+        if key is None:
+            # Defensive only: the binder initializes a stable key for every
+            # bound response. A keyless response cannot be deduplicated safely,
+            # so keep it out of canonical history rather than append a duplicate.
+            return
+        if any((message.metadata or {}).get("ds4.key") == key for message in run_context.messages):
+            return
+        run_context.messages.append(response)
+
+    async def publish_partial(self, run_context: RunContext[object] | None) -> None:
+        """Finalize this round, then publish its partial response once.
+
+        Publication is canonical history only: a round without a sampled start
+        has no response to publish, and an already-published stable key is never
+        appended twice. A teardown failure is still surfaced to the caller after
+        the partial response has been published.
+        """
+        try:
+            await self._finish()
+        finally:
+            self._publish(run_context)
 
     @override
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -363,19 +437,10 @@ class DS4StreamedResponse(StreamedResponse):
 
         return iterate()
 
-    def _dispatch(  # noqa: PLR0912 - Each facade event has a distinct harness translation.
-        self, event: Event
-    ) -> list[ModelResponseStreamEvent]:
+    def _dispatch(self, event: Event) -> list[ModelResponseStreamEvent]:
         """Apply one facade event; return harness stream events to publish."""
         outputs: list[ModelResponseStreamEvent] = []
-        if isinstance(event, ReserveReached):
-            self._reserve_needed = event.needed
-            budget = self._model.reserve_handler(event.needed) if self._model.reserve_handler is not None else None
-            if budget is None:
-                event.fail()
-            else:
-                event.resume(budget)
-        elif isinstance(event, ToolSyntax):
+        if isinstance(event, ToolSyntax):
             self._in_tool_syntax = event.state != "DONE"
         elif isinstance(event, TextDelta):
             if not self._in_tool_syntax:
@@ -414,10 +479,9 @@ class DS4StreamedResponse(StreamedResponse):
             # A reserve-resumed round may sync again; that later sync reports
             # only the work it did, so total prefill is the sum of all syncs.
             self._prefilled += event.prefilled
+            self._cached += event.plan.reused
         elif isinstance(event, Stopped):
             self._stopped(event.reason)
-            if event.reason == "context_exhausted":
-                self._context_exhausted = True
         elif isinstance(event, Interrupted):
             self._interrupted()
         return outputs
@@ -461,8 +525,16 @@ class DS4StreamedResponse(StreamedResponse):
                 self._round_exhausted = True
                 return
             self._dispatch(event)
+            if isinstance(event, ReserveReached):
+                self._settlement.settle(event)
             if isinstance(event, (Stopped, Interrupted)):
                 return
+
+    def _observe_sampled_start(self) -> None:
+        sampled_start = self._session.open_assistant_start()
+        if sampled_start is None:
+            raise EngineError("reserve owner removed the open assistant tail")
+        self._sampled_start = sampled_start
 
     async def _close_round_locked(self) -> None:
         if self._reconciled:
@@ -476,7 +548,11 @@ class DS4StreamedResponse(StreamedResponse):
                 raise
             if event is not _END:
                 self._dispatch(event)
+                if isinstance(event, ReserveReached):
+                    self._settlement.settle(event)
         await asyncio.to_thread(self._round.close)
+        if self._sampled_start is not None:
+            self._observe_sampled_start()
         sampled_start = self._sampled_start if self._sampled_start is not None else self._round_start
         cutoff = sampled_start + self._output_tokens
 
@@ -487,6 +563,9 @@ class DS4StreamedResponse(StreamedResponse):
     async def _cleanup(self) -> None:
         """Terminal drain, close, reconcile, and finalization in one owner."""
         try:
+            done = self._compaction_drain
+            if done is not None:
+                await drain_operation(done)
             async with self._pull_lock:
                 pending, self._pending_pull = self._pending_pull, None
                 if pending is not None:
@@ -504,16 +583,13 @@ class DS4StreamedResponse(StreamedResponse):
         task = self._cleanup_task
         if task is None:
             task = self._cleanup_task = asyncio.create_task(self._cleanup())
-        # AnyIO propagates request-deadline/level cancellation into every
-        # checkpoint. Shield the whole teardown, not just the executor future,
-        # so cleanup cannot be interrupted halfway through reconciliation.
+        # A timeout/cancellation already unwinding keeps its own surface; a
+        # teardown failure must not replace the original exception. The retained
+        # wait shields and drains the whole teardown, not just one executor step.
         primary = sys.exc_info()[0] is not None
         try:
-            with anyio.CancelScope(shield=True):
-                await asyncio.shield(task)
+            await await_retained(task)
         except BaseException:
-            # A timeout/cancellation already unwinding keeps its own surface;
-            # a teardown failure must not replace the original exception.
             if not primary:
                 raise
 
@@ -534,10 +610,11 @@ class DS4StreamedResponse(StreamedResponse):
                     self._round_exhausted = True
                     self._reconciled = True
                     break
+                if isinstance(event, ReserveReached):
+                    await self._settlement.recover(event)
+                    continue
                 for part_event in self._dispatch(event):
                     yield part_event
-                if self._context_exhausted:
-                    raise ContextReserveError(_context_reserve_message(self._reserve_needed))
                 if isinstance(event, Stopped) and event.reason in {
                     "max_tokens",
                     "parser_error",
@@ -550,6 +627,9 @@ class DS4StreamedResponse(StreamedResponse):
     async def close_stream(self) -> None:
         self._cancelled = True
         self._interrupted()
+        done = cancel_session_operation(self._session)
+        if done is not None:
+            self._compaction_drain = done
         if self._round_started and not self._round_exhausted:
             self._session.cancel()
         await self._finish()

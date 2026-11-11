@@ -7,11 +7,15 @@ from types import SimpleNamespace
 from typing import Any, Never, cast
 
 import pytest
+from pydantic_ai.messages import UserPromptPart
+from test_runtime import fake_engine, fixed_clock, make_model, project_dir, scripted_rounds
 
 import ds4py
 from ds4py import cli
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.noninteractive import run_noninteractive
+from ds4py.runtime import AgentRuntime
+from ds4py.store import SessionStore
 
 
 class FakeRunRuntime:
@@ -42,6 +46,32 @@ def test_noninteractive_prints_only_the_final_answer_and_saves() -> None:
     runtime = FakeRunRuntime()
     assert invoke(runtime) == (0, "answer\n", "")
     assert runtime.saves == 1
+
+
+def test_default_noninteractive_compacts_without_printing_private_summary(tmp_path: Path) -> None:
+    with fake_engine(script=scripted_rounds("answer", "answer", "private summary", "final answer")) as engine:
+        runtime = AgentRuntime(
+            make_model(engine),
+            project_dir(tmp_path),
+            system="",
+            store=SessionStore(tmp_path / "store"),
+            clock=fixed_clock,
+        )
+        out, err = io.StringIO(), io.StringIO()
+
+        async def scenario() -> int:
+            await runtime.run("x" * 40000)
+            await runtime.run("r" * (56000 - len(runtime.model.session.transcript)))
+            code = await run_noninteractive(runtime, "finish", out=out, err=err)
+            await runtime.close()
+            return code
+
+        assert asyncio.run(scenario()) == 0
+        assert out.getvalue() == "final answer\n"
+        assert err.getvalue() == ""
+        part = runtime.messages[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == "private summary"
 
 
 @pytest.mark.parametrize(

@@ -285,6 +285,22 @@ def test_terminal_marker_prefix_is_matched_independently_of_display() -> None:
     assert transcript.tokens == (60,) and control.stop_sequence == b"<"
 
 
+def test_close_preserves_the_paused_stream() -> None:
+    def script(prompt: Any, generated: Any) -> Any:
+        return b"stop"[len(generated)] + 1 if len(generated) < 4 else 0
+
+    with ds4py.open("f.gguf", think=ThinkMode.NONE, native=FakeNative(script=script)) as engine:
+        session = engine.session()
+        session.append_user("first")
+        assert list(session.run_round(stop_sequences=[b"stop"]))[-1] == Stopped("stop_sequence")
+        paused = session.history.paused_stream
+        assert paused is not None
+
+        session.close()
+
+        assert session.history.paused_stream is paused
+
+
 def test_new_user_retires_paused_stream_and_starts_fresh_assistant() -> None:
     def script(prompt: Any, generated: Any) -> Any:
         return b"stop"[len(generated)] + 1 if len(generated) < 4 else 0
@@ -294,9 +310,9 @@ def test_new_user_retires_paused_stream_and_starts_fresh_assistant() -> None:
         session.append_user("first")
         first = list(session.run_round(stop_sequences=[b"stop"]))
         assert first[-1] == Stopped("stop_sequence")
-        old_stream = session._paused_stream
+        old_stream = session.history.paused_stream
         session.append_user("second")
-        assert session._paused_stream is None
+        assert session.history.paused_stream is None
         assert [s.kind for s in session.transcript.segments][-2:] == ["eos", "user"]
         second = list(session.run_round(stop_sequences=[b"stop"]))
         assert second[-1] == Stopped("stop_sequence")
@@ -320,8 +336,8 @@ def test_new_user_retires_paused_stream_and_starts_fresh_assistant() -> None:
             "assistant_prefix",
             "assistant",
         ]
-        assert session._paused_stream is not old_stream
-        assert len(cast("Any", session._paused_stream).sampled_tokens) == 4
+        assert session.history.paused_stream is not old_stream
+        assert len(cast("Any", session.history.paused_stream).sampled_tokens) == 4
         assert [s.kind for s in session.transcript.segments].count("assistant_prefix") == 2
 
 
@@ -338,7 +354,7 @@ def test_message_mutations_close_a_paused_assistant(mutation: Any, kind: Any) ->
         session.append_user("first")
         assert list(session.run_round(stop_sequences=[b"ok"]))[-1] == Stopped("stop_sequence")
         mutation(session)
-        assert session._paused_stream is None
+        assert session.history.paused_stream is None
         assert [segment.kind for segment in session.transcript.segments][-2:] == [
             "eos",
             kind,

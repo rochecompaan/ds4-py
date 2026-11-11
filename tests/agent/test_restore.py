@@ -25,7 +25,7 @@ from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.engine.sampling import SamplingPolicy
-from ds4py.engine.session import Engine
+from ds4py.engine.session import Engine, Session
 from ds4py.errors import EngineError, StoreError
 from ds4py.model import DS4Model
 from ds4py.noninteractive import run_noninteractive
@@ -300,7 +300,10 @@ def test_partial_response_does_not_replace_bound_history_in_saved_snapshot(
             asyncio.run(runtime.close())
 
 
-def test_valid_kv_switch_restores_binding_without_prefill(tmp_path: Path) -> None:
+def test_valid_kv_switch_restores_binding_without_prefill(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     project, store, record, saved = saved_session(tmp_path)
     session_id = saved["session_id"]
     assert record.session_id == session_id
@@ -311,6 +314,14 @@ def test_valid_kv_switch_restores_binding_without_prefill(tmp_path: Path) -> Non
 
     with fake_engine(script=scripted_rounds("second answer")) as engine:
         model = make_model(engine)
+        installs: list[tuple[Any, tuple[Any, ...]]] = []
+        install_segments = Session.install_segments
+
+        def record_install(session: Session, segments: Any) -> None:
+            installs.append((session, tuple(segments)))
+            install_segments(session, segments)
+
+        monkeypatch.setattr(Session, "install_segments", record_install)
         runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
         try:
             during_switch = capture(runtime, {"Prefill", "Synced"})
@@ -355,6 +366,8 @@ def test_valid_kv_switch_restores_binding_without_prefill(tmp_path: Path) -> Non
                 for segment in model.session.transcript.segments
             ]
             assert installed == installed_view(record.segments)
+            assert [segments for _session, segments in installs] == [model.session.transcript.segments]
+            assert [session for session, _segments in installs] == [model.session]
             assert [
                 segment.meta.get("subtype") for segment in model.session.transcript.segments if segment.kind == "note"
             ] == ["date"]

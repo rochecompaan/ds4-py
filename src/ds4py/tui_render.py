@@ -146,6 +146,7 @@ class FooterModel:
         self.service_pid: int | None = None
         self.service_status: str | None = None
         self.custom: dict[str, str] = {}
+        self._before_compact_status: str | None = None
         self._unsubscribe = runtime.on_event(self.handle_event)
 
     def handle_event(self, event: SessionEvent) -> None:  # noqa: PLR0912 - Each session event owns a footer transition.
@@ -155,6 +156,15 @@ class FooterModel:
         elif event.kind == "run_end":
             self.status = "idle"
             self.prefill = None
+            self._before_compact_status = None
+        elif event.kind == "before_compact":
+            self._before_compact_status = self.status
+            self.status = "compacting"
+            self.prefill = None
+        elif event.kind == "compacted":
+            self._compacted(event)
+        elif event.kind == "compaction_finished":
+            self._compaction_finished(event)
         elif event.kind == "Token":
             self.status = "streaming"
         elif event.kind == "Prefill":
@@ -169,14 +179,7 @@ class FooterModel:
             self.plan = inner.plan.kind
             self.ctx_used = inner.pos
         elif event.kind in {"service_started", "service_status", "service_stopped"}:
-            pid = event.payload.get("pid", self.service_pid)
-            if pid is not None and not isinstance(pid, int):
-                raise TypeError("service pid must be an integer or None")
-            status = event.payload.get("status")
-            if status is not None and not isinstance(status, str):
-                raise TypeError("service status must be a string or None")
-            self.service_pid = pid
-            self.service_status = status
+            self._service_event(event)
         elif event.kind == "status":
             key = str(event.payload["key"])
             value = event.payload.get("text")
@@ -184,6 +187,37 @@ class FooterModel:
                 self.custom[key] = str(value)
             else:
                 self.custom.pop(key, None)
+
+    def _service_event(self, event: SessionEvent) -> None:
+        pid = event.payload.get("pid", self.service_pid)
+        if pid is not None and not isinstance(pid, int):
+            raise TypeError("service pid must be an integer or None")
+        status = event.payload.get("status")
+        if status is not None and not isinstance(status, str):
+            raise TypeError("service status must be a string or None")
+        self.service_pid = pid
+        self.service_status = status
+
+    def _compacted(self, event: SessionEvent) -> None:
+        counts: dict[str, int] = {}
+        for field in ("old_tokens", "new_tokens", "generated_tokens"):
+            value = event.payload.get(field)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise TypeError(f"compacted {field} must be a non-negative integer")
+            counts[field] = value
+        old_tokens, new_tokens, generated_tokens = (
+            counts[field] for field in ("old_tokens", "new_tokens", "generated_tokens")
+        )
+        self.ctx_used = new_tokens
+        self.custom["compact"] = f"{old_tokens} → {new_tokens} tokens, {generated_tokens} generated"
+
+    def _compaction_finished(self, event: SessionEvent) -> None:
+        outcome = event.payload.get("outcome")
+        if not isinstance(outcome, str) or outcome not in ("compacted", "noop", "failed", "cancelled"):
+            raise TypeError("compaction_finished outcome must be compacted, noop, failed, or cancelled")
+        if self._before_compact_status is not None:
+            self.status = self._before_compact_status
+            self._before_compact_status = None
 
     def _parts(self) -> list[str]:
         parts = [self.status]

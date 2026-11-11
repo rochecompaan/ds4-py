@@ -5,7 +5,9 @@ from typing import Any, cast
 import pytest
 from pydantic_ai.messages import (
     BinaryImage,
+    InstructionBaselinePart,
     InstructionPart,
+    ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
@@ -21,8 +23,9 @@ from pydantic_ai.tools import ToolDefinition
 import ds4py
 from ds4py import ThinkMode
 from ds4py._native.fake import FakeNative
-from ds4py.binding import MessageBinder, _BoundMessage, _content_hash
-from ds4py.engine.session import Engine
+from ds4py.binding import MessageBinder
+from ds4py.binding_provenance import BoundMessage, _content_hash, prepare_provenance
+from ds4py.engine.session import Engine, Session
 from ds4py.errors import EngineError
 
 
@@ -84,7 +87,7 @@ def test_adopt_preserves_sampled_record_in_serialized_snapshot(native_reason: st
     bound.metadata = dict(bound.metadata or {})
     bound.metadata["ds4.sampled"] = sampled
     binder = MessageBinder.__new__(MessageBinder)
-    binder._records = [_BoundMessage("response", content_hash, 0, 3)]
+    binder._records = [BoundMessage("response", content_hash, 0, 3)]
     binder._bound_messages = [bound]
 
     adopted = cast("ModelResponse", binder.adopt([candidate])[0])
@@ -140,6 +143,79 @@ def test_restore_binds_an_ordered_subsequence_of_canonical_history() -> None:
         assert [record.key for record in restored._records] == [
             cast("Any", message.metadata)["ds4.key"] for message in bound
         ]
+        assert restored._signature is None
+        assert restored._restored is True
+
+
+def test_restore_uses_session_segment_writer(monkeypatch: pytest.MonkeyPatch) -> None:
+    with fake_engine() as engine:
+        session = engine.session()
+        binder = MessageBinder(session)
+        canonical = [user("first"), ModelResponse([TextPart("answer")])]
+        binder.prepare(canonical)
+        saved_segments = binder.export_segments()
+        saved_records = binder.records()
+
+        restored = MessageBinder(session)
+        calls: list[tuple[Any, ...]] = []
+
+        def install(segments: Any) -> None:
+            # Preparation is pure: no record swap may happen before installation.
+            assert restored.records() == ()
+            calls.append(tuple(segments))
+            Session.install_segments(session, segments)
+
+        monkeypatch.setattr(session, "install_segments", install)
+        restored.restore(canonical, saved_segments)
+
+        assert calls == [session.transcript.segments]
+        assert restored.records() == saved_records
+        assert restored.export_segments() == saved_segments
+        assert restored._signature is None
+        assert restored._restored is True
+
+
+def test_prepare_provenance_deep_copies_bound_messages() -> None:
+    with fake_engine() as engine:
+        session = engine.session()
+        binder = MessageBinder(session)
+        messages = [user("first")]
+        binder.prepare(messages)
+        key = cast("Any", messages[0].metadata)["ds4.key"]
+        prepared = prepare_provenance(messages, binder.export_segments(), loaded=len(session.transcript))
+
+        messages[0].metadata = {"ds4.key": "changed"}
+
+        assert cast("Any", prepared.bound_messages[0].metadata)["ds4.key"] == key
+
+
+def test_prepare_provenance_accepts_replacement_segments() -> None:
+    with fake_engine() as engine:
+        session = engine.session()
+        binder = MessageBinder(session)
+        messages = [user("first")]
+        binder.prepare(messages)
+
+        prepared = prepare_provenance(messages, session.transcript.segments, loaded=len(session.transcript))
+
+        assert prepared.installed == session.transcript.segments
+        assert prepared.records == binder.records()
+
+
+def test_apply_compaction_assigns_records_without_restore_state() -> None:
+    with fake_engine() as engine:
+        session = engine.session()
+        binder = MessageBinder(session)
+        messages = [user("first"), ModelResponse([TextPart("answer")])]
+        binder.prepare(messages)
+        signature = binder._signature
+        prepared = prepare_provenance(messages, binder.export_segments(), loaded=len(session.transcript))
+
+        binder.apply_compaction(prepared)
+
+        assert binder.records() == prepared.records
+        assert binder._signature == signature
+        assert binder._restored is False
 
 
 def test_system_and_instruction_parts_are_separate_system_segments() -> None:
@@ -274,9 +350,45 @@ def test_rejected_non_integer_truncate_leaves_checkpoint_usable() -> None:
             session.truncate(cast("Any", 2.0))
 
         assert session.transcript.tokens == before
-        assert session._checkpoint_tokens == {"kept": 4}
+        assert session.history.checkpoint_tokens == {"kept": 4}
         session.truncate(4)
         plan = session.plan()
         assert plan.kind == "restore"
         assert plan.checkpoint == "kept"
         list(session.run_round(max_tokens=0))
+
+
+def test_canonicalize_exact_merged_requests_restores_bound_keys() -> None:
+    with fake_engine() as engine:
+        binder = MessageBinder(engine.session())
+        first, second = user("summary"), user("retained constraints")
+        messages: list[ModelMessage] = [first, second, ModelResponse([TextPart("answer")])]
+        binder.prepare(messages)
+        merged = ModelRequest([*first.parts, *second.parts])
+        canonical = binder.canonicalize([merged, messages[2]])
+        assert canonical == messages
+        assert canonical[0] is not messages[0]
+        assert canonical[1] is not messages[1]
+        assert binder.prepare(canonical).kind == "unchanged"
+        canonical[0].parts = []
+        assert binder.canonicalize([merged])[0].parts == messages[0].parts
+
+
+def test_canonicalize_leaves_nonmatching_view_only_requests_untouched() -> None:
+    with fake_engine() as engine:
+        binder = MessageBinder(engine.session())
+        binder.prepare([user("summary"), user("retained constraints")])
+        changed = ModelRequest([UserPromptPart("summary"), UserPromptPart("different view")])
+        view: list[ModelMessage] = [changed]
+        assert binder.canonicalize(view) is view
+        assert view[0] is changed
+
+
+def test_canonicalize_does_not_discard_changed_framework_parts() -> None:
+    with fake_engine() as engine:
+        binder = MessageBinder(engine.session())
+        first, second = user("summary"), user("retained")
+        binder.prepare([first, second])
+        changed = ModelRequest([*first.parts, *second.parts, InstructionBaselinePart(instructions=[])])
+        view: list[ModelMessage] = [changed]
+        assert binder.canonicalize(view) is view

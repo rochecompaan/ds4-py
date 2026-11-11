@@ -401,6 +401,7 @@ class FakeSession(_Handle):
 
     def rewind(self, pos: int) -> None:
         self._check()
+        self._prompt_length = min(self._prompt_length, max(pos, 0))
         if pos < len(self._tokens):
             del self._tokens[max(0, pos) :]
             self._valid = False

@@ -89,6 +89,7 @@ save record, native payload, step snapshots, and `events.jsonl`.
 The interactive shell supports these commands:
 
 - `/save`: Save the current session.
+- `/compact`: Summarize older history while idle; rejected during an active run.
 - `/switch <prefix>`: Restore the saved session with that unique ID prefix.
 - `/new`: Close session state and start a new session.
 - `/hints on|off`: Enable or disable programming hints.
@@ -155,9 +156,11 @@ agent bakeoff is live-verified. A guarded skip is not live evidence.
 
 ## Milestone limits
 
-M4 owns real compaction, the 50,000-token reminder, and the remaining
-persistence commands. M5 owns interactive `/think`. The shell does not
-provide those commands.
+Automatic compaction and manual `/compact` are implemented. See the
+[development guide](development.md#context-compaction) for persistence semantics
+and parity limits. The 50,000-token reminder and remaining persistence commands
+remain deferred M4 work; there is no `/strip` command. M5 owns interactive
+`/think`, which the shell does not provide.
 
 The runtime has a fork primitive for later milestones. The shell does not expose an
 interactive `/fork` command.

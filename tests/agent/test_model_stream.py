@@ -1,7 +1,7 @@
 import asyncio
 import threading
 from dataclasses import replace
-from typing import Any, cast
+from typing import Any, cast, override
 
 import pytest
 from pydantic_ai.messages import (
@@ -18,10 +18,13 @@ from ds4py import ThinkMode
 from ds4py._native.fake import FAKE_EOS, FakeEngine, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.binding import MessageBinder
-from ds4py.engine.events import STOP_REASONS
+from ds4py.capabilities.context import ContextStrategy, RoomResult
+from ds4py.engine.events import STOP_REASONS, ReserveReached, SummaryToken
+from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.session import Engine
 from ds4py.engine.worker import SyncJob
+from ds4py.errors import ContextExhausted
 from ds4py.model import DS4Model
 
 
@@ -234,6 +237,7 @@ def test_session_bus_listeners_stay_on_the_asyncio_thread() -> None:
             assert [kind for kind, _ in delivered] == [
                 "run_start",
                 "Synced",
+                "Synced",
                 "Token",
                 "Token",
                 "Token",
@@ -310,3 +314,92 @@ def test_direct_stream_response_is_reused_by_the_next_request_without_rerenderin
             assert not outputs
 
     asyncio.run(scenario())
+
+
+class _MessageListOwner(ContextStrategy):
+    def __init__(self) -> None:
+        super().__init__(cast("Any", None))
+        self.message_lists: list[list[Any]] = []
+
+    @override
+    async def make_room(self, messages: list[Any], request: Any) -> RoomResult:
+        self.message_lists.append(messages)
+        return RoomResult(made_room=False)
+
+
+def test_reserve_owner_receives_the_request_message_list() -> None:
+    async def scenario() -> tuple[_MessageListOwner, list[Any]]:
+        with fake_engine(script=scripted_text("ab")) as engine:
+            session = engine.session()
+            owner = _MessageListOwner()
+            model = make_model(session)
+            model.context_owner = owner
+            messages: list[Any] = [user("specific request")]
+            async with model.request_stream(messages, None, ModelRequestParameters()) as stream:
+                prompt_length = len(session.transcript)
+                prefix = len(PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens))
+                engine.config = replace(engine.config, ctx=prompt_length + prefix)
+                session._worker.call(
+                    lambda engine, native: setattr(native, "_ctx", prompt_length + prefix + 2)
+                ).result()
+                with pytest.raises(ContextExhausted):
+                    async for _ in stream:
+                        pass
+            return owner, messages
+
+    owner, messages = asyncio.run(scenario())
+    assert owner.message_lists == [messages]
+    assert owner.message_lists[0] is messages
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, asyncio.CancelledError])
+def test_reserve_owner_failure_decides_pause_before_cleanup(failure: type[BaseException]) -> None:
+    class FailingOwner(ContextStrategy):
+        @override
+        async def make_room(self, messages: list[Any], request: Any) -> RoomResult:
+            assert not stream._pull_lock.locked()
+            await asyncio.sleep(0)
+            raise failure("owner failed")
+
+    async def scenario() -> None:
+        nonlocal stream
+        with fake_engine(script=scripted_text("abc")) as engine:
+            session = engine.session()
+            model = make_model(session)
+            model.context_owner = FailingOwner(model.binder)
+            pauses = []
+            session.on_event(lambda e: pauses.append(e.payload["event"]), kinds={"ReserveReached"})
+            async with model.request_stream([user()], None, ModelRequestParameters()) as stream:
+                size = len(session.transcript) + 4
+                session._worker.call(lambda e, n: setattr(n, "_ctx", size)).result()
+                with pytest.raises(failure, match="owner failed"):
+                    async for _ in stream:
+                        pass
+            assert len(pauses) == 1
+            assert isinstance(pauses[0], ReserveReached)
+            assert pauses[0]._decision == "fail"
+            session.append_user("next")
+
+    stream: Any = None
+    asyncio.run(scenario())
+
+
+def test_summary_tokens_do_not_touch_response_parts(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ds4py.model import DS4StreamedResponse
+
+    with fake_engine() as engine:
+        session = engine.session()
+        response = DS4StreamedResponse(
+            make_model(session), [], ModelRequestParameters(), engine.sampling_defaults, 10, ()
+        )
+
+        def unexpected(*args: object, **kwargs: object) -> None:
+            pytest.fail("private summary reached public parts manager")
+
+        for method in ("handle_text_delta", "handle_thinking_delta", "handle_tool_call_part"):
+            monkeypatch.setattr(type(response._parts_manager), method, unexpected)
+        assert response._dispatch(SummaryToken(98, b"a")) == []
+        assert response.get().parts == []
+        assert response.usage.output_tokens == 0
+        assert response._output_tokens == 0
+        response._round.close()

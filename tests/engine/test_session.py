@@ -275,6 +275,25 @@ def test_checkpoints_through_the_session() -> None:
             s.drop_checkpoint(SYSTEM)
 
 
+def test_start_chat_syncs_only_the_system_prefix_then_holds_its_checkpoint() -> None:
+    with fake_engine(ctx=1024) as e:
+        s = e.session()
+        checkpoints = []
+        s.on_event(lambda event: checkpoints.append(event.payload["event"]), kinds={"Checkpointed"})
+
+        s.start_chat()
+
+        system = s.transcript.tokens
+        assert system
+        assert all(segment.kind == "system" for segment in s.transcript.segments)
+        assert s.ctx_used == len(system)
+        assert checkpoints == [Checkpointed(SYSTEM, len(system), len(system) * 1024)]
+
+        s.append_user("hello")
+        assert s.transcript.tokens[: len(system)] == system
+        assert s.ctx_used == len(system)
+
+
 def test_extension_binding_runs_on_the_worker(ext_site: Any) -> None:
     native = FakeNative(bindings={"ds4_engine_layer_count": lambda engine_ptr: 43})
     with ds4py.open("f.gguf", ctx=64, native=native) as e:

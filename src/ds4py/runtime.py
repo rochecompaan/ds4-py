@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, BinaryIO, TypedDict, override
+from typing import TYPE_CHECKING, BinaryIO, Literal, TypedDict, override
 from uuid import uuid4
 
 from pydantic_ai.capabilities import AbstractCapability
@@ -33,6 +34,8 @@ from pydantic_ai_harness.step_persistence import (
 )
 
 from ds4py.agent import QuestionAnswerer, build_agent_components
+from ds4py.async_session import await_retained, drain_operation
+from ds4py.capabilities.context import ContextComposition
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.errors import EngineError, StoreError
@@ -44,6 +47,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.tools import RunContext
 
+    from ds4py.capabilities.compaction import CompactionResult
     from ds4py.engine.lifecycle import Listener, SessionEvent
     from ds4py.engine.prefix import PrefixTurn
     from ds4py.engine.session import Session
@@ -59,7 +63,6 @@ from ds4py.store import (
     KV_MAGIC,
     KV_VERSION,
     SaveRecord,
-    SegmentProvenance,
     SessionStore,
     token_digest,
 )
@@ -71,6 +74,31 @@ _SAVE_PREFIX = ".save-"
 class _PayloadWrite(TypedDict, total=False):
     tokens: int
     payload_bytes: int
+
+
+type _ActivityKind = Literal["run", "compact", "close"]
+
+_CLOSED_MESSAGE = "the runtime is closed"
+
+
+class _ActivityRejection(TypedDict):
+    run: str
+    compact: str
+    close: str
+
+
+_REJECTIONS: _ActivityRejection = {
+    "run": "a run is already active",
+    "compact": "a compaction is already active",
+    "close": "the runtime is closing",
+}
+
+
+@dataclass(frozen=True)
+class _Activity:
+    task: asyncio.Task[object]
+    done: asyncio.Future[None]
+    kind: _ActivityKind
 
 
 def _bindable(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -144,6 +172,9 @@ class AgentRuntime:
     rejects an overlapping prompt. ``save``, ``switch``, ``new``, ``fork``, and
     ``close`` cancel and await an active run before changing state. ``cancel``
     requests agent and native cancellation without waiting for the run to finish.
+    Manual compaction is a separate operation: competing calls reject
+    immediately, ``cancel`` signals it, and ``close`` awaits its drain before
+    teardown.
     """
 
     def __init__(  # noqa: PLR0913 - Runtime composition mirrors the agent feature set.
@@ -158,6 +189,7 @@ class AgentRuntime:
         interactive: bool = False,
         question_answerer: QuestionAnswerer | None = None,
         request_limit: int = 50,
+        context: ContextComposition | None = None,
     ) -> None:
         self.model = model
         self.project_dir = Path(project_dir)
@@ -168,8 +200,7 @@ class AgentRuntime:
         self._title = ""
         self._status = "idle"
         self._closed = False
-        self._running = False
-        self._run_task: asyncio.Task[AgentRunResult[object]] | None = None
+        self._active: _Activity | None = None
         self._interrupted = False
         self._trace_failure: OSError | None = None
         self._request_limit = request_limit
@@ -183,6 +214,7 @@ class AgentRuntime:
             interactive=interactive,
             question_answerer=question_answerer,
             session_dir=self._session_dir,
+            context=context if context is not None else ContextComposition(),
         )
         self._agent = self.components.agent
         self._notes = next(
@@ -239,9 +271,43 @@ class AgentRuntime:
         now = self._clock()
         return now.isoformat() if isinstance(now, datetime) else str(now)
 
-    def _require_open(self) -> None:
+    def _rejection(self, *, allow_run: bool = False) -> str | None:
+        """Return the admission rejection for the current activity, or None.
+
+        An idle opener may stop a run, so it rejects only a closing or
+        compaction activity; claiming a new activity rejects any active one.
+        """
         if self._closed:
-            raise EngineError("the runtime is closed")
+            return _CLOSED_MESSAGE
+        active = self._active
+        if active is None or (allow_run and active.kind == "run"):
+            return None
+        return _REJECTIONS[active.kind]
+
+    def _require_open(self) -> None:
+        """Reject idle operations while closing or a compaction is active."""
+        if (reason := self._rejection(allow_run=True)) is not None:
+            raise EngineError(reason)
+
+    def _claim_activity(self, kind: Literal["run", "compact"]) -> _Activity:
+        """Claim the one activity slot; any active activity rejects."""
+        if (reason := self._rejection()) is not None:
+            raise EngineError(reason)
+        task = asyncio.current_task()
+        if task is None:
+            raise AssertionError("runtime activities require an asyncio task")
+        activity = _Activity(task, asyncio.get_running_loop().create_future(), kind)
+        self._active = activity
+        return activity
+
+    def _release_activity(self, activity: _Activity) -> None:
+        if self._active is activity:
+            self._active = None
+        activity.done.set_result(None)
+
+    def _cancel_activity(self, activity: _Activity) -> None:
+        self._session.cancel()
+        activity.task.cancel()
 
     def _step_store(self, session_id: str) -> FileStepStore:
         return FileStepStore(self.store.session_dir(session_id) / "steps")
@@ -279,12 +345,14 @@ class AgentRuntime:
                     return
 
     async def _stop_active(self) -> None:
-        if not self._running:
+        activity = self._active
+        if activity is None:
             return
-        task = self._run_task
         self.cancel()
-        if task is not None and task is not asyncio.current_task():
-            await asyncio.wait([task])
+        if activity.task is not asyncio.current_task():
+            # Do not re-signal from a caller cancellation: that could re-arm the
+            # worker event after reconcile_round() cleared it.
+            await await_retained(activity.done)
 
     async def _latest(self, run_id: str) -> ContinuableSnapshot | None:
         """Return the newest snapshot; propagate storage failures to the run."""
@@ -347,13 +415,9 @@ class AgentRuntime:
             persistence_error=(None if persistence_error is None else str(persistence_error)),
         )
 
-    async def run(self, prompt: str) -> AgentRunResult[object]:  # noqa: PLR0915 - One run owns its full persistence lifecycle.
+    async def run(self, prompt: str) -> AgentRunResult[object]:
         """Run one prompt as one harness run and record its terminal status."""
-        self._require_open()
-        if self._running:
-            raise EngineError("a run is already active")
-        self._running = True
-        self._run_task = asyncio.current_task()
+        activity = self._claim_activity("run")
         self._interrupted = False
         self._status = "running"
         run_id = uuid4().hex
@@ -371,7 +435,9 @@ class AgentRuntime:
                     run_id=run_id,
                     usage_limits=UsageLimits(request_limit=self._request_limit),
                     capabilities=[
-                        StepPersistence(store=holder.current),
+                        # Stash the current canonical list before the first
+                        # request, including reserve commits followed by errors.
+                        StepPersistence(store=holder.current, capture_frontier=True),
                         _ModelStepTrace(self._session),
                     ],
                 )
@@ -412,14 +478,21 @@ class AgentRuntime:
             self._session.emit("run_end", run_id=run_id, status="success")
             return result
         finally:
-            self._running = False
+            self._release_activity(activity)
+
+    async def compact(self) -> CompactionResult:
+        """Compact the owned history in place while idle, using the concrete owner."""
+        activity = self._claim_activity("compact")
+        try:
+            return await self.components.compactor.compact_messages(self._messages, reason="manual")
+        finally:
+            self._release_activity(activity)
 
     def cancel(self) -> None:
-        """Cancel the active agent run and its engine work; a no-op while idle."""
-        if self._status == "running":
-            self._session.cancel()
-            if self._run_task is not None:
-                self._run_task.cancel()
+        """Signal an active run or manual compaction; a no-op while idle."""
+        activity = self._active
+        if activity is not None and activity.kind != "close":
+            self._cancel_activity(activity)
 
     def set_hints(self, enabled: bool) -> None:
         """Change the system-note setting used by the next request."""
@@ -510,18 +583,7 @@ class AgentRuntime:
             payload_bytes=payload_bytes,
             tokens=len(tokens),
             tokens_sha256=token_digest(tokens),
-            segments=tuple(
-                SegmentProvenance(
-                    segment.start,
-                    segment.end,
-                    segment.kind,
-                    segment.key,
-                    segment.content_hash,
-                    segment.source,
-                    text=segment.text,
-                )
-                for segment in self.model.binder.export_segments()
-            ),
+            segments=self.model.binder.export_segments(),
         )
         self.store.write_record_atomic(session_dir / "save.json", record)
         self._session.emit("saved", record=record.to_dict(), payload_bytes=payload_bytes)
@@ -650,10 +712,37 @@ class AgentRuntime:
         return session_id
 
     async def close(self) -> None:
-        """Stop active work, then close the session and everything scoped to it."""
+        """Claim the activity slot, drain prior work, and tear down once."""
         if self._closed:
             return
-        await self._stop_active()
-        self._closed = True
-        self._status = "closed"
-        self._session.close()
+        previous = self._active
+        if previous is not None and previous.kind == "close":
+            await drain_operation(previous.done)
+            return
+        task = asyncio.current_task()
+        if task is None:
+            raise AssertionError("runtime close requires an asyncio task")
+        closing = _Activity(task, asyncio.get_running_loop().create_future(), "close")
+        self._active = closing
+        cancelled: asyncio.CancelledError | None = None
+        try:
+            if previous is not None:
+                self._cancel_activity(previous)
+                if previous.task is not task:
+                    try:
+                        await await_retained(previous.done)
+                    except asyncio.CancelledError as error:
+                        # The close caller keeps its cancellation surface after teardown.
+                        cancelled = error
+            self._closed = True
+            self._status = "closed"
+            try:
+                self._session.close()
+            except BaseException as error:
+                if cancelled is not None:
+                    raise cancelled from error
+                raise
+        finally:
+            self._release_activity(closing)
+        if cancelled is not None:
+            raise cancelled

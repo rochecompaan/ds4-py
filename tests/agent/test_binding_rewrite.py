@@ -181,7 +181,7 @@ def test_think_change_rebuilds_system_prefix() -> None:
         assert b"Reasoning Effort" in b"".join(engine.token_text(token) for token in session.transcript.tokens)
 
 
-def test_count_tokens_does_not_mutate_or_sync() -> None:
+def test_projection_does_not_mutate_or_sync() -> None:
     messages = [user("first")]
     with fake_engine() as engine:
         session = engine.session()
@@ -191,7 +191,7 @@ def test_count_tokens_does_not_mutate_or_sync() -> None:
         before_segments = session.transcript.segments
         before_calls = native_calls(session)
 
-        count = binder.count_tokens([*messages, user("next")], tools=[tool("read")], instructions="rules")
+        count = binder.project_request([*messages, user("next")], tools=[tool("read")], instructions="rules")
 
         builder = PromptBuilder(engine)
         user_delta = builder.message(before, "user", "next")
@@ -199,7 +199,11 @@ def test_count_tokens_does_not_mutate_or_sync() -> None:
         assert count == len(before) + len(user_delta) + len(prefix)
         assert session.transcript.tokens == before
         assert session.transcript.segments == before_segments
-        assert native_calls(session) == before_calls == []
+        # Preparing the chat synced only the system prefix; projection itself
+        # adds no native work.
+        system_end = next(segment.start for segment in before_segments if segment.kind != "system")
+        assert before_calls == [("sync", system_end)]
+        assert native_calls(session) == before_calls
 
 
 def test_provenance_covers_every_token_and_marks_sampled_response() -> None:
@@ -245,18 +249,18 @@ def test_unchanged_messages_leave_paused_sampled_response_resumable() -> None:
         binder.prepare([request])
         list(session.run_round(max_tokens=10, stop_sequences=[b"stop"]))
         binder.bind_response(response)
-        paused = session._paused_stream
+        paused = session.history.paused_stream
         assert paused is not None
         before = session.transcript.tokens
 
         change = binder.prepare([request, response])
 
         assert change.kind == "unchanged"
-        assert session._paused_stream is paused
+        assert session.history.paused_stream is paused
         assert session.transcript.tokens == before
         assert not [s for s in session.transcript.segments if s.kind == "eos"]
         list(session.run_round(max_tokens=10, stop_sequences=[b"stop"]))
-        assert session._paused_stream is None
+        assert session.history.paused_stream is None
         assert session.transcript.segments[-1].kind == "eos"
 
 
@@ -323,7 +327,7 @@ def test_append_suffix_retires_paused_response_with_sampled_eos_provenance() -> 
         change = binder.prepare([request, response, user("next")])
 
         assert change.kind == "append"
-        assert session._paused_stream is None
+        assert session.history.paused_stream is None
         assert [s.kind for s in session.transcript.segments][-4:] == [
             "assistant_prefix",
             "assistant",
@@ -406,7 +410,7 @@ def test_rejected_replacement_is_atomic(family: Any, parts: Any) -> None:
         before_tokens = session.transcript.tokens
         before_segments = session.transcript.segments
         before_records = tuple(binder._records)
-        before_checkpoints = dict(session._checkpoint_tokens)
+        before_checkpoints = dict(session.history.checkpoint_tokens)
         changed = deepcopy(original)
         changed[1].parts = deepcopy(parts)
 
@@ -416,7 +420,7 @@ def test_rejected_replacement_is_atomic(family: Any, parts: Any) -> None:
         assert session.transcript.tokens == before_tokens
         assert session.transcript.segments == before_segments
         assert tuple(binder._records) == before_records
-        assert session._checkpoint_tokens == before_checkpoints
+        assert session.history.checkpoint_tokens == before_checkpoints
         assert session.plan().kind == "extend"
         session.drop_checkpoint("kept")
 

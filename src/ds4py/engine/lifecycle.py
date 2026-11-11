@@ -11,6 +11,7 @@ import sys
 from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import Future
 from contextlib import contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from threading import RLock, get_ident
 from typing import TYPE_CHECKING, cast
@@ -19,6 +20,9 @@ if TYPE_CHECKING:
     from asyncio import AbstractEventLoop
     from collections.abc import Generator
 from uuid import uuid4
+
+in_listener: ContextVar[bool] = ContextVar("in_session_listener", default=False)
+
 
 Listener = Callable[["SessionEvent"], None]
 
@@ -43,6 +47,7 @@ class SessionLifecycle:
         self._error_handler = error_handler
         self._loop: AbstractEventLoop | None = None
         self._loop_thread: int | None = None
+        self._loop_depth = 0
 
     @property
     def id(self) -> str:
@@ -69,17 +74,20 @@ class SessionLifecycle:
         """Deliver emissions from other threads on ``loop``'s owning thread."""
         owner = get_ident()
         with self._lock:
-            if self._loop is not None:
+            if self._loop is not None and (self._loop is not loop or self._loop_thread != owner):
                 raise RuntimeError("session event delivery already has an owning loop")
             self._loop = loop
             self._loop_thread = owner
+            self._loop_depth += 1
         try:
             yield
         finally:
             with self._lock:
                 if self._loop is loop and self._loop_thread == owner:
-                    self._loop = None
-                    self._loop_thread = None
+                    self._loop_depth -= 1
+                    if not self._loop_depth:
+                        self._loop = None
+                        self._loop_thread = None
 
     def emit(self, kind: str, **payload: object) -> None:
         event = SessionEvent(kind, self._id, dict(payload))
@@ -112,10 +120,13 @@ class SessionLifecycle:
         for listener, allowed in listeners:
             if allowed is not None and event.kind not in allowed:
                 continue
+            delivery = in_listener.set(True)
             try:
                 listener(event)
             except Exception as error:  # noqa: BLE001 - A listener must not hide the engine event.
                 self._report(error)
+            finally:
+                in_listener.reset(delivery)
 
     def _report(self, error: Exception) -> None:
         if self._error_handler is not None:

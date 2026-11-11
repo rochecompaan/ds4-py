@@ -22,6 +22,7 @@ from ds4py._native.protocol import (
 )
 from ds4py.errors import CheckpointError, EmptyPromptError, EngineError, WorkerPoisonedError
 
+from .compaction import SummaryJob, summarize
 from .decode import GenerateJob, generate
 from .events import (
     Checkpointed,
@@ -82,7 +83,7 @@ class LoadPayloadJob:
     transcript: Transcript
 
 
-Job = SyncJob | CheckpointJob | ResetJob | GenerateJob | SavePayloadJob | LoadPayloadJob
+Job = SyncJob | CheckpointJob | ResetJob | GenerateJob | SummaryJob | SavePayloadJob | LoadPayloadJob
 
 
 @dataclass(frozen=True)
@@ -301,6 +302,19 @@ class EngineWorker:
             if reason == "interrupted":
                 self.cancel_event.clear()
             emit(Stopped(reason))
+        elif isinstance(job, SummaryJob):
+            try:
+                result = summarize(
+                    engine,
+                    session,
+                    job,
+                    cancelled=self.cancel_event.is_set,
+                    emit=emit,
+                    poison=self._poison,
+                )
+                job.result.set_result(result)
+            finally:
+                self.cancel_event.clear()
         elif isinstance(job, SavePayloadJob):
             self._save_payload(session, job, emit)
         elif isinstance(job, LoadPayloadJob):

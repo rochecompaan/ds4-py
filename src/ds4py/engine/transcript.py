@@ -28,6 +28,57 @@ class Segment:
     kind: str
     meta: Mapping[str, object]
 
+    def shifted(self, delta: int) -> Segment:
+        """Return the same provenance in another token coordinate space."""
+        return replace(self, start=self.start + delta, end=self.end + delta)
+
+
+def validate_segment_coverage(segments: Sequence[Segment], token_count: int) -> None:
+    """Require positive contiguous ranges covering exactly the supplied tokens."""
+    expected = 0
+    for segment in segments:
+        if segment.start != expected or segment.end <= segment.start:
+            raise ValueError("replacement segments must cover the tokens without gaps from token zero")
+        expected = segment.end
+    if expected != token_count:
+        raise ValueError(f"replacement segments cover {expected} tokens, not the {token_count} tokens present")
+
+
+@dataclass(frozen=True)
+class TranscriptReplacement:
+    """Validated tokens and provenance that replace a chat transcript."""
+
+    tokens: tuple[int, ...]
+    segments: tuple[Segment, ...]
+
+    def slice(self, start_tokens: int, end_tokens: int | None = None) -> TranscriptReplacement:
+        """Return a relative token slice, clipping provenance at its boundaries."""
+        validate_segment_coverage(self.segments, len(self.tokens))
+        end = len(self.tokens) if end_tokens is None else end_tokens
+        if not 0 <= start_tokens <= end <= len(self.tokens):
+            raise ValueError("slice positions are outside the transcript")
+        return TranscriptReplacement(
+            self.tokens[start_tokens:end],
+            tuple(
+                replace(segment, start=max(segment.start, start_tokens), end=min(segment.end, end)).shifted(
+                    -start_tokens
+                )
+                for segment in self.segments
+                if segment.end > start_tokens and segment.start < end and start_tokens < end
+            ),
+        )
+
+    @staticmethod
+    def concat(*parts: TranscriptReplacement) -> TranscriptReplacement:
+        """Join relative, fully covered values without touching live history."""
+        tokens: list[int] = []
+        segments: list[Segment] = []
+        for part in parts:
+            validate_segment_coverage(part.segments, len(part.tokens))
+            segments.extend(segment.shifted(len(tokens)) for segment in part.segments)
+            tokens.extend(part.tokens)
+        return TranscriptReplacement(tuple(tokens), tuple(segments))
+
 
 class TranscriptView:
     """Live, read-only observations of session-owned history."""
@@ -47,6 +98,10 @@ class TranscriptView:
     def chat(self) -> bool:
         return self._transcript.chat
 
+    def snapshot(self) -> tuple[int, int]:
+        """Return one coherent ``(revision, length)`` observation."""
+        return self._transcript.snapshot()
+
     def __len__(self) -> int:
         return len(self._transcript)
 
@@ -57,6 +112,18 @@ class Transcript:
         self._tokens: list[int] = []
         self._segments: list[Segment] = []
         self._chat = False
+        self._revision = 0
+
+    @property
+    def revision(self) -> int:
+        """Monotonic count of committed history mutations."""
+        with self._lock:
+            return self._revision
+
+    def snapshot(self) -> tuple[int, int]:
+        """Return one coherent ``(revision, length)`` observation."""
+        with self._lock:
+            return self._revision, len(self._tokens)
 
     @property
     def tokens(self) -> tuple[int, ...]:
@@ -76,6 +143,7 @@ class Transcript:
     def set_chat(self) -> None:
         with self._lock:
             self._chat = True
+            self._revision += 1
 
     def __len__(self) -> int:
         with self._lock:
@@ -97,6 +165,7 @@ class Transcript:
             )
             self._tokens.extend(added)
             self._segments.append(segment)
+            self._revision += 1
             return segment
 
     def extend(self, tokens: Sequence[int]) -> None:
@@ -108,6 +177,7 @@ class Transcript:
                 raise ValueError("cannot extend without a segment")
             self._tokens.extend(added)
             self._segments[-1] = replace(self._segments[-1], end=len(self._tokens))
+            self._revision += 1
 
     def annotate(self, start: int, *, kinds: tuple[str, ...], meta: Mapping[str, object]) -> None:
         """Merge provenance into existing ranges without changing token history."""
@@ -121,6 +191,17 @@ class Transcript:
                 else segment
                 for segment in self._segments
             ]
+            self._revision += 1
+
+    def replace(self, tokens: Sequence[int], segments: Sequence[Segment]) -> None:
+        """Atomically replace all tokens and provenance with a validated chat history."""
+        with self._lock:
+            replacement_tokens, replacement_segments = list(tokens), list(segments)
+            validate_segment_coverage(replacement_segments, len(replacement_tokens))
+            self._tokens = replacement_tokens
+            self._segments = replacement_segments
+            self._chat = True
+            self._revision += 1
 
     def install(self, segments: Sequence[Segment]) -> None:
         """Replace provenance over tokens a native payload already established.
@@ -131,17 +212,10 @@ class Transcript:
         """
         with self._lock:
             installed = list(segments)
-            expected = 0
-            for segment in installed:
-                if segment.start != expected or segment.end <= segment.start:
-                    raise ValueError("installed segments must cover the tokens without gaps")
-                expected = segment.end
-            if expected != len(self._tokens):
-                raise ValueError(
-                    f"installed segments cover {expected} tokens, not the {len(self._tokens)} tokens present"
-                )
+            validate_segment_coverage(installed, len(self._tokens))
             self._segments = installed
             self._chat = True
+            self._revision += 1
 
     def reset(self) -> None:
         """Drop all tokens, segments, and chat initialization."""
@@ -149,15 +223,54 @@ class Transcript:
             self._tokens.clear()
             self._segments.clear()
             self._chat = False
+            self._revision += 1
+
+    def append_group(self, replacement: TranscriptReplacement) -> None:
+        """Atomically append one validated group of relative segments.
+
+        Kinds, coverage, copied metadata and every resulting offset are checked
+        before a single publication. Appends never change the chat flag.
+        """
+        with self._lock:
+            tokens, segments = list(replacement.tokens), list(replacement.segments)
+            validate_segment_coverage(segments, len(tokens))
+            for segment in segments:
+                if segment.kind not in KINDS:
+                    raise ValueError(f"unknown segment kind: {segment.kind}")
+            start = len(self._tokens)
+            installed = [
+                Segment(
+                    start + segment.start,
+                    start + segment.end,
+                    segment.kind,
+                    MappingProxyType(dict(segment.meta)),
+                )
+                for segment in segments
+            ]
+            if not tokens:
+                return
+            self._tokens.extend(tokens)
+            self._segments.extend(installed)
+            self._revision += 1
+
+    def rollback(self, length: int) -> None:
+        """Drop tokens appended after ``length`` without touching the chat flag."""
+        with self._lock:
+            self._drop_tail(length)
+            self._revision += 1
 
     def truncate(self, n: int) -> None:
         with self._lock:
-            if not 0 <= n <= len(self._tokens):
-                raise ValueError("truncate position is outside the transcript")
-            del self._tokens[n:]
-            while self._segments and self._segments[-1].start >= n:
-                self._segments.pop()
-            if self._segments and self._segments[-1].end > n:
-                self._segments[-1] = replace(self._segments[-1], end=n)
+            self._drop_tail(n)
             if n == 0:
                 self._chat = False
+            self._revision += 1
+
+    def _drop_tail(self, n: int) -> None:
+        if not 0 <= n <= len(self._tokens):
+            raise ValueError("truncate position is outside the transcript")
+        del self._tokens[n:]
+        while self._segments and self._segments[-1].start >= n:
+            self._segments.pop()
+        if self._segments and self._segments[-1].end > n:
+            self._segments[-1] = replace(self._segments[-1], end=n)

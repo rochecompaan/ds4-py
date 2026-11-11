@@ -17,7 +17,6 @@ if TYPE_CHECKING:
     from .prefix import PrefixTurn
     from .sampling import SamplingPolicy
     from .session import Session
-    from .tool_prompt import ToolDefinition
     from .transcript import Segment
 
 
@@ -29,33 +28,40 @@ def _append(
 ) -> Segment | None:
     if not tokens:
         return None
-    return session._transcript.append(tokens, kind, meta)
-
-
-def start_chat(
-    session: Session,
-    tools: Iterable[ToolDefinition] = (),
-    instructions: str | None = None,
-) -> None:
-    if session._transcript.chat:
-        raise EngineError("chat is already initialized")
-    segments = PromptBuilder(session._engine).begin(tools, instructions)
-    for segment in segments:
-        _append(session, segment.tokens, segment.kind)
-    session._transcript.set_chat()
+    return session.history.append_segment(tokens, kind, meta)
 
 
 def _start_if_empty(session: Session) -> None:
-    if session._transcript.chat:
+    history = session.history
+    if history.transcript.chat:
         return
-    if len(session._transcript):
+    if len(history.transcript):
         raise EngineError("chat is not initialized")
-    start_chat(session)
+    session.start_chat()
 
 
 def _require_chat(session: Session) -> None:
-    if not session._transcript.chat:
+    if not session.history.transcript.chat:
         raise EngineError("chat is not initialized")
+
+
+def append_message(
+    session: Session,
+    role: str,
+    text: str,
+    *,
+    images: Sequence[object] = (),
+    meta: Mapping[str, object] | None = None,
+) -> Segment:
+    """Append one plain-payload chat message, initializing an empty chat if needed."""
+    if images:
+        raise EngineError("image input requires M5 vision support")
+    _start_if_empty(session)
+    history = session.history
+    with history.edit():
+        retire_paused(session)
+        tokens = PromptBuilder(session.engine).message(history.transcript.tokens, role, text)
+        return history.append_segment(tokens, role, meta)
 
 
 def append_user(
@@ -66,16 +72,18 @@ def append_user(
     if images:
         raise EngineError("image input requires M5 vision support")
     _start_if_empty(session)
-    retire_paused(session)
-    builder = PromptBuilder(session._engine)
-    return cast(
-        "Segment",
-        _append(
-            session,
-            builder.message(session._transcript.tokens, "user", text),
-            "user",
-        ),
-    )
+    history = session.history
+    with history.edit():
+        retire_paused(session)
+        builder = PromptBuilder(session.engine)
+        return cast(
+            "Segment",
+            _append(
+                session,
+                builder.message(history.transcript.tokens, "user", text),
+                "user",
+            ),
+        )
 
 
 def append_prefix(session: Session, turns: Iterable[PrefixTurn]) -> None:
@@ -83,13 +91,15 @@ def append_prefix(session: Session, turns: Iterable[PrefixTurn]) -> None:
     if any(turn.role not in ("user", "assistant") for turn in turns):
         raise ValueError("prefix turns must have user or assistant roles")
     _start_if_empty(session)
-    retire_paused(session)
-    builder = PromptBuilder(session._engine)
-    for turn in turns:
-        tokens = builder.message(session._transcript.tokens, turn.role, turn.content)
-        _append(session, tokens, turn.role)
-        if turn.role == "assistant":
-            append_assistant_end(session)
+    history = session.history
+    with history.edit():
+        retire_paused(session)
+        builder = PromptBuilder(session.engine)
+        for turn in turns:
+            tokens = builder.message(history.transcript.tokens, turn.role, turn.content)
+            _append(session, tokens, turn.role)
+            if turn.role == "assistant":
+                append_assistant_end(session)
 
 
 def run_round(
@@ -98,21 +108,22 @@ def run_round(
     sampling: SamplingPolicy | None,
     stop_sequences: Sequence[bytes] = (),
 ) -> Generator[Event]:
-    stream = session._paused_stream
+    history = session.history
+    stream = history.paused_stream
     resuming = stream is not None
     control = resolve_control(stream.control if stream is not None else None, stop_sequences)
     if not resuming:
         append_assistant_prefix(session)
     try:
-        think = session._engine.think
+        think = session.engine.think
         if stream is None:
-            stream = RoundStream(session._engine.info, think, control=control)
+            stream = RoundStream(session.engine.info, think, control=control)
         remaining = max_tokens
         reserve = 1
         last_tokens: tuple[int, ...] | None = None
         while True:
-            tokens = session._transcript.tokens
-            if (tokens != last_tokens or len(tokens) < session._engine.config.ctx) and bool(
+            tokens = history.transcript.tokens
+            if (tokens != last_tokens or len(tokens) < session.engine.config.ctx) and bool(
                 (yield from session._job_events(SyncJob(tokens)))
             ):
                 return
@@ -121,10 +132,10 @@ def run_round(
             sampled_before = len(stream.sampled_tokens)
             action = yield from session._job_events(
                 GenerateJob(
-                    sampling or session._engine.sampling_defaults,
+                    sampling or session.engine.sampling_defaults,
                     session._rng,
                     remaining,
-                    session._transcript,
+                    history.mutable_transcript,
                     reserve=reserve,
                     think_mode=think,
                     stream=stream,
@@ -135,7 +146,7 @@ def run_round(
                 ),
                 pause_on_reserve=True,
             )
-            last_tokens = session._transcript.tokens
+            last_tokens = history.transcript.tokens
             if not isinstance(action, tuple) or action[0] != "resume":
                 return
             remaining -= len(stream.sampled_tokens) - sampled_before
@@ -143,31 +154,32 @@ def run_round(
             resuming = True
     finally:
         if stream.stop_sequence is not None:
-            session._paused_stream = stream
-            session._paused_control = stream.control
+            history.pause_stream(stream)
         else:
-            session._paused_stream = session._paused_control = None
+            history.clear_stream_pause()
             append_assistant_end(session)
 
 
 def append_assistant_prefix(session: Session) -> Segment | None:
     _require_chat(session)
-    builder = PromptBuilder(session._engine)
-    tokens = builder.assistant_prefix(session._transcript.tokens)
+    builder = PromptBuilder(session.engine)
+    tokens = builder.assistant_prefix(session.history.transcript.tokens)
     return _append(session, tokens, "assistant_prefix")
 
 
 def append_assistant_end(session: Session) -> Segment | None:
     _require_chat(session)
-    return _append(session, PromptBuilder(session._engine).append_assistant_end(), "eos")
+    return _append(session, PromptBuilder(session.engine).append_assistant_end(), "eos")
 
 
 def append_tool_results(session: Session, results: Iterable[str]) -> Segment:
     _require_chat(session)
-    retire_paused(session)
-    builder = PromptBuilder(session._engine)
-    tokens = builder.tool_results(session._transcript.tokens, results)
-    return cast("Segment", _append(session, tokens, "tool"))
+    history = session.history
+    with history.edit():
+        retire_paused(session)
+        builder = PromptBuilder(session.engine)
+        tokens = builder.tool_results(history.transcript.tokens, results)
+        return cast("Segment", _append(session, tokens, "tool"))
 
 
 def append_system_note(
@@ -176,17 +188,20 @@ def append_system_note(
     subtype: str | None = None,
 ) -> Segment:
     _require_chat(session)
-    retire_paused(session)
-    builder = PromptBuilder(session._engine)
-    tokens = builder.message(session._transcript.tokens, "system", "\n" + text)
-    meta: dict[str, str] = {"text": text}
-    if bool(subtype):
-        meta["subtype"] = subtype
-    return cast("Segment", _append(session, tokens, "note", meta))
+    history = session.history
+    with history.edit():
+        retire_paused(session)
+        builder = PromptBuilder(session.engine)
+        tokens = builder.message(history.transcript.tokens, "system", "\n" + text)
+        meta: dict[str, str] = {"text": text}
+        if bool(subtype):
+            meta["subtype"] = subtype
+        return cast("Segment", _append(session, tokens, "note", meta))
 
 
 def retire_paused(session: Session) -> None:
     """Close a paused assistant before accepting a different conversation turn."""
-    if session._paused_stream is not None:
-        session._paused_stream = session._paused_control = None
+    history = session.history
+    if history.paused_stream is not None:
+        history.clear_stream_pause()
         append_assistant_end(session)

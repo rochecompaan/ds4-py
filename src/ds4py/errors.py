@@ -37,6 +37,10 @@ class EngineError(Ds4pyError):
     """Engine failure."""
 
 
+class ContextExhausted(EngineError):
+    """An open response reached the context reserve and no owner could make room."""
+
+
 class WorkerPoisonedError(EngineError):
     """The worker cannot run native operations after a fatal decode failure."""
 

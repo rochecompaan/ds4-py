@@ -71,6 +71,19 @@ class Token:
 
 
 @dataclass(frozen=True)
+class SummaryToken:
+    """Internal summary-generation events; excluded from response/parser output,
+    but observable on the session bus and in diagnostic run records.
+
+    At a control boundary, text_bytes may be a sanitized prefix of the token's
+    full text; the id is retained when that token contributed plain text.
+    """
+
+    id: int
+    text_bytes: bytes
+
+
+@dataclass(frozen=True)
 class Stopped:
     reason: str
 
@@ -150,6 +163,7 @@ Event = (
     | Saved
     | Loaded
     | Token
+    | SummaryToken
     | Stopped
     | ReserveReached
     | TextDelta

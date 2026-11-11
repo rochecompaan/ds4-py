@@ -56,6 +56,7 @@ name = "ds4py"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "anyio" },
     { name = "typing-extensions" },
 ]
 
@@ -75,6 +76,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.12,<5" },
     { name = "prompt-toolkit", marker = "extra == 'agent'", specifier = ">=3.0.52,<4" },
     { name = "pydantic-ai-harness", extras = ["cli"], marker = "extra == 'agent'", specifier = "==0.59.0" },
     { name = "typing-extensions", specifier = ">=4.16.0,<5" },

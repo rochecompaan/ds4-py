@@ -19,9 +19,16 @@ from pydantic_ai_harness.ask_user import (
     Question,
     QuestionOption,
 )
+from test_context_strategy import RecordingOwner, StubBinder
 
+import ds4py
+from ds4py._native.fake import FakeNative
 from ds4py.agent import build_agent_components
+from ds4py.capabilities.compaction import LLMCompaction
+from ds4py.capabilities.context import ContextComposition, ContextStrategy
 from ds4py.engine.lifecycle import SessionEvent
+from ds4py.engine.sampling import SamplingPolicy
+from ds4py.model import DS4Model
 
 
 class MockSession:
@@ -74,6 +81,7 @@ def test_build_agent_components_behavior(tmp_path: Path) -> None:
 
     base_model: Any = FunctionModel(scripted, stream_function=stream_function)
     base_model.session = MockSession()
+    base_model.binder = StubBinder([0] * 100, transcript_tokens=0, ctx=65536)
     components = build_agent_components(base_model, tmp_path, interactive=False)
 
     result = asyncio.run(components.agent.run("read hello"))
@@ -113,6 +121,7 @@ def test_factory_runs_shell_commands_without_an_approval_policy(tmp_path: Path) 
 
     model: Any = FunctionModel(scripted, stream_function=stream_function)
     model.session = MockSession()
+    model.binder = StubBinder([0] * 100, transcript_tokens=0, ctx=65536)
     components = build_agent_components(model, tmp_path)
 
     asyncio.run(components.agent.run("run it"))
@@ -133,6 +142,7 @@ def test_factory_does_not_expose_list_directory(tmp_path: Path) -> None:
 
     model: Any = FunctionModel(scripted, stream_function=stream_function)
     model.session = MockSession()
+    model.binder = StubBinder([0] * 100, transcript_tokens=0, ctx=65536)
     components = build_agent_components(model, tmp_path)
 
     asyncio.run(components.agent.run("inspect tools"))
@@ -180,6 +190,7 @@ def test_factory_shell_lists_hidden_files(tmp_path: Path) -> None:
 
     model: Any = FunctionModel(scripted, stream_function=stream_function)
     model.session = MockSession()
+    model.binder = StubBinder([0] * 100, transcript_tokens=0, ctx=65536)
     components = build_agent_components(model, tmp_path)
 
     result = asyncio.run(components.agent.run("list hidden examples"))
@@ -204,6 +215,7 @@ def test_factory_applies_default_coding_instructions(tmp_path: Path) -> None:
 
     model: Any = FunctionModel(scripted, stream_function=stream_function)
     model.session = MockSession()
+    model.binder = StubBinder([0] * 100, transcript_tokens=0, ctx=65536)
     components = build_agent_components(model, tmp_path)
 
     result = asyncio.run(components.agent.run("hello"))
@@ -224,6 +236,7 @@ def test_factory_applies_persistent_instructions(tmp_path: Path) -> None:
 
     model: Any = FunctionModel(scripted, stream_function=stream_function)
     model.session = MockSession()
+    model.binder = StubBinder([0] * 100, transcript_tokens=0, ctx=65536)
     components = build_agent_components(
         model,
         tmp_path,
@@ -247,11 +260,13 @@ def test_no_ask_user_unless_interactive(tmp_path: Path) -> None:
 
     model: Any = FunctionModel(scripted, stream_function=stream_function)
     model.session = MockSession()
+    model.binder = StubBinder([0] * 100, transcript_tokens=0, ctx=65536)
     components = build_agent_components(model, tmp_path, interactive=False)
     assert not any(isinstance(c, AskUser) for c in components.components)
 
     model2: Any = FunctionModel(scripted, stream_function=stream_function)
     model2.session = MockSession()
+    model2.binder = StubBinder([0] * 100, transcript_tokens=0, ctx=65536)
 
     async def question_answerer(request: AskUserRequest) -> AskUserResponse:
         return AskUserResponse(
@@ -279,6 +294,7 @@ def test_question_callback_has_a_typed_contract(tmp_path: Path) -> None:
 
     model: Any = FunctionModel(scripted, stream_function=stream_function)
     model.session = MockSession()
+    model.binder = StubBinder([0] * 100, transcript_tokens=0, ctx=65536)
 
     async def question_answerer(request: AskUserRequest) -> AskUserResponse:
         assert isinstance(request, AskUserRequest)
@@ -311,3 +327,24 @@ def test_question_callback_has_a_typed_contract(tmp_path: Path) -> None:
     assert questions.answerer is question_answerer
     assert isinstance(response, AskUserResponse)
     assert response.answers[0].selected == ("one",)
+
+
+def test_factory_registers_exactly_one_selected_owner(tmp_path: Path) -> None:
+    with ds4py.open("f.gguf", ctx=65536, native=FakeNative()) as engine:
+        model = DS4Model(engine.session(), sampling=SamplingPolicy(seed=1))
+        components = build_agent_components(model, tmp_path)
+        owners = [item for item in components.components if isinstance(item, ContextStrategy)]
+        assert owners == [components.compactor]
+        assert model.context_owner is components.compactor
+        assert isinstance(components.compactor, LLMCompaction)
+
+
+def test_custom_owner_replaces_only_automatic_compaction(tmp_path: Path) -> None:
+    with ds4py.open("f.gguf", ctx=65536, native=FakeNative()) as engine:
+        model = DS4Model(engine.session(), sampling=SamplingPolicy(seed=1))
+        owner = RecordingOwner(model.binder)
+        components = build_agent_components(model, tmp_path, context=ContextComposition(owner))
+        assert model.context_owner is owner
+        assert [item for item in components.components if isinstance(item, ContextStrategy)] == [owner]
+        assert isinstance(components.compactor, LLMCompaction)
+        assert components.compactor is not owner

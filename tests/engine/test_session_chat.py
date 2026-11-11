@@ -213,7 +213,10 @@ def test_chat_run_round_syncs_prefix_and_closes_assistant_turn(family: Any) -> N
         prefix = next(segment for segment in segments if segment.kind == "assistant_prefix")
         assistant = next(segment for segment in segments if segment.kind == "assistant")
         assert prefix.start == before and synced.pos == prefix.end
-        assert synced.prefilled == synced.pos
+        # start_chat synced and checkpointed the system prefix, so the round
+        # only prefills the assistant opener after that prefix.
+        assert synced.plan.kind == "extend" and synced.plan.reused == before
+        assert synced.prefilled == synced.pos - before
         assert [event.id for event in significant if isinstance(event, Token)] == engine.tokenize("ok")
         assert decode(engine, session.transcript.tokens[assistant.start : assistant.end]) == "ok"
         assert significant[-1] == Stopped("stop_token")

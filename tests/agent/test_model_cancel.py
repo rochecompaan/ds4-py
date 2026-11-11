@@ -13,6 +13,8 @@ from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ModelRequestTimeout
 from pydantic_ai.messages import ModelRequest, ModelResponse, PartStartEvent, TextPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import RunUsage
 
 import ds4py
 from ds4py import ThinkMode
@@ -23,7 +25,8 @@ from ds4py.engine import decode as decode_module
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.session import Engine
-from ds4py.model import ContextReserveError, DS4Model, DS4StreamedResponse
+from ds4py.errors import ContextExhausted, EngineError
+from ds4py.model import DS4Model, DS4StreamedResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "engine"))
 from fake_steps import FakeMultiTokenStep
@@ -153,10 +156,13 @@ def test_cancel_during_prefill_leaves_transcript_intact(
 ) -> None:
     waiting, release = threading.Event(), threading.Event()
     original_sync = FakeSession.sync
+    syncs = []
 
     def blocking_sync(self: Any, tokens: Any, *, progress: Any = None, cancel: Any = None) -> Any:
-        waiting.set()
-        assert release.wait(5), "prefill release timed out"
+        syncs.append(len(tokens))
+        if len(syncs) == 2:  # The first sync commits the system prefix at chat setup.
+            waiting.set()
+            assert release.wait(5), "prefill release timed out"
         return original_sync(self, tokens, progress=progress, cancel=cancel)
 
     monkeypatch.setattr(FakeSession, "sync", blocking_sync)
@@ -171,6 +177,7 @@ def test_cancel_during_prefill_leaves_transcript_intact(
                 ModelRequestParameters(),
             ) as stream:
                 prompt = session.transcript.tokens
+                system_used = session.ctx_used
                 cancel = session._worker.cancel_event
                 pull = asyncio.create_task(cast("Any", anext(stream.__aiter__())))
                 await asyncio.wait_for(asyncio.to_thread(waiting.wait, 5), 10)
@@ -185,9 +192,9 @@ def test_cancel_during_prefill_leaves_transcript_intact(
             assert response.parts == []
             assert response.usage.output_tokens == 0
             assert session.transcript.tokens == prompt
-            # M2 keeps an interrupted prefill out of live KV; the next round
-            # restores it from the intact transcript.
-            assert session.ctx_used == 0
+            # The interrupted prefill keeps the committed system prefix; the
+            # next round extends it from the intact transcript.
+            assert session.ctx_used == system_used < len(prompt)
             assert not [call for call in native_calls(session) if call[0] == "eval"]
 
     asyncio.run(scenario())
@@ -254,7 +261,7 @@ def test_cancel_during_speculative_block_publishes_evaluated_prefix(
     asyncio.run(scenario())
 
 
-def test_context_reserve_default_fails_clearly_without_compaction() -> None:
+def test_context_reserve_without_owner_raises_context_exhausted() -> None:
     async def scenario() -> None:
         with fake_engine(script=scripted_text("abc")) as engine:
             session = engine.session()
@@ -269,88 +276,14 @@ def test_context_reserve_default_fails_clearly_without_compaction() -> None:
                 session._worker.call(
                     lambda engine, native: setattr(native, "_ctx", prompt_length + prefix + 2)
                 ).result()
-                with pytest.raises(ContextReserveError) as raised:
+                with pytest.raises(ContextExhausted):
                     async for _ in stream:
                         pass
                 response = cast("Any", stream).get()
 
-            message = str(raised.value)
-            assert "context reserve" in message
-            assert "compaction" in message and "M4" in message
             assert response.state == "incomplete"
             assert response_text(response) == "a"
             assert session.transcript.tokens == native_tokens(session)
-
-    asyncio.run(scenario())
-
-
-def sequential_text(text: Any) -> Any:
-    tokens = tuple(tokenize_rendered(text))
-    index = 0
-
-    def script(prompt: Any, generated: Any) -> Any:
-        nonlocal index
-        token = tokens[index] if index < len(tokens) else FAKE_EOS
-        index += 1
-        return token
-
-    return script
-
-
-def test_paused_round_can_resume_without_second_assistant_prefix() -> None:
-    async def baseline() -> Any:
-        with fake_engine(script=sequential_text("abc")) as engine:
-            session = engine.session()
-            model = make_model(session)
-            async with model.request_stream(
-                [user()],
-                None,
-                ModelRequestParameters(),
-            ) as stream:
-                async for _ in stream:
-                    pass
-                return session.transcript.tokens, [segment.kind for segment in session.transcript.segments]
-
-    expected_tokens, expected_kinds = asyncio.run(baseline())
-
-    async def scenario() -> None:
-        with fake_engine(script=sequential_text("abc")) as engine:
-            session = engine.session()
-            decisions = []
-
-            def make_room(needed: Any) -> int:
-                decisions.append(needed)
-                session._worker.call(lambda engine, native: setattr(native, "_ctx", 4096)).result()
-                return 0
-
-            model = make_model(session, reserve_handler=make_room)
-            async with model.request_stream(
-                [user()],
-                None,
-                ModelRequestParameters(),
-            ) as stream:
-                prompt_length = len(session.transcript)
-                prefix = len(PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens))
-                session._worker.call(
-                    lambda engine, native: setattr(native, "_ctx", prompt_length + prefix + 2)
-                ).result()
-                async for _ in stream:
-                    pass
-                response = cast("Any", stream).get()
-
-            assert decisions == [1]
-            assert response_text(response) == "abc"
-            assert session.transcript.tokens == expected_tokens
-            kinds = [segment.kind for segment in session.transcript.segments]
-            assert kinds == expected_kinds
-            assert kinds.count("assistant_prefix") == 1
-            assert kinds.count("assistant") == 1
-            expected_prefill = prompt_length + prefix
-            assert response.usage.input_tokens == expected_prefill
-            assert response.usage.details == {"prefill_tokens": expected_prefill}
-            assert response.usage.output_tokens == 3
-            assert response.usage.requests == 1
-            assert response.usage.total_tokens == expected_prefill + 3
 
     asyncio.run(scenario())
 
@@ -414,7 +347,7 @@ def test_public_request_timeout_cleans_up_round_and_preserves_partial_response()
             assert response.usage.requests == 1
             assert bindings == 1
             assert stream._bound and stream._round_exhausted
-            assert session._active_round is False
+            assert session.history.operations.active_round is False
             assert session.transcript.tokens == native_tokens(session)
             sampled = [p for p in binder.export_segments() if p.source == "sampled"]
             assert [p.kind for p in sampled] == ["assistant"]
@@ -433,7 +366,7 @@ def test_second_round_prefill_cancel_preserves_prior_provenance(
 
     def blocking_sync(self: Any, tokens: Any, *, progress: Any = None, cancel: Any = None) -> Any:
         syncs.append(len(tokens))
-        if len(syncs) == 2:
+        if len(syncs) == 3:  # Setup, first round, then the second round's prefill.
             waiting.set()
             assert release.wait(5), "prefill release timed out"
         return original_sync(self, tokens, progress=progress, cancel=cancel)
@@ -529,5 +462,100 @@ def test_second_round_prefill_cancel_preserves_prior_provenance(
             assert change.kind == "rewrite"
             assert change.start == len(before_tokens)
             assert binder.export_segments()[: len(before_provenance)] == before_provenance
+
+    asyncio.run(scenario())
+
+
+def test_publish_partial_is_exactly_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Partial canonical publication is one named response invariant. Repeated
+    # calls, an existing key, a None context, a pre-sampling failure and a
+    # commit-then-raise/cancel teardown must never append a second response.
+    async def scenario() -> None:
+        with fake_engine(script=scripted_text("abc")) as engine:
+            session = engine.session()
+            model = make_model(session)
+
+            async def partial() -> tuple[DS4StreamedResponse, Any]:
+                async with model.request_stream([user()], None, ModelRequestParameters()) as stream:
+                    async for _ in stream:
+                        pass
+                    return stream, stream.get()
+
+            # Missing key: the first publication appends; the second is a no-op.
+            stream, response = await partial()
+            context = RunContext(deps=None, model=model, usage=RunUsage(), messages=[])
+            await stream.publish_partial(context)
+            await stream.publish_partial(context)
+            assert context.messages == [response]
+
+            # Existing key: canonical history already contains that response.
+            stream, response = await partial()
+            context = RunContext(deps=None, model=model, usage=RunUsage(), messages=[response])
+            await stream.publish_partial(context)
+            await stream.publish_partial(context)
+            assert context.messages == [response]
+
+            # None context: there is no canonical history to append to.
+            stream, _ = await partial()
+            await stream.publish_partial(None)
+            await stream.publish_partial(None)
+
+            # Pre-sampling failure: a round without sampled start publishes nothing.
+            async with model.request_stream([user()], None, ModelRequestParameters()) as unsampled:
+                await unsampled.close_stream()
+                context = RunContext(deps=None, model=model, usage=RunUsage(), messages=[])
+                await unsampled.publish_partial(context)
+                await unsampled.publish_partial(context)
+                assert context.messages == []
+
+            # Commit-then-raise: the response commits, then the reconcile raises.
+            reconcile = session.reconcile_round
+
+            def commit_then_raise(count: int) -> None:
+                reconcile(count)
+                raise EngineError("commit then raise")
+
+            monkeypatch.setattr(session, "reconcile_round", commit_then_raise)
+            opened = model.request_stream([user()], None, ModelRequestParameters())
+            stream = await opened.__aenter__()
+            await anext(stream.__aiter__())
+            context = RunContext(deps=None, model=model, usage=RunUsage(), messages=[])
+            try:
+                for _ in range(2):
+                    with pytest.raises(EngineError, match="commit then raise"):
+                        await stream.publish_partial(context)
+                assert context.messages == [stream.get()]
+            finally:
+                with pytest.raises(EngineError, match="commit then raise"):
+                    await opened.__aexit__(None, None, None)
+
+            # Commit-then-cancel: the retained teardown drains before the cancel
+            # surfaces, and the partial response is still published once.
+            reached, release = threading.Event(), threading.Event()
+
+            def gated_reconcile(count: int) -> None:
+                reached.set()
+                assert release.wait(5), "reconcile gate timed out"
+                reconcile(count)
+
+            monkeypatch.setattr(session, "reconcile_round", gated_reconcile)
+            opened = model.request_stream([user()], None, ModelRequestParameters())
+            stream = await opened.__aenter__()
+            await anext(stream.__aiter__())
+            context = RunContext(deps=None, model=model, usage=RunUsage(), messages=[])
+            try:
+                task = asyncio.create_task(stream.publish_partial(context))
+                await asyncio.wait_for(asyncio.to_thread(reached.wait, 5), 10)
+                task.cancel()
+                await asyncio.sleep(0)
+                assert not task.done(), "cancellation abandoned the retained teardown"
+                release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 5)
+                await stream.publish_partial(context)
+                assert context.messages == [stream.get()]
+            finally:
+                release.set()
+                await opened.__aexit__(None, None, None)
 
     asyncio.run(scenario())

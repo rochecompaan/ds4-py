@@ -131,11 +131,19 @@ class PrefillTraceWriter:
             return
         engine_event = event.payload.get("event")
         if isinstance(engine_event, Synced):
-            if self._current is not None:
-                # A reserve resume syncs the same model round again. Its prompt
-                # contains tokens already committed to this record's sample.
-                return
             prompt = tuple(self.session.transcript.tokens[: engine_event.pos])
+            if self._current is not None:
+                current = self._current
+                previous = current["prompt"]
+                if current["sampled"] or prompt[: len(previous)] != previous:
+                    # A reserve resume syncs the same model round again. Its
+                    # prompt contains tokens already committed to the sample.
+                    return
+                # Binding can append request messages after the initial system
+                # sync. Include those tokens before sampling starts.
+                current["prompt"] = prompt
+                current["prefill_suffix"] = prompt[current["cached"] :]
+                return
             cached = engine_event.plan.reused
             self._current = {
                 "prompt": prompt,

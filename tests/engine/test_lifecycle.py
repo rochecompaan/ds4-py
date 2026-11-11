@@ -1,6 +1,7 @@
 """Session identity, lifecycle ordering, event delivery, reset, and think changes."""
 
 import re
+import threading
 from typing import Any, Never, cast, override
 from uuid import UUID
 
@@ -178,7 +179,7 @@ def test_new_publishes_end_then_closes_state_then_resets_then_starts() -> None:
         session.append_user("hello")
         list(session.run_round(max_tokens=2))
         session.checkpoint("turn")
-        assert "turn" in session._checkpoint_tokens
+        assert "turn" in session.history.checkpoint_tokens
         sampling = session.engine.sampling_defaults
         worker = session.engine._worker
         old = session.id
@@ -195,13 +196,55 @@ def test_new_publishes_end_then_closes_state_then_resets_then_starts() -> None:
         assert new != old and session.id == new
         assert session.transcript.tokens == () and session.transcript.segments == ()
         assert session.ctx_used == 0
-        assert session._checkpoint_tokens == {}
+        assert session.history.checkpoint_tokens == {}
         assert session.engine._worker._checkpoints == {}
         assert native.sessions[0].reset_syncs == [()]
         assert session.engine.sampling_defaults is sampling
         assert session.engine._worker is worker
         replacement = session.state("jobs", CloseCounter)
         assert replacement is not state and state.closes == 1
+
+
+def test_close_is_atomic_with_session_end_delivery_and_state_closing() -> None:
+    engine, _ = reset_engine()
+    with engine:
+        session = engine.session()
+        state = CloseCounter()
+        assert session.state("jobs", lambda: state) is state
+        events: list[Any] = []
+        entered = threading.Event()
+        release = threading.Event()
+        second_started = threading.Event()
+        second_finished = threading.Event()
+
+        def listener(event: Any) -> None:
+            events.append(event)
+            entered.set()
+            if not release.wait(10):
+                events.append("listener-timeout")
+
+        def second_close() -> None:
+            second_started.set()
+            try:
+                session.close()
+            finally:
+                second_finished.set()
+
+        session.on_event(listener, kinds={"session_end"})
+        first = threading.Thread(target=session.close)
+        first.start()
+        assert entered.wait(5), "first close never delivered session_end"
+        second = threading.Thread(target=second_close)
+        second.start()
+        assert second_started.wait(5), "second close never started"
+        assert not second_finished.wait(0.2), "second close returned before session_end finished"
+
+        release.set()
+        first.join(10)
+        second.join(10)
+        assert not first.is_alive() and not second.is_alive()
+        assert kinds(events) == ["session_end"]
+        assert state.closes == 1
 
 
 @pytest.mark.parametrize("message", EMPTY_PROMPT_REJECTIONS)
@@ -228,7 +271,7 @@ def test_new_rewinds_when_the_native_rejects_the_empty_reset_prompt(
         assert native_session.fallbacks == ["invalidate", ("rewind", 0)]
         assert native_session._tokens == [] and not native_session._valid
         assert session.transcript.tokens == () and session.transcript.segments == ()
-        assert session._checkpoint_tokens == {}
+        assert session.history.checkpoint_tokens == {}
         assert session.engine._worker._checkpoints == {}
         # The rewound native session rebuilds from position zero on the next sync.
         session.append_user("after")
@@ -254,7 +297,7 @@ def test_new_propagates_an_unrelated_native_sync_error_without_starting_a_sessio
         native_session = native.sessions[0]
         native_tokens = tuple(native_session._tokens)
         _, snapshot = session.engine._worker._checkpoints["turn"]
-        facade_checkpoints = dict(session._checkpoint_tokens)
+        facade_checkpoints = dict(session.history.checkpoint_tokens)
         transcript = session.transcript.tokens
         segments = session.transcript.segments
         worker = session.engine._worker
@@ -275,9 +318,12 @@ def test_new_propagates_an_unrelated_native_sync_error_without_starting_a_sessio
         assert session.engine._worker is worker
         # The failed reset must not mutate checkpoint ownership: both mappings
         # and the native snapshot survive, so checkpoint operations still work.
-        assert facade_checkpoints == {"turn": checkpointed.tokens}
-        assert session._checkpoint_tokens == facade_checkpoints
-        assert session.engine._worker._checkpoints == {"turn": (native_tokens, snapshot)}
+        assert facade_checkpoints.keys() == {"system", "turn"}
+        assert facade_checkpoints["turn"] == checkpointed.tokens
+        assert facade_checkpoints["system"] < checkpointed.tokens
+        assert session.history.checkpoint_tokens == facade_checkpoints
+        assert session.engine._worker._checkpoints.keys() == {"system", "turn"}
+        assert session.engine._worker._checkpoints["turn"] == (native_tokens, snapshot)
         assert not snapshot.closed
         # The worker owns a still-usable session after the failed reset.
         session.append_user("after")
@@ -286,8 +332,8 @@ def test_new_propagates_an_unrelated_native_sync_error_without_starting_a_sessio
         assert session.plan().kind == "restore" and session.plan().checkpoint == "turn"
         session.drop_checkpoint("turn")
         assert snapshot.closed
-        assert session._checkpoint_tokens == {}
-        assert session.engine._worker._checkpoints == {}
+        assert session.history.checkpoint_tokens.keys() == {"system"}
+        assert session.engine._worker._checkpoints.keys() == {"system"}
 
 
 def test_switch_publishes_exact_order_and_runs_restore_while_idle() -> None:
@@ -379,7 +425,7 @@ def test_fork_emits_only_forked_and_keeps_transcript_kv_checkpoints_and_state() 
         list(session.run_round(max_tokens=2))
         session.checkpoint("turn")
         tokens = session.transcript.tokens
-        checkpoints = dict(session._checkpoint_tokens)
+        checkpoints = dict(session.history.checkpoint_tokens)
         calls = list(native.sessions[0].calls)
         worker = session.engine._worker
         old = session.id
@@ -393,7 +439,7 @@ def test_fork_emits_only_forked_and_keeps_transcript_kv_checkpoints_and_state() 
         assert record[0].payload == {"old": old, "new": new}
         assert session.id == new and new != old
         assert session.transcript.tokens == tokens
-        assert session._checkpoint_tokens == checkpoints
+        assert session.history.checkpoint_tokens == checkpoints
         assert native.sessions[0].calls == calls
         assert session.engine._worker is worker
         assert state.closes == 0

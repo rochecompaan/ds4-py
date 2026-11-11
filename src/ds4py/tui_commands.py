@@ -25,6 +25,7 @@ class _Command:
     handler: Callable[..., object]
     description: str
     usage: str
+    immediate_while_running: bool = False
 
 
 class SlashCommandRegistry:
@@ -40,6 +41,7 @@ class SlashCommandRegistry:
         *,
         description: str,
         usage: str | None = None,
+        immediate_while_running: bool = False,
     ) -> None:
         name = name.lstrip("/")
         if not name or any(char.isspace() for char in name):
@@ -50,20 +52,34 @@ class SlashCommandRegistry:
             handler,
             description,
             usage or f"/{name}",
+            immediate_while_running,
         )
 
-    async def execute(self, line: str) -> object | None:
+    @staticmethod
+    def _parse(line: str) -> tuple[str, list[str]]:
         try:
             parts = shlex.split(line)
         except ValueError as error:
             raise CommandError(str(error)) from error
         if not parts or not parts[0].startswith("/"):
             raise CommandError("a slash command must start with '/'")
-        name = parts[0][1:]
+        return parts[0][1:], parts[1:]
+
+    def is_immediate(self, line: str) -> bool:
+        """Recognize immediate commands without executing or validating usage."""
+        try:
+            name, _ = self._parse(line)
+        except CommandError:
+            return False
+        command = self._commands.get(name)
+        return command is not None and command.immediate_while_running
+
+    async def execute(self, line: str) -> object | None:
+        name, args = self._parse(line)
         command = self._commands.get(name)
         if command is None:
             raise CommandError(f"unknown command: /{name}")
-        result = command.handler(*parts[1:])
+        result = command.handler(*args)
         return await result if inspect.isawaitable(result) else result
 
     def completions(self, prefix: str) -> list[Completion]:
@@ -113,6 +129,13 @@ def install_builtin_commands(
         no_args(args, "/save")
         return _record("saved", await runtime.save())
 
+    async def compact(*args: str) -> str:
+        no_args(args, "/compact")
+        result = await runtime.compact()
+        if not result.dropped:
+            return "Nothing to compact"
+        return f"Compacted {result.dropped} messages; kept {result.kept} ({result.generated_tokens} generated tokens)"
+
     async def switch(*args: str) -> str:
         if len(args) != 1:
             _usage("/switch <prefix>")
@@ -125,6 +148,13 @@ def install_builtin_commands(
         runtime.set_hints(enabled)
         return f"hints {args[0]}"
 
+    registry.register(
+        "compact",
+        compact,
+        description="Compact the current history",
+        usage="/compact",
+        immediate_while_running=True,
+    )
     for name, handler, description, usage in (
         ("exit", exit_, "Exit the shell", "/exit"),
         ("new", new, "Start a new session", "/new"),

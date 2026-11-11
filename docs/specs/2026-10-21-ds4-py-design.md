@@ -159,7 +159,7 @@ There is no inference server, no socket and no second process holding model weig
 | Tool-call parsing | Python | `ds4py.engine.toolsyntax` |
 | Tool execution | The harness | `FileSystem` and `Shell` on a `LocalWorkspace` (section 12) |
 | Optional tool policy | Extensions or plugins | Capability hooks such as `before_tool_execute` (section 14) |
-| Context management | Python | `DS4Compaction` (default) or another strategy |
+| Context management | Python | `LLMCompaction` (default) or another strategy |
 | Session-lifetime state of capabilities (paging cuts, bookmark tables, the background commands to stop when the session ends) | Python | `session.state()` in `ds4py.engine.session` (section 13) |
 | System notes and reminders | Python | `DS4SystemNotes` capability |
 | Canonical history, save records, resume | Python | `StepPersistence` snapshots and `ds4py.store` save records (section 15) |
@@ -329,7 +329,7 @@ One `threading.Thread` owns the `SessionHandle`. Callers submit jobs to a queue 
 | `SyncJob(tokens, images)` | plans the sync (below), loads the checkpoint if the plan is `restore`, then calls `sync` with progress and cancel callbacks installed | `Prefill(done, total, cached_prefix, tps)` at most every 100 ms, then `Synced(pos, plan)` or `Interrupted(pos)` |
 | `CheckpointJob(key, drop=False)` | saves or frees a snapshot of the live state (below) | `Checkpointed(key, tokens, bytes)` or `Dropped(key)` |
 | `GenerateJob(sampling, stop_policy, max_tokens)` | the decode loop below | `Token(id, text_bytes)`, `Thinking(on/off)`, `ToolSyntax(state)`, `Stopped(reason)`, where the reason is `stop_token`, `tool_call_complete`, `max_tokens`, `context_reserve`, `interrupted` or `parser_error` |
-| `CompactJob(reason)` | the compaction recipe (section 13), generated with `argmax` | `Prefill…`, `Token…`, `Compacted(summary, dropped, kept)` |
+| `SummaryJob(bottom)` | generates a summary from `transcript[:bottom]` with `argmax`, without changing the live transcript or choosing messages | `Prefill…`, `SummaryToken…`; summary tokens never become response text |
 | `SaveJob(path)`, `LoadJob(path)` | section 17 | `Saved(bytes)`, `Loaded(tokens)` |
 | `ControlJob(steer=, power=, think=)` | between turns only | `Applied` |
 | `WorkerCallJob(fn)` | `session.on_worker(fn)` | `Done(result)` or `Failed(error)` |
@@ -438,7 +438,7 @@ session.plan(view_tokens)                    # exact Plan(kind, reused, to_prefi
 session.checkpoint(key); session.drop_checkpoint(key)  # snapshots for later restores
 session.state(key, factory)                  # session-owned state for capabilities (section 13)
 session.ctx_used                             # ds4_session_pos, exact
-session.compact(reason)
+session.prepare_summary(bottom)              # summary only; the capability chooses the tail
 session.save(path); session.load(path)
 session.fork()                               # new session id and created_at; transcript and live KV kept (section 17)
 session.add_logits_hook(hook)
@@ -471,10 +471,10 @@ When generation reaches the reserve in the middle of a response, the response mu
 
 So `DS4StreamedResponse` handles `ReserveReached` itself, inside the open stream:
 
-1. It finds the context owner in session state (section 13) and awaits `owner.make_room(run_context, needed)`. The harness passes `run_context` to `request_stream`, and `run_context.messages` is the run's live history list.
-2. The owner frees space in its own way and returns the new request view. `DS4Compaction` runs its recipe with the open assistant message kept and rewrites `run_context.messages[:]`. `RollingWindow` moves its cut and returns the new view.
-3. `DS4Model` rebinds to that view, with the partial response's tokens after it, and calls `round.resume()`. Generation continues, and its text and thinking deltas extend the same parts of the same `ModelResponse`.
-4. If there is no owner, or `make_room` returns `None`, the stream raises `ContextExhausted`. The run fails instead of returning partial text as an answer. The transcript keeps the partial tokens, as after an interrupt.
+1. After `_pull()` releases `_pull_lock`, it reads `model.context_owner` and awaits `owner.make_room(request_messages, ContextRequest(...))`. `_open_stream` passes the real request message list to the response. The owner is a composition dependency, not session state.
+2. The owner mutates that list in place and returns `RoomResult(made_room, generated_tokens)`. `LLMCompaction` keeps the open assistant as unkeyed native tail tokens. Normal response finalization assigns its message key later.
+3. After the ordered commit, `DS4Model` adds generated summary tokens to usage once and calls `round.resume(1)`. Generation continues in the same `ModelResponse`, with the same response key, parser, and output parts.
+4. If there is no owner, or `made_room` is false, the stream raises `ContextExhausted`. The run fails instead of returning partial text as an answer. The transcript keeps the partial tokens, as after an interrupt.
 
 The TUI shows the compaction through the session event bus (`before_compact`, `compacted`), not as response text.
 
@@ -510,7 +510,7 @@ agent = Agent(
         ToolOutputLimits(),                           # spills large results and truncates; never calls the model
         AskUser(answerer=tui_menu),                   # interactive mode only; nobody can answer in non-interactive mode
         DS4SystemNotes(),                             # date note, hints, 50,000-token reminder
-        DS4Compaction(soft=0.85),                     # a context strategy; swap for RollingWindow(...) or Bookmarks(...)
+        LLMCompaction(soft=0.85),                     # the selected context owner; replace through ContextComposition
         DS4RunRecord(path),                           # events.jsonl, telemetry only (section 15)
         StepPersistence(store=FileStepStore(session_dir / 'steps')),  # canonical history; each run gets conversation_id=session.id
         Instrumentation(),
@@ -588,33 +588,37 @@ The contract a strategy implements:
 | `on_event` | Turn-end bookkeeping. Stamp stable keys into `message.metadata['ds4.key']` so cut points are keyed by message, not by list index |
 | `session.plan(view) -> Plan(kind, reused, to_prefill, fits, checkpoint)` | Renders a candidate view without syncing and says whether it extends the live KV, restores a held checkpoint or rebuilds, with the exact prefill cost (section 10) |
 | `session.checkpoint(key)`, `session.drop_checkpoint(key)` | Hold or free a snapshot of the live state at its current end. A strategy holds one where it knows later moves will start, such as a turn boundary that its next batch of stubs will not cross. Each costs host memory, and the retained payloads share a byte budget, including `system` (section 10) |
-| `session.compact(...)` | Only `DS4Compaction` uses the engine-side summary job. Other strategies never call the model themselves |
-| `make_room(ctx, needed_tokens) -> list[ModelMessage] \| None` | Called on the strategy that owns the context trigger when a tool result does not fit, or when generation reaches the reserve inside a response (section 11). The strategy frees space in its own way and returns the new request view, or `None` if it cannot. A persistent strategy also rewrites `ctx.messages[:]` |
+| `session.prepare_summary(bottom) -> SummaryResult` | Only `LLMCompaction` uses the engine-side summary job. The caller supplies the token offset. The engine returns summary text and `SummaryToken` ids without selecting messages or installing a replacement |
+| `make_room(messages, request: ContextRequest) -> RoomResult` | Called on the selected owner for tool overflow or a reserve pause. The owner mutates the supplied message list in place. `RoomResult` reports whether enough room exists and how many summary tokens to add to usage. There is no second message-view return channel |
 
-Exactly one strategy owns the trigger in a session. A strategy declares `owns_context_trigger = True` and records itself as the owner in session state. `DS4Compaction` stands down when another owner is present, and `DS4Model` finds the owner there while a stream is open. Manual `/compact` still works.
+Exactly one strategy owns the trigger in a session. `ContextComposition` selects a custom strategy or the default `LLMCompaction`. `build_agent_components` stores that object as `model.context_owner` and registers the same object in the capability list. Its inherited `after_tool_execute` therefore runs without a second registry. `AgentComponents.compactor` exposes the concrete manual compactor. A custom owner replaces only the automatic capability. `/new` and `/switch` clear session state but keep the model and its composition dependency.
 
 | Strategy | Kind | What moves, and when | Cost per move | What the model can recover |
 | --- | --- | --- | --- | --- |
-| `DS4Compaction` (default; the C recipe) | persistent | At 85% of the context, the history becomes `system + user(summary) + verbatim tail`; an open assistant message is resumed | the compaction prompt (an extension), the summary (at most 4096 tokens, generated with `argmax`), then the summary message and the tail after restoring `system`. C rebuilds the system prefix here too | the summary and the tail |
+| `LLMCompaction` (default; the C recipe) | persistent | At 85% of the context, the history becomes `system + user(summary) + verbatim tail`; an open assistant message is resumed | the compaction prompt (an extension), the summary (at most 4096 tokens, generated with `argmax`), then the summary message and the tail after restoring `system`. C rebuilds the system prefix here too | the summary and the tail |
 | `RollingWindow` (a port of `pi-context-paging`) | view-only | When the rendered view exceeds `token_budget`, drop whole oldest turns until it is at most `trim_to` (default 5/8 of the budget). The cut stays until the budget is exceeded again. A paging notice sits right after the system prefix. The active request and unread tool results are never cut | the notice and the window after restoring `system`, once per cut; nothing between cuts | everything, exactly, through `search_history`, `browse_history`, `load_history` and `read_context_output`. Thinking stays private |
 | `Bookmarks` | persistent | Replace chosen messages (large tool results, a finished sub-task) with a one-line stub such as `[bookmark b17: bash output, 12 KiB, 3 errors; expand_bookmark("b17")]`, in batches at turn boundaries | everything after the latest held checkpoint before the first replaced message; with only `system`, the whole view after the system prefix | the exact original, through `expand_bookmark` |
 | Harness `ClearToolResults`, `SlidingWindowCompaction`, `SummarizingCompaction`, `TieredCompaction` | persistent | as the harness documents | the same rule: the whole view after the system prefix, each time an old message changes. `ClearToolResults` changes old messages most often, so it is the most expensive | per strategy |
 
-`DS4Compaction` in detail: a `before_model_request` hook with the C agent's trigger, `ctx_used >= 0.85 * ctx` or `ctx - used <= max(min(8192, ctx/8), reserve + 128)`. `reserve` is the rendered length of the compaction prompt, plus an assistant prefix, plus `clamp(ctx/8, 256, 4096)` for the summary. When it fires, it calls `session.compact(reason)`, which runs the whole recipe on the worker in one pass:
+`LLMCompaction` in detail: a `before_model_request` hook with the C agent's trigger, `ctx_used >= 0.85 * ctx` or `ctx - used <= max(min(8192, ctx/8), reserve + 128)`. `reserve` is the rendered length of the compaction prompt, plus an assistant prefix, plus `clamp(ctx/8, 256, 4096)` for the summary. When it fires, the capability chooses the message tail before calling the engine:
 
-1. Sync `transcript[:bottom] + user(prompt) + assistant_prefix(no-think)`.
-2. Generate the summary with `argmax` until a stop token or the DSML special token.
-3. Choose the tail and resync `system + user(summary) + tail`.
+1. `compaction_tail.py` uses binder records and `ds4.key` to keep whole messages and tool exchanges. It returns the tail messages, the token offset `bottom`, the verbatim token tail, and token counts.
+2. `session.prepare_summary(bottom)` syncs `transcript[:bottom] + user(prompt) + assistant_prefix(no-think)` and generates with `argmax`. It returns `SummaryResult(summary, tokens)` and restores the native state that existed before generation. It knows nothing about messages, reasons, response keys, or tail keys.
+3. The capability builds the system parts, a `UserPromptPart(summary)`, the retained tail, and a `TranscriptReplacement` from `system + user(summary) + tail`.
 
-Then the hook rewrites `ctx.messages[:]` to the system parts, a `UserPromptPart(summary)` and the tail's messages, and rebinds. Step 3's resync restores the `system` checkpoint and prefills the summary message and the tail, where C rebuilds from token 0.
+`compaction_commit.commit_compaction()` first prepares and deep-copies provenance with `binding_provenance.py`. It then calls `Session.replace_transcript()`, applies the pure binder record swap, and assigns `messages[:]`. Only native replacement is a fallible mutation, so there is no rollback protocol. `SessionHistory` owns token and segment replacement; `Session` remains the public facade. The binder never writes the history storage during restore or compaction. Both paths share the same provenance preparation. Existing bound-message snapshots remain for adoption and persistence.
 
-The hook covers compaction between requests only. When generation reaches the reserve in the middle of a response, the open stream handles it (section 11): `DS4Model` calls `make_room`, and `DS4Compaction` runs the same recipe with the open assistant message kept. The partial response's tokens follow the tail, and generation continues in the same `ModelResponse`, as the C agent does (`ds4_agent.c:9675–10229`).
+The replacement restores the `system` checkpoint and prefills the summary message and the tail, where C rebuilds from token 0. `chat_ops.start_chat` creates that checkpoint after the first system-only sync, before user tokens enter the native session.
 
-The check before a tool result is added lives in `after_tool_execute` and is shared by every strategy. If the result does not fit, the check calls `make_room` on the strategy that owns the context trigger. The mid-response reserve uses the same call:
+The hook covers compaction between requests only. When generation reaches the reserve in the middle of a response, `_get_event_iterator` awaits the same model owner after releasing `_pull_lock`. `LLMCompaction` uses the same message-tail and ordered-commit recipe. The open assistant prefix and sampled tokens stay unkeyed until normal response finalization. Generation continues in the same `ModelResponse`, as the C agent does (`ds4_agent.c:9675–10229`). `SummaryToken` is structurally separate from response `Token` and `TextDelta`, so summary text needs no timed suppression window. `RoomResult.generated_tokens` adds summary output to usage once.
 
-- `DS4Compaction` compacts, as C does.
+The selected `ContextStrategy` is a registered capability and owns the shared `after_tool_execute` fit check. The hook calls `make_room(ctx.messages, request)` on that same object. The mid-response reserve reads it from `model.context_owner`:
+
+- `LLMCompaction` compacts, as C does.
 - `RollingWindow` moves its cut forward by whole turns. It never summarises.
 - `Bookmarks` replaces more messages with stubs.
+
+This branch implements overflow only for persistent `LLMCompaction`. A view-only owner must define its reserve rebind when `RollingWindow` is implemented.
 
 If the result still does not fit, it is replaced with `Tool error: tool result still does not fit`. If the reserve still cannot be met inside a response, the stream raises `ContextExhausted`.
 
@@ -629,8 +633,103 @@ The harness calls `for_run` once per `Agent.run`, and by default it shares one c
 ds4-py keeps this state in the session:
 
 - `session.state(key, factory)` returns the state object for `key` in the live ds4 session, and creates it with `factory()` on first use.
-- A capability keeps no session state on `self`. Its `for_run` returns an instance that refers to `session.state(...)`. So the paging cut, the bookmark table, the reminder's growth counter and the list of background commands last from one prompt to the next.
+- A capability keeps mutable session state in `session.state(...)`, not on `self`. Its `for_run` returns an instance that refers to that state. So the paging cut, the bookmark table, the reminder's growth counter and the list of background commands last from one prompt to the next.
+- Composition dependencies are not session state. `model.context_owner` names the selected strategy and survives `/new` and `/switch`. The owner can still use session state for mutable per-session data.
 - The session drives the state's lifecycle through the event bus (section 22). `/new`, `/switch` and exit all send `session_end`. On it, the session calls `close()` on every state object and drops them all, so background commands stop and nothing leaks into the next session. On `forked`, the state is kept, because a fork keeps the transcript and the message keys. On `compacted`, a strategy that does not own the trigger resets its own state.
+
+### Standard compaction architecture
+
+The concrete class is `LLMCompaction`; there is no alias or identity-only protocol. Only standard compaction appears in this diagram. `RollingWindow` belongs to a follow-up change.
+
+Each box names its module and main responsibility. Solid arrows show calls or ownership. Dashed arrows show events.
+
+```mermaid
+flowchart TB
+    subgraph Harness["Harness and interface"]
+        direction TB
+        Command["SlashCommandRegistry<br/>tui_commands.py<br/>/compact"]
+        Runtime["AgentRuntime<br/>runtime.py<br/>owns messages and manual compact()"]
+        Agent["Agent capability list<br/>selected owner receives hooks"]
+        Model["DS4Model<br/>model.py<br/>context_owner composition dependency"]
+        Stream["DS4StreamedResponse<br/>model.py<br/>async reserve decision and usage"]
+        TUI["TUI<br/>tui.py and tui_render.py<br/>compaction status"]
+    end
+
+    subgraph Context["Context capabilities"]
+        direction TB
+        Composition["ContextComposition<br/>capabilities/context.py<br/>selects one automatic owner"]
+        Strategy["ContextStrategy<br/>capabilities/context.py<br/>after_tool_execute(), make_room(messages, request)"]
+        Compactor["LLMCompaction<br/>capabilities/compaction.py<br/>compact_messages(messages, reason)"]
+        Tail["compaction_tail.py<br/>whole messages, tool exchanges, and token tail"]
+    end
+
+    subgraph Binding["Message and token binding"]
+        direction TB
+        Binder["MessageBinder<br/>binding.py<br/>records() and pure prepared-state apply"]
+        Provenance["binding_provenance.py<br/>validation and PreparedProvenance"]
+        Commit["compaction_commit.py<br/>prepare, native replace, record swap, messages[:]"]
+    end
+
+    subgraph Engine["Native engine"]
+        direction TB
+        Session["Session<br/>engine/session.py<br/>prepare_summary(bottom)<br/>only transcript replacement writer"]
+        Worker["EngineWorker<br/>engine/worker.py<br/>runs native jobs"]
+        SummaryJob["SummaryJob<br/>engine/compaction.py<br/>summary only; no messages or keys"]
+        Result["SummaryResult<br/>engine/compaction.py<br/>summary and generated tokens"]
+        Prompt["PromptBuilder<br/>engine/prompt.py<br/>renders transcript[:bottom] plus prompt"]
+        Decode["GenerateJob and DecodeStep<br/>engine/decode.py<br/>generates SummaryToken values"]
+        Rebind["rebind.py<br/>replace_transcript()<br/>checkpoint restore or rebuild"]
+        Chat["chat.py<br/>first system-only sync<br/>then system checkpoint"]
+        Transcript["Transcript<br/>engine/transcript.py<br/>tokens and segments"]
+    end
+
+    subgraph Persistence["Session persistence"]
+        direction TB
+        Store["SessionStore<br/>store.py<br/>save.json, session.kv, steps/"]
+        Restore["runtime_restore.py<br/>shared provenance and Session segment writer"]
+    end
+
+    Command -->|/compact| Runtime
+    Runtime -->|explicit manual compactor| Compactor
+    Runtime -->|save, switch, fork| Store
+    Runtime -->|switch| Restore
+    Composition -->|selected owner| Agent
+    Composition -->|model.context_owner| Model
+    Composition -->|default and manual service| Compactor
+    Agent -->|before_model_request and after_tool_execute| Strategy
+    Model -->|prepare messages| Binder
+    Model -->|run_round| Session
+    Stream -->|make_room outside _pull_lock| Strategy
+    Compactor -->|implements| Strategy
+    Compactor -->|prepare_summary(bottom)| Session
+    Compactor -->|choose messages and token tail| Tail
+    Tail -->|reads bound records| Binder
+    Compactor -->|ordered commit| Commit
+    Compactor -.->|before_compact and compacted on session bus| TUI
+    Session -->|on_worker| Worker
+    Worker -->|runs| SummaryJob
+    SummaryJob -->|builds prompt| Prompt
+    SummaryJob -->|generates with argmax| Decode
+    SummaryJob -->|returns| Result
+    Result -->|summary and generated tokens| Compactor
+    SummaryJob -.->|SummaryToken, never TextDelta| Stream
+    Session -->|replace_transcript| Rebind
+    Rebind -->|replaces tokens and segments| Transcript
+    Session -->|owns| Transcript
+    Session -->|start_chat| Chat
+    Chat -->|system SyncJob then CheckpointJob| Worker
+    Commit -->|1. prepare pure records| Provenance
+    Commit -->|2. native replacement| Session
+    Commit -->|3. apply prepared records| Binder
+    Commit -->|4. assign owned list| Runtime
+    Binder -->|delegates validation| Provenance
+    Store -->|save record and snapshot| Restore
+    Restore -->|prepare shared provenance| Provenance
+    Restore -->|install_segments and load KV| Session
+    Restore -->|apply_restore| Binder
+```
+
+`LLMCompaction` owns message-tail selection and the in-place message contract. `SummaryJob` knows only token offsets and emits `SummaryToken`, never response text. `Session` owns transcript replacement, while `compaction_commit.py` needs no rollback because all validation happens first. The selected owner is one registered capability and one model dependency; it does not live in session state.
 
 ## 14. Policy: owned by extensions
 
@@ -877,7 +976,7 @@ The conformance test runs in CI on `FakeNative`. A stub extension must:
 
 1. rewrite the request view and see the binding re-render only from the cut;
 2. register tools that read paged-out history with thinking excluded;
-3. own the context trigger and see `DS4Compaction` stand down;
+3. replace the default owner through `ContextComposition` and receive the same tool and reserve calls;
 4. get `plan()` kinds and costs that match what the next sync does, for an append, a checkpoint restore and a rebuild;
 5. survive `/switch` and a fork with its keys intact, with the history rebuilt from the save's snapshot and the binding from its save record, and no prefill;
 6. add a slash command and a status key;
@@ -931,7 +1030,7 @@ Done when:
 
 ### M4: context and persistence
 
-Scope: `DS4Compaction`, including the reserve stop inside an open stream; the 50,000-token reminder; the system-prefix cache; `/list`, `/strip` and `/del`; the `RollingWindow` port; the full conformance test.
+Scope: `LLMCompaction`, including the reserve stop inside an open stream; the 50,000-token reminder; the system-prefix cache; `/list`, `/strip` and `/del`; the `RollingWindow` port; the full conformance test.
 
 Done when:
 
@@ -985,7 +1084,7 @@ These are my decisions, not the user's. Each can be changed.
 - Gate 5 checks a save by comparing what a loaded save generates with what a stripped copy generates after it rebuilds by prefill (section 21).
 - The M2 test CLI is dropped. It ran the C agent's `read` and `bash` before the harness existed, and ds4-py no longer has those tools.
 - The date note and hints move to M3, because `ds4-agent` gives them to the model in every session and the bake-off compares the two. The reminder stays in M4.
-- When a tool result does not fit, the strategy that owns the context trigger makes room in its own way through `make_room`. Only `DS4Compaction` compacts (section 13).
+- When a tool result does not fit, the strategy that owns the context trigger makes room in its own way through `make_room`. Only `LLMCompaction` compacts (section 13).
 - Each session has one directory under `~/.ds4py/sessions/`, named by its session id. It holds the KV file with a short header of ds4-py's own, the save record, the history and the run record (section 17).
 - `/switch` loads the KV payload only when its token list matches the save record. Otherwise it renders the snapshot fresh and prefills it (section 17).
 - The system-prefix cache has one file per prefix, keyed by a hash of the model, the quantization, the context size and the prefix's tokens (section 17).
@@ -993,7 +1092,7 @@ These are my decisions, not the user's. Each can be changed.
 - ds4-py uses engine checkpoints, which the C agent does not. The facade and strategies share a retained-payload byte budget, including `system`, rather than a checkpoint-count limit. `restore` is disabled on any backend that fails the live restore check (sections 10 and 20).
 - When generation reaches the reserve inside a response, the open stream asks the context owner to make room and continues. With no owner, the run fails with `ContextExhausted`, so partial text never becomes a final answer (section 11).
 - Each `/save` writes the live history as its own snapshot and a save record in the session directory, so every KV file maps to an exact history. `events.jsonl` is telemetry only (section 15).
-- Capabilities keep session-lifetime state in `session.state`, not on `self`. The session event bus moves from M4 to M3, because `DS4ShellJobs` needs it (sections 13 and 23).
+- Capabilities keep mutable session-lifetime state in `session.state`, not on `self`. Composition dependencies such as `model.context_owner` are not session state. The session event bus moves from M4 to M3, because `DS4ShellJobs` needs it (sections 13 and 23).
 
 ## 27. Changes from earlier versions
 

@@ -7,6 +7,7 @@ from typing import Any
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.tools import ToolDefinition
+from test_context_strategy import StubBinder
 
 from ds4py.agent import build_agent_components
 
@@ -63,6 +64,7 @@ def _run_agent(
 
     model: Any = FunctionModel(scripted, stream_function=stream_function)
     model.session = MockSession()
+    model.binder = StubBinder([0] * 100, transcript_tokens=0, ctx=65536)
     components = build_agent_components(model, tmp_path, read_only=read_only)
     result = asyncio.run(components.agent.run("run the requested tool"))
     return result, exposed
