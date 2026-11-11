@@ -48,10 +48,10 @@ At the baseline:
   `Session.switch()` close and drop scoped states; `Session.fork()` retains
   them. `session_start` is emitted after a new or switched identity is set.
 - `Session.set_decode_step()` rejects both an active round and a paused round.
-- A stop-sequence-paused chat response is retired by `MessageBinder`'s private
-  `_retire_paused()`. That helper appends EOS, marks it with the sampled
-  response's key and provenance, and updates the bound response end. Calling
-  `chat_ops.retire_paused()` directly would skip that bookkeeping.
+- `DS4StreamedResponse` cleanup calls `session.reconcile_round()`, which clears
+  paused stream/control state. The shipped TUI therefore has no paused round
+  between prompts. Direct consumers retain the existing
+  `Session.set_decode_step()` rejection for active or paused rounds.
 - `AgentRuntime.save()` always streams a native payload. The existing save
   format and restore planner already support `payload_bytes=0`: a zero-payload
   save takes the rendered-restore path with full message and provenance
@@ -136,8 +136,8 @@ applies to this spec.
 5. Show requested/resolved DFlash state and committed acceptance in the footer.
 6. Give mutable harness capabilities the existing session-state lifecycle:
    reset on `/new` and `/switch`, retain on fork.
-7. Define safe between-prompt mode changes, including retirement of a paused
-   response with exact EOS provenance.
+7. Define safe between-prompt mode changes and keep native reconfiguration out
+   of session-event listeners.
 8. Guard native file-payload operations while preserving stripped save and
    rendered switch, including after M4 compaction.
 9. Prove the combined path with portable public-flow tests and a new real
@@ -175,7 +175,6 @@ The change fails if it:
 - changes decode mode during a round, or falls back to plain decode after a
   DFlash block or native failure has started;
 - emits speculative tokens or acceptance counts before native commit;
-- loses sampled EOS provenance when retiring a paused response;
 - turns off MMA numerics only cosmetically while leaving native verify mode
   enabled;
 - rejects all persistence merely because native file payloads are unavailable;
@@ -198,7 +197,7 @@ but supply its own open path.
 - Parts of `command()` must also be reproduced if the replacement runtime is to
   retain prefix loading, tracing, interactive/noninteractive selection, and
   cleanup.
-- Paused-response retirement and payload guards would either use private
+- Identity-change reconfiguration and payload guards would either use private
   helpers or add downstream wrappers around ds4-py's runtime behavior.
 - The parser and TUI classes themselves can be reused, but their composition
   assumptions become implicit downstream dependencies.
@@ -229,9 +228,10 @@ There is no duplicate model, runtime, token loop, save format, or TUI loop.
 
 Small generic companion changes provide:
 
-1. CLI/session/TUI composition hooks;
-2. a public binder operation for paused-response retirement; and
-3. an optional core file-payload probe plus generic save/switch guards.
+1. typed engine/model options, CLI/session/TUI composition hooks, generic
+   runtime identity-change hooks, and a read-only scoped-state view for logits
+   hooks; and
+2. an optional core file-payload probe plus generic save/switch guards.
 
 Each change has default-path tests and its own small companion PR. M4-related
 persistence guards are rebased on and reviewed against the final M4 merge.
@@ -277,6 +277,22 @@ names:
 
 ```python
 @dataclass(frozen=True)
+class EngineOpenOptions:
+    model: str
+    ctx: int
+    backend: str | None
+    think: int
+    seed: int | None
+    threads: int
+    lib: Path | None
+    tokens: int
+    temperature: float | None
+    top_k: int | None
+    top_p: float | None
+    min_p: float | None
+
+
+@dataclass(frozen=True)
 class ConfiguredSession:
     session: Session
     sampling: SamplingPolicy
@@ -288,21 +304,35 @@ class AgentCLIHooks:
     configure_parser: Callable[[ArgumentParser], None] | None = None
     open_session: SessionFactory | None = None
     configure_commands: CommandConfigurator | None = None
+    resolve_extension_config: Callable[[Namespace, Path], object] | None = None
+    lifecycle: AgentLifecycleHooks | None = None
 ```
 
-`SessionFactory` is a context-manager factory called with the parsed arguments
-and `project_dir`. Its result supplies the real session and final sampling
-policy. `CommandConfigurator` receives the slash registry and runtime after
-builtins are installed.
+`open_runtime()` builds `EngineOpenOptions` once for both its default path and
+extensions. Only ds4-py reads the generic Namespace fields, including private
+`_think_mode()` and `THINK_LEVEL_BASE`. `SessionFactory` receives
+`(options, project_dir, extension_config)` and its result supplies the real
+session and final sampling policy. `resolve_extension_config(args, project_dir)`
+runs once after parsing and returns `extension_config`, or `None` when no hook
+exists.
+The downstream hook consumes only its own DFlash/drafter/draft/think-budget
+fields; generic engine, model, and sampling values come from the typed options.
+
+`CommandConfigurator` receives the slash registry and runtime after builtins are
+installed. `AgentLifecycleHooks` supplies optional before/after identity-change
+operations to `AgentRuntime`; absent hooks are no-ops.
 
 Exact type and module names are builder latitude; the ownership and call order
 are not.
 
 ### 5.1 ds4-py default path
 
-With no hooks, `open_runtime()` performs the current open and sampling flow.
-The configured-session abstraction must not drop `args.temp`, `top_p`, `min_p`,
-or seed, and must not alter the default engine or model options.
+With no hooks, `open_runtime()` performs the current open and sampling flow from
+the typed options. The options include model, ctx, backend, computed think mode,
+seed, threads, lib, max response tokens, and temperature/top-k/top-p/min-p, with
+`None` meaning an unset sampling override. The configured-session abstraction
+must not drop explicit zeros, `--nothink` (`think=0`), or `--think-level`, and
+must not alter the default engine or model options.
 
 `open_runtime()` still constructs `DS4Model` and `AgentRuntime`. The context
 manager closes the runtime before the session-factory context exits and closes
@@ -324,9 +354,12 @@ selecting another harness. `SatyrnEngine.session()` constructs the single
 runtime controller described below, and the wrapper exposes it to the TUI
 command configurator. The CLI adapter's session factory:
 
-1. resolves project and CLI configuration before native open;
-2. calls `satyrn_agent.open(..., config=resolved_config)` with the existing
-   generic engine options;
+1. resolves only its downstream project and CLI fields through
+   `resolve_extension_config()` before native open;
+2. calls `satyrn_agent.open(..., config=resolved_config)` with generic engine
+   arguments read from `EngineOpenOptions`, including the already-computed think
+   mode, and merges sampling overrides from the typed fields rather than
+   reconstructing them from Namespace;
 3. obtains the wrapper's only configured session;
 4. returns that session and `SatyrnEngine.sampling_defaults`, which already
    include family defaults, native defaults, explicit overrides, and seed; and
@@ -338,7 +371,35 @@ of sampling overrides.
 The command configurator runs after `install_builtin_commands()`. Argparse and
 `SlashCommandRegistry` continue to reject duplicate options and commands.
 Noninteractive mode uses the same configured-session factory and persistence
-guards but does not create the TUI, slash commands, or footer.
+guards but does not create the TUI, slash commands, or footer. The CLI adapter
+passes the controller's lifecycle hooks into `AgentRuntime`.
+
+### 5.3 Generic identity-change orchestration
+
+`AgentRuntime.new()` and `.switch()` accept optional generic
+`before_identity_change` and `after_identity_change` hooks (illustrative names).
+These hooks run in runtime orchestration after active work has stopped, never
+in a `Session.on_event` listener. With no hook, behavior is unchanged.
+
+For `/new`, the before hook runs after `_stop_active()` and before
+`Session.new()`. For `/switch`, it runs after saved-record, snapshot, and
+provenance validation, but before run-record relocation or any target
+bookkeeping. A before-hook error therefore aborts before identity or runtime
+record changes.
+
+The after hook runs only after ds4-py has adopted the operation's Python state:
+
+- `/new` resets messages, title, binder, notes, timestamps, and the run-record
+  location before invoking it; and
+- `/switch` invokes it after `Session.switch()` has adopted the target and its
+  restore callback has installed messages, binder state, notes, and the record
+  location, but before reporting idle success.
+
+An after-hook error propagates to the slash command. `/new` keeps the fresh
+identity it adopted, `/switch` keeps the adopted target, and both set runtime
+status to `error` rather than claiming a successful idle transition.
+These are orchestration errors visible to the caller, not listener errors
+printed and swallowed by `SessionLifecycle`.
 
 ## 6. CLI and project settings
 
@@ -418,58 +479,96 @@ not rewrite this configuration.
 
 ### 7.1 One controller, one recorder, one stable think hook
 
-Satyrn's first-and-only session setup creates the runtime controller as part of
-its existing configuration flow. The controller holds the immutable merged
-startup configuration outside session state. Mutable per-live-session values
+Satyrn's first-and-only session setup creates the runtime controller and the
+initial scoped state as part of its existing configuration flow
+(`Session.__init__` emits no `session_start`). The controller holds only the
+immutable merged startup configuration, the native-policy owner, a stateless
+think-hook adapter, and engine-lifetime subscription handles. It holds no
+`_current` mode, recorder, or think setting. All mutable per-live-session values
 are in `session.state()` under one downstream-owned key.
 
 Each scoped state contains:
 
 - requested DFlash mode and the concrete resolved step;
-- the native-policy owner needed for later between-round selection;
 - one thread-safe metrics recorder shared by every `DFlashStep` created for
-  that live session;
+  that live session; and
 - current immutable `ThinkBudgetConfig | None`.
 
-The controller, not the scoped state, owns its `session_start` and `run_end`
-subscriptions for the engine lifetime. `close_states()` therefore cannot remove
-the subscriptions needed to initialize the next identity or refresh its footer.
-The controller removes those lifetime subscriptions during
-`SatyrnEngine.close()`.
+In interactive mode, the controller, not the scoped state, owns its
+`session_start` and `run_end` subscriptions for the engine lifetime.
+`close_states()` therefore cannot remove the subscriptions needed to initialize
+the next identity or refresh its footer. The controller removes those lifetime
+subscriptions during `SatyrnEngine.close()`. Noninteractive mode installs no
+status subscriptions and never calls `publish_status()`.
 
-`DFlashStep` gains an optional recorder injection point while retaining its
-current private-recorder default for direct users. A mode toggle replaces the
-step but reuses the scoped recorder. Thus counts accumulate across toggles in
-one live session without copying or delta-adjusting snapshots.
+These listeners perform only Python-local state and footer work. In particular,
+`session_start` never calls `on_worker`, `set_decode_step`, or another blocking
+or native operation. It creates fresh scoped state and a recorder, resets the
+dynamic think setting to startup, and emits the pre-resolution safe footer
+value. The runtime lifecycle hook, not the listener, performs native
+reconfiguration and emits the final resolved status. `run_end` reads scoped
+state on the consuming thread and calls `publish_status()`; it performs no
+native work.
 
-The think-budget hook is installed once and remains stable. On each sample it
-reads the controller's current immutable setting, using Python-only atomic or
-locked access, and applies the existing soft-bias algorithm. When the setting
-is `None`, it is a no-op. The hook never calls `session.state()`, session or
-engine methods, cancellation, or blocking I/O on the worker. Installing one
+The controller creates speculative steps through an explicit
+`DFlashStep.with_recorder(...)` constructor, making recorder ownership visible.
+Existing direct construction remains a separate convenience path with its own
+recorder. A mode toggle replaces the step but reuses the scoped recorder, so
+counts accumulate across toggles without copying or delta-adjusting snapshots.
+
+The think-budget hook is installed once and remains stable and stateless. On
+each sample it reads the current immutable setting through a generic read-only
+scoped-state accessor on `LogitsView`, then applies the existing soft-bias
+algorithm. `Session`/`Engine` supplies a keyed view of the current scoped-state
+mapping through `GenerateJob` into `LogitsView`. The accessor reads under the
+lifecycle lock, returns `None` for an absent key, and has no factory. Runtime
+orchestration creates the state before any round.
+
+The hook therefore needs no session or engine call and no controller-owned
+mutable indirection. When the setting is `None`, it is a no-op. It never calls
+`session.state()`, cancellation, or blocking I/O on the worker. Installing one
 no-op hook while disabled avoids stale duplicate hooks and does not change
 sampled logits.
 
 ### 7.2 `/new`, `/switch`, fork, and close
 
-- **`/new`:** the old scoped state closes. On `session_start`, the controller
-  creates fresh state from the immutable startup config, re-resolves DFlash,
-  creates a fresh recorder, resets think budget to startup, and emits fresh
-  footer status.
-- **`/switch`:** old state closes before restore. On the target
-  `session_start`, after the restore callback, the controller performs the same
-  fresh initialization. Saved DFlash settings and acceptance are not restored,
-  because no downstream persistence schema is added.
+- **`/new`:** the before hook installs `PlainStep` and verify `OFF` after active
+  work stops. `Session.new()` closes old scoped state. The `session_start`
+  listener creates fresh Python state and a recorder, resets think budget to
+  startup, and emits the safe pre-resolution status. After ds4-py's own runtime
+  bookkeeping, the after hook re-resolves startup DFlash and emits the final
+  status.
+- **`/switch`:** after saved-record and snapshot validation, the before hook
+  installs the same safe selection before any target bookkeeping. Old scoped
+  state closes before restore. The target `session_start` listener performs only
+  the Python reset and safe status update; the after hook then performs native
+  reconfiguration and final status emission. Saved DFlash settings and
+  acceptance are not restored, because no downstream persistence schema is
+  added.
 - **Fork:** state, requested and resolved mode, recorder, acceptance counts,
-  and current think budget are retained. There is no interactive `/fork`
-  command in this slice; programmatic `AgentRuntime.fork()` is the test path.
+  and current think budget are retained. Identity-change hooks do not run.
+  There is no interactive `/fork` command in this slice; programmatic
+  `AgentRuntime.fork()` is the test path.
 - **Close:** per-session scoped resources close exactly once with the existing
   session cleanup, and the controller removes its lifetime subscriptions during
   `SatyrnEngine.close()`. No replacement worker or recovery path is introduced.
 
-A failed switch that emits its error `session_start` still initializes state
-for the identity that ds4-py actually adopted; it must not resurrect the old
-scoped state.
+The after hook probes support and constructs the step before changing native
+verify mode. If anything fails after setting MMA, it best-effort restores
+verify `OFF` before propagating the original error with any cleanup error
+chained. Python `PlainStep` remains installed, so no old DFlash step silently
+survives. The after hook emits resolved `on`/`auto/on` status only on success.
+If no MMA change occurred or rollback succeeds, it emits safe
+`off`/`on/off`/`auto/off`; if rollback itself fails, it emits `error` instead
+of claiming verify `OFF`.
+The caller always receives the error. This failure path is not mid-decode
+recovery.
+
+A failed restore does not run the after hook. The before hook's safe selection
+remains, the error `session_start` listener initializes only Python state and
+safe footer text for the identity ds4-py actually adopted, and the original
+restore error propagates. Before-hook errors abort before identity or target
+runtime record changes.
 
 ## 8. Slash commands and status
 
@@ -488,8 +587,9 @@ Any other arity or mode raises `CommandError` with
 Mode selection has one Satyrn policy implementation shared by initial open and
 later commands:
 
-- `off` and `auto` fallback explicitly set verify mode `OFF` before installing
-  `PlainStep`;
+- `off` and `auto` fallback explicitly set verify mode `OFF` when the optional
+  binding is present, then install `PlainStep`; an absent DFlash binding has no
+  verify extension and is already `OFF`;
 - supported `on`/`auto` sets `DS4_VERIFY_MODE_MMA` and installs a `DFlashStep`
   using the scoped recorder and startup draft count;
 - `on` names missing bindings, missing drafter, wrong backend, zero rows, or
@@ -500,8 +600,7 @@ later commands:
   reinitialization. `auto` is not reinterpreted between rounds.
 
 A successful command emits status before returning. A failed command leaves the
-previous requested/resolved mode and status text intact, subject to the paused
-response retirement rule below.
+previous requested/resolved mode, status text, and transcript history intact.
 
 ### 8.2 `/think-budget`
 
@@ -517,7 +616,7 @@ uses `usage: /think-budget [<max_tokens> [bias]|off]`.
 When only `N` is supplied, the command retains the current bias if a budget is
 active; otherwise it uses **2.0**. Changes do not inject `</think>`, truncate
 text, cancel a round, alter native think mode, or guarantee closure. They take
-effect on the next sample, including if a paused response is resumed.
+effect on the next sample after the command.
 
 ### 8.3 Commands execute between prompts
 
@@ -550,75 +649,58 @@ Examples:
 ```text
 dflash: on, accept — (0/0)
 dflash: on, accept 62.5% (10/16)
+dflash: on/off, accept — (0/0)
 dflash: auto/on, accept 62.5% (10/16)
 dflash: auto/off, accept — (0/0)
 dflash: off, accept 62.5% (10/16)
+dflash: error, accept — (0/0)
 ```
 
-The last example deliberately retains the live session's historical committed
+The `off` example deliberately retains the live session's historical committed
 metrics while plain decode is active. Off rounds add no offered or accepted
-drafts.
+drafts. `error` means native reconfiguration failed after changing MMA and the
+verify-`OFF` rollback also failed; it never claims verify `OFF` or DFlash
+operation. A failure before an MMA change, or one whose rollback reaches verify
+`OFF`, reports the safe `off`, `on/off`, or `auto/off` fallback instead.
 
-Status refreshes:
+One `publish_status()` method owns formatting and emission for every trigger,
+so the text cannot drift between them. Status refreshes:
 
-- after initial controller creation, and again during TUI command configuration
-  after `FooterModel` has subscribed (the open-time event alone would be missed);
+- during TUI command configuration after `FooterModel` has subscribed. This is
+  the single initial publication; controller creation emits nothing, and
+  noninteractive mode publishes no footer status;
 - after each successful `/dflash` command;
-- on every `session_start`, so `/new` and `/switch` cannot leave stale counters;
-  and
-- on every `run_end`, including success, interruption, and error, from the
-  thread-safe committed metrics snapshot.
+- on every `session_start` with the safe `<startup-requested>/off` value
+  (`on/off`, `auto/off`, or `off`), and again from the after-identity-change
+  hook with the final resolved, safe fallback, or rollback-failure value,
+  so `/new` and `/switch` cannot leave stale counters or modes; and
+- on every interactive `run_end`, including success, interruption, and error,
+  from the thread-safe committed metrics snapshot; noninteractive `run_end`
+  publishes nothing.
 
 M3 does not write these metrics to run records or define a telemetry schema.
 
-## 9. Paused rounds and mode-change invariants
-
-### 9.1 Actual TUI cleanup and direct-consumer paused rounds
+## 9. Mode changes and paused rounds
 
 The actual M3 `DS4Model`/TUI path cannot retain a paused round between prompts.
 `DS4StreamedResponse` cleanup closes the facade generator and then calls
 `session.reconcile_round()`; reconciliation truncates to the committed cutoff
 and clears `_paused_stream`, `_paused_control`, and paused sampled tokens.
 Consequently, `/dflash` in the shipped TUI needs only the between-prompt idle
-guard. It does not need to invent a pause-resume lifecycle.
+guard.
 
-A pause can survive for a consumer that drives `Session.run_round()` directly
-and uses `MessageBinder` without `DS4Model` cleanup.
-`Session.set_decode_step()` correctly rejects a mode change in that state. To
-define how such a pause is closed, the companion exposes a **public generic
-binder operation** with the existing private `_retire_paused()` behavior:
+Direct consumers keep the existing `Session.set_decode_step()` rejection for
+active and paused rounds. M3 adds no paused-response operation, transcript
+mutation, EOS handling, raw-session API, or new failure ordering for those
+consumers. Existing ds4-py raw/chat paused-round tests already cover the
+unchanged rejection. A later real use case needs a separate design rather than
+an API added speculatively here.
 
-1. require an idle round and a paused **chat** response with a bound sampled
-   response record;
-2. clear that paused chat stream/control state;
-3. append exactly the normal assistant EOS;
-4. annotate that EOS with the existing sampled response key, content hash, and
-   `source="sampled"`; and
-5. update the bound response end.
+`/dflash on` checks support and changes mode without touching transcript
+history. A failed support check leaves both history and the previous mode
+unchanged.
 
-It adds no user or assistant message, performs no rewind or second model
-response, and does not resume generation. With no paused chat response it is a
-no-op. A paused chat response with no bound sampled-response record fails with
-a clear error **before any mutation**, rather than dereferencing an empty
-record list. The controller calls the operation defensively before native mode
-selection, so it is harmless in the actual TUI and correct for a direct binder
-consumer. The next direct-consumer prompt starts a fresh assistant prefix.
-
-The operation does not retire a raw `_paused_control`-only round. That raw
-state has no `MessageBinder` response/provenance owner, so
-`Session.set_decode_step()` continues to reject the mode change with its
-paused-round error. No raw-session retirement API is implied.
-
-Retirement is deliberately completed **before** native mode selection. If
-`/dflash on` then fails a support check, the previous mode remains selected
-but the old paused response stays closed; the command does not attempt to
-recreate its parser state.
-
-This slice does not change `DS4Model` stop-sequence cleanup, EOS handling, or
-resumability. Adding resumable harness responses would require a separate
-explicit ds4-py behavior design and is not smuggled into this companion seam.
-
-### 9.2 Native invariants
+Native invariants remain:
 
 - Active DFlash decode is never interrupted to change modes.
 - Every controlled round exit closes or invalidates verify before save,
@@ -628,10 +710,8 @@ explicit ds4-py behavior design and is not smuggled into this companion seam.
 - A DFlash error after block start never selects `PlainStep` as recovery.
 - On → off changes both the Python step and native verify mode, so later plain
   rounds use ordinary decode numerics.
-- Paused-chat retirement is tested only at the direct
-  `Session.run_round()`/`MessageBinder` seam where that state can survive; no
-  unreachable paused-TUI fixture is claimed. Raw `_paused_control`-only and
-  unbound paused-chat cases reject before mutation.
+- Native identity-change work runs only in runtime orchestration, where errors
+  propagate; session-event listeners stay Python-local.
 
 ## 10. File-payload support and persistence
 
@@ -652,30 +732,37 @@ absent. An older library+manifest pair with no record for the newly declared
 probe fails closed with the existing rebuild-required ABI error; absence of a
 probe record is not silently treated as an absent symbol.
 
-A generic session query returns `True`, `False`, or `None` on the worker:
+A generic boolean query lives at the native boundary (`_native/api.py` or the
+equivalent adapter), not in runtime policy. Runtime invokes it through the
+worker. At that boundary:
 
-- `True`/`False`: the native predicate answered;
-- `None`: the optional binding is absent, so support is unknown.
+- `Library.has("ds4_session_supports_payload") == False` returns `True`,
+  preserving the legacy native path for a rebuilt library without the optional
+  function; and
+- a present binding returns the native predicate's boolean result.
 
-`None` preserves legacy behavior. Only an explicit `False` selects the guarded
-fallback. This avoids regressing existing ds4-py users on libraries that lack
-the newer predicate.
+Only `False` selects the guarded fallback. There is no third state. As above, a
+legacy manifest with no probe record still fails closed and requires a rebuild;
+it is not confused with a newly probed absent symbol.
 
 ### 10.2 Save
 
 After the existing stop-and-await active-run rule and empty-transcript check:
 
-- `True` or `None` retains the current sync-and-stream native payload path and
-  all token/byte consistency checks.
-- `False` performs no native payload staging. It writes the existing KV header
-  with `payload_bytes=0`, then writes the complete step snapshot and save
-  record with full transcript tokens, digest, segments, and
-  `record.payload_bytes=0`.
+- `True` retains the current sync-and-stream native payload path and all
+  token/byte consistency checks.
+- `False` performs no native payload staging and writes **no KV file**. It
+  writes the complete step snapshot and save record with full transcript tokens,
+  digest, segments, and `record.payload_bytes=0`. If an earlier native save left
+  `session.kv`, the stripped save removes that stale file before publishing the
+  new snapshot and record.
 
-The zero-payload file is atomically published before the snapshot and record,
-as today. The record's token count is still the full transcript length; zero is
-only the native payload size. This is a stripped save, not an empty session and
-not a failure.
+`plan_restore()` returns the rendered plan immediately for a zero record, so no
+reader needs a header-only artifact. Removing an old file before the record is
+safe: a crash in between selects the existing missing-KV rendered fallback.
+The record's token count is still the full transcript length; zero is only the
+native payload size. This is a stripped save, not an empty session and not a
+failure.
 
 Noninteractive unconditional save therefore has a valid result on an
 explicitly unsupported engine.
@@ -685,8 +772,7 @@ explicitly unsupported engine.
 After record, model, snapshot, and provenance validation, but before any native
 load or identity/state mutation:
 
-- `True` or `None` retains the current KV/render planner and exact token/digest
-  checks.
+- `True` retains the current KV/render planner and exact token/digest checks.
 - `False` changes a planned KV restore to the existing rendered restore, with a
   mismatch explanation that the live engine does not support file payloads.
 
@@ -694,6 +780,11 @@ Rendered restore keeps the saved message history and provenance and performs a
 full rebuild prefill on the next request. It does not call `load_payload`.
 Corrupt records, incompatible models, and invalid provenance remain errors;
 the fallback is not a way to bypass validation.
+
+The separate `bench/restore_plan.py` validator is KV-only and outside M3
+acceptance. This design does not claim that it validates record-only stripped
+saves; changing that bench validator belongs to a later bench-specific slice if
+needed.
 
 Fork performs no payload operation and retains controller state. On the pinned
 qwen35 engine, supported KV save/switch may include the DFlash trailer. Loading
@@ -751,33 +842,44 @@ Specifically:
 Each ds4-py companion PR follows ds4-py's own RED-GREEN and quality policy and
 adds focused tests for its public contract:
 
-**Composition and paused-response PR**
+**Composition and identity-lifecycle PR**
 
 - No-hook parsing, engine open, sampling, runtime arguments, question wiring,
   tracing, and close order match the current behavior.
+- One typed options value drives both default and extension factories,
+  preserving `--think-level`, `--nothink`/`think=0`, every generic open/model
+  field, and explicit-zero sampling values. Extension config carries only
+  downstream-added fields.
 - Parser and command hooks run in the specified order; duplicate names fail.
 - A configured-session factory supplies the session and exact sampling policy
   without a second default merge.
+- The read-only scoped-state view reaches `LogitsView` through `GenerateJob`,
+  returns an existing value and a replacement between rounds, returns `None`
+  after `close_states()`, and has no factory or DFlash policy.
 - Interactive and noninteractive paths both use the factory; only interactive
   mode installs TUI commands.
-- Public paused-chat retirement produces the same tokens, EOS provenance,
-  bound end, and next-prompt behavior as the existing private path, with no
-  pause as a no-op. A raw control-only pause keeps rejecting decode changes,
-  and an unbound paused chat fails before mutation.
+- Identity hooks run in the specified order: before → session operation →
+  runtime bookkeeping → after. No-hook defaults preserve current behavior.
+- Before-hook errors abort before identity or target record changes;
+  after-hook errors propagate with adopted runtime state and `status="error"`.
+- An after-hook failure leaves the before hook's `PlainStep` installed; generic
+  tests contain no verify-mode policy or assertions.
 - ADR 0002 tests still reject `--yolo` and no approval arguments enter runtime
   composition.
 
 **Payload-support PR**
 
 - Optional-core and downstream binding names do not collide; a rebuilt library
-  with an absent core probe returns `None`, native false/true return their
+  with an absent core probe returns `True`, native false/true return their
   values, and unrelated optional bindings retain their source/required
   metadata. A legacy manifest with no record for the new declaration is
   rejected with the rebuild-required error.
-- Explicit false writes a complete stripped save with zero payload and full
-  snapshot/provenance; true and unknown retain native save behavior.
-- Explicit false forces rendered switch before native load; true and unknown
-  retain exact KV restore and all validation errors.
+- Explicit false writes a complete stripped save with `payload_bytes=0`, full
+  snapshot/provenance, and no KV file. A stripped save replacing a native save
+  removes the stale KV file; true retains native save behavior.
+- Explicit false forces rendered switch before native load and never reads a
+  zero-payload artifact; true retains exact KV restore and all validation
+  errors.
 - Noninteractive success and failure paths can finish with a stripped save.
 - On the final M4 code, compacted sessions use native KV when supported and
   stripped/rendered persistence when unsupported, without adding a payload
@@ -803,16 +905,24 @@ Cover:
   missing-support errors, and no failure-driven plain fallback;
 - one recorder across repeated toggles, exact status strings, 0/0 formatting,
   one-decimal rounding, and run-end refresh;
-- `/new` and `/switch` resetting startup settings, metrics, and footer on
-  `session_start`; fork retaining all of them; close unsubscribing exactly
-  once;
+- `/new` and `/switch` resetting startup settings and metrics through
+  Python-only `session_start` listeners, with no `on_worker`, decode-step, or
+  other native call from any listener;
+- before hooks selecting `PlainStep`/verify `OFF`, after hooks re-resolving
+  startup mode and emitting final status, and an after-hook failure remaining
+  visible without an old DFlash step;
+- best-effort verify-`OFF` rollback with original/cleanup error chaining when a
+  failure occurs after MMA is set, safe `off`/`auto/off` after successful
+  rollback, exact `on/off`/`auto/off` pre-resolution and safe-fallback strings,
+  and `error` rather than a false OFF claim after failed rollback;
+- fork retaining state and close unsubscribing exactly once;
 - a no-op disabled think hook and a replaced setting observed by subsequent
-  samples without any session call from the worker;
-- paused-chat retirement through direct `Session.run_round()` with
-  `MessageBinder` and caller-supplied stop sequences, including sampled EOS
-  provenance and a failed mode change after retirement; raw control-only and
-  unbound paused-chat rejection before mutation; and a separate TUI test proving
-  actual `DS4Model` cleanup leaves no pause to retire; and
+  samples through the read-only `LogitsView` state accessor, without any
+  session/engine call or controller-owned mutable indirection;
+- initial scoped state created by controller setup, one mutable lifetime in
+  `session.state()`, and no controller `_current` record;
+- no creation-time status event, one `publish_status()` for every remaining
+  trigger, and no status publication in noninteractive mode; and
 - supported native persistence and explicit-unsupported stripped/rendered
   persistence through the same public runtime.
 
@@ -823,14 +933,14 @@ Model-free coverage is not live inference evidence.
 
 ### 12.3 Existing live tests and what they prove
 
-| Existing suite | Reuse for M3 | What it does not prove |
-| --- | --- | --- |
-| `tests/e2e/live/test_abi_workflow.py` | Patched build/check/open and repeated real public-session flow | Harness composition or TUI |
-| `test_policy.py` | Real `auto`/`on`/`off`, native defaults, explicit-zero overrides, consecutive rounds | Same-session toggling or verify-off after on |
-| `test_capabilities.py` | Real native Qwen sampling and soft think-bias effect | Dynamic slash-command settings |
-| `test_metrics.py` | Committed-stream acceptance reconciliation and external timing metadata | Footer text or session-scoped aggregation |
-| `test_dflash_parity.py` and `test_dflash_boundaries.py` | Real token/parser/RNG/commit behavior, stops, tools, reserve, cancellation | AgentRuntime or persistence integration |
-| ds4-py `tests/live/test_bakeoff.py` | Generic DS4Model/AgentRuntime/noninteractive tools and persistence path | Satyrn, DFlash, the interactive TUI, or the pinned Qwen models |
+| Repo | Existing suite | Reuse for M3 | What it does not prove |
+| --- | --- | --- | --- |
+| satyrn-agent | `tests/e2e/live/test_abi_workflow.py` | Patched build/check/open and repeated real public-session flow | Harness composition or TUI |
+| satyrn-agent | `test_policy.py` | Real `auto`/`on`/`off`, native defaults, explicit-zero overrides, consecutive rounds | Same-session toggling or verify-off after on |
+| satyrn-agent | `test_capabilities.py` | Real native Qwen sampling and soft think-bias effect | Dynamic slash-command settings |
+| satyrn-agent | `test_metrics.py` | Committed-stream acceptance reconciliation and external timing metadata | Footer text or session-scoped aggregation |
+| satyrn-agent | `test_dflash_parity.py` and `test_dflash_boundaries.py` | Real token/parser/RNG/commit behavior, stops, tools, reserve, cancellation | AgentRuntime or persistence integration |
+| ds4-py | `tests/live/test_bakeoff.py` | Generic DS4Model/AgentRuntime/noninteractive tools and persistence path | Satyrn, DFlash, the interactive TUI, or the pinned Qwen models |
 
 These are component or generic-path tests. No existing live test covers the
 new Satyrn + harness + TUI combination. The ABI workflow assertions must also
@@ -843,8 +953,9 @@ regression suite for this slice.
 
 ### 12.4 New live tests
 
-Add `tests/e2e/live/test_harness_tui.py` using the real patched library and
-pinned GGUFs, the actual configured runtime/TUI, and prompt-toolkit pipe input
+In **satyrn-agent**, add `tests/e2e/live/test_harness_tui.py` using the real
+patched library and pinned GGUFs, the actual configured runtime/TUI, and
+prompt-toolkit pipe input
 or an equivalent real terminal driver. It must:
 
 1. open with DFlash `on`, greedy sampling, and seed 1, then verify the initial
@@ -998,17 +1109,27 @@ not commit generated GGUFs, native libraries, saved sessions, or traces.
 
 ### 13.4 Required gates
 
-For the companion and Satyrn implementation PRs, run their complete static and
-portable gates in the canonical devenv + uv workflow, including:
+Run each repository's complete gates in its own root and canonical devenv + uv
+workflow. In **ds4-py**:
 
 ```bash
 uv run --frozen --extra agent prek run --all-files --show-diff-on-failure
 uv run --frozen --extra agent pytest -m "not build and not live" -q
 ```
 
-Use the satyrn-agent equivalents without the ds4-py `agent` extra, including
-its model-free 100% line/branch coverage gate and shell suite. Run the existing
-Satyrn abnormal and real-engine E2E suites plus the new harness live tests.
+In **satyrn-agent**:
+
+```bash
+uv run --frozen prek run --all-files --show-diff-on-failure
+bash tests/ds4_tools_test.sh
+uv run --frozen pytest tests/e2e/model_free \
+  --cov=satyrn_agent --cov-branch --cov-report=term-missing \
+  --cov-fail-under=100
+uv run --frozen pytest tests/abnormal tests/e2e/live
+```
+
+The last satyrn-agent command includes the existing abnormal and real-engine
+suites plus the new harness live tests and needs the documented real inputs.
 Run `git diff --check` in both repositories.
 
 The ds4-py companion diff's production code and tests must contain no Satyrn
@@ -1019,8 +1140,9 @@ or guarded skip in the documented real Metal harness run leaves M3 not done.
 
 ### 14.1 Companion PR sequence
 
-1. **ds4-py companion PR: generic harness composition.** Add the explicit
-   CLI/session/TUI hooks and public paused-response retirement, with no
+1. **ds4-py companion PR: generic harness composition.** Add typed
+   engine/model options, explicit CLI/session/TUI and runtime identity-change
+   hooks, and the read-only scoped-state view for logits hooks, with no
    downstream identifiers and no default behavior change.
 2. **ds4-py companion PR: generic payload support.** Add the optional core
    probe and stripped/rendered save/switch guards. Rebase the M4-related test
