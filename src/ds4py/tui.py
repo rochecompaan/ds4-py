@@ -51,6 +51,8 @@ class TUI:
         runtime: AgentRuntime,
         input: Input | None = None,
         output: Output | None = None,
+        *,
+        configure_commands: Callable[[SlashCommandRegistry, AgentRuntime], None] | None = None,
     ) -> None:
         self.runtime = runtime
         self.output = output
@@ -73,6 +75,8 @@ class TUI:
             runtime,
             request_exit=self._request_exit,
         )
+        if configure_commands is not None:
+            configure_commands(self.commands, runtime)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._events: asyncio.Queue[SessionEvent] = asyncio.Queue()
         self._prompt_task: asyncio.Task[str] | None = None

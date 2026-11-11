@@ -71,6 +71,10 @@ _PLACEHOLDER_HEADER = KV_HEADER.pack(KV_MAGIC, KV_VERSION, 0)
 _SAVE_PREFIX = ".save-"
 
 
+def _no_identity_hook() -> None:
+    pass
+
+
 class _PayloadWrite(TypedDict, total=False):
     tokens: int
     payload_bytes: int
@@ -190,6 +194,8 @@ class AgentRuntime:
         question_answerer: QuestionAnswerer | None = None,
         request_limit: int = 50,
         context: ContextComposition | None = None,
+        before_identity_change: Callable[[], None] | None = None,
+        after_identity_change: Callable[[], None] | None = None,
     ) -> None:
         self.model = model
         self.project_dir = Path(project_dir)
@@ -204,6 +210,9 @@ class AgentRuntime:
         self._interrupted = False
         self._trace_failure: OSError | None = None
         self._request_limit = request_limit
+        self._identity_hooks_configured = before_identity_change is not None or after_identity_change is not None
+        self._before_identity = before_identity_change if before_identity_change is not None else _no_identity_hook
+        self._after_identity = after_identity_change if after_identity_change is not None else _no_identity_hook
         self._created_at = self._timestamp()
         self._session_dir = self.store.session_dir(self._session.id)
         self.components = build_agent_components(
@@ -641,11 +650,15 @@ class AgentRuntime:
             record=record,
             session_dir=session_dir,
         )
-        if self._record is not None:
+        if self._identity_hooks_configured:
+            self._before_identity()
+        elif self._record is not None:
             self._record.relocate(session_dir / "events.jsonl")
         outcome: dict[str, object] = {}
 
         def restore() -> RestoreResult:
+            if self._identity_hooks_configured and self._record is not None:
+                self._record.relocate(session_dir / "events.jsonl")
             try:
                 result = restore_snapshot(
                     session=self._session,
@@ -675,6 +688,12 @@ class AgentRuntime:
             restore_path=plan.path,
             mismatch=plan.mismatch,
         )
+        if self._identity_hooks_configured:
+            try:
+                self._after_identity()
+            except BaseException:
+                self._status = "error"
+                raise
         self._status = "idle"
         if "rejected" in outcome:
             self._session.emit(
@@ -688,6 +707,8 @@ class AgentRuntime:
         """Start a clean session; the old directory and its files stay intact."""
         self._require_open()
         await self._stop_active()
+        if self._identity_hooks_configured:
+            self._before_identity()
         session_id = self._session.new()
         self._messages = []
         self._title = ""
@@ -698,6 +719,12 @@ class AgentRuntime:
             self._record.relocate(self.store.session_dir(session_id) / "events.jsonl")
         if self._notes is not None:
             self._notes.sync_from_segments(())
+        if self._identity_hooks_configured:
+            try:
+                self._after_identity()
+            except BaseException:
+                self._status = "error"
+                raise
         return session_id
 
     async def fork(self) -> str:

@@ -28,6 +28,7 @@ from ds4py._native.fake import FAKE_EOS, FakeNative
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.capabilities.compaction import LLMCompaction
 from ds4py.capabilities.context import ContextComposition, ContextRequest, RoomResult
+from ds4py.engine.decode import PlainStep
 from ds4py.engine.lifecycle import SessionEvent
 from ds4py.engine.prefix import PrefixTurn
 from ds4py.engine.replay import read_replay
@@ -1072,3 +1073,136 @@ def test_automatic_compaction_persists_history_and_counts_summary_once(tmp_path:
             await runtime.close()
 
         asyncio.run(scenario())
+
+
+def test_identity_hooks_wrap_new_bookkeeping_and_skip_fork(tmp_path: Path) -> None:
+    with fake_engine(script=scripted_rounds("answer")) as engine:
+        model = make_model(engine)
+        times = iter(
+            [
+                datetime(2026, 10, 21, 9, 30, tzinfo=UTC),
+                datetime(2026, 10, 22, 9, 30, tzinfo=UTC),
+                datetime(2026, 10, 23, 9, 30, tzinfo=UTC),
+                datetime(2026, 10, 24, 9, 30, tzinfo=UTC),
+            ]
+        )
+        order = []
+        runtime: Any = None
+
+        def before() -> None:
+            order.append("before")
+
+        def after() -> None:
+            order.append("after")
+            assert runtime is not None
+            assert runtime.messages == []
+            assert runtime.title == ""
+            assert model.binder.records() == ()
+            assert runtime.created_at == "2026-10-23T09:30:00+00:00"
+            assert cast("Any", runtime._record).path == store.session_dir(runtime.session_id) / "events.jsonl"
+
+        store = SessionStore(tmp_path / "home")
+        runtime = AgentRuntime(
+            model,
+            project_dir(tmp_path),
+            store=store,
+            clock=lambda: next(times),
+            before_identity_change=before,
+            after_identity_change=after,
+        )
+        runtime.on_event(
+            lambda event: order.append("session-start"),
+            kinds={"session_start"},
+        )
+
+        async def scenario() -> None:
+            await runtime.run("old")
+            old_id = runtime.session_id
+            new_id = await runtime.new()
+            assert new_id != old_id
+            assert order == ["before", "session-start", "after"]
+
+            await runtime.fork()
+            assert order == ["before", "session-start", "after"]
+            assert runtime.created_at == "2026-10-24T09:30:00+00:00"
+
+        try:
+            asyncio.run(scenario())
+        finally:
+            asyncio.run(runtime.close())
+
+
+def test_new_before_hook_failure_leaves_identity_and_record_untouched(tmp_path: Path) -> None:
+    with fake_engine(script=scripted_rounds("answer")) as engine:
+        model = make_model(engine)
+        failure = RuntimeError("before failed")
+
+        def before() -> None:
+            raise failure
+
+        store = SessionStore(tmp_path / "home")
+        runtime = AgentRuntime(
+            model,
+            project_dir(tmp_path),
+            store=store,
+            clock=fixed_clock,
+            before_identity_change=before,
+            after_identity_change=lambda: None,
+        )
+
+        async def scenario() -> None:
+            await runtime.run("old")
+            old_id = runtime.session_id
+            old_messages = dump(runtime.messages)
+            old_path = cast("Any", runtime._record).path
+            with pytest.raises(RuntimeError) as caught:
+                await runtime.new()
+            assert caught.value is failure
+            assert runtime.session_id == old_id
+            assert dump(runtime.messages) == old_messages
+            assert runtime.status == "success"
+            assert cast("Any", runtime._record).path == old_path
+
+        try:
+            asyncio.run(scenario())
+        finally:
+            asyncio.run(runtime.close())
+
+
+def test_new_after_hook_failure_keeps_adopted_identity_and_plain_step(tmp_path: Path) -> None:
+    with fake_engine(script=scripted_rounds("answer")) as engine:
+        model = make_model(engine)
+        failure = RuntimeError("after failed")
+
+        def before() -> None:
+            model.session.set_decode_step(PlainStep())
+
+        def after() -> None:
+            raise failure
+
+        store = SessionStore(tmp_path / "home")
+        runtime = AgentRuntime(
+            model,
+            project_dir(tmp_path),
+            store=store,
+            clock=fixed_clock,
+            before_identity_change=before,
+            after_identity_change=after,
+        )
+
+        async def scenario() -> None:
+            await runtime.run("old")
+            old_id = runtime.session_id
+            with pytest.raises(RuntimeError) as caught:
+                await runtime.new()
+            assert caught.value is failure
+            assert runtime.session_id != old_id
+            assert runtime.messages == []
+            assert runtime.status == "error"
+            assert cast("Any", runtime._record).path == store.session_dir(runtime.session_id) / "events.jsonl"
+            assert isinstance(model.session._decode_step, PlainStep)
+
+        try:
+            asyncio.run(scenario())
+        finally:
+            asyncio.run(runtime.close())
