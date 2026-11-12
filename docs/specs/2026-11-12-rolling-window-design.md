@@ -180,10 +180,11 @@ The public projection:
 - removes provider signatures from retained public calls without rewriting
   arguments or text;
 - hides paging-only turns and retains ordinary work in mixed turns;
-- reads host wrappers from `ModelResponse.metadata['nestedCalls']` when an
+- reads host wrappers from each `ToolReturnPart.metadata['nestedCalls']` when an
   embedding application supplies them; ds4 does not synthesize that metadata.
-  Hide a wrapper only when the complete value shows every nested call is a
-  paging call, preserving mixed, malformed, or absent wrappers;
+  This per-result location identifies the wrapper within a mixed turn. Hide a
+  wrapper only when its complete value shows every nested call is a paging call,
+  preserving ordinary results and mixed, malformed, or absent wrappers;
 - never recursively strips application-owned fields or text.
 
 ## Exact request accounting
@@ -730,7 +731,8 @@ Use real capabilities and `FakeNative` to prove:
 - startup defaults to compaction, while CLI RollingWindow selection passes
   `min(args.ctx, token_budget)` to native session creation;
 - paging calls/results, thinking, signatures, and nested paging-only wrappers
-  never leak through recovery;
+  never leak through recovery; mixed, malformed, and absent per-result wrappers
+  preserve ordinary public output;
 - restored incomplete exchanges page safely while malformed live exchanges fail;
 - `/new`, `/switch`, fork, compaction, and repeated events follow lifecycle
   rules without losing keys or duplicating resets, including accounting on
