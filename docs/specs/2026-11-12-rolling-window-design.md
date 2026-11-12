@@ -585,8 +585,11 @@ Preserve the baseline report sections and unavailable/zero semantics.
   `FileStepStore`'s media-aware read path and rehydrate externalized text with
   its public media restoration API before hashing or estimating. Do not parse
   raw snapshot JSON and mistake media references for content. Deduplicate after
-  rehydration by stable message key and content hash. This estimate runs without
-  an engine, is for display only, and never enters selection.
+  rehydration by stable message key and content hash. Exclude the resident
+  system/tools/instruction prefix and the transient paging notice, matching Pi's
+  saved-history boundary; exact request input statistics account for that prefix
+  separately. This estimate runs without an engine, is for display only, and
+  never enters selection.
 - **Input tokens:** latest exact selected request total, then the latest valid
   saved response's Pydantic `usage.input_tokens` after restore. That field
   already includes cache-read and cache-write tokens, so do not add the cache
@@ -661,8 +664,8 @@ Use real capabilities and `FakeNative` to prove:
   case 2 without feeding transient messages to compaction;
 - all conformance items 1–9 pass, with RollingWindow satisfying items 1–5;
 - command/status/stats behavior and disabled tool refusal, including a real
-  `FileStepStore` snapshot with externalized text and its documented damaged
-  snapshot behavior;
+  `FileStepStore` snapshot with externalized text, its documented damaged
+  snapshot behavior, and exclusion of resident system/instruction parts;
 - no prefill on exact view restore and no notice leakage into canonical history.
 
 Run focused RED/GREEN cycles, then:
