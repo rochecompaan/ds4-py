@@ -294,9 +294,11 @@ Port the current wording and behavior, including:
   evicted turns;
 - no conversation contribution from prefix or partial-turn eviction;
 - newest-first selection displayed oldest-first;
-- 6,000 UTF-16-code-unit entry clips, 500-code-unit minimum useful clip,
-  32,000-code-unit section cap, and the smaller room left by the effective
-  budget and protected floor;
+- 6,000 UTF-16-code-unit entry clips, 500-code-unit minimum useful clip, and
+  `conversationCharacterLimit = min(32_000, floor(token_budget * 0.4))`, then
+  the smaller room left by the effective budget and protected floor. At four
+  code units per estimated token, the second term is the baseline's
+  10%-of-budget conversation cap;
 - exact `read_context_output` handles for clipped text;
 - notice cost in both trigger and destination;
 - frozen content between advances, with bounded resizing when a remembered
@@ -593,7 +595,8 @@ Cover:
 - exchange projection and public privacy/exclusion shapes;
 - stable, partial, keyless, fallback, and protected selection frontiers using
   injected additive token costs;
-- notice conversation selection, clipping, and handles;
+- notice conversation selection, clipping, handles, and the low-budget 10%
+  conversation cap;
 - search/browse/load ordering and filters;
 - reply byte limits, deferred parts, UTF-16 pages, selectors, image metadata,
   and the explicit M5 image-mode error.
