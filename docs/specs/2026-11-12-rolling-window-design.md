@@ -490,6 +490,17 @@ recovery or stats. V1 records omit the field and retain their current meaning.
 V2 compaction saves may omit it; RollingWindow saves include it whenever the
 bound view differs from canonical history.
 
+Add read-only `MessageBinder.request_view() -> tuple[ModelMessage, ...]`. It
+returns deep copies of the exact messages in the last successful bind, including
+marked transient messages; mutating a returned copy cannot mutate binder state.
+`records()` remains token provenance and is not a substitute. Saving calls this
+accessor rather than rebuilding a candidate or reading `_bound_messages`.
+
+Case-1 switch/fork binds the restored view through this same state, so a save
+before any new request serializes the view that produced the loaded KV. Case 2
+binds the fresh canonical render. With no bound request before the first model
+call, the accessor returns an empty tuple and the save omits `request_view`.
+
 Unchanged view messages retain their canonical `ds4.key`. Every synthetic or
 content-replaced view message receives a fresh view-only `ds4.key` plus:
 
@@ -702,6 +713,8 @@ Use real capabilities and `FakeNative` to prove:
 - cut restore/rebuild costs match the following sync plan, with `/switch` and
   fork fixtures for an active partial turn and its later completed remainder
   asserting identical retained messages and extension of loaded KV;
+- saving immediately after switch/fork and before a new request reads the exact
+  bound view from `MessageBinder.request_view()` and matches the loaded KV;
 - tool overflow and mid-response reserve recovery continue correctly, including
   byte-for-byte unchanged canonical `ctx.messages` after a rejected tool result;
 - disabled fallback uses LLMCompaction and manual compaction remains available;
