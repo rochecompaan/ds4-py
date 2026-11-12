@@ -147,11 +147,22 @@ Map messages as follows:
   result paths. Omitted assistant slots preserve original indices.
 - System and instruction parts belong to the resident prefix. A request envelope
   may retain active injected instructions as in the baseline.
-- Tool calls and results match by `tool_call_id`. Duplicate, orphan, mismatched,
-  and incomplete live exchanges fail with the baseline error codes.
-- Response `state != 'complete'`, tool outcome `interrupted`/`failed`, and saved
-  incomplete exchanges supply failure/interruption metadata. No synthetic tool
-  result is created.
+- Tool calls and results match by `tool_call_id`. Duplicate, orphan, and
+  mismatched live exchanges fail with the baseline error codes. Incomplete
+  exchanges follow this table instead of one blanket failure rule:
+
+  | Exchange | Request selection | Public recovery |
+  | --- | --- | --- |
+  | Newest normal incomplete exchange | Keep the protected active request | Omit until it completes |
+  | Older normal incomplete exchange | Fail `INCOMPLETE_TOOL_RESULTS` | Fail `INCOMPLETE_TOOL_RESULTS` |
+  | Live aborted/error exchange | Normalize it out of request candidates | Retain it with failure metadata |
+  | Restore-discovered incomplete exchange | Classify it at the restore boundary | Retain it as interrupted |
+
+- Failure is true only for an aborted/error/interrupted response, tool outcome
+  `failed`, `denied`, or `interrupted`, a `RetryPromptPart` error result, or a
+  restore-discovered interruption. A normal length-capped response with
+  `state='incomplete'` is not by itself a failure. No synthetic tool result is
+  created.
 - Only restore-like boundaries (`switched` and `forked`) may classify newly
   found incomplete saved exchanges as interrupted and retain them for recovery.
   Later user messages must not make those exchanges fatal.
@@ -238,7 +249,11 @@ Selection errors retain the baseline codes: invalid settings/model context,
 resident input too large, active request too large, and invalid message
 structure. A failed selection commits no cut and leaves canonical history
 untouched. Add `ContextSelectionError(EngineError)` with a structured `code`
-field and the baseline diagnostic. Before-request callers catch that exception.
+field and the baseline diagnostic. `AgentRuntime.run` is the before-request
+error boundary: it records the failed run and `run_end`, then re-raises the same
+exception. The interactive and non-interactive frontends render its structured
+code and diagnostic through the normal `EngineError` path; neither matches on
+message text nor converts the failure into a successful empty result.
 A reserve failure raises `ContextExhausted` with the selection error as its
 cause, preserving the code without changing the existing exception's public
 shape. The tool fallback retains the exact text `Tool error: tool result still
