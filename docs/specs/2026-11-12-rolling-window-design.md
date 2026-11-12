@@ -507,8 +507,16 @@ RollingWindow session writes:
 - `request_view`, including transient notices/replacements when present;
 - token segments and hashes for exactly that request view.
 
-On case-1 restore, validate and bind `request_view` to the payload, then adopt
-the full canonical snapshot independently in the runtime. Every keyed segment
+Select the restore case before provenance validation. `AgentRuntime.switch`
+first loads the record and canonical snapshot structurally, then checks payload,
+preamble, and whether the selected owner is an enabled RollingWindow. It must
+not call `validate_restore_snapshot(snapshot.messages, record.segments)` before
+that choice: view-scoped segment keys need not exist in canonical history.
+
+For eligible case 1, validate `request_view` plus `record.segments`, bind them
+to the payload, then adopt the full canonical snapshot independently in the
+runtime. Validate the canonical snapshot's own schema, media, and stable keys
+independently rather than against view-scoped segments. Every keyed segment
 must resolve exactly once in `request_view` with a matching content hash. Every
 unmarked view message must also occur in the canonical snapshot with the same
 key/hash; every view-only key must carry a valid paging marker and, for a
@@ -516,8 +524,11 @@ replacement, an existing `view_of` target. The canonical snapshot may contain
 arbitrary additional paged-out messages. The view need not contain every
 canonical message.
 
-On case 2, ignore `request_view` and fresh-render full canonical history.
-Missing or malformed view provenance fails before live state changes. The
+For case 2, ignore `request_view` and its segments, validate only the canonical
+snapshot's structure/media/keys, and fresh-render full canonical history. This
+applies to `/strip`, payload or preamble mismatch, disabled RollingWindow, and
+non-Rolling owners. Malformed view provenance matters only for eligible case 1;
+any required validation failure occurs before live state changes. The
 `StoreError` names the session directory, record run/step, and the missing or
 mismatched view key, canonical target, or snapshot as applicable.
 
@@ -709,8 +720,9 @@ Use real capabilities and `FakeNative` to prove:
   specified, and `session_end` clears status before the next successful
   initialization publishes it;
 - v1 records still restore, v2 records preserve full history plus exact view,
-  bad view provenance is atomic, and disabled-Rolling/non-Rolling restores take
-  case 2 without feeding transient messages to compaction;
+  bad view provenance is atomic, and notice/replacement saves reach case 1;
+  `/strip`, disabled-Rolling, and non-Rolling restores validate canonical history
+  independently and take case 2 without feeding transient messages to compaction;
 - all conformance items 1–9 pass, with RollingWindow satisfying items 1–5;
 - command/status/stats behavior and disabled tool refusal, including a real
   `FileStepStore` snapshot with externalized text, its documented damaged
