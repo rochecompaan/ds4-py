@@ -489,9 +489,11 @@ start with an empty frontier and let the next exact budget check decide whether
 a cut is needed. This preserves a full loaded view without an unnecessary
 prefill.
 
-Switching a view-bound save to a non-Rolling owner takes case 2 and
-fresh-renders canonical history rather than binding an unsupported synthetic
-view.
+Case 1 binds `request_view` only when the selected owner is an enabled
+RollingWindow. A disabled RollingWindow, LLMCompaction, and every other owner
+take case 2 and fresh-render full canonical history. In particular, the disabled
+delegate never receives a paging notice or view-only replacement as compaction
+history.
 
 Image-containing sessions still refuse save. Request-view serialization adds no
 image-storage exception.
@@ -616,7 +618,8 @@ Use real capabilities and `FakeNative` to prove:
 - `/new`, `/switch`, fork, compaction, and repeated events follow lifecycle
   rules without losing keys or duplicating resets;
 - v1 records still restore, v2 records preserve full history plus exact view,
-  bad view provenance is atomic, and non-Rolling restore takes case 2;
+  bad view provenance is atomic, and disabled-Rolling/non-Rolling restores take
+  case 2 without feeding transient messages to compaction;
 - all conformance items 1–9 pass, with RollingWindow satisfying items 1–5;
 - command/status/stats behavior and disabled tool refusal;
 - no prefill on exact view restore and no notice leakage into canonical history.
