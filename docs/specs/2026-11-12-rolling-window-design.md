@@ -289,9 +289,10 @@ behavior resumes without a fabricated frontier advance.
 
 ## Paging notice
 
-The notice is a transient user request inserted after the resident system prefix
-and before retained canonical messages. It has a dedicated metadata marker and
-no canonical-history ownership.
+The notice is a transient user request in the exact binder input view, after the
+resident system prefix and before retained canonical messages. It has a
+dedicated metadata marker and no canonical-history ownership. It is not inserted
+into `ModelRequestContext` before harness normalization.
 
 Port the current wording and behavior, including:
 
@@ -385,11 +386,21 @@ result still does not fit`. Repeat the baseline's minimal trailing-rejection
 loop on view-only clones. If every allowed replacement still overflows, raise
 `ContextExhausted`.
 
-`request_context.messages` carries the selected view to the model binder while
-`ctx.messages` remains canonical. Runtime adoption retains canonical request
-history plus the new response and discards all marked view-only request clones
-and notices. Save-record `request_view` serialization is the only place those
-transient request messages persist.
+Add `ContextStrategy.request_messages(messages, run_context)`, defaulting to the
+identity for existing owners. RollingWindow's `before_model_request` leaves
+`request_context.messages = ctx.messages` and stores the selected view in session
+state. After the pinned harness finishes request normalization, and immediately
+before `MessageBinder.prepare_model_request`, `DS4Model._open_stream` calls the
+owner hook and uses its returned view. RollingWindow returns the exact stored
+view, including marked notices and replacements.
+
+This binder-side seam is required because harness merging preserves only its own
+metadata namespace and an unbound marked request cannot later be split reliably.
+No marked view-only message crosses that merge boundary. Projection and final
+fit measure the same post-normalization binder input. Runtime adoption retains
+canonical request history plus the new response and discards all marked view-only
+request clones and notices. Save-record `request_view` serialization is the only
+place those transient request messages persist.
 
 ## Lifecycle, settings, command, and status
 
@@ -706,7 +717,10 @@ Use real capabilities and `FakeNative` to prove:
   snapshot behavior, and exclusion of resident system/instruction parts;
 - input statistics cover cached append, exact restore, and reserve recovery,
   while missing old counters or ambiguous multi-sync usage is `unavailable`;
-- no prefill on exact view restore and no notice leakage into canonical history.
+- no prefill on exact view restore and no notice leakage into canonical history;
+- with a retained user request first and with a resident system request first,
+  post-normalization binder input preserves notice/replacement keys and markers
+  and canonical history remains unchanged.
 
 Run focused RED/GREEN cycles, then:
 
