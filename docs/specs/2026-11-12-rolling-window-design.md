@@ -440,8 +440,9 @@ Lifecycle behavior:
 - `forked` retains canonical keys but resets override/accounting and performs
   the same restore classification and bound-view cut derivation from the
   binder's current request view, preserving KV;
-- successful manual compaction resets cut and accounting but not the enabled
-  override; canceled attempts change nothing;
+- every manual compaction attempt clears accounting when it starts; success
+  resets the cut as well, while cancellation or failure preserves the cut. The
+  enabled override survives every outcome;
 - `model_changed`, if emitted by an embedding application, resets cut and
   accounting but preserves override and warning history;
 - events and saved-entry notifications are idempotent so one transition cannot
@@ -647,7 +648,8 @@ Use real capabilities and `FakeNative` to prove:
   never leak through recovery;
 - restored incomplete exchanges page safely while malformed live exchanges fail;
 - `/new`, `/switch`, fork, compaction, and repeated events follow lifecycle
-  rules without losing keys or duplicating resets;
+  rules without losing keys or duplicating resets, including accounting on
+  manual-compaction start, cancellation, and success;
 - settings file I/O honors project trust, explicit store-root isolation, and
   programmatic precedence; read/parse failures publish `paging off` when a
   session exists, emit their diagnostic, and abort startup;
