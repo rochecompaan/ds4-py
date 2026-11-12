@@ -186,24 +186,39 @@ The public projection:
 
 ## Exact request accounting
 
-Add one public observation-only binder entry,
-`project_request_view(messages, params) -> RequestProjection`. It uses the
-existing `plan_transition()` path and returns the exact projected token list,
-total, binding change, and stable per-unit spans. `RequestProjection` is an
-immutable value; it does not expose mutable planner state. The capability's
+Add one public observation-only binder entry:
+
+```python
+project_request_view(
+    *,
+    canonical_messages: Sequence[ModelMessage],
+    candidate_messages: Sequence[ModelMessage],
+    params: ModelRequestParameters,
+) -> RequestProjection
+```
+
+`canonical_messages` supplies original identities, content hashes, and exchange
+provenance. `candidate_messages` is the sole message list rendered into the
+projected request. Neither list is mutated. The binder reads its already
+registered `note_provider` and takes an isolated `preview()`; the caller does not
+pass a second provider or apply that preview.
+
+`RequestProjection` is immutable and contains `tokens`, `total_tokens`, the
+binding `change`, `resident_tokens`, `notice_tokens`, and `units`. Each
+`RequestUnitSpan` has `unit_key`, `start`, `end`, `request_keys`, and an optional
+`response_key`; offsets address `tokens`. A completed exchange uses its canonical
+response `ds4.key` as `unit_key`. A newest request-only unit uses its first
+canonical request key. For a view-only replacement, `ds4.view_of` supplies the
+canonical identity. Resident preamble and notice costs are separate totals, not
+anonymous units. The projection exposes no mutable planner state.
+
+The implementation uses the existing `plan_transition()` path. The capability's
 `RequestMeter` consumes this API and must not duplicate `MessageRenderer` or
-planner logic.
-
-The projection receives the current `ModelRequestParameters`, canonical
-messages, candidate view, and note-provider preview. It runs without mutating
-native state, canonical messages, note-provider state, or binding records.
-
-The implementation reuses the real rendering path, including resident
-system/tools/instructions, sampled response token records, request grouping,
-assistant prefixes, and notes. It must not tokenize an approximation of a
-message separately from `MessageBinder`. `Session.plan(projection.tokens)`
-supplies the conformance-test transition kind and cost; RollingWindow does not
-need a second public `plan()` API.
+planner logic. It reuses resident system/tools/instructions, sampled response
+token records, request grouping, assistant prefixes, and notes. It must not
+tokenize an approximation separately from `MessageBinder`.
+`Session.plan(projection.tokens)` supplies the conformance-test transition kind
+and cost; RollingWindow does not need a second public `plan()` API.
 
 Cache measurements only by immutable inputs: configuration signature, message
 key and content hash, grouping role, notice content, and frontier. A selection
