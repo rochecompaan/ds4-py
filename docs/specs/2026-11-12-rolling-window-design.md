@@ -345,8 +345,23 @@ without registering two competing capabilities.
 For view-only reserve recovery, advance the cut in the actual request-message
 view, rebind through the existing retained reserve operations, and continue the
 same `ModelResponse`. Do not append the view to canonical history. If no legal
-cut can satisfy the reserve, raise `ContextExhausted`. Tool-result overflow uses
-the same selector and final exact fit verification.
+cut can satisfy the reserve, raise `ContextExhausted`.
+
+RollingWindow overrides the inherited pending-tool-fit path. It never calls
+`_reject_until_fit` on canonical `ctx.messages`. Instead it builds the candidate
+request view, runs the same selector, and verifies exact fit with
+`project_request_view`. To reject an oversized trailing ordinary result, clone
+its containing request with a fresh view-only `ds4.key`, set `ds4.view_of` to the
+canonical request key, and change only the clone's part to `Tool error: tool
+result still does not fit`. Repeat the baseline's minimal trailing-rejection
+loop on view-only clones. If every allowed replacement still overflows, raise
+`ContextExhausted`.
+
+`request_context.messages` carries the selected view to the model binder while
+`ctx.messages` remains canonical. Runtime adoption retains canonical request
+history plus the new response and discards all marked view-only request clones
+and notices. Save-record `request_view` serialization is the only place those
+transient request messages persist.
 
 ## Lifecycle, settings, command, and status
 
@@ -592,7 +607,8 @@ Use real capabilities and `FakeNative` to prove:
 - full history remains canonical while request views page;
 - exact budget/notice counts and stable KV prefixes between cuts;
 - cut restore/rebuild costs match the following sync plan;
-- tool overflow and mid-response reserve recovery continue correctly;
+- tool overflow and mid-response reserve recovery continue correctly, including
+  byte-for-byte unchanged canonical `ctx.messages` after a rejected tool result;
 - disabled fallback uses LLMCompaction and manual compaction remains available;
 - paging calls/results, thinking, signatures, and nested paging-only wrappers
   never leak through recovery;
