@@ -95,6 +95,7 @@ def test_stripped_replacement_publishes_record_on_both_sides_of_stale_kv_removal
             asyncio.run(runtime.run("first"))
             first_record = asyncio.run(runtime.save())
             first_snapshot = latest_snapshot(store, first_record)
+            assert first_snapshot is not None
             session_dir = store.session_dir(first_record.session_id)
             kv_path = session_dir / "session.kv"
             original_kv = kv_path.read_bytes()
@@ -192,13 +193,28 @@ def test_unsupported_engine_renders_a_planned_kv_switch_before_native_load(
         raise AssertionError("native payload load must not run")
 
     monkeypatch.setattr(Session, "load_payload", forbid_native_load)
+    order: list[str] = []
+    original_probe = Session.file_payloads_supported
+
+    def record_probe(session: Session) -> bool:
+        order.append("probe")
+        return original_probe(session)
+
+    monkeypatch.setattr(Session, "file_payloads_supported", record_probe)
     with fake_engine(script=scripted_rounds("second answer"), payload_support=False) as engine:
         model = make_model(engine)
-        runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
+        runtime = AgentRuntime(
+            model,
+            project,
+            store=store,
+            clock=fixed_clock,
+            before_identity_change=lambda: order.append("before"),
+        )
         try:
             during_switch: list[Any] = []
             runtime.on_event(during_switch.append, kinds={"Prefill", "Synced"})
             asyncio.run(runtime.switch(record.session_id))
+            assert order == ["probe", "before"]
             assert during_switch == []
             assert dump(runtime.messages) == dump(saved["messages"])
             assert model.session.transcript.tokens == ()

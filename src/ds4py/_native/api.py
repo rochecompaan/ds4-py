@@ -474,6 +474,9 @@ class NativeSession(_Handle):
         self._call("ds4_session_invalidate")
 
     def file_payloads_supported(self) -> bool:
+        self._assert_thread()
+        if not self.raw:
+            raise EngineError("native handle is closed")
         return file_payloads_supported(self._lib, self.raw)
 
     def payload_bytes(self) -> int:

@@ -102,7 +102,7 @@ git commit -m "feat: add optional file payload capability probe"
 - Modify: `tests/agent/test_noninteractive.py`
 - Modify: `tests/agent/test_compaction_persistence.py`
 
-**Interfaces:
+**Interfaces:**
 - Consumes: `Session.file_payloads_supported() -> bool` from Task 1.
 - Produces: on `False`, `AgentRuntime.save()` returns a full `SaveRecord` with `payload_bytes == 0`, full token digest/provenance/messages, and no new KV artifact.
 - Preserves: existing `_PayloadWrite`, `write_kv_stream_atomic`, token/byte consistency checks, snapshot IDs, and record format on `True`.
