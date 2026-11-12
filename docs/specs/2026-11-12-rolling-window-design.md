@@ -400,9 +400,10 @@ developer's real global settings.
 `AgentRuntime` and the shared interactive/non-interactive agent CLI parser gain a
 `project_trusted` flag, exposed as `--trust-project-settings`. It defaults to
 false. Project settings are ignored unless trusted; the flag grants no other
-permission. Values accept only real booleans and positive integers. Invalid
-project values fall through to global, then defaults. Direct policy inputs raise
-instead of falling back.
+permission. Values accept only real booleans and integers satisfying
+`1 <= value <= 2**53 - 1`, matching the baseline's positive-safe-integer bound.
+Invalid project values fall through to global, then defaults. Direct policy
+inputs raise instead of falling back.
 
 Match the baseline failure behavior: a settings read/parse failure first
 publishes `paging off` and emits a `context_paging_error` diagnostic, then
@@ -619,7 +620,8 @@ test runner or a production dependency.
 
 Cover:
 
-- settings precedence and integer boundaries;
+- settings precedence and integer boundaries, including `2**53 - 1` accepted
+  and `2**53` rejected;
 - exchange projection and public privacy/exclusion shapes, including newest
   normal incomplete omission, older incomplete failure, live abort/error
   normalization, denied and retry failures, and normal length-capped responses;
