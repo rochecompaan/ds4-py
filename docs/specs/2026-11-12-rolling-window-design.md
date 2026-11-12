@@ -536,10 +536,17 @@ arbitrary additional paged-out messages. The view need not contain every
 canonical message.
 
 For case 2, ignore `request_view` and its segments, validate only the canonical
-snapshot's structure/media/keys, and fresh-render full canonical history. This
-applies to `/strip`, payload or preamble mismatch, disabled RollingWindow, and
-non-Rolling owners. Malformed view provenance matters only for eligible case 1;
-any required validation failure occurs before live state changes. The
+snapshot's structure/media/keys, and fresh-render full canonical history. When
+`request_view` is present, also ignore `record.segments` for notes: do not call
+`notes.restore_from_segments` or `binder.restore_notes` with view-scoped data.
+Reset note and restored-note state so the canonical render can emit the correct
+first-turn date and hints. Unpaged records without `request_view` retain the
+existing canonical segment note restoration. Case 1 continues to restore notes
+from its validated view segments.
+
+Case 2 applies to `/strip`, payload or preamble mismatch, disabled RollingWindow,
+and non-Rolling owners. Malformed view provenance matters only for eligible
+case 1; any required validation failure occurs before live state changes. The
 `StoreError` names the session directory, record run/step, and the missing or
 mismatched view key, canonical target, or snapshot as applicable.
 
@@ -710,6 +717,8 @@ Use real capabilities and `FakeNative` to prove:
 - full history remains canonical while request views page;
 - exact budget/notice counts and stable KV prefixes between cuts, including
   cached-projection invalidation across hints on/off and restored-note changes;
+- case-2 restore with the first turn paged out re-renders saved date/hints notes
+  from canonical history instead of restoring view-scoped note state;
 - cut restore/rebuild costs match the following sync plan, with `/switch` and
   fork fixtures for an active partial turn and its later completed remainder
   asserting identical retained messages and extension of loaded KV;
