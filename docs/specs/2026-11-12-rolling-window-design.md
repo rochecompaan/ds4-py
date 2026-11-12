@@ -272,7 +272,9 @@ Selection errors retain the baseline codes: invalid settings/model context,
 resident input too large, active request too large, and invalid message
 structure. A failed selection commits no cut and leaves canonical history
 untouched. Add `ContextSelectionError(EngineError)` with a structured `code`
-field and the baseline diagnostic. `AgentRuntime.run` is the before-request
+field and the baseline diagnostic. Its `__str__` returns `[CODE] diagnostic`, so
+the existing interactive and non-interactive exception printers cannot drop the
+code. `AgentRuntime.run` is the before-request
 error boundary: it records the failed run and `run_end`, then re-raises the same
 exception. The interactive and non-interactive frontends render its structured
 code and diagnostic through the normal `EngineError` path; neither matches on
@@ -449,9 +451,11 @@ capability still has no TUI import.
 Publish exactly `paging on` or `paging off` under the `context-paging` status
 key. Clear it on every `session_end` (including `/new`, `/switch`, and close),
 then publish the new state after successful session initialization. Trim-target
-warnings use a separate `context_paging_warning` event with a `message` payload;
-the interactive and non-interactive frontends render it like other warnings.
-Warning deduplication remains capability-owned.
+warnings use a separate `context_paging_warning` event with a `message` payload.
+The TUI event subscription handles that kind alongside `agent_event` and renders
+the warning. `run_noninteractive` subscribes through `runtime.on_event`, writes
+`warning: <message>` to stderr, and unsubscribes in `finally`. Warning
+deduplication remains capability-owned.
 
 Lifecycle behavior:
 
@@ -741,8 +745,9 @@ Use real capabilities and `FakeNative` to prove:
   programmatic precedence; read/parse failures publish `paging off` when a
   session exists, emit their diagnostic, and abort startup;
 - trim-target warning deduplication survives `/new` and `model_changed` as
-  specified, and `session_end` clears status before the next successful
-  initialization publishes it;
+  specified, warnings reach both frontends, selection failures preserve their
+  code without becoming successful empty results, and `session_end` clears
+  status before the next successful initialization publishes it;
 - v1 records still restore, v2 records preserve full history plus exact view,
   bad view provenance is atomic, and notice/replacement saves reach case 1;
   `/strip`, disabled-Rolling, and non-Rolling restores validate canonical history
