@@ -48,7 +48,7 @@
 - Modify: `tests/abi/test_manifest.py`
 - Modify: `tests/abi/test_check.py`
 - Modify: `tests/abi/test_build.py` (build-marked assertion only; no build/live run in this PR)
-- Create: `tests/native/test_payload_support.py`
+- Create: `tests/native/test_file_payloads.py`
 - Modify: `tests/agent/test_runtime.py` (test helper only)
 
 **Interfaces:**
@@ -73,7 +73,7 @@ Create helper tests with a small library double whose `has`/`fn` behavior is exp
 
 - [ ] **Step 2: Run the native tests to verify RED**
 
-Run: `uv run --frozen --extra agent pytest tests/native/test_bindings.py tests/native/test_loader.py tests/native/test_payload_support.py tests/abi/test_probe.py tests/abi/test_manifest.py tests/abi/test_check.py -q`
+Run: `uv run --frozen --extra agent pytest tests/native/test_bindings.py tests/native/test_loader.py tests/native/test_file_payloads.py tests/abi/test_probe.py tests/abi/test_manifest.py tests/abi/test_check.py -q`
 
 Expected: failures for the missing 53rd binding/helper and the updated optional-core ABI invariant; the legacy-manifest test must fail because loading incorrectly succeeds, not because the fixture lacks the new record.
 
@@ -83,14 +83,14 @@ Add the optional core declaration. Implement the helper at the native boundary a
 
 - [ ] **Step 4: Run native and existing payload/switch smoke tests to verify GREEN**
 
-Run: `uv run --frozen --extra agent pytest tests/native/test_bindings.py tests/native/test_loader.py tests/native/test_payload_support.py tests/abi/test_probe.py tests/abi/test_manifest.py tests/abi/test_check.py tests/engine/test_payload_jobs.py tests/agent/test_restore.py::test_valid_kv_switch_restores_binding_without_prefill -q`
+Run: `uv run --frozen --extra agent pytest tests/native/test_bindings.py tests/native/test_loader.py tests/native/test_file_payloads.py tests/abi/test_probe.py tests/abi/test_manifest.py tests/abi/test_check.py tests/engine/test_payload_jobs.py tests/agent/test_restore.py::test_valid_kv_switch_restores_binding_without_prefill -q`
 
 Expected: PASS, including existing native save/load behavior with the fake probe absent.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/ds4py/_native/bindings.py src/ds4py/_native/api.py src/ds4py/_native/protocol.py src/ds4py/_native/fake.py src/ds4py/engine/session.py tests/native/test_bindings.py tests/native/test_loader.py tests/native/test_payload_support.py tests/abi/test_probe.py tests/abi/test_manifest.py tests/abi/test_check.py tests/abi/test_build.py tests/agent/test_runtime.py
+git add src/ds4py/_native/bindings.py src/ds4py/_native/api.py src/ds4py/_native/protocol.py src/ds4py/_native/fake.py src/ds4py/engine/session.py tests/native/test_bindings.py tests/native/test_loader.py tests/native/test_file_payloads.py tests/abi/test_probe.py tests/abi/test_manifest.py tests/abi/test_check.py tests/abi/test_build.py tests/agent/test_runtime.py
 git commit -m "feat: add optional file payload capability probe"
 ```
 
