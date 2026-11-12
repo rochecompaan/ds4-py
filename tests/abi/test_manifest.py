@@ -17,7 +17,9 @@ LAYOUTS = {name: struct_layout(cls) for name, cls in STRUCTS.items()}
 def test_matching_manifest_is_accepted(make_manifest: Any, tmp_path: Path, upstream_headers: Any) -> None:
     lib, m = make_manifest(tmp_path, upstream_headers)
     v = manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=CORE_BINDINGS, layouts=LAYOUTS)
-    assert v.available == {b.name for b in CORE_BINDINGS} and v.warnings == ()
+    assert v.available == {b.name for b in CORE_BINDINGS if b.required}
+    assert v.absent == {"ds4_session_supports_payload"}
+    assert v.warnings == ()
 
 
 def test_unknown_headers_only_warn(make_manifest: Any, tmp_path: Path, fork_headers: Any) -> None:
@@ -123,7 +125,8 @@ def test_absent_optional_binding_is_listed(
         bindings=all_bindings(),
         layouts=LAYOUTS,
     )
-    assert v.absent == {"ds4_engine_sampling_defaults"} and "ds4_engine_layer_count" in v.available
+    assert v.absent == {"ds4_engine_sampling_defaults", "ds4_session_supports_payload"}
+    assert "ds4_engine_layer_count" in v.available
 
 
 @pytest.mark.parametrize("records", [{}, None, []])

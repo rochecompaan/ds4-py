@@ -48,7 +48,13 @@ def fixed_clock() -> datetime:
     return datetime(2026, 10, 21, 9, 30, 0, tzinfo=UTC)
 
 
-def fake_engine(*, script: Any = None, family: str = "qwen", model_id: int = 7) -> Engine:
+def fake_engine(
+    *,
+    script: Any = None,
+    family: str = "qwen",
+    model_id: int = 7,
+    payload_support: bool | None = None,
+) -> Engine:
     info = replace(
         FakeNative()._info,
         name="fake-ds4",
@@ -58,7 +64,11 @@ def fake_engine(*, script: Any = None, family: str = "qwen", model_id: int = 7) 
         is_glm_dsa=False,
         is_qwen4=family == "qwen",
     )
-    native = FakeNative(info=info) if script is None else FakeNative(info=info, script=script)
+    native = (
+        FakeNative(info=info, payload_support=payload_support)
+        if script is None
+        else FakeNative(info=info, script=script, payload_support=payload_support)
+    )
     return ds4py.open("f.gguf", ctx=65536, think=ThinkMode.NONE, native=native)
 
 

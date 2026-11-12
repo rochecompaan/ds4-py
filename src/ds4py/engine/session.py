@@ -708,6 +708,11 @@ class Session:
         """Dispose one native checkpoint between rounds under an exclusive claim."""
         self._history.drop_checkpoint(key)
 
+    def file_payloads_supported(self) -> bool:
+        """Return the native file-payload policy on the owning worker."""
+        self._history.require_open()
+        return self._worker.call(lambda e, s: s.file_payloads_supported()).result()
+
     def save_payload(self, file: BinaryIO, *, header: bytes) -> Saved:
         """Sync the transcript and write the header plus staged native payload.
 

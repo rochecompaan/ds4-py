@@ -69,8 +69,8 @@ def test_report_known_headers_and_no_optional_bindings() -> None:
         "ds4 tree: /src/ds4 at 5379c1c9ac31",
         "headers:  known",
         "layouts:  ok",
-        f"bindings: {len(CORE_BINDINGS)} required ok",
-        "optional: none",
+        f"bindings: {sum(b.required for b in CORE_BINDINGS)} required ok",
+        "optional: ds4_session_supports_payload  present  (core)",
         "restore:  not verified (run `ds4py check --live --model PATH`)",
     ]
 
