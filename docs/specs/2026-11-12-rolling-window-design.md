@@ -180,8 +180,10 @@ The public projection:
 - removes provider signatures from retained public calls without rewriting
   arguments or text;
 - hides paging-only turns and retains ordinary work in mixed turns;
-- supports complete host-level `nestedCalls` metadata only when every nested
-  call is a paging call, preserving mixed or malformed wrappers;
+- reads host wrappers from `ModelResponse.metadata['nestedCalls']` when an
+  embedding application supplies them; ds4 does not synthesize that metadata.
+  Hide a wrapper only when the complete value shows every nested call is a
+  paging call, preserving mixed, malformed, or absent wrappers;
 - never recursively strips application-owned fields or text.
 
 ## Exact request accounting
