@@ -615,11 +615,20 @@ Preserve the baseline report sections and unavailable/zero semantics.
   saved-history boundary; exact request input statistics account for that prefix
   separately. This estimate runs without an engine, is for display only, and
   never enters selection.
-- **Input tokens:** latest exact selected request total, then the latest valid
-  saved response's Pydantic `usage.input_tokens` after restore. That field
-  already includes cache-read and cache-write tokens, so do not add the cache
-  counters again. Output is excluded. Mark only estimated fallback values with
-  `~`.
+- **Input tokens:** latest exact `RequestProjection.total_tokens` for the live
+  selection. RollingWindow also records that value as a validated non-negative
+  safe integer in the final canonical response's
+  `metadata['ds4.context_paging.input_tokens']`, so restore does not confuse
+  aggregate work counters with one selected request total. For an older saved
+  response proven to represent one request sync, reconstruct the total as
+  `usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens`:
+  `DS4StreamedResponse` assigns prefilled input and cached reads separately.
+  Require all three counters and `metadata['ds4.request_sync_count'] == 1`, a
+  new response-provenance field stamped by `DS4StreamedResponse`. A count above
+  one identifies reserve/recovery work; use the separate exact metadata rather
+  than aggregate usage. An old or damaged record without exact metadata or an
+  explicit single-sync count reports `unavailable`, never a falsely exact value.
+  Output is excluded. Mark only estimated fallback values with `~`.
 - **Paging budget/model window:** effective values and current percentage;
   disabled shows `inactive`.
 - **Cache totals:** sum `cacheRead` and `cacheWrite` once per stable saved
@@ -695,6 +704,8 @@ Use real capabilities and `FakeNative` to prove:
 - command/status/stats behavior and disabled tool refusal, including a real
   `FileStepStore` snapshot with externalized text, its documented damaged
   snapshot behavior, and exclusion of resident system/instruction parts;
+- input statistics cover cached append, exact restore, and reserve recovery,
+  while missing old counters or ambiguous multi-sync usage is `unavailable`;
 - no prefill on exact view restore and no notice leakage into canonical history.
 
 Run focused RED/GREEN cycles, then:
