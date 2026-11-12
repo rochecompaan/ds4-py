@@ -207,7 +207,10 @@ registered `note_provider` and takes an isolated `preview()`; the caller does no
 pass a second provider or apply that preview.
 
 `RequestProjection` is immutable and contains `tokens`, `total_tokens`, the
-binding `change`, `resident_tokens`, `notice_tokens`, and `units`. Each
+binding `change`, `resident_tokens`, `notice_tokens`, and `units`. `tokens` is
+the exact planned sequence passed to `Session.plan`, including the assistant
+prefix, and `total_tokens = len(tokens)`. The assistant prefix contributes to
+the total but not to a history-unit span. Each
 `RequestUnitSpan` has `unit_key`, `start`, `end`, `request_keys`, and an optional
 `response_key`; offsets address `tokens`. A completed exchange uses its canonical
 response `ds4.key` as `unit_key`. A newest request-only unit uses its first
@@ -724,6 +727,8 @@ Use real capabilities and `FakeNative` to prove:
   cached-projection invalidation across hints on/off and restored-note changes;
 - case-2 restore with the first turn paged out re-renders saved date/hints notes
   from canonical history instead of restoring view-scoped note state;
+- `Session.plan(projection.tokens)`, including the assistant prefix and
+  `total_tokens = len(tokens)`, matches the following `Synced` plan;
 - cut restore/rebuild costs match the following sync plan, with `/switch` and
   fork fixtures for an active partial turn and its later completed remainder
   asserting identical retained messages and extension of loaded KV;
