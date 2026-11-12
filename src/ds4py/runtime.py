@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from ds4py.engine.session import Session
     from ds4py.model import DS4Model
 from ds4py.runtime_restore import (
+    RestorePlan,
     RestoreResult,
     plan_restore,
     restore_snapshot,
@@ -655,6 +656,8 @@ class AgentRuntime:
             record=record,
             session_dir=session_dir,
         )
+        if plan.path == "kv" and not self._session.file_payloads_supported():
+            plan = RestorePlan("render", None, "the live engine does not support file payloads")
         if self._identity_hooks_configured:
             self._before_identity()
         elif self._record is not None:

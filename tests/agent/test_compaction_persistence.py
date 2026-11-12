@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any, Never
 
 import pytest
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelRequest, UserPromptPart
@@ -14,6 +15,7 @@ from test_runtime import fake_engine, fixed_clock, make_model, scripted_rounds
 from ds4py.capabilities.compaction import LLMCompaction
 from ds4py.engine.events import Synced
 from ds4py.engine.lifecycle import SessionEvent
+from ds4py.engine.session import Session
 from ds4py.runtime import AgentRuntime
 from ds4py.store import KV_HEADER, KV_MAGIC, KV_VERSION, SessionStore, token_digest
 from ds4py.tui_commands import SlashCommandRegistry, install_builtin_commands
@@ -187,6 +189,40 @@ def test_compacted_history_writes_stripped_save_without_guarding_compaction(runt
         assert saved.segments == segments
         assert not (directory / "session.kv").exists()
         assert snapshot is not None and dump(snapshot.messages) == messages
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("runtime", [False], indirect=True)
+def test_compacted_history_switch_renders_and_rebuilds_without_native_load(
+    runtime: AgentRuntime,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbid_native_load(*args: Any, **kwargs: Any) -> Never:
+        raise AssertionError("native payload load must not run")
+
+    monkeypatch.setattr(Session, "load_payload", forbid_native_load)
+
+    async def scenario() -> None:
+        await compact_history(runtime)
+        messages = dump(runtime.messages)
+        tokens = runtime.model.session.transcript.tokens
+        saved = await runtime.save()
+        assert saved.payload_bytes == 0
+
+        await runtime.new()
+        syncs = collect_syncs(runtime)
+        await runtime.switch(saved.session_id)
+        assert dump(runtime.messages) == messages
+        assert runtime.model.session.transcript.tokens == ()
+        assert syncs == []
+
+        result = await runtime.run("continue")
+        assert result.output == "continued"
+        assert len(syncs) == 2
+        assert sum(event.prefilled for event in syncs) == len(tokens) + 33
+        assert runtime.model.session.transcript.tokens[: len(tokens)] == tokens
+        assert all((message.metadata or {}).get("ds4.key") for message in runtime.messages)
 
     asyncio.run(scenario())
 

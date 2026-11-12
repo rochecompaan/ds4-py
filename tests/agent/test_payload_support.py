@@ -1,16 +1,18 @@
 """Generic stripped-save behavior when native file payloads are unsupported."""
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any, Never, cast
 
 import pytest
 from pydantic_ai_harness.step_persistence import FileStepStore
-from test_restore import dump, read_events
+from test_restore import dump, engine_events, read_events, saved_session
 from test_runtime import fake_engine, fixed_clock, make_model, project_dir, scripted_rounds
 
 from ds4py._native.fake import FakeNative
 from ds4py.engine.session import Session
+from ds4py.errors import StoreError
 from ds4py.runtime import AgentRuntime
 from ds4py.store import SaveRecord, SessionStore, token_digest
 
@@ -178,3 +180,139 @@ def test_failed_stripped_record_publication_keeps_the_old_record_and_kv(
 
     assert store.read_record(kv_path.with_name("save.json")) == first_record
     assert kv_path.read_bytes() == original_kv
+
+
+def test_unsupported_engine_renders_a_planned_kv_switch_before_native_load(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, store, record, saved = saved_session(tmp_path, script=("first answer",))
+
+    def forbid_native_load(*args: Any, **kwargs: Any) -> Never:
+        raise AssertionError("native payload load must not run")
+
+    monkeypatch.setattr(Session, "load_payload", forbid_native_load)
+    with fake_engine(script=scripted_rounds("second answer"), payload_support=False) as engine:
+        model = make_model(engine)
+        runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
+        try:
+            during_switch: list[Any] = []
+            runtime.on_event(during_switch.append, kinds={"Prefill", "Synced"})
+            asyncio.run(runtime.switch(record.session_id))
+            assert during_switch == []
+            assert dump(runtime.messages) == dump(saved["messages"])
+            assert model.session.transcript.tokens == ()
+
+            requests: list[Any] = []
+            runtime.on_event(requests.append, kinds={"Synced"})
+            asyncio.run(runtime.run("follow up"))
+            synced = engine_events(requests, "Synced")
+            assert synced[0].plan.kind == "rebuild"
+            assert synced[0].prefilled == synced[0].pos
+            assert list(model.session.transcript.tokens[: len(saved["tokens"])]) == saved["tokens"]
+            assert dump(runtime.messages[: len(saved["messages"])]) == dump(saved["messages"])
+        finally:
+            asyncio.run(runtime.close())
+
+    switched = [
+        event
+        for event in read_events(store.session_dir(record.session_id) / "events.jsonl")
+        if event["kind"] == "switched"
+    ]
+    assert switched[-1]["payload"]["restore_path"] == "render"
+    assert switched[-1]["payload"]["mismatch"] == "the live engine does not support file payloads"
+
+
+def test_explicit_payload_support_retains_exact_kv_switch(tmp_path: Path) -> None:
+    project, store, record, saved = saved_session(tmp_path, script=("first answer",))
+    with fake_engine(script=scripted_rounds("second answer"), payload_support=True) as engine:
+        model = make_model(engine)
+        runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
+        try:
+            during_switch: list[Any] = []
+            runtime.on_event(during_switch.append, kinds={"Prefill", "Synced"})
+            asyncio.run(runtime.switch(record.session_id))
+            assert during_switch == []
+            assert list(model.session.transcript.tokens) == saved["tokens"]
+            assert model.binder.export_segments() == record.segments
+            assert dump(runtime.messages) == dump(saved["messages"])
+
+            requests: list[Any] = []
+            runtime.on_event(requests.append, kinds={"Synced"})
+            asyncio.run(runtime.run("follow up"))
+            synced = engine_events(requests, "Synced")
+            assert synced[0].plan.kind == "extend"
+            assert synced[0].plan.reused == len(saved["tokens"])
+        finally:
+            asyncio.run(runtime.close())
+
+
+@pytest.mark.parametrize("damage", ["model", "provenance", "kv"])
+def test_switch_validation_errors_precede_capability_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    damage: str,
+) -> None:
+    project, store, record, _saved = saved_session(tmp_path, script=("first answer",))
+    record_path = store.session_dir(record.session_id) / "save.json"
+    if damage in {"model", "provenance"}:
+        data = json.loads(record_path.read_text())
+        if damage == "model":
+            data["model_id"] += 1
+        else:
+            keyed = [index for index, segment in enumerate(data["segments"]) if segment["key"]]
+            data["segments"][keyed[-1]]["content_hash"] = "f" * 64
+        record_path.write_text(json.dumps(data))
+    else:
+        (record_path.with_name("session.kv")).write_bytes(b"not a KV header")
+
+    def forbid_early_probe(*args: Any, **kwargs: Any) -> Never:
+        raise AssertionError("capability probe must follow validation")
+
+    monkeypatch.setattr(Session, "file_payloads_supported", forbid_early_probe)
+    expected = {"model": "model id", "provenance": "cannot restore", "kv": r"session\.kv"}[damage]
+    with fake_engine(payload_support=False) as engine:
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
+        original_session_id = runtime.session_id
+        try:
+            with pytest.raises(StoreError, match=expected):
+                asyncio.run(runtime.switch(record.session_id))
+            assert runtime.session_id == original_session_id
+            assert runtime.messages == []
+        finally:
+            asyncio.run(runtime.close())
+
+
+def test_zero_payload_switch_never_probes_or_reads_a_stale_kv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SessionStore(tmp_path / "home")
+    project = project_dir(tmp_path)
+    with fake_engine(script=scripted_rounds("first answer"), payload_support=False) as engine:
+        runtime = AgentRuntime(make_model(engine), project, store=store, clock=fixed_clock)
+        try:
+            asyncio.run(runtime.run("hello"))
+            record = asyncio.run(runtime.save())
+            messages = dump(runtime.messages)
+        finally:
+            asyncio.run(runtime.close())
+
+    kv_path = store.session_dir(record.session_id) / "session.kv"
+    kv_path.write_bytes(b"stale corrupt KV")
+
+    def forbid_artifact_access(*args: Any, **kwargs: Any) -> Never:
+        raise AssertionError("zero-payload restore must not probe or read KV")
+
+    monkeypatch.setattr(Session, "file_payloads_supported", forbid_artifact_access)
+    monkeypatch.setattr(Session, "load_payload", forbid_artifact_access)
+    monkeypatch.setattr(store, "read_kv_header", forbid_artifact_access)
+    with fake_engine(payload_support=False) as engine:
+        model = make_model(engine)
+        runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
+        try:
+            asyncio.run(runtime.switch(record.session_id))
+            assert dump(runtime.messages) == messages
+            assert model.session.transcript.tokens == ()
+        finally:
+            asyncio.run(runtime.close())
