@@ -2,6 +2,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -98,12 +99,13 @@ def test_parse_qwen_value(text: Any, expected: Any) -> None:
     assert parse_qwen_value(text) == expected
 
 
-def test_parse_qwen_value_deep_nesting_stays_text() -> None:
-    from ds4py.engine.tool_syntax.qwen import parse_qwen_value
+def test_parse_qwen_value_recursion_error_stays_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ds4py.engine.tool_syntax import qwen
 
-    text = "[" * 200_000 + "]" * 200_000
+    monkeypatch.setattr(qwen.json, "loads", Mock(side_effect=RecursionError))
+    text = "[[]]"
 
-    assert parse_qwen_value(text) == (text, True)
+    assert qwen.parse_qwen_value(text) == (text, True)
 
 
 def test_qwen_closing_delimiter_requests_greedy_sampling() -> None:
