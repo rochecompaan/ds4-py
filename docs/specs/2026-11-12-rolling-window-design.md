@@ -326,6 +326,24 @@ second `ContextComposition.strategy` field is added. The shared agent CLI parser
 used by the interactive TUI and `--non-interactive` exposes
 `--context-strategy compaction|rolling`, `--context-token-budget`, and
 `--context-trim-to`; `raw` is not an agent path and gains none of these flags.
+The default is `compaction`, preserving existing interactive and
+non-interactive behavior.
+
+For CLI RollingWindow selection, resolve the strategy and effective token budget
+before `open_engine`. Set `native_ctx = min(args.ctx, resolved_token_budget)` and
+pass it as `open_engine(ctx=native_ctx)`. The existing worker then supplies that
+value to `ds4_session_create` without a second allocation path. Reserve this
+window whenever RollingWindow is selected, even if its initial enabled setting
+is false, so later `/context-paging on` needs no native resize. On/off commands
+change policy only; they never resize a live native session. A CLI preflight
+settings failure emits its startup diagnostic and aborts before a session event
+bus exists; programmatic runtime construction retains the status-then-raise
+behavior below.
+
+Programmatic callers choose the native context when creating their engine and
+session. `AgentRuntime` cannot resize an existing native session; RollingWindow
+clamps its policy budget to `session.ctx()` and documents the smaller native
+allocation as a composition requirement, not a runtime promise.
 
 `RollingWindow` is the one registered owner when selected. Its session state
 holds the enabled override, frontier/frozen notice, restore-interrupted IDs,
@@ -619,6 +637,8 @@ Use real capabilities and `FakeNative` to prove:
 - tool overflow and mid-response reserve recovery continue correctly, including
   byte-for-byte unchanged canonical `ctx.messages` after a rejected tool result;
 - disabled fallback uses LLMCompaction and manual compaction remains available;
+- startup defaults to compaction, while CLI RollingWindow selection passes
+  `min(args.ctx, token_budget)` to native session creation;
 - paging calls/results, thinking, signatures, and nested paging-only wrappers
   never leak through recovery;
 - restored incomplete exchanges page safely while malformed live exchanges fail;
