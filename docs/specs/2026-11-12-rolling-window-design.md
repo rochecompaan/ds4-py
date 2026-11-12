@@ -302,10 +302,11 @@ Port the current wording and behavior, including:
 - no conversation contribution from prefix or partial-turn eviction;
 - newest-first selection displayed oldest-first;
 - 6,000 UTF-16-code-unit entry clips, 500-code-unit minimum useful clip, and
-  `conversationCharacterLimit = min(32_000, floor(token_budget * 0.4))`, then
+  `conversationCharacterLimit = min(32_000, floor(effective_budget_tokens * 0.4))`, then
   the smaller room left by the effective budget and protected floor. At four
   code units per estimated token, the second term is the baseline's
-  10%-of-budget conversation cap;
+  10%-of-effective-budget conversation cap. `effective_budget_tokens` is the
+  model-capped budget from selection, not the configured `token_budget`;
 - exact `read_context_output` handles for clipped text;
 - notice cost in both trigger and destination;
 - frozen content between advances, with bounded resizing when a remembered
@@ -651,7 +652,7 @@ Cover:
 - stable, partial, keyless, fallback, and protected selection frontiers using
   injected additive token costs;
 - notice conversation selection, clipping, handles, and the low-budget 10%
-  conversation cap;
+  conversation cap, including configured budget above the native/model window;
 - search/browse/load ordering and filters;
 - reply byte limits, deferred parts, UTF-16 pages, selectors, image metadata,
   unconditional image-item load deferral, and the explicit M5 image-mode error.
