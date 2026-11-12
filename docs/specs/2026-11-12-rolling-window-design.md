@@ -223,8 +223,13 @@ tokenize an approximation separately from `MessageBinder`.
 and cost; RollingWindow does not need a second public `plan()` API.
 
 Cache measurements only by immutable inputs: configuration signature, message
-key and content hash, grouping role, notice content, and frontier. A selection
-that fails or is abandoned publishes none of these mutations. The binder's
+key and content hash, grouping role, notice content, frontier, registered
+note-provider identity, and the effective note preview. The note identity
+includes `hints_enabled`, exact pending and restored note content, note state,
+and every clock-derived value that can change emission. Invalidate affected
+entries whenever that preview changes; never key only by the provider's
+configuration signature. A selection that fails or is abandoned publishes none
+of these mutations. The binder's
 existing `project_request()` remains the final exact fit check before a view is
 returned. `Session.ctx_used` supplies the live reserve measurement.
 
@@ -644,7 +649,8 @@ structure and decisions, then pin ds4's exact totals separately against
 Use real capabilities and `FakeNative` to prove:
 
 - full history remains canonical while request views page;
-- exact budget/notice counts and stable KV prefixes between cuts;
+- exact budget/notice counts and stable KV prefixes between cuts, including
+  cached-projection invalidation across hints on/off and restored-note changes;
 - cut restore/rebuild costs match the following sync plan;
 - tool overflow and mid-response reserve recovery continue correctly, including
   byte-for-byte unchanged canonical `ctx.messages` after a rejected tool result;
