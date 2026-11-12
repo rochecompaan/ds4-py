@@ -537,6 +537,8 @@ The complete serialized text reply is at most 16,384 UTF-8 bytes. Part
 descriptions are at most 4,096 bytes. Load at most three items, smallest first
 for fitting while retaining requested output order. Large items defer to bounded
 part descriptions and read handles; one large item cannot block a smaller one.
+Items containing images always defer regardless of byte size, so `load_history`
+returns their part descriptions and handles rather than inlining the item.
 
 `read_context_output` retains:
 
@@ -623,7 +625,7 @@ Cover:
   conversation cap;
 - search/browse/load ordering and filters;
 - reply byte limits, deferred parts, UTF-16 pages, selectors, image metadata,
-  and the explicit M5 image-mode error.
+  unconditional image-item load deferral, and the explicit M5 image-mode error.
 
 Where Pi estimates and ds4 exact rendering cannot share numeric inputs, compare
 structure and decisions, then pin ds4's exact totals separately against
