@@ -533,7 +533,7 @@ class AgentRuntime:
         return list(messages)
 
     async def save(self) -> SaveRecord:
-        """Write the KV file, then a complete snapshot, then the save record."""
+        """Publish a complete snapshot and record, with KV or stripped payload bytes."""
         self._require_open()
         await self._stop_active()
         session_id = self._session.id
@@ -544,22 +544,25 @@ class AgentRuntime:
         holder = self._holder()
         run_id = await self._next_save_run_id(holder.current)
 
-        written: _PayloadWrite = {}
+        payloads_supported = self._session.file_payloads_supported()
+        payload_bytes = 0
+        if payloads_supported:
+            written: _PayloadWrite = {}
 
-        def write_payload(file: BinaryIO) -> int:
-            saved = self._session.save_payload(file, header=_PLACEHOLDER_HEADER)
-            written["tokens"] = saved.tokens
-            written["payload_bytes"] = saved.payload_bytes
-            return saved.payload_bytes
+            def write_payload(file: BinaryIO) -> int:
+                saved = self._session.save_payload(file, header=_PLACEHOLDER_HEADER)
+                written["tokens"] = saved.tokens
+                written["payload_bytes"] = saved.payload_bytes
+                return saved.payload_bytes
 
-        payload_bytes = self.store.write_kv_stream_atomic(
-            session_dir / "session.kv",
-            write_payload,
-        )
-        if written.get("tokens") != len(tokens) or written.get("payload_bytes") != payload_bytes:
-            raise EngineError(
-                f"the native payload covers {written.get('tokens')} tokens, the transcript has {len(tokens)}"
+            payload_bytes = self.store.write_kv_stream_atomic(
+                session_dir / "session.kv",
+                write_payload,
             )
+            if written.get("tokens") != len(tokens) or written.get("payload_bytes") != payload_bytes:
+                raise EngineError(
+                    f"the native payload covers {written.get('tokens')} tokens, the transcript has {len(tokens)}"
+                )
 
         snapshot = ContinuableSnapshot(
             run_id=run_id,
@@ -595,6 +598,8 @@ class AgentRuntime:
             segments=self.model.binder.export_segments(),
         )
         self.store.write_record_atomic(session_dir / "save.json", record)
+        if not payloads_supported:
+            (session_dir / "session.kv").unlink(missing_ok=True)
         self._session.emit("saved", record=record.to_dict(), payload_bytes=payload_bytes)
         return record
 
