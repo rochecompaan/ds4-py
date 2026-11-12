@@ -250,6 +250,7 @@ def test_session_abi_and_ownership(stub_engine: Any) -> None:
     assert c.stub_snapshots() == 1
     with pytest.raises(EngineError, match="closed"):
         session.load_snapshot(snap)
+    assert session.file_payloads_supported() is True
     session.close()
     session.close()
     assert c.stub_frees() == 1
