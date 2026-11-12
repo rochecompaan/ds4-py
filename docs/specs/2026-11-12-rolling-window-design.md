@@ -509,14 +509,30 @@ Missing or malformed view provenance fails before live state changes. The
 `StoreError` names the session directory, record run/step, and the missing or
 mismatched view key, canonical target, or snapshot as applicable.
 
-RollingWindow reconstructs its frontier from the first canonical message bound
-in the loaded view and retains the loaded notice; it does not persist a separate
-frontier. The first follow-up extends the loaded KV. A valid view with omitted
-canonical messages must contain its paging marker. With no `request_view` (v1),
-a full equal view, a fork before the first request, or a post-compaction reset,
-start with an empty frontier and let the next exact budget check decide whether
-a cut is needed. This preserves a full loaded view without an unnecessary
-prefill.
+RollingWindow reconstructs a structured frontier from the canonical/view gap,
+not from the first retained canonical message. Ignore the synthetic notice and
+map replacements through `ds4.view_of`, then derive:
+
+- no omitted content: an empty frontier;
+- only whole turns omitted: a `wholeTurn` frontier at the last omitted response
+  `ds4.key`;
+- part of an active turn omitted: a `partialTurn` frontier containing the
+  retained user request's `userHistoryId`, the last omitted response `ds4.key`,
+  and the optional omitted `tool_call_id` anchor. The retained user request may
+  be the first canonical message in the view.
+
+Replaying that frontier over canonical history must reproduce exactly the
+view's retained canonical messages and per-turn exchanges. A mismatch is invalid
+view provenance and fails case-1 restore atomically before live state changes.
+Fork derivation uses the same algorithm against the binder's current view and
+current canonical history, including an active remainder that has since
+completed. The loaded notice is retained and no separate frontier is persisted.
+
+The first follow-up extends the loaded KV. A valid view with omitted canonical
+messages must contain its paging marker. With no `request_view` (v1), a full
+equal view, a fork before the first request, or a post-compaction reset, start
+with an empty frontier and let the next exact budget check decide whether a cut
+is needed. This preserves a full loaded view without an unnecessary prefill.
 
 Case 1 binds `request_view` only when the selected owner is an enabled
 RollingWindow. A disabled RollingWindow, LLMCompaction, and every other owner
@@ -651,7 +667,9 @@ Use real capabilities and `FakeNative` to prove:
 - full history remains canonical while request views page;
 - exact budget/notice counts and stable KV prefixes between cuts, including
   cached-projection invalidation across hints on/off and restored-note changes;
-- cut restore/rebuild costs match the following sync plan;
+- cut restore/rebuild costs match the following sync plan, with `/switch` and
+  fork fixtures for an active partial turn and its later completed remainder
+  asserting identical retained messages and extension of loaded KV;
 - tool overflow and mid-response reserve recovery continue correctly, including
   byte-for-byte unchanged canonical `ctx.messages` after a rejected tool result;
 - disabled fallback uses LLMCompaction and manual compaction remains available;
