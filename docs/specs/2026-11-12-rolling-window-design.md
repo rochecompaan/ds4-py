@@ -614,7 +614,9 @@ test runner or a production dependency.
 Cover:
 
 - settings precedence and integer boundaries;
-- exchange projection and public privacy/exclusion shapes;
+- exchange projection and public privacy/exclusion shapes, including newest
+  normal incomplete omission, older incomplete failure, live abort/error
+  normalization, denied and retry failures, and normal length-capped responses;
 - stable, partial, keyless, fallback, and protected selection frontiers using
   injected additive token costs;
 - notice conversation selection, clipping, handles, and the low-budget 10%
@@ -644,6 +646,12 @@ Use real capabilities and `FakeNative` to prove:
 - restored incomplete exchanges page safely while malformed live exchanges fail;
 - `/new`, `/switch`, fork, compaction, and repeated events follow lifecycle
   rules without losing keys or duplicating resets;
+- settings file I/O honors project trust, explicit store-root isolation, and
+  programmatic precedence; read/parse failures publish `paging off` when a
+  session exists, emit their diagnostic, and abort startup;
+- trim-target warning deduplication survives `/new` and `model_changed` as
+  specified, and `session_end` clears status before the next successful
+  initialization publishes it;
 - v1 records still restore, v2 records preserve full history plus exact view,
   bad view provenance is atomic, and disabled-Rolling/non-Rolling restores take
   case 2 without feeding transient messages to compaction;
