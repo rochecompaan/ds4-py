@@ -111,6 +111,7 @@ class FakeNative:
         absent: Iterable[str] = (),
         restore_enabled: bool = True,
         info: EngineInfo | None = None,
+        payload_support: bool | None = None,
     ) -> None:
         if chunk <= 0:
             raise ValueError("chunk must be positive")
@@ -119,6 +120,8 @@ class FakeNative:
         self.chunk_seconds = chunk_seconds
         self.bindings, self.absent = dict(bindings), set(absent)
         self.restore_enabled = restore_enabled
+        self.payload_support = payload_support
+        self.payload_support_threads: list[int] = []
         self._info = (
             info
             if info is not None
@@ -439,6 +442,12 @@ class FakeSession(_Handle):
         self._check()
         self._valid = False
         self._logits = None
+
+    def file_payloads_supported(self) -> bool:
+        self._check()
+        self._native.payload_support_threads.append(threading.get_ident())
+        support = self._native.payload_support
+        return True if support is None else support
 
     def payload_bytes(self) -> int:
         self._check()

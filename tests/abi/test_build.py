@@ -397,7 +397,9 @@ def test_cpu_build_of_upstream(built_upstream: Any, capsys: pytest.CaptureFixtur
 
     lib, m = built_upstream
     assert lib.name == LIB_NAME and m.library_sha256 == file_sha256(lib)
-    assert all(r.ok for r in m.bindings.values()) and m.headers_known and m.backend == "cpu"
+    assert all(r.ok for name, r in m.bindings.items() if name != "ds4_session_supports_payload")
+    assert not m.bindings["ds4_session_supports_payload"].ok
+    assert m.headers_known and m.backend == "cpu"
     if (Path(os.environ["DS4_SRC_UPSTREAM"]) / ".git").exists():
         assert m.source_commit == pins.UPSTREAM.commit
     # The CLI rebuild shares the farm: objects survive and are not recompiled.

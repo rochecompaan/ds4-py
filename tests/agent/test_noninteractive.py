@@ -48,6 +48,47 @@ def test_noninteractive_prints_only_the_final_answer_and_saves() -> None:
     assert runtime.saves == 1
 
 
+def test_noninteractive_success_finishes_with_a_stripped_save(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "store")
+    with fake_engine(script=scripted_rounds("answer"), payload_support=False) as engine:
+        runtime = AgentRuntime(make_model(engine), project_dir(tmp_path), store=store, clock=fixed_clock)
+        try:
+            code, out, err = invoke(runtime)
+            session_id = runtime.session_id
+        finally:
+            asyncio.run(runtime.close())
+
+    record = store.read_record(store.session_dir(session_id) / "save.json")
+    assert (code, out, err) == (0, "answer\n", "")
+    assert record.payload_bytes == 0
+    assert record.tokens > 0
+    assert not (store.session_dir(session_id) / "session.kv").exists()
+
+
+def test_noninteractive_terminal_failure_finishes_with_a_stripped_save(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "store")
+    with fake_engine(script=scripted_rounds("ab"), payload_support=False) as engine:
+        runtime = AgentRuntime(
+            make_model(engine, max_tokens=1),
+            project_dir(tmp_path),
+            store=store,
+            clock=fixed_clock,
+        )
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            code = asyncio.run(run_noninteractive(runtime, "prompt", out=out, err=err))
+            session_id = runtime.session_id
+        finally:
+            asyncio.run(runtime.close())
+
+    record = store.read_record(store.session_dir(session_id) / "save.json")
+    assert code == 1
+    assert "max_tokens" in err.getvalue()
+    assert record.payload_bytes == 0
+    assert record.tokens > 0
+    assert not (store.session_dir(session_id) / "session.kv").exists()
+
+
 def test_default_noninteractive_compacts_without_printing_private_summary(tmp_path: Path) -> None:
     with fake_engine(script=scripted_rounds("answer", "answer", "private summary", "final answer")) as engine:
         runtime = AgentRuntime(

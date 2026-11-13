@@ -250,11 +250,14 @@ def test_session_abi_and_ownership(stub_engine: Any) -> None:
     assert c.stub_snapshots() == 1
     with pytest.raises(EngineError, match="closed"):
         session.load_snapshot(snap)
+    assert session.file_payloads_supported() is True
     session.close()
     session.close()
     assert c.stub_frees() == 1
     with pytest.raises(EngineError, match="closed"):
         session.tokens()
+    with pytest.raises(EngineError, match="closed"):
+        session.file_payloads_supported()
 
 
 def test_callbacks_errors_and_thread_confinement(stub_engine: Any) -> None:
@@ -283,6 +286,7 @@ def test_callbacks_errors_and_thread_confinement(stub_engine: Any) -> None:
     with ThreadPoolExecutor(1) as pool:
         for method in (
             session.tokens,
+            session.file_payloads_supported,
             session.close,
             session.save_snapshot,
             engine.eos,

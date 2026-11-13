@@ -6,7 +6,7 @@ from unittest import mock
 
 import pytest
 
-from ds4py._native import loader
+from ds4py._native import api, loader
 from ds4py._native.bindings import all_bindings
 from ds4py._native.loader import LIB_NAME, load_library, resolve_lib_path
 from ds4py.abi import build, manifest
@@ -156,6 +156,32 @@ def test_absent_optional_binding_raises_missing_binding(
     assert loaded.has("ds4_engine_layer_count") and not loaded.has("ds4_engine_sampling_defaults")
     with pytest.raises(MissingBinding, match="ds4_engine_sampling_defaults is absent from this library"):
         loaded.fn("ds4_engine_sampling_defaults")
+
+
+def test_rebuilt_library_without_payload_probe_loads_absent_and_uses_legacy_support(
+    make_manifest: Any,
+    tmp_path: Path,
+    upstream_headers: Any,
+    stub_dlopen: Any,
+) -> None:
+    lib, m = make_manifest(tmp_path, upstream_headers, bindings=all_bindings())
+    m.write(manifest_path(lib))
+    loaded = load_library(lib)
+    assert not loaded.has("ds4_session_supports_payload")
+    assert api.file_payloads_supported(loaded, 1) is True
+
+
+def test_legacy_manifest_without_payload_probe_record_requires_rebuild(
+    make_manifest: Any,
+    tmp_path: Path,
+    upstream_headers: Any,
+    stub_dlopen: Any,
+) -> None:
+    lib, m = make_manifest(tmp_path, upstream_headers, bindings=all_bindings())
+    m.bindings.pop("ds4_session_supports_payload", None)
+    m.write(manifest_path(lib))
+    with pytest.raises(AbiMismatch, match=r"ds4_session_supports_payload.*no probe result recorded.*ds4py build"):
+        load_library(lib)
 
 
 def test_undeclared_name_raises_missing_binding(
