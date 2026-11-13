@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Stack on `feat/harness-composition`; commit locally on `feat/payload-support`, with no push, PR, co-author, or tool trailers.
+- Stack on `feat/harness-composition` and commit locally on `feat/payload-support`. Do not add co-author or tool trailers. The Delivery rule in `AGENTS.md` supersedes the original constraint against pushing and opening a PR.
 - Add exactly one optional core binding: `bool ds4_session_supports_payload(ds4_session *s)`, with `source="core"` and `required=False`.
 - A missing manifest record retains the existing rebuild-required ABI failure; only a rebuilt manifest recording an absent symbol receives legacy `True` behavior.
 - Runtime obtains the boolean through the native worker. Only `False` selects stripped/rendered persistence; there is no third state.
@@ -235,4 +235,4 @@ Give one fresh reviewer the `thermo-nuclear-code-quality-review` skill for struc
 
 - [x] **Step 4: Commit review fixes and report**
 
-If review produced changes, commit them locally with a focused message and rerun all three required checks. Report every commit hash, exact check results and test counts, and every departure from the spec with its reason. Do not push or open a PR.
+If review produced changes, commit them locally with a focused message and rerun all three required checks. Report every commit hash, exact check results and test counts, and every departure from the spec with its reason. The Delivery rule in `AGENTS.md` supersedes the earlier instruction not to push or open a PR. Follow that rule for delivery.
