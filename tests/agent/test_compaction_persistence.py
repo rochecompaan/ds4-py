@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any, Never
 
 import pytest
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelRequest, UserPromptPart
@@ -14,8 +15,10 @@ from test_runtime import fake_engine, fixed_clock, make_model, scripted_rounds
 from ds4py.capabilities.compaction import LLMCompaction
 from ds4py.engine.events import Synced
 from ds4py.engine.lifecycle import SessionEvent
+from ds4py.engine.session import Session
 from ds4py.runtime import AgentRuntime
 from ds4py.store import KV_HEADER, KV_MAGIC, KV_VERSION, SessionStore, token_digest
+from ds4py.tui_commands import SlashCommandRegistry, install_builtin_commands
 
 
 def dump(messages: list[ModelMessage]) -> bytes:
@@ -23,14 +26,22 @@ def dump(messages: list[ModelMessage]) -> bytes:
 
 
 @pytest.fixture
-def runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[AgentRuntime]:
+def runtime(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[AgentRuntime]:
     # Personal skill catalogs must not change the prompt or add YAML warnings.
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     project = tmp_path / "project"
     project.mkdir()
-    with fake_engine(script=scripted_rounds("first answer", "recent answer", "durable state", "continued")) as engine:
+    payload_support = getattr(request, "param", None)
+    with fake_engine(
+        script=scripted_rounds("first answer", "recent answer", "durable state", "continued"),
+        payload_support=payload_support,
+    ) as engine:
         # Existing harness cwd deprecations are expected at runtime construction;
         # capture only that warning, not new warnings from persistence operations.
         with pytest.warns(HarnessDeprecationWarning, match="deprecated and ignored: commands/paths start"):
@@ -68,6 +79,7 @@ def collect_syncs(runtime: AgentRuntime) -> list[Synced]:
     return syncs
 
 
+@pytest.mark.parametrize("runtime", [None, True], indirect=True)
 def test_compact_save_switch_restores_exact_kv_and_preserves_old_run(runtime: AgentRuntime) -> None:
     async def scenario() -> None:
         old_run, original = await compact_history(runtime)
@@ -148,6 +160,69 @@ def test_compact_save_switch_restores_exact_kv_and_preserves_old_run(runtime: Ag
         live_keys = {record.key for record in records}
         assert len(old_snapshot.messages) == 4
         assert len(old_keys - live_keys) == 2  # Old runs need not have ranges in the compacted KV.
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("runtime", [False], indirect=True)
+def test_compacted_history_writes_stripped_save_without_guarding_compaction(runtime: AgentRuntime) -> None:
+    async def scenario() -> None:
+        await runtime.run("x" * 14000)
+        await runtime.run("recent")
+        commands = SlashCommandRegistry()
+        install_builtin_commands(commands, runtime, request_exit=lambda: None)
+        text = await commands.execute("/compact")
+        assert isinstance(text, str)
+        assert text == "Compacted 2 messages; kept 2 (13 generated tokens)"
+        assert "payload" not in text.lower() and "kv" not in text.lower()
+
+        messages = dump(runtime.messages)
+        tokens = runtime.model.session.transcript.tokens
+        segments = runtime.model.binder.export_segments()
+        saved = await runtime.save()
+        directory = runtime.store.session_dir(saved.session_id)
+        snapshot = await FileStepStore(directory / "steps").latest_snapshot(run_id=saved.run_id)
+
+        assert saved.payload_bytes == 0
+        assert saved.tokens == len(tokens) > 0
+        assert saved.tokens_sha256 == token_digest(tokens)
+        assert saved.segments == segments
+        assert not (directory / "session.kv").exists()
+        assert snapshot is not None and dump(snapshot.messages) == messages
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("runtime", [False], indirect=True)
+def test_compacted_history_switch_renders_and_rebuilds_without_native_load(
+    runtime: AgentRuntime,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbid_native_load(*args: Any, **kwargs: Any) -> Never:
+        raise AssertionError("native payload load must not run")
+
+    monkeypatch.setattr(Session, "load_payload", forbid_native_load)
+
+    async def scenario() -> None:
+        await compact_history(runtime)
+        messages = dump(runtime.messages)
+        tokens = runtime.model.session.transcript.tokens
+        saved = await runtime.save()
+        assert saved.payload_bytes == 0
+
+        await runtime.new()
+        syncs = collect_syncs(runtime)
+        await runtime.switch(saved.session_id)
+        assert dump(runtime.messages) == messages
+        assert runtime.model.session.transcript.tokens == ()
+        assert syncs == []
+
+        result = await runtime.run("continue")
+        assert result.output == "continued"
+        assert len(syncs) == 2
+        assert sum(event.prefilled for event in syncs) == len(tokens) + 33
+        assert runtime.model.session.transcript.tokens[: len(tokens)] == tokens
+        assert all((message.metadata or {}).get("ds4.key") for message in runtime.messages)
 
     asyncio.run(scenario())
 

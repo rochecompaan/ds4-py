@@ -48,6 +48,47 @@ def test_noninteractive_prints_only_the_final_answer_and_saves() -> None:
     assert runtime.saves == 1
 
 
+def test_noninteractive_success_finishes_with_a_stripped_save(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "store")
+    with fake_engine(script=scripted_rounds("answer"), payload_support=False) as engine:
+        runtime = AgentRuntime(make_model(engine), project_dir(tmp_path), store=store, clock=fixed_clock)
+        try:
+            code, out, err = invoke(runtime)
+            session_id = runtime.session_id
+        finally:
+            asyncio.run(runtime.close())
+
+    record = store.read_record(store.session_dir(session_id) / "save.json")
+    assert (code, out, err) == (0, "answer\n", "")
+    assert record.payload_bytes == 0
+    assert record.tokens > 0
+    assert not (store.session_dir(session_id) / "session.kv").exists()
+
+
+def test_noninteractive_terminal_failure_finishes_with_a_stripped_save(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "store")
+    with fake_engine(script=scripted_rounds("ab"), payload_support=False) as engine:
+        runtime = AgentRuntime(
+            make_model(engine, max_tokens=1),
+            project_dir(tmp_path),
+            store=store,
+            clock=fixed_clock,
+        )
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            code = asyncio.run(run_noninteractive(runtime, "prompt", out=out, err=err))
+            session_id = runtime.session_id
+        finally:
+            asyncio.run(runtime.close())
+
+    record = store.read_record(store.session_dir(session_id) / "save.json")
+    assert code == 1
+    assert "max_tokens" in err.getvalue()
+    assert record.payload_bytes == 0
+    assert record.tokens > 0
+    assert not (store.session_dir(session_id) / "session.kv").exists()
+
+
 def test_default_noninteractive_compacts_without_printing_private_summary(tmp_path: Path) -> None:
     with fake_engine(script=scripted_rounds("answer", "answer", "private summary", "final answer")) as engine:
         runtime = AgentRuntime(
@@ -95,6 +136,16 @@ def test_noninteractive_save_failure_is_nonzero() -> None:
         "answer\n",
         "ds4py: save failed: disk full\n",
     )
+
+
+def test_noninteractive_uses_extension_program_for_run_and_save_diagnostics() -> None:
+    runtime = FakeRunRuntime(run_error=RuntimeError("run failed"), save_error=OSError("disk full"))
+    err = io.StringIO()
+
+    code = asyncio.run(run_noninteractive(cast("Any", runtime), "prompt", err=err, program="companion-agent"))
+
+    assert code == 1
+    assert err.getvalue() == "companion-agent: run failed\ncompanion-agent: save failed: disk full\n"
 
 
 def test_noninteractive_saves_and_reports_save_failure_after_output_failure() -> None:
@@ -150,7 +201,7 @@ def test_agent_cli_reports_value_errors_without_a_traceback(
 ) -> None:
     from ds4py import agent_cli
 
-    def fail(_args: Any) -> Never:
+    def fail(_args: Any, **kwargs: Any) -> Never:
         raise ValueError("invalid prefix")
 
     monkeypatch.setattr(agent_cli, "command", fail)
@@ -164,6 +215,7 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(
 ) -> None:
     import ds4py.model as model_module
     import ds4py.noninteractive as noninteractive_module
+    import ds4py.prefill_trace as prefill_trace_module
     import ds4py.runtime as runtime_module
 
     created = []
@@ -179,9 +231,10 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(
 
         def __exit__(self, *args: object) -> None:
             self.exited = True
+            created.append(SimpleNamespace(kind="engine-close"))
 
         def session(self) -> object:
-            return object()
+            return SimpleNamespace(engine=self)
 
     class Runtime:
         def __init__(self, model: Any, project_dir: Any, **kwargs: Any) -> None:
@@ -197,6 +250,7 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(
 
         async def close(self) -> None:
             self.closed = True
+            created.append(SimpleNamespace(kind="runtime-close"))
 
     def open_fake(model: Any, **kwargs: Any) -> Any:
         created.append(SimpleNamespace(kind="open", model=model, kwargs=kwargs))
@@ -209,7 +263,7 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(
         created.append(SimpleNamespace(kind="model", model=value))
         return value
 
-    async def run_fake(runtime: Any, prompt: Any) -> int:
+    async def run_fake(runtime: Any, prompt: Any, **kwargs: Any) -> int:
         created.append(SimpleNamespace(kind="run", runtime=runtime, prompt=prompt))
         return 0
 
@@ -217,6 +271,19 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(
     monkeypatch.setattr(model_module, "DS4Model", model_fake)
     monkeypatch.setattr(runtime_module, "AgentRuntime", Runtime)
     monkeypatch.setattr(noninteractive_module, "run_noninteractive", run_fake)
+
+    class Trace:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def __enter__(self) -> Any:
+            created.append(SimpleNamespace(kind="trace-enter"))
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            created.append(SimpleNamespace(kind="trace-exit"))
+
+    monkeypatch.setattr(prefill_trace_module, "PrefillTraceWriter", Trace)
     prefix = tmp_path / "prefix.txt"
     prefix.write_text("USER: earlier\nASSISTANT: answer\n")
 
@@ -234,6 +301,8 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(
                 "123",
                 "--temp",
                 "0",
+                "--top-k",
+                "0",
                 "--top-p",
                 "0.8",
                 "--min-p",
@@ -245,11 +314,15 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(
                 "--cpu",
                 "--threads",
                 "2",
+                "--lib",
+                str(tmp_path / "libds4.dylib"),
                 "--system",
                 "persistent rules",
                 "--prefix-file",
                 str(prefix),
                 "--read-only",
+                "--trace",
+                str(tmp_path / "trace.jsonl"),
             ]
         )
         == 0
@@ -263,11 +336,11 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(
         "think": 1025,
         "seed": 1,
         "threads": 2,
-        "lib": None,
+        "lib": tmp_path / "libds4.dylib",
     }
     made = next(item for item in created if item.kind == "model").model
     assert made.kwargs == {
-        "sampling": SamplingPolicy(temperature=0.0, top_p=0.8, min_p=0.0, seed=1),
+        "sampling": SamplingPolicy(temperature=0.0, top_k=0, top_p=0.8, min_p=0.0, seed=1),
         "max_tokens": 123,
     }
     runtime = next(item for item in created if isinstance(item, Runtime))
@@ -277,6 +350,8 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(
         "interactive": False,
         "question_answerer": None,
         "request_limit": 100,
+        "before_identity_change": None,
+        "after_identity_change": None,
     }
     assert [(turn.role, turn.content) for turn in cast("Any", runtime.loaded)] == [
         ("user", "earlier"),
@@ -286,6 +361,9 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(
     assert run.runtime is runtime and run.prompt == "hello"
     assert runtime.closed
     assert next(item for item in created if getattr(item, "kind", None) == "engine").engine.exited
+    kinds = [getattr(item, "kind", None) for item in created]
+    assert kinds.index("trace-enter") < kinds.index("run") < kinds.index("trace-exit")
+    assert kinds.index("trace-exit") < kinds.index("runtime-close") < kinds.index("engine-close")
 
 
 def test_agent_cli_interactive_constructs_and_runs_tui(
@@ -318,7 +396,7 @@ def test_agent_cli_interactive_constructs_and_runs_tui(
             created.append("runtime-closed")
 
     class FakeTUI:
-        def __init__(self, runtime: Any) -> None:
+        def __init__(self, runtime: Any, *, configure_commands: Any = None) -> None:
             self.runtime = runtime
             created.append(self)
 
@@ -390,7 +468,7 @@ def test_run_tui_binds_questions_to_the_tui(monkeypatch: pytest.MonkeyPatch) -> 
     created = []
 
     class FakeTUI:
-        def __init__(self, actual_runtime: Any) -> None:
+        def __init__(self, actual_runtime: Any, *, configure_commands: Any = None) -> None:
             assert actual_runtime is runtime
             created.append(self)
 

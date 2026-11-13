@@ -7,10 +7,13 @@ import pytest
 from ds4py._native import bindings, typemap
 
 
-def test_core_bindings_are_the_m1_list() -> None:
+def test_core_bindings_include_the_optional_payload_probe() -> None:
     names = [b.name for b in bindings.CORE_BINDINGS]
-    assert len(names) == len(set(names)) == 52
-    assert all(b.required for b in bindings.CORE_BINDINGS)
+    assert len(names) == len(set(names)) == 53
+    assert all(b.required for b in bindings.CORE_BINDINGS if b.name != "ds4_session_supports_payload")
+    probe = next(b for b in bindings.CORE_BINDINGS if b.name == "ds4_session_supports_payload")
+    assert not probe.required
+    assert probe.source == "core"
     assert {
         "ds4_session_sync",
         "ds4_session_save_snapshot",
@@ -63,7 +66,7 @@ def test_extension_discovered_through_entry_point(ext_site: Any) -> None:
     assert not found["ds4_engine_sampling_defaults"].required
     assert found["ds4_engine_layer_count"].source == "test_ext"
     combined = bindings.all_bindings()
-    assert combined[:52] == bindings.CORE_BINDINGS
+    assert combined[: len(bindings.CORE_BINDINGS)] == bindings.CORE_BINDINGS
     assert [b.name for b in combined][-2:] == list(found)
 
 
@@ -93,6 +96,21 @@ def install_providers(monkeypatch: pytest.MonkeyPatch, *providers: Any) -> None:
         monkeypatch.setitem(sys.modules, name, module)
         points.append(EntryPoint(name=name, value=f"{name}:BINDINGS", group="ds4py.bindings"))
     monkeypatch.setattr(bindings.metadata, "entry_points", lambda *, group: points)
+
+
+def test_extension_may_not_redeclare_the_payload_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_providers(
+        monkeypatch,
+        (
+            bindings.Binding(
+                "ds4_session_supports_payload",
+                "bool ds4_session_supports_payload(ds4_session *s)",
+                False,
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="ds4_session_supports_payload"):
+        bindings.discover_extension_bindings()
 
 
 @pytest.mark.parametrize("first_required", [False, True])

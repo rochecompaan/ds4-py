@@ -78,6 +78,10 @@ HOME=/tmp/ds4-quality-empty-home uv run --frozen --extra agent pytest -m "not bu
 
 Do not commit generated build output, native libraries, traces, virtual environments, or local `.devenv` state.
 
+## Delivery
+
+For ds4-py and satyrn-agent, delivery includes implementation, required verification, local commits, pushing the task branch, and creating the pull request. Do not stop at local commits unless the user explicitly asks not to push or open a pull request.
+
 ## Pull request review
 
 Agent correctness review happens on the author's side, before a person

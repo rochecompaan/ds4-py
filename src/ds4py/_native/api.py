@@ -7,7 +7,7 @@ import threading
 import weakref
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, BinaryIO, Self, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Protocol, Self, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence
@@ -32,6 +32,19 @@ from .protocol import (
 )
 
 _open_lock = threading.Lock()
+
+
+class _PayloadLibrary(Protocol):
+    def has(self, name: str) -> bool: ...
+
+    def fn(self, name: str) -> Callable[..., Any]: ...
+
+
+def file_payloads_supported(library: _PayloadLibrary, session: int) -> bool:
+    """Return native support, treating a freshly probed absent symbol as legacy support."""
+    if not library.has("ds4_session_supports_payload"):
+        return True
+    return bool_result(library.fn("ds4_session_supports_payload")(session))
 
 
 # Instance locking and open-time configuration.
@@ -459,6 +472,12 @@ class NativeSession(_Handle):
 
     def invalidate(self) -> None:
         self._call("ds4_session_invalidate")
+
+    def file_payloads_supported(self) -> bool:
+        self._assert_thread()
+        if not self.raw:
+            raise EngineError("native handle is closed")
+        return file_payloads_supported(self._lib, self.raw)
 
     def payload_bytes(self) -> int:
         return int_result(self._call("ds4_session_payload_bytes"))

@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from ds4py.engine.session import Session
     from ds4py.model import DS4Model
 from ds4py.runtime_restore import (
+    RestorePlan,
     RestoreResult,
     plan_restore,
     restore_snapshot,
@@ -69,6 +70,10 @@ from ds4py.store import (
 
 _PLACEHOLDER_HEADER = KV_HEADER.pack(KV_MAGIC, KV_VERSION, 0)
 _SAVE_PREFIX = ".save-"
+
+
+def _no_identity_hook() -> None:
+    pass
 
 
 class _PayloadWrite(TypedDict, total=False):
@@ -190,6 +195,8 @@ class AgentRuntime:
         question_answerer: QuestionAnswerer | None = None,
         request_limit: int = 50,
         context: ContextComposition | None = None,
+        before_identity_change: Callable[[], None] | None = None,
+        after_identity_change: Callable[[], None] | None = None,
     ) -> None:
         self.model = model
         self.project_dir = Path(project_dir)
@@ -204,6 +211,9 @@ class AgentRuntime:
         self._interrupted = False
         self._trace_failure: OSError | None = None
         self._request_limit = request_limit
+        self._identity_hooks_configured = before_identity_change is not None or after_identity_change is not None
+        self._before_identity = before_identity_change if before_identity_change is not None else _no_identity_hook
+        self._after_identity = after_identity_change if after_identity_change is not None else _no_identity_hook
         self._created_at = self._timestamp()
         self._session_dir = self.store.session_dir(self._session.id)
         self.components = build_agent_components(
@@ -524,7 +534,7 @@ class AgentRuntime:
         return list(messages)
 
     async def save(self) -> SaveRecord:
-        """Write the KV file, then a complete snapshot, then the save record."""
+        """Publish a complete snapshot and record, with KV or stripped payload bytes."""
         self._require_open()
         await self._stop_active()
         session_id = self._session.id
@@ -535,22 +545,25 @@ class AgentRuntime:
         holder = self._holder()
         run_id = await self._next_save_run_id(holder.current)
 
-        written: _PayloadWrite = {}
+        payloads_supported = self._session.file_payloads_supported()
+        payload_bytes = 0
+        if payloads_supported:
+            written: _PayloadWrite = {}
 
-        def write_payload(file: BinaryIO) -> int:
-            saved = self._session.save_payload(file, header=_PLACEHOLDER_HEADER)
-            written["tokens"] = saved.tokens
-            written["payload_bytes"] = saved.payload_bytes
-            return saved.payload_bytes
+            def write_payload(file: BinaryIO) -> int:
+                saved = self._session.save_payload(file, header=_PLACEHOLDER_HEADER)
+                written["tokens"] = saved.tokens
+                written["payload_bytes"] = saved.payload_bytes
+                return saved.payload_bytes
 
-        payload_bytes = self.store.write_kv_stream_atomic(
-            session_dir / "session.kv",
-            write_payload,
-        )
-        if written.get("tokens") != len(tokens) or written.get("payload_bytes") != payload_bytes:
-            raise EngineError(
-                f"the native payload covers {written.get('tokens')} tokens, the transcript has {len(tokens)}"
+            payload_bytes = self.store.write_kv_stream_atomic(
+                session_dir / "session.kv",
+                write_payload,
             )
+            if written.get("tokens") != len(tokens) or written.get("payload_bytes") != payload_bytes:
+                raise EngineError(
+                    f"the native payload covers {written.get('tokens')} tokens, the transcript has {len(tokens)}"
+                )
 
         snapshot = ContinuableSnapshot(
             run_id=run_id,
@@ -586,6 +599,8 @@ class AgentRuntime:
             segments=self.model.binder.export_segments(),
         )
         self.store.write_record_atomic(session_dir / "save.json", record)
+        if not payloads_supported:
+            (session_dir / "session.kv").unlink(missing_ok=True)
         self._session.emit("saved", record=record.to_dict(), payload_bytes=payload_bytes)
         return record
 
@@ -641,11 +656,17 @@ class AgentRuntime:
             record=record,
             session_dir=session_dir,
         )
-        if self._record is not None:
+        if plan.path == "kv" and not self._session.file_payloads_supported():
+            plan = RestorePlan("render", None, "the live engine does not support file payloads")
+        if self._identity_hooks_configured:
+            self._before_identity()
+        elif self._record is not None:
             self._record.relocate(session_dir / "events.jsonl")
         outcome: dict[str, object] = {}
 
         def restore() -> RestoreResult:
+            if self._identity_hooks_configured and self._record is not None:
+                self._record.relocate(session_dir / "events.jsonl")
             try:
                 result = restore_snapshot(
                     session=self._session,
@@ -675,6 +696,12 @@ class AgentRuntime:
             restore_path=plan.path,
             mismatch=plan.mismatch,
         )
+        if self._identity_hooks_configured:
+            try:
+                self._after_identity()
+            except BaseException:
+                self._status = "error"
+                raise
         self._status = "idle"
         if "rejected" in outcome:
             self._session.emit(
@@ -688,6 +715,8 @@ class AgentRuntime:
         """Start a clean session; the old directory and its files stay intact."""
         self._require_open()
         await self._stop_active()
+        if self._identity_hooks_configured:
+            self._before_identity()
         session_id = self._session.new()
         self._messages = []
         self._title = ""
@@ -698,6 +727,12 @@ class AgentRuntime:
             self._record.relocate(self.store.session_dir(session_id) / "events.jsonl")
         if self._notes is not None:
             self._notes.sync_from_segments(())
+        if self._identity_hooks_configured:
+            try:
+                self._after_identity()
+            except BaseException:
+                self._status = "error"
+                raise
         return session_id
 
     async def fork(self) -> str:

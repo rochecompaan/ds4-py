@@ -135,6 +135,11 @@ CORE_BINDINGS: tuple[Binding, ...] = (
         "void ds4_session_snapshot_free(ds4_session_snapshot *snap)",
     ),
     Binding(
+        "ds4_session_supports_payload",
+        "bool ds4_session_supports_payload(ds4_session *s)",
+        required=False,
+    ),
+    Binding(
         "ds4_session_payload_bytes",
         "uint64_t ds4_session_payload_bytes(ds4_session *s)",
     ),

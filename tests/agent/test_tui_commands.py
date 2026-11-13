@@ -81,6 +81,30 @@ def make_tui(runtime: Any = None) -> TUI:
     return TUI(cast("Any", runtime or FakeRuntime()), output=DummyOutput())
 
 
+def test_extension_commands_run_after_builtins() -> None:
+    runtime = FakeRuntime()
+    configured = []
+
+    def configure(registry: SlashCommandRegistry, actual_runtime: Any) -> None:
+        assert actual_runtime is runtime
+        assert any(item.text.startswith("/new ") for item in registry.completions("/"))
+        registry.register("extra", lambda: "extra result", description="Extra command")
+        configured.append(True)
+
+    tui = TUI(cast("Any", runtime), output=DummyOutput(), configure_commands=configure)
+
+    assert configured == [True]
+    assert asyncio.run(tui.commands.execute("/extra")) == "extra result"
+
+
+def test_extension_cannot_replace_builtin_command() -> None:
+    def configure(registry: SlashCommandRegistry, runtime: Any) -> None:
+        registry.register("new", lambda: None, description="Duplicate")
+
+    with pytest.raises(ValueError, match="command already registered: /new"):
+        TUI(cast("Any", FakeRuntime()), output=DummyOutput(), configure_commands=configure)
+
+
 def test_builtin_commands_execute_runtime_lifecycle() -> None:
     runtime = FakeRuntime()
     tui = make_tui(runtime)

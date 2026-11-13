@@ -8,10 +8,10 @@ if TYPE_CHECKING:
     from ds4py.runtime import AgentRuntime
 
 
-def _report(err: TextIO, message: str) -> None:
+def _report(err: TextIO, message: str, program: str) -> None:
     """Best-effort diagnostics must not prevent the unconditional save."""
     try:
-        print(f"ds4py: {message}", file=err)
+        print(f"{program}: {message}", file=err)
     except asyncio.CancelledError, KeyboardInterrupt:
         pass
     except Exception:
@@ -24,6 +24,7 @@ async def run_noninteractive(
     *,
     out: TextIO | None = None,
     err: TextIO | None = None,
+    program: str = "ds4py",
 ) -> int:
     """Run one prompt, print its final output, and attempt a save in all cases.
 
@@ -38,27 +39,27 @@ async def run_noninteractive(
             result = await runtime.run(prompt)
         except asyncio.CancelledError, KeyboardInterrupt:
             code = 130
-            _report(errors, "interrupted")
+            _report(errors, "interrupted", program)
         except Exception as exc:
             code = 1
-            _report(errors, str(exc))
+            _report(errors, str(exc), program)
         else:
             try:
                 print(result.output, file=output)
             except asyncio.CancelledError, KeyboardInterrupt:
                 code = 130
-                _report(errors, "output interrupted")
+                _report(errors, "output interrupted", program)
             except Exception as exc:
                 code = 1
-                _report(errors, f"output failed: {exc}")
+                _report(errors, f"output failed: {exc}", program)
     finally:
         try:
             await runtime.save()
         except asyncio.CancelledError, KeyboardInterrupt:
             if code == 0:
                 code = 130
-            _report(errors, "save interrupted")
+            _report(errors, "save interrupted", program)
         except Exception as exc:
             code = 1
-            _report(errors, f"save failed: {exc}")
+            _report(errors, f"save failed: {exc}", program)
     return code
