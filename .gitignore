@@ -7,6 +7,7 @@ devenv.local.yaml
 
 # direnv
 .direnv
+.envrc.local
 
 # Python and package builds
 .venv/

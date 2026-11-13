@@ -81,3 +81,21 @@ Do not commit generated build output, native libraries, traces, virtual environm
 ## Delivery
 
 For ds4-py and satyrn-agent, delivery includes implementation, required verification, local commits, pushing the task branch, and creating the pull request. Do not stop at local commits unless the user explicitly asks not to push or open a pull request.
+
+## Pull request review
+
+Agent correctness review happens on the author's side, before a person
+reviews the PR.
+
+- Authors run the `pr-review-loop` skill before they request human review.
+  They run it again after they push code changes, including changes made in
+  answer to a human reviewer.
+- We strongly recommend that human reviewers do not run agents for
+  correctness reviews or post agent-written reviews. The author's loop
+  already covers correctness, and agent reviews on the PR bring back the
+  back-and-forth between agents that the loop replaces.
+- Human reviewers check that the evidence head in the PR's "Review evidence"
+  section matches the PR head. They read the declined and deferred findings
+  and the human reviewer callouts. Then they look at what smells off,
+  maintainability, and fit with the spec.
+- A reviewer who doubts the evidence asks the author to run another loop.
