@@ -1,4 +1,5 @@
 # yaml-language-server: $schema=https://devenv.sh/devenv.schema.json
 inputs:
   nixpkgs:
-    url: github:cachix/devenv-nixpkgs/rolling
+    # Keep Ruff and ty aligned with uv.lock for non-Nix CI.
+    url: github:cachix/devenv-nixpkgs/bf42f6b70f14cbe80d043a24597035e951d6a31c

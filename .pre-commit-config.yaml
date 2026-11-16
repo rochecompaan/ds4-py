@@ -50,7 +50,7 @@ repos:
       - id: ruff-check
         name: ruff check
         entry: >-
-          uv run --frozen --extra agent ruff check
+          ruff check
           --force-exclude --fix --exit-non-zero-on-fix
         language: system
         types_or: [python, pyi, jupyter]
@@ -58,14 +58,14 @@ repos:
       - id: ruff-format
         name: ruff format
         entry: >-
-          uv run --frozen --extra agent ruff format
+          ruff format
           --force-exclude --exit-non-zero-on-format
         language: system
         types_or: [python, pyi, jupyter]
         require_serial: true
       - id: ty
         name: ty check
-        entry: uv run --frozen --extra agent ty check
+        entry: ty check
         language: system
         pass_filenames: false
         always_run: true

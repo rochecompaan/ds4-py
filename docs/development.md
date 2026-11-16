@@ -20,7 +20,7 @@ From the ds4-py checkout, enter the project environment:
 devenv shell
 ```
 
-The environment provides Python, `uv`, a C compiler, GNU Make, Git, curl, GNU coreutils, unzip, and actionlint.
+The environment provides Python, `uv`, a C compiler, GNU Make, Git, curl, GNU coreutils, unzip, actionlint, prek, Ruff, and ty.
 `devenv.lock` pins the Nix inputs.
 `uv` uses the Nix Python and does not download another interpreter.
 It stores the project's virtual environment in `.devenv/state/venv`.
@@ -47,15 +47,24 @@ It does not prove that model inference works on your hardware.
 Install the prek hook once, then run the same static quality gate used by CI:
 
 ```bash
-uv run prek install
-uv run --frozen --extra agent prek run --all-files --show-diff-on-failure
+prek install
+prek run --all-files --show-diff-on-failure
 ```
+
+Run `prek`, `ruff`, and `ty` directly so devenv supplies the Nix-compatible executables.
+Do not run these tools through `uv run` locally: their generic Linux binaries do not run on NixOS.
+If an existing hook points to the uv executable, re-run `prek install` inside devenv to replace it.
+The Python dependencies for these tools remain available for CI, which does not use Nix.
+CI runs `uv run --frozen --extra agent prek run --all-files --show-diff-on-failure`.
+That command puts the uv-installed tools on `PATH` for the same hooks.
+Keep the nixpkgs revision in `devenv.yaml` aligned with the tool versions in `uv.lock` when you update them.
+Devenv sets `VIRTUAL_ENV` to the uv environment so ty can find its dependencies without running the uv-installed executable.
 
 The gate includes Ruff lint and formatting, ty, TOML, YAML, JSON, GitHub workflow schema checks, actionlint, and general file hygiene.
 Run ty directly when you need its complete diagnostics without the other hooks:
 
 ```bash
-uv run --frozen --extra agent ty check
+ty check
 ```
 
 Use `TypeIs`, not `TypeGuard`, for custom narrowing validators.

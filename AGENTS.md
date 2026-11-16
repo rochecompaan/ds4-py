@@ -21,17 +21,24 @@ Then synchronize the locked dependencies and install the Git hooks once:
 
 ```bash
 uv sync --frozen --extra agent
-uv run prek install
+prek install
 ```
 
-`devenv.lock` pins the Nix inputs. `uv.lock` pins Python tools and packages. Do not let uv download another interpreter.
+`devenv.lock` pins the Nix inputs, including local `prek`, Ruff, and ty executables.
+`uv.lock` pins Python tools and packages, including those tools for non-Nix CI.
+Keep the nixpkgs revision in `devenv.yaml` aligned with these tool versions in `uv.lock`.
+Do not let uv download another interpreter.
+
+Run `prek`, `ruff`, and `ty` directly inside devenv, not through `uv run`, to avoid generic Linux binaries on NixOS.
+Re-run `prek install` to repair hooks installed with the uv executable.
+CI runs `uv run --frozen --extra agent prek run --all-files --show-diff-on-failure` so the same hooks find the uv-installed tools on `PATH`.
 
 ## Run checks
 
 Run the complete static gate after relevant changes:
 
 ```bash
-uv run --frozen --extra agent prek run --all-files --show-diff-on-failure
+prek run --all-files --show-diff-on-failure
 ```
 
 This includes Ruff lint and format, ty, TOML, YAML, JSON, GitHub workflow schema checks, actionlint, and the `TypeGuard` ban. Do not run only changed files when a change can affect types or formatting elsewhere.

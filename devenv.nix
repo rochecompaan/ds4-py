@@ -21,6 +21,9 @@
     curl
     git
     gnumake
+    prek
+    ruff
+    ty
     unzip
   ];
 
@@ -29,4 +32,7 @@
   # Use Nix's Python for uv projects, including the initial scaffold.
   env.UV_PYTHON = "${config.languages.python.package}/bin/python3";
   env.UV_PYTHON_DOWNLOADS = "never";
+
+  # The Nix-provided type checker must inspect the uv project's dependencies.
+  env.VIRTUAL_ENV = config.env.UV_PROJECT_ENVIRONMENT;
 }
