@@ -10,7 +10,10 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartDeltaEvent,
+    PartEndEvent,
+    TextPart,
     TextPartDelta,
+    ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
@@ -404,6 +407,104 @@ def test_text_and_thinking_deltas_have_distinct_styles() -> None:
     assert fragment_text(thinking) == "private"
     assert text[0][0] != thinking[0][0]
     assert "dim" in thinking[0][0]
+
+
+def test_stream_renderer_prints_complete_styled_lines_and_flushes_part_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    printed: list[tuple[list[tuple[str, str]], str]] = []
+
+    def record(fragments: Any, *, end: str, **_kwargs: Any) -> None:
+        printed.append((list(fragments), end))
+
+    monkeypatch.setattr("ds4py.tui_render.print_formatted_text", record)
+    renderer = StreamRenderer(DummyOutput())
+    renderer.handle_event(PartDeltaEvent(index=0, delta=TextPartDelta("**bold**")))
+    assert printed == []
+
+    renderer.handle_event(PartDeltaEvent(index=0, delta=TextPartDelta("\n")))
+    renderer.handle_event(PartEndEvent(index=0, part=TextPart("**bold**")))
+    renderer.handle_event(PartDeltaEvent(index=1, delta=ThinkingPartDelta(content_delta="quiet")))
+    assert len(printed) == 1
+
+    renderer.handle_event(PartEndEvent(index=1, part=ThinkingPart("quiet")))
+
+    assert printed == [
+        ([("class:markdown.bold bold", "bold")], "\n"),
+        ([("dim italic class:thinking", "quiet")], "\n"),
+    ]
+
+
+def test_stream_renderer_flushes_text_before_tool_lines(monkeypatch: pytest.MonkeyPatch) -> None:
+    printed: list[tuple[str, str]] = []
+
+    def record(fragments: Any, *, end: str, **_kwargs: Any) -> None:
+        printed.append((fragment_text(list(fragments)), end))
+
+    monkeypatch.setattr("ds4py.tui_render.print_formatted_text", record)
+    renderer = StreamRenderer(DummyOutput())
+    call = FunctionToolCallEvent(part=ToolCallPart(tool_name="read_file", args={"path": "a.txt"}))
+    result = FunctionToolResultEvent(
+        part=ToolReturnPart(tool_name="read_file", content="contents", tool_call_id="call-1")
+    )
+
+    renderer.handle_event(PartDeltaEvent(index=0, delta=TextPartDelta("before")))
+    renderer.handle_event(call)
+    renderer.handle_event(PartDeltaEvent(index=1, delta=TextPartDelta("after")))
+    renderer.handle_event(result)
+
+    assert printed == [
+        ("before", "\n"),
+        ("→ read_file {'path': 'a.txt'}", "\n"),
+        ("after", "\n"),
+        ("← read_file: contents", "\n"),
+    ]
+
+
+def test_tui_run_end_and_shutdown_flush_pending_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    printed: list[tuple[str, str]] = []
+    flushed = asyncio.Event()
+
+    def record(fragments: Any, *, end: str, **_kwargs: Any) -> None:
+        printed.append((fragment_text(list(fragments)), end))
+        flushed.set()
+
+    monkeypatch.setattr("ds4py.tui_render.print_formatted_text", record)
+
+    async def scenario() -> None:
+        tui = make_tui(cast("Any", FakeRuntime()))
+        tui.renderer.handle_event(PartDeltaEvent(index=0, delta=TextPartDelta("run tail")))
+        tui._events.put_nowait(SessionEvent("run_end", "session", {}))
+        task = asyncio.create_task(tui._render_events())
+        await asyncio.wait_for(flushed.wait(), timeout=2)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert printed == [("run tail", "\n")]
+
+        tui.renderer.handle_event(PartDeltaEvent(index=0, delta=TextPartDelta("shutdown tail")))
+        tui.close()
+
+    asyncio.run(scenario())
+    assert printed == [("run tail", "\n"), ("shutdown tail", "\n")]
+
+
+def test_show_message_flushes_pending_text_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    printed: list[str] = []
+
+    def record(fragments: Any, *, end: str = "\n", **_kwargs: Any) -> None:
+        text = fragments if isinstance(fragments, str) else fragment_text(list(fragments))
+        printed.append(text + end)
+
+    monkeypatch.setattr("ds4py.tui_render.print_formatted_text", record)
+    monkeypatch.setattr("ds4py.tui.print_formatted_text", record)
+    tui = make_tui(cast("Any", FakeRuntime()))
+    try:
+        tui.renderer.handle_event(PartDeltaEvent(index=0, delta=TextPartDelta("partial")))
+        tui.show_message("error: boom")
+    finally:
+        tui.close()
+
+    assert printed == ["partial\n", "error: boom\n"]
 
 
 def test_tool_previews_are_one_line_and_ellipsized() -> None:
