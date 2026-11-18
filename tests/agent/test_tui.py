@@ -435,6 +435,22 @@ def test_stream_renderer_prints_complete_styled_lines_and_flushes_part_end(
     ]
 
 
+def test_stream_renderer_preserves_blank_lines(monkeypatch: pytest.MonkeyPatch) -> None:
+    printed: list[tuple[str, str]] = []
+
+    def record(fragments: Any, *, end: str, **_kwargs: Any) -> None:
+        printed.append((fragment_text(list(fragments)), end))
+
+    monkeypatch.setattr("ds4py.tui_render.print_formatted_text", record)
+    renderer = StreamRenderer(DummyOutput())
+    renderer.handle_event(PartDeltaEvent(index=0, delta=TextPartDelta("a\n\nb")))
+    assert printed == [("a", "\n"), ("", "\n")]
+
+    renderer.flush()
+
+    assert printed == [("a", "\n"), ("", "\n"), ("b", "\n")]
+
+
 def test_stream_renderer_flushes_text_before_tool_lines(monkeypatch: pytest.MonkeyPatch) -> None:
     printed: list[tuple[str, str]] = []
 
