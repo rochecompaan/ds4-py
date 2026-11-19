@@ -109,7 +109,7 @@ class ToolPromptGenerator:
         suffix = (
             "</tools>\n\n"
             "Call example:\n"
-            "<tool_call>read<arg_key>path</arg_key><arg_value>README.md</arg_value></tool_call>\n\n"
+            "<tool_call>$TOOL_NAME<arg_key>$PARAMETER_NAME</arg_key><arg_value>$PARAMETER_VALUE</arg_value></tool_call>\n\n"
             "Escape literal </arg_value> as &lt;/arg_value>; write &lt;/arg_value> literally as "
             "&amp;lt;/arg_value>. Other entities stay unchanged.\n"
         )
@@ -120,7 +120,7 @@ class ToolPromptGenerator:
         suffix = (
             "</tools>\n\n"
             "Call example:\n"
-            "<tool_call>\n<function=read>\n<parameter=path>\nREADME.md\n</parameter>\n"
+            "<tool_call>\n<function=$TOOL_NAME>\n<parameter=$PARAMETER_NAME>\n$PARAMETER_VALUE\n</parameter>\n"
             "</function>\n</tool_call>\n\n"
             "Escape literal </parameter> as &lt;/parameter>; write &lt;/parameter> literally as "
             "&amp;lt;/parameter>. Other entities stay unchanged.\n"

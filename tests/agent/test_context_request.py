@@ -84,10 +84,10 @@ def test_pending_count_keeps_native_sampled_prefix_and_grouped_wrappers(pending_
                     ToolReturnPart("read_big", "b" * 20, tool_call_id="two"),
                 ]
             )
-            # Native prefix: 2 BOS + 190 default tools/system + 1 user
+            # Native prefix: 2 BOS + 214 default tools/system + 1 user
             # marker + 2 body + 3 assistant prefix + 22 sampled; no GLM EOS.
             # The sampled empty think block is absent from the public response.
-            assert len(model.session.transcript) == 220
+            assert len(model.session.transcript) == 244
             if pending_note:
                 notes = DS4SystemNotes(model.session, hints=True)
                 notes.notes(messages)
@@ -95,7 +95,7 @@ def test_pending_count_keeps_native_sampled_prefix_and_grouped_wrappers(pending_
                 model.binder.note_provider = notes
             before = (model.session.transcript.tokens, model.binder.records())
             # Pending hints-off: 92 body bytes + leading newline + system marker.
-            expected = 404 if pending_note else 310
+            expected = 428 if pending_note else 334
             assert model.binder.project_request([*messages, response, pending], bound=True) == expected
             assert (model.session.transcript.tokens, model.binder.records()) == before
             model.binder.prepare([*messages, response, pending])

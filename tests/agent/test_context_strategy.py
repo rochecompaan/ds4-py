@@ -265,12 +265,12 @@ def test_tool_fit_check_preserves_sampled_spans_and_counts_assistant_prefix() ->
         rendered = len(oracle_session.transcript) - before
 
     assert _tool_return(result).content == TOOL_ERROR
-    # Hand-checked counts: live prompt 545, wrong scratch base 358, rendered tool
+    # Hand-checked counts: live prompt 569, wrong scratch base 382, rendered tool
     # message 20038, assistant prefix 17, and an 8192 context. The old delta
-    # calculation omitted that prefix (12392 instead of the exact 12409).
-    assert (base, before, rendered, ctx) == (545, 358, 20038, 8192)
+    # calculation omitted that prefix (12416 instead of the exact 12433).
+    assert (base, before, rendered, ctx) == (569, 382, 20038, 8192)
     assert owner.requests == [ContextRequest(base + rendered + 17 + 1 - ctx, "tool_result")]
-    assert owner.requests[0].needed_tokens == 12409
+    assert owner.requests[0].needed_tokens == 12433
 
 
 def test_reserve_without_owner_raises_context_exhausted() -> None:
