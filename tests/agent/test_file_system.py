@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.tools import ToolDefinition
 from test_context_strategy import StubBinder
@@ -68,6 +68,40 @@ def _run_agent(
     components = build_agent_components(model, tmp_path, read_only=read_only)
     result = asyncio.run(components.agent.run("run the requested tool"))
     return result, exposed
+
+
+def _run_turns(tmp_path: Path, turns: list[str | tuple[str, dict[str, Any]]]) -> Any:
+    remaining = iter(turns)
+
+    def scripted(messages: Any, info: Any) -> ModelResponse:
+        turn = next(remaining)
+        if isinstance(turn, str):
+            return ModelResponse(parts=[TextPart(turn)])
+        name, args = turn
+        return ModelResponse(parts=[ToolCallPart(name, args)])
+
+    async def stream_function(messages: Any, info: Any) -> AsyncIterator[Any]:
+        turn = next(remaining)
+        if isinstance(turn, str):
+            yield turn
+        else:
+            name, args = turn
+            yield {0: DeltaToolCall(name=name, json_args=json.dumps(args))}
+
+    model: Any = FunctionModel(scripted, stream_function=stream_function)
+    model.session = MockSession()
+    model.binder = StubBinder([0] * 100, transcript_tokens=0, ctx=65536)
+    components = build_agent_components(model, tmp_path)
+    return asyncio.run(components.agent.run("run the scripted tools"))
+
+
+def _retry_content(result: Any) -> str:
+    retries = [
+        part.content for message in result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+    ]
+    assert len(retries) == 1
+    assert isinstance(retries[0], str)
+    return retries[0]
 
 
 def _read_result(tmp_path: Path, args: dict[str, Any]) -> str:
@@ -188,3 +222,107 @@ def test_two_bad_tool_calls_finish_with_tool_error(tmp_path: Path) -> None:
     assert len(returns) == 1
     assert isinstance(returns[0].content, str)
     assert returns[0].content.startswith("Tool error: old_text not found in app.py.")
+
+
+def test_missing_old_text_reports_nearest_line_and_stale_read(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text('def home(request):\n    return response("hello")\n')
+    result = _run_turns(
+        tmp_path,
+        [
+            ("read_file", {"path": "app.py"}),
+            ("write_file", {"path": "app.py", "content": 'def home(request):\n    return response("hi")\n'}),
+            (
+                "edit_file",
+                {
+                    "path": "app.py",
+                    "old_text": 'return response("hello")',
+                    "new_text": 'return response("hey")',
+                },
+            ),
+            "done",
+        ],
+    )
+
+    content = _retry_content(result)
+    assert 'Nearest match: line 2:\n    return response("hi")' in content
+    assert "The file has changed since the model last read it; re-read it before retrying." in content
+
+
+def test_missing_old_text_reports_unchanged_read(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text('def home(request):\n    return response("hi")\n')
+    result = _run_turns(
+        tmp_path,
+        [
+            ("read_file", {"path": "app.py"}),
+            (
+                "edit_file",
+                {
+                    "path": "app.py",
+                    "old_text": 'return response("hello")',
+                    "new_text": 'return response("hey")',
+                },
+            ),
+            "done",
+        ],
+    )
+
+    content = _retry_content(result)
+    assert "Nearest match: line 2:" in content
+    assert "The file has not changed since the model last read it; use the nearest line to correct old_text." in content
+
+
+def test_missing_old_text_without_read_has_no_staleness_claim(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text('return response("hi")\n')
+    result = _run_turns(
+        tmp_path,
+        [
+            (
+                "edit_file",
+                {
+                    "path": "app.py",
+                    "old_text": 'return response("hello")',
+                    "new_text": 'return response("hey")',
+                },
+            ),
+            "done",
+        ],
+    )
+
+    content = _retry_content(result)
+    assert "Nearest match: line 1:" in content
+    assert "since the model last read it" not in content
+
+
+def test_missing_old_text_finds_hash_in_spilled_read(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("start\n" + "x" * 12_000 + '\nreturn response("hi")\n')
+    result = _run_turns(
+        tmp_path,
+        [
+            ("read_file", {"path": "app.py"}),
+            (
+                "edit_file",
+                {
+                    "path": "app.py",
+                    "old_text": 'return response("hello")',
+                    "new_text": 'return response("hey")',
+                },
+            ),
+            "done",
+        ],
+    )
+
+    content = _retry_content(result)
+    assert "Nearest match: line 3:" in content
+    assert "The file has not changed since the model last read it" in content
+
+
+def test_missing_old_text_bounds_nearest_line(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("x" * 300 + "\n")
+    result = _run_turns(
+        tmp_path,
+        [("edit_file", {"path": "app.py", "old_text": "y", "new_text": "z"}), "done"],
+    )
+
+    content = _retry_content(result)
+    excerpt = content.split("Nearest match: line 1:\n", 1)[1].splitlines()[0]
+    assert len(excerpt) == 200
