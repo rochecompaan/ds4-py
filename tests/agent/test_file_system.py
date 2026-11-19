@@ -159,3 +159,32 @@ def test_read_only_workspace_keeps_writable_tools_hidden(tmp_path: Path) -> None
 
     assert "read_file" in exposed
     assert {"write_file", "edit_file", "create_directory"}.isdisjoint(exposed)
+
+
+def test_two_bad_tool_calls_finish_with_tool_error(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text('return response("hi")\n')
+    call = (
+        "edit_file",
+        {"path": "app.py", "old_text": 'return response("hello")', "new_text": 'return response("hey")'},
+    )
+
+    result, _ = _run_agent(tmp_path, call)
+
+    messages = result.all_messages()
+    calls = [
+        part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolCallPart) and part.tool_name == "edit_file"
+    ]
+    returns = [
+        part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == "edit_file"
+    ]
+    assert result.output == "done"
+    assert len(calls) == 2
+    assert len(returns) == 1
+    assert isinstance(returns[0].content, str)
+    assert returns[0].content.startswith("Tool error: old_text not found in app.py.")

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from typing import Any, Never, cast
 
 import pytest
-from pydantic_ai.messages import UserPromptPart
+from pydantic_ai.messages import ToolReturnPart, UserPromptPart
 from test_runtime import fake_engine, fixed_clock, make_model, project_dir, scripted_rounds
 
 import ds4py
@@ -128,6 +128,61 @@ def test_noninteractive_saves_on_run_failure_and_interruption(error: Any, code: 
     actual, out, err = invoke(runtime)
     assert actual == code and out == "" and message in err
     assert runtime.saves == 1
+
+
+@pytest.mark.parametrize(
+    ("call", "tool_name"),
+    [
+        ("<tool_call><function=missing></function></tool_call>", "missing"),
+        ("<tool_call><function=read_file></function></tool_call>", "read_file"),
+    ],
+)
+def test_noninteractive_two_bad_tool_calls_exit_zero(tmp_path: Path, call: str, tool_name: str) -> None:
+    with fake_engine(script=scripted_rounds(call, call, "done"), payload_support=False) as engine:
+        runtime = AgentRuntime(
+            make_model(engine),
+            project_dir(tmp_path),
+            store=SessionStore(tmp_path / "store"),
+            clock=fixed_clock,
+        )
+        try:
+            code, out, err = invoke(runtime)
+        finally:
+            asyncio.run(runtime.close())
+
+    assert (code, out, err) == (0, "done\n", "")
+    returns = [
+        part
+        for message in runtime.messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == tool_name
+    ]
+    assert len(returns) == 1
+    assert isinstance(returns[0].content, str)
+    assert returns[0].content.startswith("Tool error: ")
+
+
+def test_noninteractive_repeated_bad_tool_calls_continue(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("actual\n")
+    call = (
+        "<tool_call><function=edit_file><parameter=path>app.py</parameter>"
+        "<parameter=old_text>missing</parameter><parameter=new_text>replacement</parameter>"
+        "</function></tool_call>"
+    )
+    with fake_engine(script=scripted_rounds(call, call, call, "done"), payload_support=False) as engine:
+        runtime = AgentRuntime(
+            make_model(engine),
+            project_dir(tmp_path),
+            store=SessionStore(tmp_path / "store"),
+            clock=fixed_clock,
+        )
+        try:
+            code, out, err = invoke(runtime)
+        finally:
+            asyncio.run(runtime.close())
+
+    assert (code, out, err) == (0, "done\n", "")
+    assert (tmp_path / "app.py").read_text() == "actual\n"
 
 
 def test_noninteractive_save_failure_is_nonzero() -> None:

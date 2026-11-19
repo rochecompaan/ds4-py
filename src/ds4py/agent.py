@@ -24,6 +24,7 @@ from ds4py.capabilities.harness_events import HarnessEventBridge
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.shell_jobs import DS4ShellJobs
 from ds4py.capabilities.system_notes import DS4SystemNotes
+from ds4py.capabilities.tool_errors import ToolErrorRecovery
 
 if TYPE_CHECKING:
     from ds4py.capabilities.context import ContextComposition
@@ -93,6 +94,7 @@ def build_agent_components(  # noqa: PLR0913 - Agent composition mirrors the run
             missing_directories="skip",
         ),
         ToolOutputLimits(),
+        ToolErrorRecovery(),
         HarnessEventBridge(model.session),
         DS4RunRecord(model.session, Path(session_dir or project_dir) / "events.jsonl"),
         Instrumentation(),
