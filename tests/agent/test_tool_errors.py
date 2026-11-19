@@ -36,3 +36,17 @@ def test_output_retry_exhaustion_still_propagates() -> None:
 
     assert caught.value is error
     assert ctx.messages == [interrupted]
+
+
+def test_unrelated_node_error_propagates() -> None:
+    error = UnexpectedModelBehavior("unrelated")
+    node = CallToolsNode(ModelResponse(parts=[]))
+    interrupted = ModelRequest(parts=[], state="interrupted")
+    model = FunctionModel(lambda messages, info: ModelResponse(parts=[]))
+    ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=[interrupted])
+
+    with pytest.raises(UnexpectedModelBehavior) as caught:
+        asyncio.run(ToolErrorRecovery().on_node_run_error(ctx, node=node, error=error))
+
+    assert caught.value is error
+    assert ctx.messages == [interrupted]
