@@ -12,6 +12,7 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     TextPart,
     TextPartDelta,
@@ -91,17 +92,48 @@ class StreamRenderer:
 
     def __init__(self, output: Output | None = None) -> None:
         self.output = output
+        self._pending: StyleAndTextTuples = []
+
+    def _print(self, fragments: StyleAndTextTuples) -> None:
+        print_formatted_text(
+            FormattedText(fragments),
+            output=self.output,
+            end="\n",
+            flush=True,
+        )
+
+    def _emit_line(self) -> None:
+        fragments = self._pending
+        self._pending = []
+        self._print(fragments)
+
+    def _buffer(self, fragments: StyleAndTextTuples) -> None:
+        for fragment in fragments:
+            style, text = fragment[0], fragment[1]
+            lines = text.split("\n")
+            for line in lines[:-1]:
+                if line:
+                    self._pending.append((style, line))
+                self._emit_line()
+            if lines[-1]:
+                self._pending.append((style, lines[-1]))
+
+    def flush(self) -> None:
+        """Finish a pending line before a non-streaming output boundary."""
+        if self._pending:
+            self._emit_line()
 
     def handle_event(self, event: object) -> StyleAndTextTuples:
+        if isinstance(event, PartEndEvent):
+            self.flush()
+            return []
         fragments = self._fragments(event)
         if fragments:
-            newline = isinstance(event, (FunctionToolCallEvent, FunctionToolResultEvent))
-            print_formatted_text(
-                FormattedText(fragments),
-                output=self.output,
-                end="\n" if newline else "",
-                flush=True,
-            )
+            if isinstance(event, (FunctionToolCallEvent, FunctionToolResultEvent)):
+                self.flush()
+                self._print(fragments)
+            else:
+                self._buffer(fragments)
         return fragments
 
     def _fragments(  # noqa: PLR0911 - Each harness event type has its own renderer.

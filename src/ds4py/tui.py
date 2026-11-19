@@ -117,6 +117,7 @@ class TUI:
 
     def show_message(self, text: object) -> None:
         """Write a command result or error outside the model renderer."""
+        self.renderer.flush()
         print_formatted_text(str(text), output=self.output)
 
     def _receive_event(self, event: SessionEvent) -> None:
@@ -128,6 +129,8 @@ class TUI:
             event = await self._events.get()
             if event.kind == "agent_event":
                 self.renderer.handle_event(event.payload["event"])
+            elif event.kind == "run_end":
+                self.renderer.flush()
             self.session.app.invalidate()
 
     def _ensure_prompt(self) -> asyncio.Task[str]:
@@ -320,4 +323,5 @@ class TUI:
             return
         self._closed = True
         self._unsubscribe()
+        self.renderer.flush()
         self.footer.close()
