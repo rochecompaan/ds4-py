@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 def _retry_message(error: Exception) -> str | None:
-    if not isinstance(error, UnexpectedModelBehavior):
+    if not isinstance(error, UnexpectedModelBehavior) or error.message.startswith("Exceeded maximum output retries ("):
         return None
     cause = error.__cause__
     if isinstance(cause, ModelRetry | ValidationError):
