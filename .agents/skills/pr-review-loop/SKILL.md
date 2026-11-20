@@ -38,9 +38,11 @@ Files that come with this skill:
   commit stays on the branch so every commit link in the evidence works.
 - Never create an issue the author did not pick.
 - Only one writer works in the checkout at a time.
-- Write one evidence section in the PR body. Do not post a comment per round.
-- Every finding appears in the evidence, including declined and deferred
-  ones.
+- Write one evidence section in the PR body. The only PR comments the loop
+  posts are the full reviewer reports, one per round, each collapsed. Never
+  reply to them or discuss findings in comments.
+- Every finding appears in the evidence once, including declined and
+  deferred ones.
 
 ## 1. Check that the loop can start
 
@@ -87,7 +89,8 @@ Count the lines of the PR body that consist of exactly
 A marker inside other text on a line does not count.
 
 - Neither marker: this is run 1 and round 1. There are no earlier findings.
-- One of each, start before end: read the section. The new run number is one
+- One of each, start before end: read the section. Its tables are in the
+  collapsed review log. The new run number is one
   more than the highest Run in the rounds table. The next round number is one
   more than the highest Round. Earlier findings are the rounds table and the
   Fixed, Declined, and Deferred tables.
@@ -121,22 +124,33 @@ Repeat these steps until a stop condition in section 7 is met.
    Give the reviewer `references/review-criteria.md` with the prompt.
 4. **Check the report.** It must have the sections the prompt asks for, with
    numbered issues and a final "Human Reviewer Callouts (Non-Blocking)"
-   section. If the reviewer fails or the report is unusable, start one more
+   section. A severity heading or "Declined to judge" section with nothing
+   in it is left out, so a missing one means none. If the reviewer fails or the report is unusable, start one more
    fresh reviewer. If that also fails, stop early (section 11).
+   Keep the usable report as written; section 9 posts it as a PR comment.
 5. **Propose a ruling** on every finding: fix, decline with a reason, or
    defer. A decline reason cites a specific line, fact, or requirement. Also
    propose a ruling on every "Declined to judge" item: set it aside, or treat
    it as a finding. Either way, give it the next finding ID in this round. An
    item set aside goes in the Declined table with severity `Not graded` and
    the author's reason, so later reviewers and the human reviewer see it.
+   - A finding or "Declined to judge" item that repeats an earlier declined
+     or `Not graded` item, and names no code change or new evidence, gets no
+     new ID, no table row, and no question to the author. Drop it and tell
+     the author in the round message which earlier IDs came back, in one
+     line.
+   - When it names a code change or new evidence, treat it as new: give it
+     an ID, propose a ruling, and name the earlier ID in the finding.
 6. **Fix and ask.**
    - Fix the Critical and Important findings you propose to fix, without
      waiting: correctness findings first, then structural findings. See
      section 6.
-   - Then send the author one message for the round. It lists every proposed
-     decline and deferral, every Minor finding you propose to fix, and every
-     "Declined to judge" ruling. The author approves each one or changes it
-     to a fix.
+   - Then send the author one message for the round. It lists the Critical
+     and Important fixes you made, one line each with the finding ID and fix
+     commit, so the author sees them before the push. Then it lists every
+     proposed decline and deferral, every Minor finding you propose to fix,
+     and every "Declined to judge" ruling. The author approves each one or
+     changes it to a fix.
    - Fix what the author changed to a fix, then the Minor findings the author
      approved.
 7. **Validate** on the new head (section 8). Skip this when the round made
@@ -204,41 +218,91 @@ Then write the evidence (section 9) and ask about follow-up issues
 
 ## 9. Write the evidence
 
-1. Fill in `assets/evidence-template.md` from all runs:
+1. Post the full reports (see "Post the full reports" below), so each
+   round of this run has a report link for the rounds table.
+2. Fill in `assets/evidence-template.md` from all runs. A human reviewer
+   reads only the part above the review log, so keep it short: one plain
+   sentence per item, and leave out empty parts.
    - **Evidence head:** the last commit the run reviewed or produced that is
      on the remote branch. This is the last pushed fix commit when the final
      round made fixes, and otherwise the commit the final round reviewed.
      Never name a commit that was not pushed.
-   - Compare it with `headRefOid` from a fresh `gh pr view` and say whether
-     it matches.
+   - Compare it with `headRefOid` from a fresh `gh pr view` and name the PR
+     head in the note when it differs.
+   - **Last reviewed commit:** the commit the final round's fresh reviewer
+     saw. When the evidence head differs, the fixes between them were not
+     reviewed by a fresh reviewer.
    - **Result:** this run's outcome and number of rounds, and the counts of
      fixed, declined, and deferred findings across all runs.
-   - Add this run's rows to the rounds table and its findings to the Fixed,
-     Declined, and Deferred tables, after the earlier rows.
+   - **For you to check:** the last round's callouts, merged with earlier
+     callouts that still apply, then one line for the fixes made in the
+     final round of this run, which no fresh reviewer has seen.
+   - **Visible findings:** a short table of the fixed Critical and Important
+     findings from all runs, a count of the fixed Minor findings, and one
+     line for each declined or deferred finding.
+   - **Review log:** add this run's rows to the rounds table and its findings
+     to the Fixed, Declined, and Deferred tables, after the earlier rows. The
+     Report cell links the round's report comment, or says `-` when the
+     round has no usable report.
    - When a later commit reverts or replaces an earlier fix, keep that row
      and its ID, and add `Reverted by <sha> (<reason>)` or
      `Later replaced by <ID>` to its Fix cell.
    - **Validation:** the results on the evidence head.
-   - **Callouts:** the last round's callouts, merged with earlier callouts
-     that still apply.
-   - **Full reports:** add one collapsed block per round of this run after
-     the earlier blocks. Before you add a report, replace every `<!--` in it
-     with `&lt;!--` and every `</details>` with `&lt;/details>`, so a report
-     that quotes the markers cannot break the section.
-2. Read the PR body again right before writing, with
+   - Never put full reports in the PR body. They live in the report
+     comments.
+3. Read the PR body again right before writing, with
    `gh pr view <number> --json body`. Check the markers again as section 3
    does.
-3. Replace only the text from the start marker to the end marker. If there
+4. Replace only the text from the start marker to the end marker. If there
    are no markers, add the section to the end of the body after a blank line.
    Leave the rest of the body as written.
-4. If the new body is longer than 65,536 characters, replace full reports
-   with `Full report removed for size.`, oldest run first, until it fits.
-   Never remove tables or callouts. If the body is still too long after every
-   full report is removed, do not edit the PR. Tell the author that the
-   evidence could not be written, give them the evidence section, and ask
-   them to make room in the PR body. Then try this step again.
-5. Write the body to a temporary file and run
+5. If the new body is longer than 65,536 characters, do not edit the PR.
+   Tell the author that the evidence could not be written, give them the
+   evidence section, and ask them to make room in the PR body. Then try this
+   step again.
+6. Write the body to a temporary file and run
    `gh pr edit <number> --body-file <file>`.
+
+### Post the full reports
+
+Each round with a usable report gets one PR comment that holds its full
+report. A human reviewer opens it from the rounds table when they want the
+detail.
+
+1. Look for report comments that already exist, so a second write of the
+   evidence does not post them twice. The marker can be on any line, because
+   a project rule may put an attribution line first:
+   `gh api repos/{owner}/{repo}/issues/<number>/comments --paginate --jq '.[] | (.body | split("\n") | map(select(startswith("<!-- pr-review-loop:report "))) | first) as $m | select($m) | [.html_url, $m] | @tsv'`.
+2. For each round of this run that has a usable report and no comment yet:
+   - In the report, replace every `<!--` with `&lt;!--` and every
+     `</details>` with `&lt;/details>`, so a report that quotes the markers
+     cannot break the comment.
+   - Write the comment to a temporary file in this form, then run
+     `gh pr comment <number> --body-file <file>`. It prints the comment URL.
+     Put the marker on line 1. If the project's rules ask for an attribution
+     line, put it on line 2.
+
+     ```markdown
+     <!-- pr-review-loop:report run=<run> round=<round> -->
+     <attribution line, if the project asks for one>
+     <details><summary>pr-review-loop: run <run> round <round> full report (<model>, <short reviewed sha>)</summary>
+
+     <report>
+
+     </details>
+     ```
+
+   - If the comment would pass 65,536 characters, split the report at a
+     `###` heading into numbered parts. Post each part with the marker
+     `<!-- pr-review-loop:report run=<run> round=<round> part=<n> -->`, and
+     link part 1 from the rounds table.
+3. Earlier versions of this skill kept full reports in the PR body, in
+   `<details><summary>Run <run> round <round> full report</summary>` blocks
+   in the review log. If the section you read in section 3 has such blocks,
+   post each one as a report comment the same way, link it from its rounds
+   table row, and leave the block out of the new section. A block that says
+   `Full report removed for size.` has no report to post: its Report cell
+   says `removed for size`.
 
 ## 10. Ask about follow-up issues
 

@@ -42,7 +42,9 @@ Earlier review rounds on this PR, and how the author handled each finding:
 
 Do not raise a finding again if it matches one that was fixed or declined,
 unless the code changed or you have new evidence. When you do raise it
-again, name the earlier finding ID and say what changed.
+again, name the earlier finding ID and say what changed. Declined findings
+include the items with severity `Not graded`: behaviors an earlier reviewer
+set aside and the author agreed to leave out.
 
 ## Validation
 
@@ -65,8 +67,13 @@ that person, not by whether the spec mentions the trigger.
 
 Before your verdict, list every behavior you considered and set aside as
 outside the requirements, one line each, with the reason. The author rules
-on each line. Nothing you set aside is dropped silently. An empty list
-means you set nothing aside.
+on each line. Nothing you set aside is dropped silently. When you set
+nothing aside, leave the section out.
+
+Leave out a behavior that matches an earlier `Not graded` item in Earlier
+rounds. The author already ruled on it. List it again only when the code
+changed or you have new evidence, and then name the earlier finding ID and
+say what changed.
 
 ## Read-only review
 
@@ -149,10 +156,12 @@ in-scope structural defects.
 #### Minor
 Style, small optimizations, documentation polish.
 
-Write `(none)` under a severity with no issues.
+Leave out a severity heading with no issues. When there are no issues at
+all, write `No issues found.` under Issues.
 
 ### Declined to judge
-One line per behavior you set aside, with the reason, or `(none)`.
+One line per behavior you set aside, with the reason. Leave this section
+out when you set nothing aside.
 
 ### Structure
 One result for each item in the Structure checklist in `review-criteria.md`.
