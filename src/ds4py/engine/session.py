@@ -17,6 +17,7 @@ from ds4py._native.api import LibNative
 from ds4py._native.loader import load_library
 from ds4py._native.protocol import EngineConfig, Native, ThinkMode
 from ds4py.errors import EngineError
+from ds4py.store import SessionStore
 
 from . import chat as chat_ops
 from . import session_operations
@@ -43,7 +44,7 @@ if TYPE_CHECKING:
     from .prefix import PrefixTurn
     from .tool_prompt import ToolDefinition
 from .sampling import Rng, SamplingPolicy
-from .transcript import Segment, TranscriptReplacement, TranscriptView, validate_segment_coverage
+from .transcript import Segment, Transcript, TranscriptReplacement, TranscriptView, validate_segment_coverage
 from .worker import (
     EngineWorker,
     Handles,
@@ -184,6 +185,7 @@ class Session:
     def __init__(self, engine: Engine) -> None:
         self._engine, self._worker = engine, engine._worker
         self._history = SessionHistory(self)
+        self._system_prefix_store = SessionStore()
         self._rng = Rng(engine.sampling_defaults.seed)
         self._decode_step: DecodeStep | None = None
         self._logits_hooks: list[Callable[[LogitsView], None]] = []
@@ -708,10 +710,34 @@ class Session:
         """Dispose one native checkpoint between rounds under an exclusive claim."""
         self._history.drop_checkpoint(key)
 
+    def _set_system_prefix_store(self, store: SessionStore) -> None:
+        """Bind cache paths to the owning runtime's store between operations."""
+        with self._history.edit():
+            self._system_prefix_store = store
+
     def file_payloads_supported(self) -> bool:
         """Return the native file-payload policy on the owning worker."""
         self._history.require_open()
         return self._worker.call(lambda e, s: s.file_payloads_supported()).result()
+
+    def _save_payload_events(
+        self,
+        file: BinaryIO,
+        *,
+        tokens: tuple[int, ...],
+        header: bytes,
+        already_synced: bool = False,
+    ) -> Saved:
+        """Drain one save job for a caller that already owns session admission."""
+        saved = None
+        for event in self._job_events(
+            SavePayloadJob(tokens, header, file, already_synced=already_synced),
+        ):
+            if isinstance(event, Saved):
+                saved = event
+        if saved is None:
+            raise EngineError("save did not complete")
+        return saved
 
     def save_payload(self, file: BinaryIO, *, header: bytes) -> Saved:
         """Sync the transcript and write the header plus staged native payload.
@@ -722,15 +748,32 @@ class Session:
         """
         with self._history.mutation_lock:
             self._history.require_idle()
-            saved = None
-            for event in self._job_events(
-                SavePayloadJob(self._history.transcript.tokens, header, file),
-            ):
-                if isinstance(event, Saved):
-                    saved = event
-            if saved is None:
-                raise EngineError("save did not complete")
-            return saved
+            return self._save_payload_events(
+                file,
+                tokens=self._history.transcript.tokens,
+                header=header,
+            )
+
+    def _load_payload_events(
+        self,
+        file: BinaryIO,
+        *,
+        payload_bytes: int,
+        transcript: Transcript | None,
+        expected_tokens: tuple[int, ...] | None = None,
+    ) -> Loaded:
+        """Drain one load job for a caller that already owns session admission."""
+        loaded = None
+        for event in self._job_events(
+            LoadPayloadJob(file, payload_bytes, transcript, expected_tokens=expected_tokens),
+        ):
+            if isinstance(event, Loaded):
+                loaded = event
+        if loaded is None:
+            raise EngineError("load did not complete")
+        self._history.clear_checkpoints()
+        self._history.clear_pause()
+        return loaded
 
     def load_payload(self, file: BinaryIO, *, payload_bytes: int) -> list[int]:
         """Load a payload after the caller's header and adopt its token list.
@@ -744,16 +787,11 @@ class Session:
             raise ValueError("payload byte count cannot be negative")
         with self._history.mutation_lock:
             self._history.require_idle()
-            loaded = None
-            for event in self._job_events(
-                LoadPayloadJob(file, payload_bytes, self._history.mutable_transcript),
-            ):
-                if isinstance(event, Loaded):
-                    loaded = event
-            if loaded is None:
-                raise EngineError("load did not complete")
-            self._history.clear_checkpoints()
-            self._history.clear_pause()
+            self._load_payload_events(
+                file,
+                payload_bytes=payload_bytes,
+                transcript=self._history.mutable_transcript,
+            )
             return list(self._history.transcript.tokens)
 
     def on_worker[T](self, fn: Callable[[Handles], T]) -> Future[T]:
@@ -765,6 +803,10 @@ class Session:
         """
         self._history.require_open()
         return self._worker.call(lambda e, s: fn(Handles(e.raw, s.raw)))
+
+    def _cancellation_pending(self) -> bool:
+        """Return the thread-safe cancellation state for an admitted operation."""
+        return self._worker.cancel_event.is_set()
 
     def cancel(self) -> None:
         """Request worker cancellation from any thread without closing the round."""

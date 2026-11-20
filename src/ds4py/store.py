@@ -331,6 +331,10 @@ class SessionStore:
     def session_dir(self, session_id: str) -> Path:
         return self.root / "sessions" / session_id
 
+    def sysprompt_path(self, digest: str) -> Path:
+        """Resolve one system-prefix cache file without creating its directory."""
+        return self.root / "sysprompt" / f"{digest}.kv"
+
     def write_kv_atomic(self, path: str | os.PathLike[str], payload: bytes) -> None:
         """Write the fixed header and exactly ``len(payload)`` payload bytes."""
         if not isinstance(payload, (bytes, bytearray, memoryview)):

@@ -13,6 +13,12 @@ if TYPE_CHECKING:
     from ds4py.abi.manifest import Manifest
 
 
+@pytest.fixture(autouse=True)
+def isolated_ds4py_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep implicit session and system-prefix writes inside each test."""
+    monkeypatch.setenv("DS4PY_HOME", str(tmp_path / "ds4py-home"))
+
+
 @pytest.fixture(scope="session")
 def built_upstream(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Manifest]:
     from ds4py.abi.build import build_library

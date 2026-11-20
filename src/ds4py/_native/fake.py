@@ -17,6 +17,7 @@ from .protocol import (
     CancelFn,
     EngineConfig,
     EngineInfo,
+    LibraryIdentity,
     ProgressFn,
     Snapshot,
     SyncStatus,
@@ -112,6 +113,7 @@ class FakeNative:
         restore_enabled: bool = True,
         info: EngineInfo | None = None,
         payload_support: bool | None = None,
+        library_identity: LibraryIdentity | None = None,
     ) -> None:
         if chunk <= 0:
             raise ValueError("chunk must be positive")
@@ -120,6 +122,11 @@ class FakeNative:
         self.chunk_seconds = chunk_seconds
         self.bindings, self.absent = dict(bindings), set(absent)
         self.restore_enabled = restore_enabled
+        self.library_identity = (
+            library_identity
+            if library_identity is not None
+            else LibraryIdentity(source_commit="fake", library_sha256="0" * 64)
+        )
         self.payload_support = payload_support
         self.payload_support_threads: list[int] = []
         self._info = (

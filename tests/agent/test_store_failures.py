@@ -311,6 +311,34 @@ def test_interrupted_kv_write_leaves_the_prior_file_intact(
     assert [entry.name for entry in path.parent.iterdir()] == ["session.kv"]
 
 
+@pytest.mark.parametrize("failure", ["fsync", "replace"])
+def test_interrupted_streaming_kv_write_leaves_the_prior_file_intact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Any,
+) -> None:
+    store = SessionStore(tmp_path)
+    path = store.session_dir("session-1") / "session.kv"
+    store.write_kv_atomic(path, b"old payload")
+
+    def write_payload(file: Any) -> int:
+        file.write(KV_HEADER.pack(KV_MAGIC, KV_VERSION, 0))
+        file.write(b"new payload")
+        return len(b"new payload")
+
+    def fail(*args: Any, **kwargs: Any) -> Never:
+        raise OSError("interrupted")
+
+    monkeypatch.setattr(store_module.os, failure, fail)
+    with pytest.raises(StoreError) as caught:
+        store.write_kv_stream_atomic(path, write_payload)
+
+    assert str(path) in str(caught.value)
+    monkeypatch.undo()
+    assert store.read_kv(path) == b"old payload"
+    assert [entry.name for entry in path.parent.iterdir()] == ["session.kv"]
+
+
 def test_interrupted_record_write_leaves_the_prior_record_intact(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

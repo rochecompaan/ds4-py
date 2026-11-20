@@ -203,6 +203,7 @@ class AgentRuntime:
         self.store = store if store is not None else SessionStore()
         self._clock = clock if clock is not None else (lambda: datetime.now().astimezone())
         self._session = model.session
+        self._session._set_system_prefix_store(self.store)
         self._messages: list[ModelMessage] = []
         self._title = ""
         self._status = "idle"
