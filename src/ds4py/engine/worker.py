@@ -20,7 +20,14 @@ from ds4py._native.protocol import (
     Snapshot,
     SyncStatus,
 )
-from ds4py.errors import CheckpointError, EmptyPromptError, EngineError, WorkerPoisonedError
+from ds4py.errors import (
+    CheckpointError,
+    EmptyPromptError,
+    EngineError,
+    PayloadLoadError,
+    PayloadMismatch,
+    WorkerPoisonedError,
+)
 
 from .compaction import SummaryJob, summarize
 from .decode import GenerateJob, generate
@@ -63,7 +70,11 @@ class ResetJob:
 
 @dataclass(frozen=True)
 class SavePayloadJob:
-    """Sync unless already current, then write the caller header and native payload."""
+    """Sync unless already current, then write the caller header and native payload.
+
+    ``already_synced=True`` requires an exact sync of ``tokens`` under the
+    caller's still-held admission claim.
+    """
 
     tokens: tuple[int, ...]
     header: bytes
@@ -396,11 +407,17 @@ class EngineWorker:
         job: LoadPayloadJob,
         emit: Callable[[Event], None],
     ) -> None:
-        session.load_payload(job.file, job.payload_bytes)
+        try:
+            session.load_payload(job.file, job.payload_bytes)
+        except EngineError as error:
+            if job.expected_tokens is None or isinstance(error, WorkerPoisonedError):
+                raise
+            self._reset(session)
+            raise PayloadLoadError("native payload load failed for the expected prefix") from error
         tokens = session.tokens()
         if job.expected_tokens is not None and tuple(tokens) != job.expected_tokens:
             self._reset(session)
-            raise EngineError("loaded system-prefix tokens do not match the rendered prefix")
+            raise PayloadMismatch("loaded payload tokens do not match the expected tokens")
         if job.transcript is not None:
             job.transcript.reset()
             if tokens:

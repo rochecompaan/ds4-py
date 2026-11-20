@@ -159,6 +159,13 @@ def test_default_root_reads_ds4py_home_at_call_time(tmp_path: Path, monkeypatch:
     assert not second.exists()
 
 
+def test_sysprompt_path_uses_the_store_root_without_creating_it(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path)
+
+    assert store.sysprompt_path("abc123") == tmp_path / "sysprompt" / "abc123.kv"
+    assert not (tmp_path / "sysprompt").exists()
+
+
 def test_default_root_expands_a_home_redirect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("DS4PY_HOME", "~/state")

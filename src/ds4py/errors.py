@@ -37,6 +37,14 @@ class EngineError(Ds4pyError):
     """Engine failure."""
 
 
+class PayloadLoadError(EngineError):
+    """A native payload could not be loaded as a verified prefix."""
+
+
+class PayloadMismatch(EngineError):
+    """Loaded native payload tokens differ from the expected tokens."""
+
+
 class ContextExhausted(EngineError):
     """An open response reached the context reserve and no owner could make room."""
 

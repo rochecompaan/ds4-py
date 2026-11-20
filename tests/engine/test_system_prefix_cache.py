@@ -8,11 +8,11 @@ import pytest
 
 import ds4py
 from ds4py._native.fake import PAYLOAD_STRIDE, FakeNative, FakeSession, reply
-from ds4py.engine.events import Loaded, Prefill, Token
+from ds4py.engine.events import Loaded, Prefill, Saved, Token
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.session import Engine, Session
 from ds4py.engine.tool_prompt import ToolDefinition
-from ds4py.engine.worker import SYSTEM
+from ds4py.engine.worker import SYSTEM, SavePayloadJob
 from ds4py.errors import EngineError, StoreError
 from ds4py.store import KV_HEADER, SessionStore
 
@@ -23,9 +23,15 @@ def fake_engine(
     model_id: int = 0,
     quant_bits: int = 0,
     payload_support: bool | None = None,
+    restore_enabled: bool = True,
 ) -> Engine:
     info = replace(FakeNative()._info, model_id=model_id, routed_quant_bits=quant_bits)
-    native = FakeNative(info=info, payload_support=payload_support, script=reply(b"same"))
+    native = FakeNative(
+        info=info,
+        payload_support=payload_support,
+        restore_enabled=restore_enabled,
+        script=reply(b"same"),
+    )
     return ds4py.open("f.gguf", ctx=ctx, native=native)
 
 
@@ -268,6 +274,89 @@ def test_unsupported_file_payloads_prefill_without_touching_cache(
     with fake_engine(payload_support=False) as engine:
         engine.session().start_chat()
     assert not (fresh / "sysprompt").exists()
+
+
+def test_restore_disabled_prefills_without_touching_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    prefix, segments, _events, path = start_with_tools(home, monkeypatch)
+    cached = path.read_bytes()
+
+    def forbid(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("disabled native restore must not load or stage cache payloads")
+
+    monkeypatch.setattr(FakeSession, "load_payload", forbid)
+    monkeypatch.setattr(FakeSession, "stage_payload", forbid)
+    with fake_engine(restore_enabled=False) as engine:
+        session = engine.session()
+        events = capture(session)
+        session.start_chat()
+        assert session.transcript.tokens == prefix
+        assert session.transcript.segments == segments
+        assert positive_prefills(events)[0].cached_prefix == 0
+
+    assert path.read_bytes() == cached
+    assert cache_files(home) == [path]
+
+
+def test_failed_native_cache_load_resets_before_prefill(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    prefix, _segments, _events, _path = start_with_tools(home, monkeypatch)
+    original_load = FakeSession.load_payload
+
+    def fail_after_loading(self: Any, file: Any, payload_bytes: Any) -> None:
+        original_load(self, file, payload_bytes)
+        raise EngineError("native load failed after changing state")
+
+    monkeypatch.setattr(FakeSession, "load_payload", fail_after_loading)
+    with fake_engine() as engine:
+        session = engine.session()
+        events = capture(session)
+        session.start_chat()
+        synced = engine_events(events, "Synced")
+        assert synced[0].plan.kind == "rebuild"
+        assert synced[0].plan.reused == 0
+        assert synced[0].prefilled == len(prefix)
+
+
+def test_warm_cache_preserves_interrupted_chat_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    _prefix, _segments, _events, path = start_with_tools(home, monkeypatch)
+    cached = path.read_bytes()
+
+    with fake_engine() as engine:
+        session = engine.session()
+        session.cancel()
+        with pytest.raises(EngineError, match=r"^chat start was interrupted$"):
+            session.start_chat()
+        assert session.transcript.tokens == ()
+
+    assert path.read_bytes() == cached
+
+
+def test_cache_save_rejects_wrong_token_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    original_events = Session._job_events
+
+    def wrong_saved_count(self: Session, job: Any, **kwargs: Any) -> Any:
+        for event in original_events(self, job, **kwargs):
+            if isinstance(job, SavePayloadJob) and isinstance(event, Saved):
+                yield replace(event, tokens=event.tokens - 1)
+            else:
+                yield event
+
+    monkeypatch.setattr(Session, "_job_events", wrong_saved_count)
+    with fake_engine() as engine:
+        session = engine.session()
+        with pytest.raises(EngineError, match="token count"):
+            session.start_chat()
 
 
 def test_cache_write_failure_does_not_abort_chat_start(monkeypatch: pytest.MonkeyPatch) -> None:

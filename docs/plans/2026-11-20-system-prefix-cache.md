@@ -17,7 +17,7 @@
 - Use `<DS4PY_HOME>/sysprompt/<sha256>.kv`, defaulting to `~/.ds4py` through `SessionStore` when `DS4PY_HOME` is unset or empty.
 - Key the file by model id, routed quantization, context size, and the complete ordered prefix token ids; do not key by prompt text.
 - Use the existing `KV_MAGIC`, `KV_VERSION`, and payload representation used by `session.kv`; no compatibility with another file format is required.
-- Probe `Session.file_payloads_supported()` before every cache load/save. False means no cache read, no cache write, and the current rendering/prefill behavior.
+- Probe `Session.file_payloads_supported()` and native `restore_enabled` before every cache load/save. Either being false means no cache read, no cache write, and the current rendering/prefill behavior.
 - Missing, unreadable, corrupt, truncated, extra-data, and token-mismatched cache files must fall back to ordinary prefill and be atomically replaced after a successful prefill.
 - Never accept loaded native tokens unless they exactly equal the rendered prefix, including length and order. Preserve the staged transcript and its original system segment boundaries on a cache hit.
 - Publish through the existing destination-directory temporary-file-plus-rename implementation; concurrent writers must never expose a partial final file.
@@ -44,6 +44,9 @@
 - Create: `src/ds4py/engine/sysprompt.py`
 - Modify: `src/ds4py/engine/history.py` (`SessionHistory._sync_chat`)
 - Modify: `src/ds4py/engine/worker.py` (`LoadPayloadJob` and `_load_payload`)
+- Modify: `src/ds4py/engine/session.py` (shared internal payload-job drains)
+- Modify: `src/ds4py/errors.py` (narrow payload load/mismatch errors)
+- Modify: `src/ds4py/store.py` (store-owned `sysprompt/` layout)
 - Modify: `docs/specs/2026-11-10-m3-harness-integration-design.md` (section 10.3)
 - Modify: `tests/conftest.py` (isolate test cache writes)
 - Create: `tests/engine/test_system_prefix_cache.py`
@@ -51,12 +54,13 @@
 - Modify: `tests/agent/test_restore.py`
 - Modify: `tests/agent/test_compaction_persistence.py`
 - Modify: `tests/agent/test_store_failures.py`
+- Modify: `tests/agent/test_store.py`
 
 **Interfaces:**
-- Produces: `system_prefix_path(engine: Engine, tokens: Sequence[int]) -> Path`, returning `SessionStore().root / "sysprompt" / f"{digest}.kv"`. The digest input is the ASCII model id, routed quant bits, context size, and `token_digest(tokens)`, with unambiguous separators.
-- Produces: `sync_system_prefix(session: Session, tokens: tuple[int, ...]) -> None`, called only inside the binding transaction. On a miss/fallback it submits the existing `SyncJob` and raises `EngineError("chat start was interrupted")` for an `Interrupted` event. After supported successful prefill it makes a best-effort `SavePayloadJob` publication through `SessionStore.write_kv_stream_atomic`. On a hit it submits `LoadPayloadJob` with `expected_tokens=tokens` and `transcript=None`. `SessionHistory._sync_chat` retains sole responsibility for `_checkpoint_native(SYSTEM)`.
+- Produces: `system_prefix_path(store: SessionStore, engine: Engine, tokens: Sequence[int]) -> Path`, returning `store.sysprompt_path(digest)`. The digest input is the ASCII model id, routed quant bits, context size, and `token_digest(tokens)`, with unambiguous separators.
+- Produces: `sync_system_prefix(session: Session, tokens: tuple[int, ...]) -> None`, called only inside the binding transaction. Pending cancellation and disabled native restore use ordinary prefill without cache I/O. On a miss/fallback it submits the existing `SyncJob` and raises `EngineError("chat start was interrupted")` for an `Interrupted` event. After supported successful prefill it publishes best-effort through `SessionStore.write_kv_stream_atomic`. Public payload methods and the cache share `Session._save_payload_events` / `Session._load_payload_events`; `SessionHistory._sync_chat` retains sole responsibility for `_checkpoint_native(SYSTEM)`.
 - Consumes: `LoadPayloadJob(file: BinaryIO, payload_bytes: int, transcript: Transcript | None, expected_tokens: tuple[int, ...] | None = None)`. Existing public session restore passes the mutable transcript and no expected tokens, preserving its behavior. A cache load passes no transcript and exact expected tokens.
-- Worker behavior: after native load, compare `session.tokens()` with `expected_tokens` when provided. On mismatch, reset native state and close native checkpoints without changing the Python transcript, then raise `EngineError`. On success, close stale native checkpoints, emit `Loaded`, and modify the transcript only when one was supplied. The internal cache path also clears history checkpoint/pause bookkeeping, matching public payload-load ownership while preserving the staged transcript.
+- Worker behavior: native load failure on the verified-cache path resets native state and raises `PayloadLoadError`; token mismatch resets and raises `PayloadMismatch`. On success, close stale native checkpoints, emit `Loaded`, and modify the transcript only when one was supplied. The shared internal Session load drain clears history checkpoint/pause bookkeeping once for both public and cache callers.
 - Local test helpers: define `fake_engine` and event-capture helpers in the new test modules; do not refer to nonexistent shared helpers.
 
 - [ ] **Step 1: Isolate test cache state**
@@ -101,9 +105,9 @@ Expected: cache lifecycle, changed-key, invalid-file, mismatch, unsupported no-I
 
 - [ ] **Step 5: Implement the key, guarded load, ordinary fallback, and best-effort atomic save**
 
-Create `sysprompt.py` with the interfaces above. Reuse the existing KV constants, events, jobs, and `SessionStore`; do not duplicate the KV format or atomic writer. Probe support before path I/O. Catch `StoreError` and `EngineError` only around the attempted cache load. After any load failure, run ordinary prefill and attempt replacement; suppress only `StoreError` from publication. Do not catch ordinary-prefill errors.
+Create `sysprompt.py` with the interfaces above. Reuse the existing KV constants, events, jobs, and `SessionStore`; do not duplicate the KV format, atomic writer, or Session's payload-job drains. Probe payload support and native restore before path I/O. Catch only `StoreError`, `OSError`, `PayloadLoadError`, and `PayloadMismatch` around the attempted cache load. After any load failure, run ordinary prefill and attempt replacement; suppress only `StoreError` from publication. Do not catch ordinary-prefill or fatal worker errors.
 
-Extend `LoadPayloadJob` as specified. On token mismatch use the worker's existing reset path so the following sync genuinely rebuilds. On successful cache load preserve the staged transcript and clear checkpoint/pause ownership. Ordinary `Session.load_payload()` behavior remains unchanged.
+Extend `LoadPayloadJob` as specified. On native load failure or token mismatch use the worker's existing reset path so the following sync genuinely rebuilds. On successful cache load preserve the staged transcript and clear checkpoint/pause ownership through the shared Session helper. Ordinary `Session.load_payload()` behavior remains unchanged.
 
 Change `_sync_chat` to call `sync_system_prefix()` and then `_checkpoint_native(SYSTEM)` exactly once on every successful path.
 
@@ -134,9 +138,11 @@ Expected: all portable tests pass; record exact passed/skipped/deselected counts
 - [ ] **Step 9: Commit the implementation, tests, plan, and approved spec refinement**
 
 ```bash
-git add docs/plans/2026-11-20-system-prefix-cache.md docs/specs/2026-11-10-m3-harness-integration-design.md src/ds4py/engine/sysprompt.py src/ds4py/engine/history.py src/ds4py/engine/worker.py tests/conftest.py tests/engine/test_system_prefix_cache.py tests/agent/test_agent_system_prefix_cache.py tests/agent/test_restore.py tests/agent/test_compaction_persistence.py tests/agent/test_store_failures.py
+git add docs/plans/2026-11-20-system-prefix-cache.md docs/specs/2026-11-10-m3-harness-integration-design.md src/ds4py/engine/sysprompt.py src/ds4py/engine/history.py src/ds4py/engine/worker.py src/ds4py/engine/session.py src/ds4py/errors.py src/ds4py/store.py tests/conftest.py tests/engine/test_system_prefix_cache.py tests/agent/test_agent_system_prefix_cache.py tests/agent/test_restore.py tests/agent/test_compaction_persistence.py tests/agent/test_store_failures.py tests/agent/test_store.py
 git commit -m "feat: cache rendered system prefixes" -m "Part of #38"
 ```
+
+Final whole-branch review produced five additional RED regression tests: disabled native restore, failed native load reset, warm interruption, saved token count, and store-owned cache layout. The owner approved the `restore_enabled` guard and contained shared-Session-helper refactor. All five passed after the corrections, followed by the focused and complete gates. Cache eviction and unrelated test-helper restructuring remain outside this feature.
 
 ### Task 2: Real-model measurements, static gates, and delivery evidence
 
