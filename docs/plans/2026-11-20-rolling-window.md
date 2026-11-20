@@ -4,7 +4,7 @@
 
 **Goal:** Add the complete view-only RollingWindow context strategy, including stable cuts, exact ds4 token/KV accounting, public history recovery, lifecycle and settings, v2 request-view persistence, statistics, and native/live verification.
 
-**Architecture:** Keep deterministic policy and recovery in `ds4py.context_paging`; keep native, filesystem, command, and status effects in the orchestrating `RollingWindow` capability and small adapters. Reuse `binding_provenance.py` for all key/hash/segment validation and extract runtime persistence before extending it. Canonical harness history remains authoritative. A selected request view is measured without a projection cache and bound through `MessageBinder`, while transient notices and recovery replacements never enter canonical history.
+**Architecture:** Keep deterministic policy and recovery in `ds4py.context_paging`; keep native, filesystem, command, and status effects in the orchestrating `RollingWindow` capability and small adapters. Reuse `binding_provenance.py` for all key/hash/segment validation and extract pure save planning before extending persistence. Canonical harness history remains authoritative. A selected request view is measured without a projection cache and bound through `MessageBinder`, while transient notices and recovery replacements never enter canonical history.
 
 **Tech Stack:** Python 3.14, Pydantic AI/Pydantic AI Harness, existing `MessageBinder`/`Session`/`FileStepStore`, `FakeNative`, pytest, devenv and uv. Node is used only by the manually run baseline fixture generator. CUDA inference and live replay run on the separately provisioned Salad host.
 
@@ -24,7 +24,7 @@
 - Keep v1 save records readable. The canonical snapshot remains authoritative; v2 `request_view` is binding provenance only.
 - Do not add a Node production dependency, a second model session/history, native image attachment, branch navigation, or a command-level `/strip` implementation.
 - Keep modules focused. `RollingWindow` is the only new registered capability and orchestrates policy rather than reimplementing it. No file may cross 1,000 lines; extract a cohesive responsibility instead.
-- Reuse `ContextStrategy.reserve_messages` for both ordinary request materialization and reserve recovery. Do not add a parallel request-view hook or a mutable disabled-owner setter.
+- Add an identity-default `ContextStrategy.request_messages` hook for ordinary requests only. Keep `reserve_messages` recovery-only and preserve the LLMCompaction override unchanged. RollingWindow overrides both hooks, but neither hook delegates to the other. Do not add a mutable disabled-owner setter.
 - Centralize production `ds4.*` keys in `message_metadata.py`. Extend `binding_provenance.py` for view validation; `context_paging` must not duplicate key, hash, marker, or segment rules.
 - Do not cache request projections in this milestone. Recompute through the exact planner so every note, clock, content, configuration, grouping, and frontier input is fresh.
 - Use `TypeIs`, precise domain types, PEP 695 syntax, and safe lint fixes. Do not add a second Python environment or hook runner.
@@ -61,8 +61,9 @@
 - `src/ds4py/context_paging/stats.py` computes read-only reports through an explicit snapshot-store provider and returns typed request-input provenance.
 - `src/ds4py/capabilities/rolling_window.py` is the sole new context owner and toolset provider; it contains orchestration, not selection/serialization/statistics policy.
 - `src/ds4py/capabilities/rolling_window_session.py` contains session-scoped lifecycle/status/settings/command/statistics adapters, not a second capability.
-- `src/ds4py/runtime_persistence.py` owns save/switch/new/fork choreography through an internal host adapter before v2 behavior is added.
-- Existing `binding.py`, `model.py`, `runtime.py`, `runtime_restore.py`, `store.py`, `agent.py`, `agent_cli.py`, `tui_commands.py`, `tui.py`, and `noninteractive.py` remain integration facades rather than receiving duplicate policy implementations.
+- `src/ds4py/runtime_persistence.py` contains only pure save snapshot/record builders with explicit inputs. `AgentRuntime` retains save/switch/new/fork orchestration and state transitions; no `PersistenceHost` or runtime mirror protocol is added.
+- `src/ds4py/runtime_restore.py` owns restore-case selection and pure request-view/canonical validation planning alongside its existing restore helpers.
+- Existing `binding.py`, `model.py`, `runtime.py`, `store.py`, `agent.py`, `agent_cli.py`, `tui_commands.py`, `tui.py`, and `noninteractive.py` remain integration/orchestration facades rather than receiving duplicate policy implementations.
 
 ---
 
@@ -107,11 +108,12 @@ Run:
 
 ```bash
 node scripts/generate_context_paging_fixtures.mjs /tmp/pi-context-paging-4409e5e
+git add tests/fixtures/context_paging/manifest.json tests/fixtures/context_paging/settings.json tests/fixtures/context_paging/history.json tests/fixtures/context_paging/selection.json tests/fixtures/context_paging/notice.json tests/fixtures/context_paging/navigator.json tests/fixtures/context_paging/recovery.json
 node scripts/generate_context_paging_fixtures.mjs /tmp/pi-context-paging-4409e5e
-git diff --exit-code -- tests/fixtures/context_paging
+git diff --exit-code -- tests/fixtures/context_paging/manifest.json tests/fixtures/context_paging/settings.json tests/fixtures/context_paging/history.json tests/fixtures/context_paging/selection.json tests/fixtures/context_paging/notice.json tests/fixtures/context_paging/navigator.json tests/fixtures/context_paging/recovery.json
 ```
 
-Expected: both pinned runs succeed; the second produces no diff.
+Expected: both pinned runs succeed; the second produces no unstaged diff against the staged first-run outputs. Staging before the second run is required: `git diff` ignores untracked fixtures and therefore cannot prove idempotence until their first-run contents enter the index.
 
 - [ ] **Step 4: Check fixture coverage directly**
 
@@ -520,7 +522,7 @@ git commit -m "feat: add context history recovery tools"
 **Files:**
 - Create: `src/ds4py/capabilities/rolling_window.py`
 - Create: `src/ds4py/context_paging/meter.py`
-- Modify: `src/ds4py/capabilities/context.py` (broaden `ContextStrategy.reserve_messages` documentation)
+- Modify: `src/ds4py/capabilities/context.py` (add ordinary-request `ContextStrategy.request_messages`; keep recovery-only `reserve_messages`)
 - Modify: `src/ds4py/model.py` (`DS4Model._open_stream`)
 - Modify: `src/ds4py/agent.py` (owner factory and disabled delegate)
 - Create: `tests/agent/test_rolling_window.py`
@@ -528,15 +530,17 @@ git commit -m "feat: add context history recovery tools"
 - Modify: `tests/agent/test_context_strategy.py`
 - Modify: `tests/agent/test_agent_factory.py`
 - Modify: `tests/agent/test_conformance.py`
+- Modify: `tests/agent/test_model_stream.py`
 
 **Interfaces:**
-- Produces: `ContextOwnerFactory = Callable[[MessageBinder, LLMCompaction], ContextStrategy]`; `ContextComposition.owner` accepts one existing owner instance, one factory, or `None`, preserving current custom-owner callers without a second strategy field.
-- Produces: `ContextComposition.rolling(*, enabled: bool | None = None, token_budget: int | None = None, trim_to: int | None = None) -> ContextComposition` using a factory.
-- Produces: `RollingWindow(model.binder, *, disabled_owner: LLMCompaction, enabled=None, token_budget=None, trim_to=None)` with `reserve_operations=True`. The builder adopts a directly constructed RollingWindow's exact `disabled_owner` as `AgentComponents.compactor`; it never creates a second manual compactor.
-- Consumes: the existing `ContextStrategy.reserve_messages(messages, run_context)` identity default and LLMCompaction override. RollingWindow overrides this same method to return its exact stored selected view; no `request_messages` hook or `set_disabled_owner` method is added.
+- Produces: `ContextOwnerFactory = Callable[[MessageBinder, LLMCompaction], ContextStrategy]`; `ContextComposition.owner` accepts one existing custom owner instance, one factory, or `None`, preserving current custom-owner callers without a second strategy field.
+- Produces: `ContextComposition.rolling(*, enabled: bool | None = None, token_budget: int | None = None, trim_to: int | None = None) -> ContextComposition` using a factory. This is the sole supported RollingWindow composition path for the default agent builder; directly constructed RollingWindow instances do not get a second builder path.
+- Produces: `RollingWindow(model.binder, *, disabled_owner: LLMCompaction, enabled=None, token_budget=None, trim_to=None)` with `reserve_operations=True`, constructed by the factory with the same compactor returned as `AgentComponents.compactor`. The generic builder has no RollingWindow instance-adoption branch or owner/compactor reconciliation.
+- Produces: `ContextStrategy.request_messages(messages, run_context)` with an identity default for ordinary requests. LLMCompaction inherits it unchanged; its existing recovery-only `reserve_messages` override continues to select `run_context.messages` when present.
+- Produces: separate RollingWindow overrides for `request_messages` and `reserve_messages`. The ordinary hook returns the exact stored selected view; the recovery hook returns the actual request view only to `reserve_settlement._recover`. Neither hook delegates to the other, and no `set_disabled_owner` method is added.
 - Produces: `RequestMeter` in `context_paging/meter.py`, implementing `SelectionMeter` through Task 5 with no cache or selection policy.
 - Produces: RollingWindow's four-tool toolset at construction time, independent of enabled state.
-- `before_model_request` leaves `request_context.messages = ctx.messages` and stores selection in session state. Immediately before `MessageBinder.prepare_model_request`, `DS4Model._open_stream` invokes `reserve_messages` after harness normalization; `reserve_settlement._recover` uses the same materialization seam.
+- `before_model_request` leaves `request_context.messages = ctx.messages` and stores selection in session state. Immediately before `MessageBinder.prepare_model_request`, `DS4Model._open_stream` invokes `request_messages` after harness normalization. `reserve_settlement._recover` remains the sole caller of `reserve_messages`.
 
 - [ ] **Step 1: Write failing request-view and composition tests**
 
@@ -544,12 +548,14 @@ Using real capabilities and `FakeNative`, assert:
 
 1. full history remains byte-for-byte canonical while the bound request contains the selected notice/view;
 2. marked view-only messages survive post-normalization binder input both with a retained user request first and with a resident system request first;
-3. runtime adoption retains canonical requests plus the new response and discards notices/replacements;
-4. exact budget/notice counts match Task 5 and stable cuts reuse append-only KV prefixes between advances;
-5. repeated projections immediately reflect hints, pending/restored notes, clock-derived note changes, configuration, content, grouping, and frontier changes without a projection cache; failed/abandoned selections publish no planner or live state;
-6. the selected owner is the only registered `ContextStrategy`, and all four tools are present while both enabled and disabled;
-7. disabled RollingWindow delegates threshold/tool/reserve behavior to the existing `LLMCompaction`, while manual compaction remains a separate concrete service;
-8. `ContextComposition.rolling()` injects the identical `AgentComponents.compactor` as the disabled delegate, a directly constructed RollingWindow adopts its supplied compactor, existing custom owner instances still work, and no two-phase setter or post-construction wiring is required.
+3. a regression fixture makes canonical history `C`, harness-normalized messages `N`, and Rolling-selected view `S` pairwise distinct: LLMCompaction's ordinary `_open_stream` binds `N`, never the `C` returned by its recovery hook, while RollingWindow binds exactly `S`; capture the actual `prepare_model_request` input for both owners;
+4. RollingWindow's final selection measurement supplies `S` itself to `project_request_view`, and the ordinary hook returns that same message sequence with identical keys, parts, metadata, and order; the implementation must not rebuild a different candidate from `N` after selection, and its recovery hook is not called on the ordinary path;
+5. runtime adoption retains canonical requests plus the new response and discards notices/replacements;
+6. exact budget/notice counts match Task 5 and stable cuts reuse append-only KV prefixes between advances;
+7. repeated projections immediately reflect hints, pending/restored notes, clock-derived note changes, configuration, content, grouping, and frontier changes without a projection cache; failed/abandoned selections publish no planner or live state;
+8. the selected owner is the only registered `ContextStrategy`, and all four tools are present while both enabled and disabled;
+9. disabled RollingWindow delegates threshold/tool/reserve behavior to the existing `LLMCompaction`, while manual compaction remains a separate concrete service;
+10. `ContextComposition.rolling()` injects the identical `AgentComponents.compactor` as the disabled delegate, existing custom owner instances still work, and the builder has neither a direct-Rolling adoption branch nor two-phase/post-construction wiring.
 
 - [ ] **Step 2: Write failing overflow and reserve tests**
 
@@ -560,14 +566,14 @@ During reserve recovery, advance in the actual view, rebind through retained res
 - [ ] **Step 3: Run the tests and verify RED**
 
 ```bash
-uv run --frozen --extra agent pytest tests/agent/test_rolling_window.py tests/agent/test_rolling_window_reserve.py tests/agent/test_context_strategy.py tests/agent/test_agent_factory.py -q
+uv run --frozen --extra agent pytest tests/agent/test_rolling_window.py tests/agent/test_rolling_window_reserve.py tests/agent/test_context_strategy.py tests/agent/test_agent_factory.py tests/agent/test_model_stream.py -q
 ```
 
-Expected: FAIL because RollingWindow and post-normalization use of `reserve_messages` are not wired.
+Expected: FAIL because RollingWindow and the separate post-normalization `request_messages` hook are not wired.
 
 - [ ] **Step 4: Implement the capability and binder-side seam**
 
-Store mutable enabled/frontier/notice/navigation/accounting state in `Session.state`, not a per-run copy. Measure through `RequestMeter` and Task 5, select through Task 6, and use the existing `project_request()` final exact fit check. Keep measurement in `meter.py`, selection in `selection.py`, and lifecycle/statistics policy out of this capability. Never call `_reject_until_fit` on canonical messages and never pass marked views through harness merging. Use retained reserve operations; do not add a second native allocation path. Resolve factories in `build_agent_components` with the concrete compactor already in hand; do not mutate the owner after construction.
+Store mutable enabled/frontier/notice/navigation/accounting state in `Session.state`, not a per-run copy. Measure through `RequestMeter` and Task 5, select through Task 6, and use the existing `project_request()` final exact fit check. Keep measurement in `meter.py`, selection in `selection.py`, and lifecycle/statistics policy out of this capability. Never call `_reject_until_fit` on canonical messages and never pass marked views through harness merging. Use retained reserve operations; do not add a second native allocation path. Resolve `ContextComposition.rolling()` factories in `build_agent_components` with the concrete compactor already in hand; do not mutate the owner after construction or add a direct-Rolling special case. Leave ordinary LLMCompaction binding on the normalized messages through the identity request hook.
 
 - [ ] **Step 5: Run focused, conformance, and neighboring tests**
 
@@ -580,13 +586,13 @@ Expected: PASS, including context extension conformance items 1–5 for RollingW
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/ds4py/capabilities/rolling_window.py src/ds4py/context_paging/meter.py src/ds4py/capabilities/context.py src/ds4py/model.py src/ds4py/agent.py tests/agent/test_rolling_window.py tests/agent/test_rolling_window_reserve.py tests/agent/test_context_strategy.py tests/agent/test_agent_factory.py tests/agent/test_conformance.py
+git add src/ds4py/capabilities/rolling_window.py src/ds4py/context_paging/meter.py src/ds4py/capabilities/context.py src/ds4py/model.py src/ds4py/agent.py tests/agent/test_rolling_window.py tests/agent/test_rolling_window_reserve.py tests/agent/test_context_strategy.py tests/agent/test_agent_factory.py tests/agent/test_conformance.py tests/agent/test_model_stream.py
 git commit -m "feat: add rolling window context owner"
 ```
 
 ---
 
-### Task 10: Extract runtime persistence without behavior changes
+### Task 10: Extract pure save planning without moving runtime orchestration
 
 **Files:**
 - Create: `src/ds4py/runtime_persistence.py`
@@ -596,9 +602,9 @@ git commit -m "feat: add rolling window context owner"
 - Test: `tests/agent/test_compaction_persistence.py`
 
 **Interfaces:**
-- Produces: internal `PersistenceHost` protocol describing only the runtime state/callbacks used by persistence choreography; `AgentRuntime` satisfies it structurally.
-- Produces: `save_session(host)`, `switch_session(host, session_prefix)`, `new_session(host)`, and `fork_session(host)` async functions owning the moved implementation.
-- `AgentRuntime.save`, `switch`, `new`, and `fork` become one-call delegates. `runtime_restore.py` remains the pure restore-state helper; no v2 behavior is added in this task.
+- Produces: `build_save_snapshot(*, run_id, session_id, messages) -> ContinuableSnapshot`, deep-copying canonical messages through explicit inputs.
+- Produces: `build_save_record(...) -> SaveRecord` from explicit snapshot, engine/model, identity, payload, token, and segment values. It computes the existing token count/digest but accepts no runtime, host, session, store, or callbacks.
+- `AgentRuntime.save` retains activity handling, save-run numbering, KV writes, step-store writes, event ordering, and state transitions. `switch`, `new`, and `fork` remain on `AgentRuntime`; `runtime_restore.py` retains restore helpers. No `PersistenceHost`, host adapter, or one-call runtime delegate is added, and no v2 behavior is introduced in this task.
 
 - [ ] **Step 1: Establish the existing persistence baseline**
 
@@ -608,9 +614,9 @@ uv run --frozen --extra agent pytest tests/agent/test_restore.py tests/agent/tes
 
 Expected: PASS before the move. Existing behavioral coverage is the regression gate for this mechanical extraction; add a characterization test only if a moved branch has no existing assertion.
 
-- [ ] **Step 2: Move persistence choreography behind the adapter**
+- [ ] **Step 2: Move only pure snapshot and record construction**
 
-Move save/switch/new/fork, save-run numbering, payload writes, restore abort handling, and their private helpers as one behavior-preserving change. Keep activity claims, public runtime method signatures, event ordering, and state transitions unchanged. Do not add request-view cases or reformat unrelated runtime code. Both `runtime.py` and the new module must remain below 1,000 lines.
+Move the existing `ContinuableSnapshot` and `SaveRecord` assembly into the two pure builders. Keep save/switch/new/fork orchestration, save-run numbering, payload writes, restore abort handling, activity claims, identity hooks, and all session/store/native state transitions in their current owners. Do not add request-view cases, a host interface, or unrelated reformatting. Both `runtime.py` and the new module must remain below 1,000 lines.
 
 - [ ] **Step 3: Verify the extraction**
 
@@ -624,7 +630,7 @@ Expected: PASS with no test expectation changes.
 
 ```bash
 git add src/ds4py/runtime_persistence.py src/ds4py/runtime.py
-git commit -m "refactor: extract runtime persistence"
+git commit -m "refactor: extract save record planning"
 ```
 
 ---
@@ -635,8 +641,9 @@ git commit -m "refactor: extract runtime persistence"
 - Modify: `src/ds4py/store.py` (`SaveRecord` v1/v2 and optional `request_view`)
 - Modify: `src/ds4py/binding.py` (`MessageBinder.request_view`)
 - Modify: `src/ds4py/context_paging/history.py` (frontier derivation from validated provenance)
-- Modify: `src/ds4py/runtime_restore.py`
-- Modify: `src/ds4py/runtime_persistence.py` (save/switch/fork integration)
+- Modify: `src/ds4py/runtime_restore.py` (pure restore-case selection and validation planning)
+- Modify: `src/ds4py/runtime_persistence.py` (optional request-view input to pure save construction)
+- Modify: `src/ds4py/runtime.py` (save/switch/fork orchestration through the pure planners)
 - Create: `tests/agent/test_rolling_window_restore.py`
 - Modify: `tests/agent/test_restore.py`
 - Modify: `tests/agent/test_store.py`
@@ -647,7 +654,7 @@ git commit -m "refactor: extract runtime persistence"
 - `SaveRecord` accepts v1 records without `request_view`, writes v2, and serializes a present view through `ModelMessagesTypeAdapter` in JSON mode. V2 compaction saves may omit it.
 - Consumes: Task 3's `prepare_request_view_provenance()` and immutable validated mapping; this task adds no key/hash/marker/segment validator to `context_paging`.
 - Produces: `derive_frontier(canonical_messages, prepared_view) -> CutFrontier`, replaying that frontier to require exactly the retained canonical messages/exchanges.
-- Case 1 binds a validated `request_view` only for an enabled RollingWindow with compatible payload/preamble. Case 2 ignores view-scoped segments and fresh-renders full canonical history.
+- Produces: a pure restore-case planner in `runtime_restore.py`; `AgentRuntime.switch` invokes it before canonical segment validation and retains all live-state orchestration. Case 1 binds a validated `request_view` only for an enabled RollingWindow with compatible payload/preamble. Case 2 ignores view-scoped segments and fresh-renders full canonical history.
 
 - [ ] **Step 1: Write failing save-record and binder-view tests**
 
@@ -675,7 +682,7 @@ Expected: FAIL because v2 views, exact bound-view access, and view-scoped restor
 
 - [ ] **Step 4: Implement save/restore case selection and provenance**
 
-Select the restore case in `runtime_persistence.py` before calling canonical segment validation; leave `AgentRuntime` as a delegate. Validate canonical schema/media/stable keys independently. For eligible case 1, call Task 3's canonical view validator before live mutation, derive/replay the frontier in `history.py`, bind the view to the payload, then adopt full canonical history. Keep save order KV -> canonical snapshot -> save record. Case 2 resets note/restored-note state appropriately and ignores `request_view` provenance.
+Select the restore case through the pure planner in `runtime_restore.py` before calling canonical segment validation; `AgentRuntime.switch` remains the orchestrator, not a delegate to a shadow persistence host. Validate canonical schema/media/stable keys independently. For eligible case 1, call Task 3's canonical view validator before live mutation, derive/replay the frontier in `history.py`, bind the view to the payload, then adopt full canonical history. Extend Task 10's pure save builders with the optional exact bound view while `AgentRuntime.save` keeps save order KV -> canonical snapshot -> save record. Case 2 resets note/restored-note state appropriately and ignores `request_view` provenance.
 
 - [ ] **Step 5: Run focused and persistence regressions**
 
@@ -688,7 +695,7 @@ Expected: PASS with no prefill on exact view restore and no notice/replacement l
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/ds4py/store.py src/ds4py/binding.py src/ds4py/context_paging/history.py src/ds4py/runtime_restore.py src/ds4py/runtime_persistence.py tests/agent/test_rolling_window_restore.py tests/agent/test_restore.py tests/agent/test_store.py tests/agent/test_compaction_persistence.py
+git add src/ds4py/store.py src/ds4py/binding.py src/ds4py/context_paging/history.py src/ds4py/runtime_restore.py src/ds4py/runtime_persistence.py src/ds4py/runtime.py tests/agent/test_rolling_window_restore.py tests/agent/test_restore.py tests/agent/test_store.py tests/agent/test_compaction_persistence.py
 git commit -m "feat: persist rolling request views"
 ```
 

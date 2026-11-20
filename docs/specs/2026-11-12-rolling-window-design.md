@@ -138,13 +138,16 @@ one capability adapter in `ds4py.capabilities.rolling_window`.
 | `context_paging/stats.py` | Read-only saved-history, latest-request, and cache statistics through an explicit snapshot-store provider |
 | `capabilities/rolling_window.py` | Capability hooks, selected-view state, toolset registration, and disabled-owner delegation only |
 | `capabilities/rolling_window_session.py` | Settings, lifecycle, command, status, and statistics adaptation without TUI imports |
-| `runtime_persistence.py` | Save/switch/new/fork persistence choreography behind an internal runtime host adapter |
+| `runtime_persistence.py` | Pure save snapshot/record construction from explicit values; no runtime host interface or session orchestration |
+| `runtime_restore.py` | Restore-case selection and request-view/canonical validation planning alongside the existing restore helpers |
 
 The deterministic modules do not import the TUI, native worker, runtime, or
-filesystem. The capability and small store adapters own those effects. Extract
-existing save/switch/new/fork orchestration from `AgentRuntime` into
-`runtime_persistence.py` before adding request-view cases; `AgentRuntime` only
-delegates to that module.
+filesystem. The capability and small store adapters own those effects.
+`AgentRuntime` retains save/switch/new/fork orchestration, activity claims,
+store/native I/O, identity hooks, and state transitions. `runtime_persistence.py`
+contains only pure snapshot/record builders with explicit inputs;
+`runtime_restore.py` owns pure restore-case and validation planning. Do not add
+a `PersistenceHost` protocol or another interface mirroring `AgentRuntime`.
 
 ## Public history and stable identity
 
@@ -354,11 +357,12 @@ ContextComposition.rolling(
 `RollingWindow(binder, disabled_owner=compactor, ...)`. `build_agent_components`
 constructs the concrete compactor first and invokes the factory once, so the
 automatic disabled delegate and manual `/compact` service are the same object.
-Existing custom owner instances retain their current behavior. A directly
-constructed RollingWindow must supply its `disabled_owner`; the builder adopts
-that exact object as the manual compactor rather than creating a second one.
-There is no mutable `set_disabled_owner()` method, ordering rule, or second
-strategy field.
+This factory is the sole supported RollingWindow composition path for the
+default agent builder. Existing custom `ContextStrategy` instances retain their
+current generic path, but a directly constructed RollingWindow is not a second
+supported input path and the builder contains no RollingWindow-specific
+instance adoption or owner/compactor reconciliation. There is no mutable
+`set_disabled_owner()` method, ordering rule, or second strategy field.
 
 The shared agent CLI parser used by the interactive TUI and `--non-interactive`
 exposes `--context-strategy compaction|rolling`, `--context-token-budget`, and
@@ -414,17 +418,30 @@ result still does not fit`. Repeat the baseline's minimal trailing-rejection
 loop on view-only clones. If every allowed replacement still overflows, raise
 `ContextExhausted`.
 
-Reuse the existing `ContextStrategy.reserve_messages(messages, run_context)` as
-the one request-view materialization seam; do not add a second hook. Broaden its
-contract to select the owner's authoritative messages for both ordinary model
-requests and reserve recovery. Its identity default and LLMCompaction override
-remain unchanged. RollingWindow's `before_model_request` leaves
+Add `ContextStrategy.request_messages(messages, run_context)` with an identity
+default for ordinary model requests only. Keep
+`ContextStrategy.reserve_messages(messages, run_context)` as the separate
+reserve-recovery seam with its existing contract. In particular,
+`LLMCompaction.request_messages` inherits the identity default, while its
+unchanged `reserve_messages` override still selects `run_context.messages` when
+a run context exists. Ordinary compaction requests therefore bind the
+harness-normalized messages, never canonical history substituted through the
+recovery hook.
+
+RollingWindow's `before_model_request` leaves
 `request_context.messages = ctx.messages` and stores the selected view in session
 state. After the pinned harness finishes request normalization, and immediately
 before `MessageBinder.prepare_model_request`, `DS4Model._open_stream` calls
-`reserve_messages` and uses its returned view. `reserve_settlement._recover`
-continues to call the same method. RollingWindow returns the exact stored view,
-including marked notices and replacements.
+`request_messages` and uses its returned view. RollingWindow overrides that
+ordinary-request hook to return the exact stored view, including marked notices
+and replacements. Its separate `reserve_messages` override returns the actual
+request view only when `reserve_settlement._recover` performs reserve recovery.
+The two hooks have separate call sites and contracts; neither delegates to the
+other. RollingWindow's final selection measurement passes the selected candidate
+`S` itself to `project_request_view`, and `request_messages` returns that same
+message sequence with identical keys, parts, metadata, and order. It must not
+rebuild a different candidate from the normalized canonical list after
+selection.
 
 This binder-side seam is required because harness merging preserves only its own
 metadata namespace and an unbound marked request cannot later be split reliably.
@@ -810,7 +827,13 @@ Use real capabilities and `FakeNative` to prove:
 - no prefill on exact view restore and no notice leakage into canonical history;
 - with a retained user request first and with a resident system request first,
   post-normalization binder input preserves notice/replacement keys and markers
-  and canonical history remains unchanged.
+  and canonical history remains unchanged;
+- canonical, harness-normalized, and Rolling-selected messages are observably
+  different in one regression fixture: LLMCompaction's ordinary request binds
+  the normalized messages while its recovery hook still selects canonical
+  history, and RollingWindow binds the same selected candidate view passed to
+  `project_request_view`, with identical keys, parts, metadata, and order, not
+  the normalized canonical list.
 
 Run focused RED/GREEN cycles, then:
 
