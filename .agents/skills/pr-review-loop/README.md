@@ -44,36 +44,6 @@ the skill posts.
 
 See [`assets/evidence-template.md`](assets/evidence-template.md).
 
-## Install
-
-### For a project
-
-Copy this folder into the project and link it for Claude Code:
-
-```bash
-mkdir -p .agents/skills .claude/skills
-cp -R /path/to/the-promptorium/skills/pr-review-loop .agents/skills/
-ln -s ../../.agents/skills/pr-review-loop .claude/skills/pr-review-loop
-```
-
-Pi and other Agent Skills tools read `.agents/skills/`. Claude Code reads
-`.claude/skills/`.
-
-Then add the text in
-[`assets/pr-review-guidance.md`](assets/pr-review-guidance.md) to the
-project's `AGENTS.md` or contributor docs.
-
-### For yourself
-
-Link the folder into your personal skills directory, as
-[Agent Skills + Claude Code Integration](https://github.com/sixfeetup/the-promptorium/blob/main/docs/claude-code-integration.md)
-describes:
-
-```bash
-ln -s /path/to/the-promptorium/skills/pr-review-loop ~/.agents/skills/pr-review-loop
-ln -s /path/to/the-promptorium/skills/pr-review-loop ~/.claude/skills/pr-review-loop
-```
-
 ## Guidance for human reviewers
 
 Agent correctness review happens on the author's side, before a person
