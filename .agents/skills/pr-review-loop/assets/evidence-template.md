@@ -14,9 +14,12 @@ Values:
 
 - `{{HEAD_NOTE}}`: `the PR head when this was written`, or
   `the PR head was <sha> when this was written` when they differ.
-- `{{REVIEW_NOTE}}`: `A fresh reviewer saw this commit.`, or
+- `{{REVIEW_NOTE}}`: `A fresh reviewer saw this commit.`,
   `A fresh reviewer last saw <last reviewed sha>; later fixes are listed below.`
-  when the final round made fixes.
+  when the final round made fixes, or
+  `No fresh reviewer completed a review of this commit.` when the final
+  round has no usable fresh review and no earlier round supplies a
+  last-reviewed commit.
 - `{{OUTCOME}}`: `Clean`, `Cap reached`, or `Incomplete: <reason>`.
 - `{{ROUNDS_WORD}}`: `round` or `rounds`.
 - `{{UNREVIEWED}}`: a check item for fixes made in the final round of the

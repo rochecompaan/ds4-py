@@ -231,7 +231,10 @@ Then write the evidence (section 9) and ask about follow-up issues
      head in the note when it differs.
    - **Last reviewed commit:** the commit the final round's fresh reviewer
      saw. When the evidence head differs, the fixes between them were not
-     reviewed by a fresh reviewer.
+     reviewed by a fresh reviewer. If the final round has no usable fresh
+     review and no earlier round supplies a last-reviewed commit, use
+     `No fresh reviewer completed a review of this commit.` as the review
+     note instead.
    - **Result:** this run's outcome and number of rounds, and the counts of
      fixed, declined, and deferred findings across all runs.
    - **For you to check:** the last round's callouts, merged with earlier
