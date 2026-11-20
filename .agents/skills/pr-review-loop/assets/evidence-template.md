@@ -18,8 +18,7 @@ Values:
   `A fresh reviewer last saw <last reviewed sha>; later fixes are listed below.`
   when the final round made fixes, or
   `No fresh reviewer completed a review of this commit.` when the final
-  round has no usable fresh review and no earlier round supplies a
-  last-reviewed commit.
+  round has no usable fresh review.
 - `{{OUTCOME}}`: `Clean`, `Cap reached`, or `Incomplete: <reason>`.
 - `{{ROUNDS_WORD}}`: `round` or `rounds`.
 - `{{UNREVIEWED}}`: a check item for fixes made in the final round of the
