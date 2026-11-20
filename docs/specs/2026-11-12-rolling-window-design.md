@@ -83,6 +83,12 @@ partial vision binding is added in this milestone.
   prefill by itself.
 - Keep public modules focused. Selection, history projection, public recovery,
   output paging, tool adaptation, settings, and statistics are separate changes.
+  `capabilities/rolling_window.py` orchestrates these modules; it does not
+  reimplement their policy. No file may cross 1,000 lines; extract a cohesive
+  responsibility instead.
+- Centralize `ds4.*` metadata keys in `message_metadata.py`. Extend
+  `binding_provenance.py` for key/hash/segment and request-view validation rather
+  than implementing a parallel validator in `context_paging`.
 - Use precise domain types, `TypeIs`, PEP 695 syntax, and safe lint fixes only.
 - Start every behavioral change with a focused failing test and observe RED.
 - Keep v1 save records readable and preserve existing LLMCompaction behavior.
@@ -114,21 +120,31 @@ one capability adapter in `ds4py.capabilities.rolling_window`.
 
 | Module | Responsibility |
 | --- | --- |
-| `context_paging/model.py` | Immutable history items, public content records, cut frontiers, selection results, settings, and error types |
-| `context_paging/settings.py` | Pure settings resolution, positive-integer validation, effective budget/target arithmetic |
-| `context_paging/history.py` | Canonical Pydantic messages to atomic user/model-turn items; exchange validation and restore interruption classification |
-| `context_paging/public_history.py` | Public recovery projection, privacy filtering, paging/nested-paging exclusion, metadata and file/tool/failure filters |
-| `context_paging/selection.py` | Prefix/completed/active grouping, remembered-frontier resolution, FIFO advances, keyless fallback, protected overflow and recovery modes |
-| `context_paging/notice.py` | Frozen notices, copied evicted conversation, clipping and continuation handles |
+| `message_metadata.py` | The single registry for `ds4.*` message metadata keys and their typed marker values |
+| `binding_provenance.py` | Canonical key/hash/part validation, segment provenance, and validated request-view-to-canonical mappings |
+| `binding_projection.py` | Immutable exact request projections and token-unit spans |
+| `context_paging/settings.py` | `RollingWindowSettings`, pure settings resolution, positive-integer validation, effective budget/target arithmetic |
+| `context_paging/history.py` | Immutable canonical history/exchange records and their validation/projection; restored-view frontier derivation from validated provenance |
+| `context_paging/public_history.py` | Public DTOs and recovery projection, privacy filtering, paging/nested-paging exclusion, metadata and file/tool/failure filters |
+| `context_paging/selection.py` | Cut frontiers, selection state/results, `SelectionMeter`, stable-cut policy, protected overflow and recovery modes |
+| `context_paging/meter.py` | The `RequestMeter` adapter from selection to exact binder projection; no cache or selection policy |
+| `context_paging/notice.py` | `PagingNotice`, frozen notices, copied evicted conversation, clipping and continuation handles |
+| `context_paging/text_units.py` | Shared UTF-16 length, offset, and slicing operations that never split surrogate pairs |
+| `context_paging/estimates.py` | Shared display-only text/image unit estimates, including four units per token and 4,800 units per image |
 | `context_paging/navigator.py` | Cached public search corpus, stable IDs and sequences, search/browse/load |
 | `context_paging/recovery_parts.py` | Baseline-compatible public JSON shapes, JSON Pointer selection, part descriptions and image metadata |
-| `context_paging/recovery_response.py` | Serialized UTF-8 byte budgets, deferred loads, plain-text/JSON pages, UTF-16 offsets and continuation handles |
+| `context_paging/recovery_response.py` | Serialized UTF-8 byte budgets, deferred loads, plain-text/JSON pages, and continuation handles using `text_units.py` |
 | `context_paging/tools.py` | Four tool functions, strict schemas, disabled refusal, Pydantic `ToolReturn`, and the explicit M5 image-mode error |
-| `context_paging/stats.py` | Read-only saved-history, latest-request, and cache statistics |
-| `capabilities/rolling_window.py` | Session state, exact token accounting, capability hooks, owner fallback, lifecycle, command service and status events |
+| `context_paging/stats.py` | Read-only saved-history, latest-request, and cache statistics through an explicit snapshot-store provider |
+| `capabilities/rolling_window.py` | Capability hooks, selected-view state, toolset registration, and disabled-owner delegation only |
+| `capabilities/rolling_window_session.py` | Settings, lifecycle, command, status, and statistics adaptation without TUI imports |
+| `runtime_persistence.py` | Save/switch/new/fork persistence choreography behind an internal runtime host adapter |
 
 The deterministic modules do not import the TUI, native worker, runtime, or
-filesystem. The capability and small store adapters own those effects.
+filesystem. The capability and small store adapters own those effects. Extract
+existing save/switch/new/fork orchestration from `AgentRuntime` into
+`runtime_persistence.py` before adding request-view cases; `AgentRuntime` only
+delegates to that module.
 
 ## Public history and stable identity
 
@@ -226,16 +242,15 @@ tokenize an approximation separately from `MessageBinder`.
 `Session.plan(projection.tokens)` supplies the conformance-test transition kind
 and cost; RollingWindow does not need a second public `plan()` API.
 
-Cache measurements only by immutable inputs: configuration signature, message
-key and content hash, grouping role, notice content, frontier, registered
-note-provider identity, and the effective note preview. The note identity
-includes `hints_enabled`, exact pending and restored note content, note state,
-and every clock-derived value that can change emission. Invalidate affected
-entries whenever that preview changes; never key only by the provider's
-configuration signature. A selection that fails or is abandoned publishes none
-of these mutations. The binder's
-existing `project_request()` remains the final exact fit check before a view is
-returned. `Session.ctx_used` supplies the live reserve measurement.
+Do not cache request projections in this milestone. Recompute each candidate
+through `plan_transition()` so hints, pending/restored notes, clock-derived
+values, configuration, content, grouping, and frontier changes are reflected
+without an invalidation list. A selection that fails or is abandoned publishes
+no planner or live-state mutations. The binder's existing `project_request()`
+remains the final exact fit check before a view is returned. `Session.ctx_used`
+supplies the live reserve measurement. A later cache requires measurements
+showing it is hot and one frozen input value object constructed from every
+projection input; it must not use a hand-maintained set of cache-key fields.
 
 Pi's provider-estimate calibration is not ported. Its accounting invariants are:
 removed units remove their own cost, notice cost remains included, outgoing-only
@@ -321,28 +336,35 @@ Port the current wording and behavior, including:
 
 ## Capability, fallback, and reserve recovery
 
-Keep `ContextComposition.owner` as the selection seam. Its RollingWindow form is:
+Keep `ContextComposition.owner` as the single selection seam. It accepts an
+existing custom `ContextStrategy` instance, a context-owner factory, or `None`.
+The factory interface is
+`Callable[[MessageBinder, LLMCompaction], ContextStrategy]`. Its RollingWindow
+form is:
 
 ```python
-ContextComposition(
-    owner=RollingWindow(
-        model.binder,
-        enabled=None,          # None resolves settings; a bool overrides them
-        token_budget=None,     # positive int overrides settings
-        trim_to=None,          # positive int or None for the adaptive default
-    )
+ContextComposition.rolling(
+    enabled=None,          # None resolves settings; a bool overrides them
+    token_budget=None,     # positive int overrides settings
+    trim_to=None,          # positive int or None for the adaptive default
 )
 ```
 
-The constructor needs no compactor. `build_agent_components` detects a
-RollingWindow owner and injects the concrete `LLMCompaction` through an internal
-`set_disabled_owner()` composition step before the agent is built. No factory or
-second `ContextComposition.strategy` field is added. The shared agent CLI parser
-used by the interactive TUI and `--non-interactive` exposes
-`--context-strategy compaction|rolling`, `--context-token-budget`, and
-`--context-trim-to`; `raw` is not an agent path and gains none of these flags.
-The default is `compaction`, preserving existing interactive and
-non-interactive behavior.
+`ContextComposition.rolling()` returns a composition whose factory constructs
+`RollingWindow(binder, disabled_owner=compactor, ...)`. `build_agent_components`
+constructs the concrete compactor first and invokes the factory once, so the
+automatic disabled delegate and manual `/compact` service are the same object.
+Existing custom owner instances retain their current behavior. A directly
+constructed RollingWindow must supply its `disabled_owner`; the builder adopts
+that exact object as the manual compactor rather than creating a second one.
+There is no mutable `set_disabled_owner()` method, ordering rule, or second
+strategy field.
+
+The shared agent CLI parser used by the interactive TUI and `--non-interactive`
+exposes `--context-strategy compaction|rolling`, `--context-token-budget`, and
+`--context-trim-to`; it maps the Rolling name to `ContextComposition.rolling()`.
+`raw` is not an agent path and gains none of these flags. The default is
+`compaction`, preserving existing interactive and non-interactive behavior.
 
 For CLI RollingWindow selection, resolve the strategy and effective token budget
 before `open_engine`. Set `native_ctx = min(args.ctx, resolved_token_budget)` and
@@ -392,13 +414,17 @@ result still does not fit`. Repeat the baseline's minimal trailing-rejection
 loop on view-only clones. If every allowed replacement still overflows, raise
 `ContextExhausted`.
 
-Add `ContextStrategy.request_messages(messages, run_context)`, defaulting to the
-identity for existing owners. RollingWindow's `before_model_request` leaves
+Reuse the existing `ContextStrategy.reserve_messages(messages, run_context)` as
+the one request-view materialization seam; do not add a second hook. Broaden its
+contract to select the owner's authoritative messages for both ordinary model
+requests and reserve recovery. Its identity default and LLMCompaction override
+remain unchanged. RollingWindow's `before_model_request` leaves
 `request_context.messages = ctx.messages` and stores the selected view in session
 state. After the pinned harness finishes request normalization, and immediately
-before `MessageBinder.prepare_model_request`, `DS4Model._open_stream` calls the
-owner hook and uses its returned view. RollingWindow returns the exact stored
-view, including marked notices and replacements.
+before `MessageBinder.prepare_model_request`, `DS4Model._open_stream` calls
+`reserve_messages` and uses its returned view. `reserve_settlement._recover`
+continues to call the same method. RollingWindow returns the exact stored view,
+including marked notices and replacements.
 
 This binder-side seam is required because harness merging preserves only its own
 metadata namespace and an unbound marked request cannot later be split reliably.
@@ -534,7 +560,15 @@ that choice: view-scoped segment keys need not exist in canonical history.
 
 For eligible case 1, validate `request_view` plus `record.segments`, bind them
 to the payload, then adopt the full canonical snapshot independently in the
-runtime. Validate the canonical snapshot's own schema, media, and stable keys
+runtime. `binding_provenance.prepare_request_view_provenance()` owns this
+validation and returns the bound view plus its validated view-to-canonical
+mapping. It reuses the module's canonical part validator, content hash, key
+handling, and `prepare_provenance()` segment checks. `store.SegmentProvenance`
+remains the persisted segment record. `context_paging.history` consumes the
+validated mapping to derive and replay the cut frontier; it does not reimplement
+key, hash, marker, or segment validation.
+
+Validate the canonical snapshot's own schema, media, and stable keys
 independently rather than against view-scoped segments. Every keyed segment
 must resolve exactly once in `request_view` with a matching content hash. Every
 unmarked view message must also occur in the canonical snapshot with the same
@@ -661,8 +695,9 @@ Preserve the baseline report sections and unavailable/zero semantics.
   rehydration by stable message key and content hash. Exclude the resident
   system/tools/instruction prefix and the transient paging notice, matching Pi's
   saved-history boundary; exact request input statistics account for that prefix
-  separately. This estimate runs without an engine, is for display only, and
-  never enters selection.
+  separately. Share `text_units.py` and `estimates.py` with notice construction
+  rather than duplicating UTF-16 or image-estimate rules. This estimate runs
+  without an engine, is for display only, and never enters selection.
 - **Input tokens:** latest exact `RequestProjection.total_tokens` for the live
   selection. RollingWindow also records that value as a validated non-negative
   safe integer in the final canonical response's
@@ -676,7 +711,11 @@ Preserve the baseline report sections and unavailable/zero semantics.
   one identifies reserve/recovery work; use the separate exact metadata rather
   than aggregate usage. An old or damaged record without exact metadata or an
   explicit single-sync count reports `unavailable`, never a falsely exact value.
-  Output is excluded. Mark only estimated fallback values with `~`.
+  One `read_request_input()` adapter returns an immutable
+  `InputTokenReading(provenance, tokens)`, where `provenance` is `exact`,
+  `reconstructible`, or `unavailable`; report code consumes that typed result and
+  never re-derives the sync-count rule. Output is excluded. Mark only estimated
+  fallback values with `~`.
 - **Paging budget/model window:** effective values and current percentage;
   disabled shows `inactive`.
 - **Cache totals:** sum `cacheRead` and `cacheWrite` once per stable saved
@@ -684,8 +723,12 @@ Preserve the baseline report sections and unavailable/zero semantics.
   counter makes that total unavailable; explicit measured zero remains zero.
 
 Reading snapshots must tolerate the step store's documented damaged-file
-behavior. Stats does not mutate navigation, cut state, accounting, settings,
-status, native state, or canonical history.
+behavior. `collect_statistics()` receives an explicit `StatisticsStore` provider
+and session directory; it never reaches through `AgentRuntime`. The runtime's
+existing command adapter supplies the current `FileStepStore` and directory, so
+adding statistics requires no further runtime persistence or store logic. Stats
+does not mutate navigation, cut state, accounting, settings, status, native
+state, or canonical history.
 
 ## Verification and parity evidence
 
@@ -724,7 +767,8 @@ Use real capabilities and `FakeNative` to prove:
 
 - full history remains canonical while request views page;
 - exact budget/notice counts and stable KV prefixes between cuts, including
-  cached-projection invalidation across hints on/off and restored-note changes;
+  fresh projection results across hints on/off, restored-note changes, and
+  clock-derived note changes without a projection cache;
 - case-2 restore with the first turn paged out re-renders saved date/hints notes
   from canonical history instead of restoring view-scoped note state;
 - `Session.plan(projection.tokens)`, including the assistant prefix and
@@ -780,8 +824,8 @@ claim native/live parity from portable tests.
 
 ## Builder choices
 
-The builder may choose private helper names, concrete dataclass layouts, cache
-key encoding, async filesystem offload, and the smallest Pydantic `ToolReturn`
-adapter that preserves the wire contract. These choices must not alter the
-public behavior, ownership boundaries, save format, or verification requirements
-above.
+The builder may choose private helper names, concrete dataclass layouts, async
+filesystem offload, and the smallest Pydantic `ToolReturn` adapter that preserves
+the wire contract. These choices must not alter the public behavior, ownership
+boundaries, save format, no-projection-cache decision, or verification
+requirements above.

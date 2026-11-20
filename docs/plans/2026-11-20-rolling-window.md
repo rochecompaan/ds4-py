@@ -4,13 +4,13 @@
 
 **Goal:** Add the complete view-only RollingWindow context strategy, including stable cuts, exact ds4 token/KV accounting, public history recovery, lifecycle and settings, v2 request-view persistence, statistics, and native/live verification.
 
-**Architecture:** Keep deterministic policy and recovery in `ds4py.context_paging`; keep native, runtime, filesystem, command, and status effects in one `RollingWindow` capability and small existing-runtime adapters. Canonical harness history remains authoritative. A selected request view is measured and bound through `MessageBinder`, while transient notices and recovery replacements never enter canonical history.
+**Architecture:** Keep deterministic policy and recovery in `ds4py.context_paging`; keep native, filesystem, command, and status effects in the orchestrating `RollingWindow` capability and small adapters. Reuse `binding_provenance.py` for all key/hash/segment validation and extract runtime persistence before extending it. Canonical harness history remains authoritative. A selected request view is measured without a projection cache and bound through `MessageBinder`, while transient notices and recovery replacements never enter canonical history.
 
 **Tech Stack:** Python 3.14, Pydantic AI/Pydantic AI Harness, existing `MessageBinder`/`Session`/`FileStepStore`, `FakeNative`, pytest, devenv and uv. Node is used only by the manually run baseline fixture generator. CUDA inference and live replay run on the separately provisioned Salad host.
 
 **Spec:** [`docs/specs/2026-11-12-rolling-window-design.md`](../specs/2026-11-12-rolling-window-design.md). The parity baseline is `pi-context-paging` commit `4409e5e4ffa0b626c11e72afe666f0b6e55a0e5f`; later upstream changes are not normative.
 
-**Base:** Start at `7d80c7c` on `feat/rolling-window` in `/home/roche/projects/satyrn/ds4-py/.worktrees/rolling-window`. Do not edit the main checkout.
+**Base:** `7d80c7c`; `feat/rolling-window` adds only the design and this plan. Execute in `/home/roche/projects/satyrn/ds4-py/.worktrees/rolling-window`; do not edit the main checkout.
 
 ## Global Constraints
 
@@ -23,7 +23,10 @@
 - Keep the public recovery protocol at or below 16,384 UTF-8 bytes, part descriptions at or below 4,096 bytes, and text offsets/limits in UTF-16 code units. Never expose thinking, signatures, paging implementation chatter, image bytes, or base64 through public recovery.
 - Keep v1 save records readable. The canonical snapshot remains authoritative; v2 `request_view` is binding provenance only.
 - Do not add a Node production dependency, a second model session/history, native image attachment, branch navigation, or a command-level `/strip` implementation.
-- Keep modules focused. New pure modules follow the boundaries in the spec; `RollingWindow` remains the only new registered capability, with session-lifecycle helpers kept out of its public interface.
+- Keep modules focused. `RollingWindow` is the only new registered capability and orchestrates policy rather than reimplementing it. No file may cross 1,000 lines; extract a cohesive responsibility instead.
+- Reuse `ContextStrategy.reserve_messages` for both ordinary request materialization and reserve recovery. Do not add a parallel request-view hook or a mutable disabled-owner setter.
+- Centralize production `ds4.*` keys in `message_metadata.py`. Extend `binding_provenance.py` for view validation; `context_paging` must not duplicate key, hash, marker, or segment rules.
+- Do not cache request projections in this milestone. Recompute through the exact planner so every note, clock, content, configuration, grouping, and frontier input is fresh.
 - Use `TypeIs`, precise domain types, PEP 695 syntax, and safe lint fixes. Do not add a second Python environment or hook runner.
 - Start every behavioral change with a focused failing test and observe RED. Keep formatting and behavioral changes in separate commits.
 - Run commands from this worktree inside `devenv shell`. Run the complete static gate and portable suite before delivery.
@@ -31,30 +34,34 @@
 
 ## Review Focus
 
-- **View-scoped restore provenance:** a valid paged save can omit canonical messages and contain synthetic keys. Task 9 pins atomic case-1 validation, independent canonical validation, and case-2 fallback for disabled/non-Rolling owners.
-- **Small effective budgets:** notices must not consume the protected active request's floor or silently exceed the model window. Task 5 pins the 500-code-unit useful clip, the model-capped 10% conversation allowance, and bounded notice resizing.
-- **Unicode paging boundaries:** Python code-point slicing can split the baseline's UTF-16 positions, and character counts do not bound UTF-8 replies. Task 6 pins astral characters, unpaired-surrogate avoidance, exact byte limits, and continuation arguments.
-- **Settings and lifecycle failures:** a parse error or repeated event must not leave half-applied settings or erase a newer frontier. Task 10 pins status-then-raise startup failure, atomic settings resolution, event idempotence, and warning deduplication.
-- **Damaged or old usage records:** aggregate multi-sync usage is not one exact request input. Task 11 pins `ds4.request_sync_count`, exact input metadata, unavailable fallbacks, and damaged snapshot behavior.
-- **Note-driven projection drift:** hints, dates, and restored notes can change exact request tokens without changing message hashes. Tasks 4 and 8 pin isolated previews and cache invalidation across every emitted-note input.
+- **View-scoped restore provenance:** a valid paged save can omit canonical messages and contain synthetic keys. Tasks 3 and 11 pin canonical key/hash/segment validation, atomic case-1 validation, independent canonical validation, and case-2 fallback for disabled/non-Rolling owners.
+- **Small effective budgets:** notices must not consume the protected active request's floor or silently exceed the model window. Task 6 pins the 500-code-unit useful clip, the model-capped 10% conversation allowance, and bounded notice resizing.
+- **Unicode paging boundaries:** Python code-point slicing can split the baseline's UTF-16 positions, and character counts do not bound UTF-8 replies. Tasks 6 and 7 pin astral characters, unpaired-surrogate avoidance, exact byte limits, and continuation arguments through shared helpers.
+- **Settings and lifecycle failures:** a parse error or repeated event must not leave half-applied settings or erase a newer frontier. Task 12 pins status-then-raise startup failure, atomic settings resolution, event idempotence, and warning deduplication.
+- **Damaged or old usage records:** aggregate multi-sync usage is not one exact request input. Task 13 pins typed exact/reconstructible/unavailable input provenance and damaged snapshot behavior.
+- **Note-driven projection drift:** hints, dates, and restored notes can change exact request tokens without changing message hashes. Tasks 5 and 9 pin isolated previews and fresh recomputation across every emitted-note input, with no projection cache.
 
 ## File Structure
 
 - `scripts/generate_context_paging_fixtures.mjs` and `tests/fixtures/context_paging/` provide pinned, language-neutral differential evidence; Node is not a production or CI dependency.
-- `src/ds4py/context_paging/model.py` defines immutable history, public DTO, frontier, selection, notice, and settings records.
-- `src/ds4py/context_paging/settings.py` resolves trusted project, global, and programmatic settings.
-- `src/ds4py/context_paging/history.py` validates exchanges and maps canonical messages to atomic history items; it also validates restored views and derives their frontiers.
-- `src/ds4py/context_paging/public_history.py` projects safe public history and applies paging/privacy/nested-wrapper exclusions.
+- `src/ds4py/message_metadata.py` is the single production registry for `ds4.*` keys and typed paging marker values.
+- `src/ds4py/binding_provenance.py` owns canonical part/key/hash validation, `store.SegmentProvenance` validation, and request-view-to-canonical mappings. No paging module duplicates those rules.
+- `src/ds4py/context_paging/settings.py` defines `RollingWindowSettings` and resolves trusted project, global, and programmatic settings.
+- `src/ds4py/context_paging/history.py` defines canonical history/exchange records, validates exchanges, and derives restored frontiers from validated provenance.
+- `src/ds4py/context_paging/public_history.py` defines public DTOs and applies paging/privacy/nested-wrapper exclusions.
 - `src/ds4py/binding_projection.py` defines exact request projections and unit spans without expanding the binder facade's responsibilities.
-- `src/ds4py/context_paging/selection.py` resolves remembered frontiers, advances stable cuts, and handles protected overflow/fallback modes.
-- `src/ds4py/context_paging/notice.py` builds, freezes, clips, and resizes transient paging notices.
+- `src/ds4py/context_paging/selection.py` defines cut/selection records and `SelectionMeter`, resolves remembered frontiers, and advances stable cuts.
+- `src/ds4py/context_paging/meter.py` implements `SelectionMeter` as `RequestMeter` through the exact binder projection, without policy or caching.
+- `src/ds4py/context_paging/notice.py` defines `PagingNotice` and builds, freezes, clips, and resizes transient notices.
+- `src/ds4py/context_paging/text_units.py` owns UTF-16 length/offset/slicing; `estimates.py` owns the shared four-units-per-token and 4,800-units-per-image display estimates.
 - `src/ds4py/context_paging/recovery_parts.py` implements public JSON shapes, JSON Pointer selection, and image metadata.
-- `src/ds4py/context_paging/recovery_response.py` implements UTF-16 pages and complete UTF-8 byte-budget serialization.
+- `src/ds4py/context_paging/recovery_response.py` implements complete UTF-8 byte-budget serialization using `text_units.py`.
 - `src/ds4py/context_paging/navigator.py` owns cached public search/browse/load views and stable references.
 - `src/ds4py/context_paging/tools.py` adapts the four strict tool schemas to model-visible returns and disabled/M5 errors.
-- `src/ds4py/context_paging/stats.py` computes read-only storage, history, request, budget, and cache reports.
-- `src/ds4py/capabilities/rolling_window.py` is the sole new context owner and toolset provider.
-- `src/ds4py/capabilities/rolling_window_session.py` contains session-scoped lifecycle/status/settings helpers, not a second capability.
+- `src/ds4py/context_paging/stats.py` computes read-only reports through an explicit snapshot-store provider and returns typed request-input provenance.
+- `src/ds4py/capabilities/rolling_window.py` is the sole new context owner and toolset provider; it contains orchestration, not selection/serialization/statistics policy.
+- `src/ds4py/capabilities/rolling_window_session.py` contains session-scoped lifecycle/status/settings/command/statistics adapters, not a second capability.
+- `src/ds4py/runtime_persistence.py` owns save/switch/new/fork choreography through an internal host adapter before v2 behavior is added.
 - Existing `binding.py`, `model.py`, `runtime.py`, `runtime_restore.py`, `store.py`, `agent.py`, `agent_cli.py`, `tui_commands.py`, `tui.py`, and `noninteractive.py` remain integration facades rather than receiving duplicate policy implementations.
 
 ---
@@ -64,8 +71,12 @@
 **Files:**
 - Create: `scripts/generate_context_paging_fixtures.mjs`
 - Create: `tests/fixtures/context_paging/manifest.json`
-- Create: selected JSON fixtures under `tests/fixtures/context_paging/`
-- Add: `docs/plans/2026-11-20-rolling-window.md`
+- Create: `tests/fixtures/context_paging/settings.json`
+- Create: `tests/fixtures/context_paging/history.json`
+- Create: `tests/fixtures/context_paging/selection.json`
+- Create: `tests/fixtures/context_paging/notice.json`
+- Create: `tests/fixtures/context_paging/navigator.json`
+- Create: `tests/fixtures/context_paging/recovery.json`
 
 **Interfaces:**
 - Produces: `node scripts/generate_context_paging_fixtures.mjs <baseline-checkout>`; the command refuses any baseline whose `HEAD` is not `4409e5e4ffa0b626c11e72afe666f0b6e55a0e5f`.
@@ -106,10 +117,10 @@ Expected: both pinned runs succeed; the second produces no diff.
 
 Compare every bullet in the spec's “Differential contract fixtures” section with a manifest entry. Validate all JSON files with the repository's JSON hook or `python -m json.tool`. No new pytest suite is needed for manifest text or one-off script structure; the meaningful verification is executing the generator and consuming fixtures in later behavioral tests.
 
-- [ ] **Step 5: Commit the plan and reproducibility inputs**
+- [ ] **Step 5: Commit the reproducibility inputs**
 
 ```bash
-git add docs/plans/2026-11-20-rolling-window.md scripts/generate_context_paging_fixtures.mjs tests/fixtures/context_paging
+git add scripts/generate_context_paging_fixtures.mjs tests/fixtures/context_paging/manifest.json tests/fixtures/context_paging/settings.json tests/fixtures/context_paging/history.json tests/fixtures/context_paging/selection.json tests/fixtures/context_paging/notice.json tests/fixtures/context_paging/navigator.json tests/fixtures/context_paging/recovery.json
 git commit -m "test: add pinned context paging fixtures"
 ```
 
@@ -119,12 +130,11 @@ git commit -m "test: add pinned context paging fixtures"
 
 **Files:**
 - Create: `src/ds4py/context_paging/__init__.py`
-- Create: `src/ds4py/context_paging/model.py`
 - Create: `src/ds4py/context_paging/settings.py`
 - Create: `tests/context_paging/test_settings.py`
 
 **Interfaces:**
-- Produces: immutable `RollingWindowSettings(enabled: bool, token_budget: int, trim_to: int, trim_to_explicit: bool)` plus the history/public/frontier records consumed by later tasks.
+- Produces: immutable `RollingWindowSettings(enabled: bool, token_budget: int, trim_to: int, trim_to_explicit: bool)`.
 - Produces: `default_trim_to(token_budget: int) -> int` using exact integer arithmetic.
 - Produces: `resolve_settings(*, project_dir: Path, store_root: Path, project_trusted: bool, enabled: bool | None = None, token_budget: int | None = None, trim_to: int | None = None) -> RollingWindowSettings`.
 - Precedence: valid trusted project `<project>/.ds4py/settings.json`, then global `<store_root>/settings.json`, then defaults; explicit constructor values override the corresponding resolved value. `trim_to=None` means adaptive when no explicit target was supplied.
@@ -150,7 +160,7 @@ Expected: FAIL because the package, records, and resolver do not exist.
 
 - [ ] **Step 3: Implement records and settings resolution**
 
-Validate dynamic JSON at the file boundary. Distinguish booleans from integers despite Python's `bool` subclassing `int`. Read the global file under the explicit store root so tests never use the developer's real home. Keep file I/O and diagnostics separate: this task raises; Task 10 adds status/event publication.
+Validate dynamic JSON at the file boundary. Distinguish booleans from integers despite Python's `bool` subclassing `int`. Read the global file under the explicit store root so tests never use the developer's real home. Keep file I/O and diagnostics separate: this task raises; Task 12 adds status/event publication.
 
 - [ ] **Step 4: Run focused tests**
 
@@ -163,13 +173,66 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/ds4py/context_paging tests/context_paging/test_settings.py
+git add src/ds4py/context_paging/__init__.py src/ds4py/context_paging/settings.py tests/context_paging/test_settings.py
 git commit -m "feat: add context paging settings"
 ```
 
 ---
 
-### Task 3: Project canonical history into safe public items
+### Task 3: Centralize metadata and canonical view provenance
+
+**Files:**
+- Create: `src/ds4py/message_metadata.py`
+- Modify: `src/ds4py/binding_provenance.py`
+- Modify: `src/ds4py/binding.py`
+- Modify: `src/ds4py/message_rendering.py`
+- Modify: `src/ds4py/model.py`
+- Modify: `src/ds4py/capabilities/compaction.py`
+- Modify: `src/ds4py/capabilities/compaction_tail.py`
+- Create: `tests/agent/test_request_view_provenance.py`
+- Test: `tests/agent/test_binding.py`
+- Test: `tests/agent/test_restore.py`
+
+**Interfaces:**
+- Produces: `DS4_KEY`, `DS4_SOURCE`, `DS4_SAMPLED`, `DS4_CONTEXT_PAGING`, `DS4_VIEW_OF`, `DS4_PAGING_INPUT_TOKENS`, and `DS4_REQUEST_SYNC_COUNT` constants plus typed `PagingMarker = Literal["notice", "recovery"]`.
+- Produces: public `validate_messages(messages: Sequence[ModelMessage]) -> None` and `message_content_hash(message: ModelMessage) -> str`, implemented by the existing canonical validators rather than copied.
+- Produces: `prepare_request_view_provenance(*, canonical_messages, request_view, segments, loaded) -> PreparedRequestViewProvenance`, returning the existing `PreparedProvenance` plus an immutable validated view-key/canonical-key/marker mapping.
+- Consumes: `store.SegmentProvenance` as the persisted segment record and existing `prepare_provenance()` for segment coverage, key uniqueness, order, and content hashes.
+
+- [ ] **Step 1: Write failing request-view provenance tests**
+
+Construct canonical messages, marked notices, keyed replacements, and `SegmentProvenance` records directly. Assert every keyed segment resolves exactly once with the canonical content hash; unmarked view messages resolve to the same canonical key/hash; notices have no target; replacements have fresh keys and existing canonical targets; duplicate/out-of-order keys, mismatched hashes, malformed markers, missing targets, and non-canonical unmarked messages fail atomically. Arbitrary additional canonical messages are valid.
+
+- [ ] **Step 2: Run the tests and verify RED**
+
+```bash
+uv run --frozen --extra agent pytest tests/agent/test_request_view_provenance.py tests/agent/test_binding.py -q
+```
+
+Expected: FAIL because the public hash/validator and view-provenance result do not exist.
+
+- [ ] **Step 3: Extend the canonical owner and centralize keys**
+
+Promote narrow wrappers around the existing part validator and content hash, then implement view validation in `binding_provenance.py` on top of `prepare_provenance()`. Keep frontier/exchange policy out of this module. Replace production `ds4.*` literals in the listed existing modules with `message_metadata.py` constants; leave literal wire expectations in tests. This is a mechanical key migration in the same commit as the new provenance behavior only because both establish the single canonical metadata layer; do not change rendered metadata values.
+
+- [ ] **Step 4: Run provenance and neighboring regression tests**
+
+```bash
+uv run --frozen --extra agent pytest tests/agent/test_request_view_provenance.py tests/agent/test_binding.py tests/agent/test_restore.py tests/agent/test_binding_rewrite.py tests/agent/test_compaction_stream.py -q
+```
+
+Expected: PASS with byte-identical metadata behavior.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/ds4py/message_metadata.py src/ds4py/binding_provenance.py src/ds4py/binding.py src/ds4py/message_rendering.py src/ds4py/model.py src/ds4py/capabilities/compaction.py src/ds4py/capabilities/compaction_tail.py tests/agent/test_request_view_provenance.py
+git commit -m "feat: validate rolling request view provenance"
+```
+
+---
+
+### Task 4: Project canonical history into safe public items
 
 **Files:**
 - Create: `src/ds4py/context_paging/history.py`
@@ -205,7 +268,7 @@ Expected: FAIL because canonical/public projection does not exist.
 
 - [ ] **Step 3: Implement canonical and public projection**
 
-Match calls/results by `tool_call_id`; validate all original exchanges before any remembered cut is applied. Keep canonical content immutable and use projections/references rather than a second stored ledger. Remove provider signatures only from retained public calls; never recursively strip application-owned fields or text.
+Match calls/results by `tool_call_id`; validate all original exchanges before any remembered cut is applied. Define history/exchange records here and public DTOs in `public_history.py`, not in a shared record dump. Use Task 3's `message_content_hash()` and canonical key validation; do not implement another hasher. Keep canonical content immutable and use projections/references rather than a second stored ledger. Remove provider signatures only from retained public calls; never recursively strip application-owned fields or text.
 
 - [ ] **Step 4: Run focused tests**
 
@@ -218,13 +281,13 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/ds4py/context_paging/history.py src/ds4py/context_paging/public_history.py src/ds4py/context_paging/model.py tests/context_paging/test_history.py tests/context_paging/test_public_history.py
+git add src/ds4py/context_paging/history.py src/ds4py/context_paging/public_history.py tests/context_paging/test_history.py tests/context_paging/test_public_history.py
 git commit -m "feat: project public context history"
 ```
 
 ---
 
-### Task 4: Expose exact observation-only request projection
+### Task 5: Expose exact observation-only request projection
 
 **Files:**
 - Create: `src/ds4py/binding_projection.py`
@@ -261,7 +324,7 @@ Expected: FAIL because the view projection API and span records do not exist.
 
 - [ ] **Step 3: Implement the projection through the existing planner**
 
-Reuse `plan_transition()`, current registered `note_provider.preview()`, request grouping, sampled token records, assistant prefixes, and effective instructions. Do not tokenize a second approximation or call the mutating prepare path. Derive spans from planned boundaries and canonical provenance. Keep projection caches out of the binder; Task 8's meter keys any cache by immutable configuration/content/frontier/note-preview inputs.
+Reuse `plan_transition()`, current registered `note_provider.preview()`, request grouping, sampled token records, assistant prefixes, and effective instructions. Do not tokenize a second approximation or call the mutating prepare path. Derive spans from planned boundaries and Task 3's canonical provenance helpers. Recompute every projection and keep projection caches out of both the binder and Task 9's meter; correctness must not depend on enumerating invalidation dimensions.
 
 - [ ] **Step 4: Run focused and neighboring binder tests**
 
@@ -280,20 +343,24 @@ git commit -m "feat: project exact request views"
 
 ---
 
-### Task 5: Implement stable selection and paging notices
+### Task 6: Implement stable selection and paging notices
 
 **Files:**
 - Modify: `src/ds4py/errors.py` (`ContextSelectionError`)
 - Create: `src/ds4py/context_paging/selection.py`
 - Create: `src/ds4py/context_paging/notice.py`
+- Create: `src/ds4py/context_paging/text_units.py`
+- Create: `src/ds4py/context_paging/estimates.py`
 - Create: `tests/context_paging/test_selection.py`
 - Create: `tests/context_paging/test_notice.py`
+- Create: `tests/context_paging/test_text_units.py`
 
 **Interfaces:**
 - Produces: `ContextSelectionError(EngineError)` with structured `code`; `str(error)` is `[CODE] diagnostic`.
-- Produces: a `SelectionMeter` protocol implemented by Task 8's exact request meter and by additive fake costs in differential tests.
+- Produces: cut frontier, selection state/result, and overflow records plus a `SelectionMeter` protocol implemented by Task 9's `context_paging/meter.py` and by additive fake costs in differential tests.
 - Produces: `select_view(history: HistoryProjection, *, settings: RollingWindowSettings, model_context: int, meter: SelectionMeter, remembered: SelectionState | None = None, overflow: OverflowMode = "normal") -> SelectionResult`.
 - Produces: frozen `PagingNotice` records and bounded resizing for a remembered notice. Selection results contain candidate messages, exact measurement, resolved effective budget/target, optional frontier/notice, and fallback/warning diagnostics.
+- Produces: shared UTF-16 length/offset/slicing helpers and display-only text/image estimates consumed by this task, Task 7, and Task 13.
 - Selection failure commits no frontier or notice and never mutates canonical history.
 
 - [ ] **Step 1: Write failing selector tests**
@@ -308,26 +375,26 @@ Use additive-cost fixtures and literal state transitions to assert:
 6. protected unread overflow fits above normal budget when possible, otherwise selects recoverable-result replacement/exclusion mode without fabricating a frontier advance;
 7. explicit targets at/above budget trim to effective budget and emit one warning per resolved pair per runtime process.
 
-- [ ] **Step 2: Write failing notice tests**
+- [ ] **Step 2: Write failing notice and shared-unit tests**
 
 Assert newest-three evicted-turn selection, newest-first selection displayed oldest-first, full user requests/final public replies only, no prefix/partial-turn conversation, exact continuation handles, 6,000-unit clips, the 500-unit minimum useful clip, and `conversationCharacterLimit = min(32_000, floor(effective_budget_tokens * 0.4))` followed by the remaining-room cap. Include configured budget above model window, frozen content between advances, and bounded resizing.
 
 - [ ] **Step 3: Run the tests and verify RED**
 
 ```bash
-uv run --frozen --extra agent pytest tests/context_paging/test_selection.py tests/context_paging/test_notice.py -q
+uv run --frozen --extra agent pytest tests/context_paging/test_selection.py tests/context_paging/test_notice.py tests/context_paging/test_text_units.py -q
 ```
 
 Expected: FAIL because selection/frontiers/notices do not exist.
 
 - [ ] **Step 4: Implement selection and notice construction**
 
-Resolve remembered frontiers against raw canonical history before grouping. Advance only forward and remeasure exact destination views, including notices. Keep policy independent of native/session/TUI imports. Use UTF-16 code units for baseline conversation limits and exact read handles for clipped content.
+Resolve remembered frontiers against raw canonical history before grouping. Advance only forward and remeasure exact destination views, including notices. Keep policy independent of native/session/TUI imports. Put UTF-16 operations in `text_units.py` and the four-units-per-token/4,800-units-per-image rules in `estimates.py`; notices must import those shared modules rather than duplicating conversion logic. Use exact read handles for clipped content.
 
 - [ ] **Step 5: Run focused tests**
 
 ```bash
-uv run --frozen --extra agent pytest tests/context_paging/test_selection.py tests/context_paging/test_notice.py -q
+uv run --frozen --extra agent pytest tests/context_paging/test_selection.py tests/context_paging/test_notice.py tests/context_paging/test_text_units.py -q
 ```
 
 Expected: PASS.
@@ -335,23 +402,25 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/ds4py/errors.py src/ds4py/context_paging/selection.py src/ds4py/context_paging/notice.py tests/context_paging/test_selection.py tests/context_paging/test_notice.py
+git add src/ds4py/errors.py src/ds4py/context_paging/selection.py src/ds4py/context_paging/notice.py src/ds4py/context_paging/text_units.py src/ds4py/context_paging/estimates.py tests/context_paging/test_selection.py tests/context_paging/test_notice.py tests/context_paging/test_text_units.py
 git commit -m "feat: select stable rolling context views"
 ```
 
 ---
 
-### Task 6: Implement bounded recovery serialization and public parts
+### Task 7: Implement bounded recovery serialization and public parts
 
 **Files:**
 - Create: `src/ds4py/context_paging/recovery_parts.py`
 - Create: `src/ds4py/context_paging/recovery_response.py`
+- Modify: `src/ds4py/context_paging/text_units.py`
 - Create: `tests/context_paging/test_recovery_parts.py`
 - Create: `tests/context_paging/test_recovery_response.py`
+- Modify: `tests/context_paging/test_text_units.py`
 
 **Interfaces:**
 - Produces: public DTO serialization, bounded JSON Pointer selection, part descriptions, explicit public part handles, and image metadata without binary payloads.
-- Produces: UTF-16 length/slicing helpers that never split surrogate pairs and continuation arguments for the next page.
+- Consumes: Task 6's `text_units.py` helpers, extending them for continuation arguments without splitting surrogate pairs. This serialization module owns no UTF-16 conversion rules.
 - Produces: one complete-reply serializer with a 16,384-byte budget and one part-description serializer with a 4,096-byte budget. Text pages contain strings/plain text; other values use exact JSON. A JSON header precedes an unescaped page block.
 
 - [ ] **Step 1: Write failing wire-protocol tests**
@@ -368,19 +437,19 @@ Consume fixtures and assert:
 - [ ] **Step 2: Run the tests and verify RED**
 
 ```bash
-uv run --frozen --extra agent pytest tests/context_paging/test_recovery_parts.py tests/context_paging/test_recovery_response.py -q
+uv run --frozen --extra agent pytest tests/context_paging/test_recovery_parts.py tests/context_paging/test_recovery_response.py tests/context_paging/test_text_units.py -q
 ```
 
 Expected: FAIL because public parts and bounded serialization do not exist.
 
 - [ ] **Step 3: Implement the explicit UTF-16 and byte-budget adapters**
 
-Use a UTF-16 codec/index adapter, not code-point slicing. Serialize each complete candidate and measure `len(candidate.encode('utf-8'))`; shrink through the baseline continuation protocol rather than truncating encoded bytes. Keep public JSON shapes independent of Pydantic's internal serialization layout.
+Use Task 6's UTF-16 codec/index adapter, not code-point slicing or a second encoder in this module. Serialize each complete candidate and measure `len(candidate.encode('utf-8'))`; shrink through the baseline continuation protocol rather than truncating encoded bytes. Keep public JSON shapes independent of Pydantic's internal serialization layout.
 
 - [ ] **Step 4: Run focused tests**
 
 ```bash
-uv run --frozen --extra agent pytest tests/context_paging/test_recovery_parts.py tests/context_paging/test_recovery_response.py -q
+uv run --frozen --extra agent pytest tests/context_paging/test_recovery_parts.py tests/context_paging/test_recovery_response.py tests/context_paging/test_text_units.py -q
 ```
 
 Expected: PASS.
@@ -388,13 +457,13 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/ds4py/context_paging/recovery_parts.py src/ds4py/context_paging/recovery_response.py tests/context_paging/test_recovery_parts.py tests/context_paging/test_recovery_response.py
+git add src/ds4py/context_paging/recovery_parts.py src/ds4py/context_paging/recovery_response.py src/ds4py/context_paging/text_units.py tests/context_paging/test_recovery_parts.py tests/context_paging/test_recovery_response.py tests/context_paging/test_text_units.py
 git commit -m "feat: add bounded context recovery pages"
 ```
 
 ---
 
-### Task 7: Add history navigation and all four recovery tools
+### Task 8: Add history navigation and all four recovery tools
 
 **Files:**
 - Create: `src/ds4py/context_paging/navigator.py`
@@ -415,7 +484,7 @@ git commit -m "feat: add bounded context recovery pages"
 
 Assert baseline defaults/maxima, camelCase arguments, stable IDs/sequences/handles, context previews, files/tools/failed filters, browse directions/count/stride, result ordering, and at-most-three smallest-first loading. Verify repeated reads against unchanged visible IDs reuse the corpus, while changed IDs rebuild it.
 
-Through real Pydantic tool definitions/calls, assert strict argument rejection, disabled refusal in all four tools, and all Task 6 wire guarantees. A valid explicit `mode='image'` raises `EngineError("image recovery requires M5 vision support")`; invalid handles and non-image selections keep their baseline validation errors.
+Through real Pydantic tool definitions/calls, assert strict argument rejection, disabled refusal in all four tools, and all Task 7 wire guarantees. A valid explicit `mode='image'` raises `EngineError("image recovery requires M5 vision support")`; invalid handles and non-image selections keep their baseline validation errors.
 
 - [ ] **Step 2: Run the tests and verify RED**
 
@@ -446,13 +515,14 @@ git commit -m "feat: add context history recovery tools"
 
 ---
 
-### Task 8: Wire RollingWindow as the single view-only context owner
+### Task 9: Wire RollingWindow as the single view-only context owner
 
 **Files:**
 - Create: `src/ds4py/capabilities/rolling_window.py`
-- Modify: `src/ds4py/capabilities/context.py` (`ContextStrategy.request_messages`)
+- Create: `src/ds4py/context_paging/meter.py`
+- Modify: `src/ds4py/capabilities/context.py` (broaden `ContextStrategy.reserve_messages` documentation)
 - Modify: `src/ds4py/model.py` (`DS4Model._open_stream`)
-- Modify: `src/ds4py/agent.py` (composition and disabled delegate)
+- Modify: `src/ds4py/agent.py` (owner factory and disabled delegate)
 - Create: `tests/agent/test_rolling_window.py`
 - Create: `tests/agent/test_rolling_window_reserve.py`
 - Modify: `tests/agent/test_context_strategy.py`
@@ -460,11 +530,13 @@ git commit -m "feat: add context history recovery tools"
 - Modify: `tests/agent/test_conformance.py`
 
 **Interfaces:**
-- Produces: `RollingWindow(model.binder, enabled=None, token_budget=None, trim_to=None)` with `reserve_operations=True`.
-- Produces: internal `set_disabled_owner(compactor: LLMCompaction) -> None`; composition calls it before building the agent, without adding a factory or second strategy field.
-- Produces: `ContextStrategy.request_messages(messages, run_context)`, defaulting to identity for all existing owners. RollingWindow returns its exact stored selected view.
+- Produces: `ContextOwnerFactory = Callable[[MessageBinder, LLMCompaction], ContextStrategy]`; `ContextComposition.owner` accepts one existing owner instance, one factory, or `None`, preserving current custom-owner callers without a second strategy field.
+- Produces: `ContextComposition.rolling(*, enabled: bool | None = None, token_budget: int | None = None, trim_to: int | None = None) -> ContextComposition` using a factory.
+- Produces: `RollingWindow(model.binder, *, disabled_owner: LLMCompaction, enabled=None, token_budget=None, trim_to=None)` with `reserve_operations=True`. The builder adopts a directly constructed RollingWindow's exact `disabled_owner` as `AgentComponents.compactor`; it never creates a second manual compactor.
+- Consumes: the existing `ContextStrategy.reserve_messages(messages, run_context)` identity default and LLMCompaction override. RollingWindow overrides this same method to return its exact stored selected view; no `request_messages` hook or `set_disabled_owner` method is added.
+- Produces: `RequestMeter` in `context_paging/meter.py`, implementing `SelectionMeter` through Task 5 with no cache or selection policy.
 - Produces: RollingWindow's four-tool toolset at construction time, independent of enabled state.
-- `before_model_request` leaves `request_context.messages = ctx.messages` and stores selection in session state. Immediately before `MessageBinder.prepare_model_request`, `DS4Model._open_stream` invokes the owner hook after harness normalization.
+- `before_model_request` leaves `request_context.messages = ctx.messages` and stores selection in session state. Immediately before `MessageBinder.prepare_model_request`, `DS4Model._open_stream` invokes `reserve_messages` after harness normalization; `reserve_settlement._recover` uses the same materialization seam.
 
 - [ ] **Step 1: Write failing request-view and composition tests**
 
@@ -473,10 +545,11 @@ Using real capabilities and `FakeNative`, assert:
 1. full history remains byte-for-byte canonical while the bound request contains the selected notice/view;
 2. marked view-only messages survive post-normalization binder input both with a retained user request first and with a resident system request first;
 3. runtime adoption retains canonical requests plus the new response and discards notices/replacements;
-4. exact budget/notice counts match Task 4 and stable cuts reuse append-only KV prefixes between advances;
-5. projection caches invalidate on hints, pending/restored notes, clock-derived note changes, configuration, content, grouping, and frontier changes; failed/abandoned selections publish no cache or live state;
+4. exact budget/notice counts match Task 5 and stable cuts reuse append-only KV prefixes between advances;
+5. repeated projections immediately reflect hints, pending/restored notes, clock-derived note changes, configuration, content, grouping, and frontier changes without a projection cache; failed/abandoned selections publish no planner or live state;
 6. the selected owner is the only registered `ContextStrategy`, and all four tools are present while both enabled and disabled;
-7. disabled RollingWindow delegates threshold/tool/reserve behavior to the existing `LLMCompaction`, while manual compaction remains a separate concrete service.
+7. disabled RollingWindow delegates threshold/tool/reserve behavior to the existing `LLMCompaction`, while manual compaction remains a separate concrete service;
+8. `ContextComposition.rolling()` injects the identical `AgentComponents.compactor` as the disabled delegate, a directly constructed RollingWindow adopts its supplied compactor, existing custom owner instances still work, and no two-phase setter or post-construction wiring is required.
 
 - [ ] **Step 2: Write failing overflow and reserve tests**
 
@@ -490,11 +563,11 @@ During reserve recovery, advance in the actual view, rebind through retained res
 uv run --frozen --extra agent pytest tests/agent/test_rolling_window.py tests/agent/test_rolling_window_reserve.py tests/agent/test_context_strategy.py tests/agent/test_agent_factory.py -q
 ```
 
-Expected: FAIL because RollingWindow and the post-normalization view hook do not exist.
+Expected: FAIL because RollingWindow and post-normalization use of `reserve_messages` are not wired.
 
 - [ ] **Step 4: Implement the capability and binder-side seam**
 
-Store mutable enabled/frontier/notice/navigation/accounting state in `Session.state`, not a per-run copy. Measure through Task 4, select through Task 5, and use the existing `project_request()` final exact fit check. Never call `_reject_until_fit` on canonical messages and never pass marked views through harness merging. Use retained reserve operations; do not add a second native allocation path.
+Store mutable enabled/frontier/notice/navigation/accounting state in `Session.state`, not a per-run copy. Measure through `RequestMeter` and Task 5, select through Task 6, and use the existing `project_request()` final exact fit check. Keep measurement in `meter.py`, selection in `selection.py`, and lifecycle/statistics policy out of this capability. Never call `_reject_until_fit` on canonical messages and never pass marked views through harness merging. Use retained reserve operations; do not add a second native allocation path. Resolve factories in `build_agent_components` with the concrete compactor already in hand; do not mutate the owner after construction.
 
 - [ ] **Step 5: Run focused, conformance, and neighboring tests**
 
@@ -507,20 +580,63 @@ Expected: PASS, including context extension conformance items 1–5 for RollingW
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/ds4py/capabilities/rolling_window.py src/ds4py/capabilities/context.py src/ds4py/model.py src/ds4py/agent.py tests/agent/test_rolling_window.py tests/agent/test_rolling_window_reserve.py tests/agent/test_context_strategy.py tests/agent/test_agent_factory.py tests/agent/test_conformance.py
+git add src/ds4py/capabilities/rolling_window.py src/ds4py/context_paging/meter.py src/ds4py/capabilities/context.py src/ds4py/model.py src/ds4py/agent.py tests/agent/test_rolling_window.py tests/agent/test_rolling_window_reserve.py tests/agent/test_context_strategy.py tests/agent/test_agent_factory.py tests/agent/test_conformance.py
 git commit -m "feat: add rolling window context owner"
 ```
 
 ---
 
-### Task 9: Add v2 request-view save and atomic restore
+### Task 10: Extract runtime persistence without behavior changes
+
+**Files:**
+- Create: `src/ds4py/runtime_persistence.py`
+- Modify: `src/ds4py/runtime.py`
+- Test: `tests/agent/test_restore.py`
+- Test: `tests/agent/test_runtime.py`
+- Test: `tests/agent/test_compaction_persistence.py`
+
+**Interfaces:**
+- Produces: internal `PersistenceHost` protocol describing only the runtime state/callbacks used by persistence choreography; `AgentRuntime` satisfies it structurally.
+- Produces: `save_session(host)`, `switch_session(host, session_prefix)`, `new_session(host)`, and `fork_session(host)` async functions owning the moved implementation.
+- `AgentRuntime.save`, `switch`, `new`, and `fork` become one-call delegates. `runtime_restore.py` remains the pure restore-state helper; no v2 behavior is added in this task.
+
+- [ ] **Step 1: Establish the existing persistence baseline**
+
+```bash
+uv run --frozen --extra agent pytest tests/agent/test_restore.py tests/agent/test_runtime.py tests/agent/test_compaction_persistence.py tests/agent/test_conformance_persistence.py -q
+```
+
+Expected: PASS before the move. Existing behavioral coverage is the regression gate for this mechanical extraction; add a characterization test only if a moved branch has no existing assertion.
+
+- [ ] **Step 2: Move persistence choreography behind the adapter**
+
+Move save/switch/new/fork, save-run numbering, payload writes, restore abort handling, and their private helpers as one behavior-preserving change. Keep activity claims, public runtime method signatures, event ordering, and state transitions unchanged. Do not add request-view cases or reformat unrelated runtime code. Both `runtime.py` and the new module must remain below 1,000 lines.
+
+- [ ] **Step 3: Verify the extraction**
+
+```bash
+uv run --frozen --extra agent pytest tests/agent/test_restore.py tests/agent/test_runtime.py tests/agent/test_compaction_persistence.py tests/agent/test_conformance_persistence.py -q
+```
+
+Expected: PASS with no test expectation changes.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/ds4py/runtime_persistence.py src/ds4py/runtime.py
+git commit -m "refactor: extract runtime persistence"
+```
+
+---
+
+### Task 11: Add v2 request-view save and atomic restore
 
 **Files:**
 - Modify: `src/ds4py/store.py` (`SaveRecord` v1/v2 and optional `request_view`)
 - Modify: `src/ds4py/binding.py` (`MessageBinder.request_view`)
-- Modify: `src/ds4py/context_paging/history.py` (view validation/frontier derivation)
+- Modify: `src/ds4py/context_paging/history.py` (frontier derivation from validated provenance)
 - Modify: `src/ds4py/runtime_restore.py`
-- Modify: `src/ds4py/runtime.py` (save/switch/fork integration)
+- Modify: `src/ds4py/runtime_persistence.py` (save/switch/fork integration)
 - Create: `tests/agent/test_rolling_window_restore.py`
 - Modify: `tests/agent/test_restore.py`
 - Modify: `tests/agent/test_store.py`
@@ -529,7 +645,8 @@ git commit -m "feat: add rolling window context owner"
 **Interfaces:**
 - Produces: `MessageBinder.request_view() -> tuple[ModelMessage, ...]`, returning deep copies of the last successful bound view or `()` before any bind.
 - `SaveRecord` accepts v1 records without `request_view`, writes v2, and serializes a present view through `ModelMessagesTypeAdapter` in JSON mode. V2 compaction saves may omit it.
-- Produces: pure request-view provenance validation and `derive_frontier(canonical_messages, request_view) -> CutFrontier`, replaying that frontier to require exactly the retained canonical messages/exchanges.
+- Consumes: Task 3's `prepare_request_view_provenance()` and immutable validated mapping; this task adds no key/hash/marker/segment validator to `context_paging`.
+- Produces: `derive_frontier(canonical_messages, prepared_view) -> CutFrontier`, replaying that frontier to require exactly the retained canonical messages/exchanges.
 - Case 1 binds a validated `request_view` only for an enabled RollingWindow with compatible payload/preamble. Case 2 ignores view-scoped segments and fresh-renders full canonical history.
 
 - [ ] **Step 1: Write failing save-record and binder-view tests**
@@ -558,7 +675,7 @@ Expected: FAIL because v2 views, exact bound-view access, and view-scoped restor
 
 - [ ] **Step 4: Implement save/restore case selection and provenance**
 
-Select the restore case before calling canonical segment validation. Validate canonical schema/media/stable keys independently. For eligible case 1, validate view plus segments before live mutation, bind the view to the payload, then adopt full canonical history. Keep save order KV -> canonical snapshot -> save record. Case 2 resets note/restored-note state appropriately and ignores `request_view` provenance.
+Select the restore case in `runtime_persistence.py` before calling canonical segment validation; leave `AgentRuntime` as a delegate. Validate canonical schema/media/stable keys independently. For eligible case 1, call Task 3's canonical view validator before live mutation, derive/replay the frontier in `history.py`, bind the view to the payload, then adopt full canonical history. Keep save order KV -> canonical snapshot -> save record. Case 2 resets note/restored-note state appropriately and ignores `request_view` provenance.
 
 - [ ] **Step 5: Run focused and persistence regressions**
 
@@ -571,18 +688,18 @@ Expected: PASS with no prefill on exact view restore and no notice/replacement l
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/ds4py/store.py src/ds4py/binding.py src/ds4py/context_paging/history.py src/ds4py/runtime_restore.py src/ds4py/runtime.py tests/agent/test_rolling_window_restore.py tests/agent/test_restore.py tests/agent/test_store.py tests/agent/test_compaction_persistence.py
+git add src/ds4py/store.py src/ds4py/binding.py src/ds4py/context_paging/history.py src/ds4py/runtime_restore.py src/ds4py/runtime_persistence.py tests/agent/test_rolling_window_restore.py tests/agent/test_restore.py tests/agent/test_store.py tests/agent/test_compaction_persistence.py
 git commit -m "feat: persist rolling request views"
 ```
 
 ---
 
-### Task 10: Wire settings, lifecycle, commands, status, and CLI selection
+### Task 12: Wire settings, lifecycle, commands, status, and CLI selection
 
 **Files:**
 - Create: `src/ds4py/capabilities/rolling_window_session.py`
 - Modify: `src/ds4py/capabilities/rolling_window.py`
-- Modify: `src/ds4py/runtime.py` (`project_trusted`, `context_paging`, failure boundary)
+- Modify: `src/ds4py/runtime.py` (`project_trusted`, `context_paging`, `context_paging_stats` store adapter, failure boundary)
 - Modify: `src/ds4py/agent_cli.py`
 - Modify: `src/ds4py/tui_commands.py`
 - Modify: `src/ds4py/tui.py`
@@ -598,13 +715,14 @@ git commit -m "feat: persist rolling request views"
 
 **Interfaces:**
 - Produces: shared agent CLI `--context-strategy compaction|rolling`, `--context-token-budget`, `--context-trim-to`, and `--trust-project-settings`; programmatic runtime gains `project_trusted=False`.
-- Produces: `/context-paging [on|off|status|stats]` only for a RollingWindow owner and `AgentRuntime.context_paging(action)` delegating to it.
+- Produces: `/context-paging [on|off|status]` only for a RollingWindow owner and `AgentRuntime.context_paging(action)` delegating to it; Task 13 adds `stats` to this command without changing runtime persistence.
+- Produces: `AgentRuntime.context_paging_stats()` as the final store-adapter seam. It supplies the current `FileStepStore` and session directory to `RollingWindowSession.statistics()`; Task 13 implements the report behind this interface and does not modify `runtime.py`.
 - Produces: `context-paging` status values exactly `paging on`/`paging off`, `context_paging_error` diagnostics, and `context_paging_warning(message=...)`.
 - CLI Rolling selection resolves settings before `open_engine`, then passes `ctx=min(args.ctx, resolved_token_budget)` through the existing worker/session creation path.
 
 - [ ] **Step 1: Write failing command and lifecycle tests**
 
-Assert no-arg/status/repeated on/off/stats preserve cut/accounting, actual on/off changes reset them, invalid arguments return usage without mutation, stats makes no native/provider call, and command execution remains idle-only. `/new` clears override/cut/accounting/navigation/restore IDs but preserves warning history; switch/fork use Task 9 restoration; compaction start clears accounting, success resets cut, cancellation/failure preserves cut, and override survives. `model_changed` resets cut/accounting but preserves override/warnings. Duplicate lifecycle and saved-entry notifications cannot reset a newer frontier twice.
+Assert no-arg/status/repeated on/off preserve cut/accounting, actual on/off changes reset them, invalid arguments return usage without mutation, and command execution remains idle-only. `/new` clears override/cut/accounting/navigation/restore IDs but preserves warning history; switch/fork use Task 11 restoration; compaction start clears accounting, success resets cut, cancellation/failure preserves cut, and override survives. `model_changed` resets cut/accounting but preserves override/warnings. Duplicate lifecycle and saved-entry notifications cannot reset a newer frontier twice.
 
 Assert status clears on every `session_end` and publishes only after successful initialization. Settings read/parse failures publish `paging off` when a session exists, emit their diagnostic, and abort without half-applied enabled state.
 
@@ -624,7 +742,7 @@ Expected: FAIL because settings/CLI/command/lifecycle wiring does not exist.
 
 - [ ] **Step 4: Implement session and frontend integration**
 
-Keep TUI imports out of the capability. Use existing registry admission, runtime operation guards, session event subscriptions, and status events. Resolve constructor overrides above file settings, and make programmatic budget clamping to `session.ctx()` explicit. Reserve native context only during CLI Rolling selection; never resize a live session. Document the CLI flags, trusted settings, default-enabled Rolling policy versus default-compaction CLI, disabled delegate, `/context-paging`, and the programmatic requirement to allocate a suitably sized native context in `docs/development.md`.
+Keep TUI imports out of the capability. Use existing registry admission, runtime operation guards, session event subscriptions, and status events. Resolve constructor overrides above file settings, and make programmatic budget clamping to `session.ctx()` explicit. Reserve native context only during CLI Rolling selection; never resize a live session. Register on/off/status now and add the final runtime statistics-provider adapter, but leave the `stats` subcommand and report to Task 13. Document the CLI flags, trusted settings, default-enabled Rolling policy versus default-compaction CLI, disabled delegate, `/context-paging`, and the programmatic requirement to allocate a suitably sized native context in `docs/development.md`.
 
 - [ ] **Step 5: Run focused and neighboring frontend tests**
 
@@ -643,51 +761,59 @@ git commit -m "feat: add rolling context commands and lifecycle"
 
 ---
 
-### Task 11: Add read-only statistics and request-input provenance
+### Task 13: Add read-only statistics and request-input provenance
 
 **Files:**
 - Create: `src/ds4py/context_paging/stats.py`
-- Modify: `src/ds4py/model.py` (`ds4.request_sync_count` and exact paging input metadata)
-- Modify: `src/ds4py/capabilities/rolling_window.py` (statistics service)
-- Modify: `src/ds4py/runtime.py` (live store access only if required)
+- Modify: `src/ds4py/model.py` (sync-count and exact paging input metadata through Task 3's key registry)
+- Modify: `src/ds4py/capabilities/rolling_window.py` (latest-input snapshot only)
+- Modify: `src/ds4py/capabilities/rolling_window_session.py` (statistics provider adapter)
+- Modify: `src/ds4py/tui_commands.py` (add the `stats` subcommand)
+- Modify: `docs/development.md` (statistics and provenance semantics)
 - Create: `tests/context_paging/test_stats.py`
 - Create: `tests/agent/test_context_paging_stats.py`
+- Modify: `tests/agent/test_context_paging_commands.py`
 - Modify: `tests/agent/test_summary_usage.py`
 - Modify: `tests/agent/test_restore.py`
 
 **Interfaces:**
+- Produces: `StatisticsStore`, a narrow structural protocol for only the used public async `FileStepStore.list_snapshots` and `restore_media` methods; `FileStepStore` satisfies it directly.
+- Produces: immutable `RollingWindowStatisticsState` and `ContextPagingStats` records plus `collect_statistics(*, store: StatisticsStore, session_dir: Path, current: RollingWindowStatisticsState) -> ContextPagingStats`. The function receives storage explicitly and never imports or reaches through `AgentRuntime`.
+- Consumes: Task 12's `AgentRuntime.context_paging_stats()` adapter, which supplies the current store/directory. This task makes no `runtime.py` change.
+- Produces: immutable `InputTokenReading(provenance: Literal["exact", "reconstructible", "unavailable"], tokens: int | None)` and one `read_request_input(response)` adapter. Exact/reconstructible readings require an integer; unavailable requires `None`. All sync-count/counter rules live in that adapter; report code consumes its typed result.
 - Produces: a read-only statistics report with baseline stored-size, history-token, input-token, budget/model-window, and cache sections plus unavailable/zero semantics.
-- `DS4StreamedResponse` increments `ds4.request_sync_count` once per `Synced` event. RollingWindow records the selected `RequestProjection.total_tokens` as validated nonnegative safe integer metadata at `ds4.context_paging.input_tokens` on the final canonical response.
-- Older records can reconstruct exact input only when `ds4.request_sync_count == 1` and all of `usage.input_tokens`, `usage.cache_read_tokens`, and `usage.cache_write_tokens` exist; otherwise input is `unavailable`.
+- `DS4StreamedResponse` increments `DS4_REQUEST_SYNC_COUNT` once per `Synced` event. RollingWindow records the selected `RequestProjection.total_tokens` as validated nonnegative safe integer metadata at `DS4_PAGING_INPUT_TOKENS` on the final canonical response.
+- Older records return `reconstructible` only when `DS4_REQUEST_SYNC_COUNT == 1` and all of `usage.input_tokens`, `usage.cache_read_tokens`, and `usage.cache_write_tokens` exist; otherwise input is `unavailable`.
 
 - [ ] **Step 1: Write failing statistics tests**
 
 Use a real `FileStepStore` and temporary session directories. Assert:
 
 1. stored size counts regular files under `steps/`, including run/snapshot/tool-effect/media files, excludes `events.jsonl`, KV and save records, and counts content-addressed media once;
-2. history tokens use UTF-16 units ceiling-divided by four, include user/text/tool/thinking/tool-name/JSON arguments, use 4,800 units per image, and exclude resident prefix and transient notices;
-3. repeated snapshots deduplicate by stable message key plus rehydrated content hash, while revisions/summaries remain distinct;
-4. externalized text is restored through the store's media-aware `list_snapshots`/`restore_media` path before hashing/estimating, and documented damaged-file behavior is preserved;
-5. cached append, exact restore, and reserve recovery report exact selected input; ambiguous multi-sync or missing old counters report `unavailable`, never a falsely exact sum;
+2. history tokens use Task 6's shared UTF-16/four-units-per-token estimator, include user/text/tool/thinking/tool-name/JSON arguments, use the shared 4,800-units-per-image rule, and exclude resident prefix and transient notices;
+3. repeated snapshots deduplicate by stable message key plus Task 3's rehydrated content hash, while revisions/summaries remain distinct;
+4. externalized text is restored through the provider's media-aware `list_snapshots`/media-restoration path before hashing/estimating, and documented damaged-file behavior is preserved;
+5. cached append, exact restore, and reserve recovery return `exact` selected input; a valid older single-sync record returns `reconstructible`; ambiguous multi-sync or missing old counters return `unavailable`, never a falsely exact sum;
 6. cache read/write totals deduplicate stable saved response/tool usage records, explicit zero remains zero, and any required invalid/missing counter makes the affected total unavailable;
-7. disabled budget/model display is `inactive`, only estimates carry `~`, and stats mutate no navigation/cut/accounting/settings/status/native/canonical state.
+7. disabled budget/model display is `inactive`, only estimates carry `~`, and stats mutate no navigation/cut/accounting/settings/status/native/canonical state;
+8. `/context-paging stats` and repeated `stats` preserve cut/accounting, make no native/provider call, and use Task 12's explicit runtime store adapter without adding store logic to statistics.
 
 - [ ] **Step 2: Run the tests and verify RED**
 
 ```bash
-uv run --frozen --extra agent pytest tests/context_paging/test_stats.py tests/agent/test_context_paging_stats.py -q
+uv run --frozen --extra agent pytest tests/context_paging/test_stats.py tests/agent/test_context_paging_stats.py tests/agent/test_context_paging_commands.py -q
 ```
 
 Expected: FAIL because statistics and sync provenance do not exist.
 
 - [ ] **Step 3: Implement statistics without native/provider calls**
 
-Read snapshots through `FileStepStore`'s public async media-aware methods; do not parse raw snapshot JSON as a substitute for media restoration. Walk storage metadata without loading KV. Keep this display estimate separate from exact selection. Stamp sync count in the existing response dispatch path and selected input only on the final canonical response.
+Read snapshots through the supplied `StatisticsStore`; do not parse raw snapshot JSON as a substitute for media restoration or obtain a store from `AgentRuntime`. Walk storage metadata under the supplied session directory without loading KV. Reuse Task 6's display estimators and Task 3's content hash. Keep this display estimate separate from exact selection. Stamp sync count in the existing response dispatch path and selected input only on the final canonical response. Implement the sync/counter rule once in `read_request_input()` and keep it out of report formatting.
 
 - [ ] **Step 4: Run focused and usage/restore regressions**
 
 ```bash
-uv run --frozen --extra agent pytest tests/context_paging/test_stats.py tests/agent/test_context_paging_stats.py tests/agent/test_summary_usage.py tests/agent/test_restore.py tests/agent/test_model_stream.py -q
+uv run --frozen --extra agent pytest tests/context_paging/test_stats.py tests/agent/test_context_paging_stats.py tests/agent/test_context_paging_commands.py tests/agent/test_summary_usage.py tests/agent/test_restore.py tests/agent/test_model_stream.py -q
 ```
 
 Expected: PASS.
@@ -695,13 +821,13 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/ds4py/context_paging/stats.py src/ds4py/model.py src/ds4py/capabilities/rolling_window.py src/ds4py/runtime.py tests/context_paging/test_stats.py tests/agent/test_context_paging_stats.py tests/agent/test_summary_usage.py tests/agent/test_restore.py
+git add src/ds4py/context_paging/stats.py src/ds4py/model.py src/ds4py/capabilities/rolling_window.py src/ds4py/capabilities/rolling_window_session.py src/ds4py/tui_commands.py docs/development.md tests/context_paging/test_stats.py tests/agent/test_context_paging_stats.py tests/agent/test_context_paging_commands.py tests/agent/test_summary_usage.py tests/agent/test_restore.py
 git commit -m "feat: add rolling context statistics"
 ```
 
 ---
 
-### Task 12: Complete conformance, portable gates, Salad live evidence, and delivery
+### Task 14: Complete conformance, portable gates, Salad live evidence, and delivery
 
 **Files:**
 - Modify only files needed by RED regression findings; every correction starts with a focused failing test.
