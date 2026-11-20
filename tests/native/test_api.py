@@ -327,6 +327,8 @@ def test_open_environment_and_failure_cleanup(
         backend=backend,
         live_checks={"restore": {"ok": False}},
         source_path=str(tmp_path / "deleted-checkout"),
+        source_commit="test",
+        library_sha256="0" * 64,
         metal_sources={
             "metal/moe.metal": hashlib.sha256(b"moe").hexdigest(),
             "metal/flash_attn.metal": hashlib.sha256(b"flash").hexdigest(),
@@ -390,6 +392,8 @@ def metal_native(stub_engine: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPat
         backend="metal",
         live_checks={},
         source_path="/deleted/checkout",
+        source_commit="test",
+        library_sha256="0" * 64,
         metal_sources={"metal/dense.metal": hashlib.sha256(b"first bundle").hexdigest()},
     )
     monkeypatch.setattr(api, "inspect_model", lambda *args: None)

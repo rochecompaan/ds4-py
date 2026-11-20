@@ -17,6 +17,7 @@ from ds4py._native.api import LibNative
 from ds4py._native.loader import load_library
 from ds4py._native.protocol import EngineConfig, Native, ThinkMode
 from ds4py.errors import EngineError
+from ds4py.store import SessionStore
 
 from . import chat as chat_ops
 from . import session_operations
@@ -184,6 +185,7 @@ class Session:
     def __init__(self, engine: Engine) -> None:
         self._engine, self._worker = engine, engine._worker
         self._history = SessionHistory(self)
+        self._system_prefix_store = SessionStore()
         self._rng = Rng(engine.sampling_defaults.seed)
         self._decode_step: DecodeStep | None = None
         self._logits_hooks: list[Callable[[LogitsView], None]] = []
@@ -707,6 +709,11 @@ class Session:
     def drop_checkpoint(self, key: str) -> None:
         """Dispose one native checkpoint between rounds under an exclusive claim."""
         self._history.drop_checkpoint(key)
+
+    def _set_system_prefix_store(self, store: SessionStore) -> None:
+        """Bind cache paths to the owning runtime's store between operations."""
+        with self._history.edit():
+            self._system_prefix_store = store
 
     def file_payloads_supported(self) -> bool:
         """Return the native file-payload policy on the owning worker."""

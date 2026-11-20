@@ -14,8 +14,8 @@
 
 ## Global Constraints
 
-- Use `<DS4PY_HOME>/sysprompt/<sha256>.kv`, defaulting to `~/.ds4py` through `SessionStore` when `DS4PY_HOME` is unset or empty.
-- Key the file by model id, routed quantization, context size, and the complete ordered prefix token ids; do not key by prompt text.
+- Use the session store root's `sysprompt/<sha256>.kv`, defaulting to `DS4PY_HOME` or `~/.ds4py` through `SessionStore`; an explicit runtime store root replaces the default home.
+- Key the file by model id, routed quantization, context size, the validated native manifest's ds4 source commit and library-file SHA-256, and the complete ordered prefix token ids; do not key by prompt text. A drafter is not part of the key.
 - Use the existing `KV_MAGIC`, `KV_VERSION`, and payload representation used by `session.kv`; no compatibility with another file format is required.
 - Probe `Session.file_payloads_supported()` and native `restore_enabled` before every cache load/save. Either being false means no cache read, no cache write, and the current rendering/prefill behavior.
 - Missing, unreadable, corrupt, truncated, extra-data, and token-mismatched cache files must fall back to ordinary prefill and be atomically replaced after a successful prefill.
@@ -48,6 +48,9 @@
 - Modify: `src/ds4py/errors.py` (narrow payload load/mismatch errors)
 - Modify: `src/ds4py/store.py` (store-owned `sysprompt/` layout)
 - Modify: `docs/specs/2026-11-10-m3-harness-integration-design.md` (section 10.3)
+- Modify: `docs/specs/2026-10-21-ds4-py-design.md` (system-prefix key and explicit store root)
+- Modify: `src/ds4py/_native/protocol.py`, `src/ds4py/_native/api.py`, and `src/ds4py/_native/fake.py` (validated library identity)
+- Modify: `src/ds4py/runtime.py` (bind the session cache to the runtime store)
 - Modify: `tests/conftest.py` (isolate test cache writes)
 - Create: `tests/engine/test_system_prefix_cache.py`
 - Create: `tests/agent/test_agent_system_prefix_cache.py`
@@ -55,9 +58,10 @@
 - Modify: `tests/agent/test_compaction_persistence.py`
 - Modify: `tests/agent/test_store_failures.py`
 - Modify: `tests/agent/test_store.py`
+- Modify: `tests/native/test_loader.py`
 
 **Interfaces:**
-- Produces: `system_prefix_path(store: SessionStore, engine: Engine, tokens: Sequence[int]) -> Path`, returning `store.sysprompt_path(digest)`. The digest input is the ASCII model id, routed quant bits, context size, and `token_digest(tokens)`, with unambiguous separators.
+- Produces: `system_prefix_path(store: SessionStore, engine: Engine, tokens: Sequence[int]) -> Path`, returning `store.sysprompt_path(digest)`. The digest input is the ASCII model id, routed quant bits, context size, native library source commit or empty string, validated library-file SHA-256, and `token_digest(tokens)`, with unambiguous separators.
 - Produces: `sync_system_prefix(session: Session, tokens: tuple[int, ...]) -> None`, called only inside the binding transaction. Pending cancellation and disabled native restore use ordinary prefill without cache I/O. On a miss/fallback it submits the existing `SyncJob` and raises `EngineError("chat start was interrupted")` for an `Interrupted` event. After supported successful prefill it publishes best-effort through `SessionStore.write_kv_stream_atomic`. Public payload methods and the cache share `Session._save_payload_events` / `Session._load_payload_events`; `SessionHistory._sync_chat` retains sole responsibility for `_checkpoint_native(SYSTEM)`.
 - Consumes: `LoadPayloadJob(file: BinaryIO, payload_bytes: int, transcript: Transcript | None, expected_tokens: tuple[int, ...] | None = None)`. Existing public session restore passes the mutable transcript and no expected tokens, preserving its behavior. A cache load passes no transcript and exact expected tokens.
 - Worker behavior: native load failure on the verified-cache path resets native state and raises `PayloadLoadError`; token mismatch resets and raises `PayloadMismatch`. On success, close stale native checkpoints, emit `Loaded`, and modify the transcript only when one was supplied. The shared internal Session load drain clears history checkpoint/pause bookkeeping once for both public and cache callers.
@@ -143,6 +147,8 @@ git commit -m "feat: cache rendered system prefixes" -m "Part of #38"
 ```
 
 Final whole-branch review produced five additional RED regression tests: disabled native restore, failed native load reset, warm interruption, saved token count, and store-owned cache layout. The owner approved the `restore_enabled` guard and contained shared-Session-helper refactor. All five passed after the corrections, followed by the focused and complete gates. Cache eviction and unrelated test-helper restructuring remain outside this feature.
+
+PR round 1 added library commit and binary hash to the key, bound explicit runtime store roots to the session cache, and filled the directory-damage test case. The drafter stays outside the key by owner ruling. The strengthened key is a human reviewer callout because it extends the original specification.
 
 ### Task 2: Real-model measurements, static gates, and delivery evidence
 

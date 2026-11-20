@@ -25,6 +25,7 @@ from .protocol import (
     CancelFn,
     EngineConfig,
     EngineInfo,
+    LibraryIdentity,
     ProgressFn,
     Snapshot,
     SyncStatus,
@@ -128,6 +129,7 @@ class LibNative:
     def __init__(self, lib: Library) -> None:
         self.lib = lib
         self.backend = lib.manifest.backend
+        self.library_identity = LibraryIdentity(lib.manifest.source_commit, lib.manifest.library_sha256)
         self.restore_enabled = lib.manifest.live_checks.get("restore", {}).get("ok") is not False
 
     def bind(self, name: str) -> Callable[..., Any]:

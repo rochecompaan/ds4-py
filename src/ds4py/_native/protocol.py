@@ -38,6 +38,14 @@ class EngineConfig:
 
 
 @dataclass(frozen=True)
+class LibraryIdentity:
+    """Stable source and binary identity of one validated native library."""
+
+    source_commit: str | None
+    library_sha256: str
+
+
+@dataclass(frozen=True)
 class EngineInfo:
     name: str
     model_id: int
@@ -136,6 +144,7 @@ class EngineHandle(Protocol):
 class Native(Protocol):
     backend: str  # the backend the library was built for
     restore_enabled: bool
+    library_identity: LibraryIdentity
 
     def open_engine(self, config: EngineConfig) -> EngineHandle: ...
     def bind(self, name: str) -> Callable[..., Any]: ...

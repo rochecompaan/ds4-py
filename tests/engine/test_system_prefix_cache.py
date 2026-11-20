@@ -8,6 +8,7 @@ import pytest
 
 import ds4py
 from ds4py._native.fake import PAYLOAD_STRIDE, FakeNative, FakeSession, reply
+from ds4py._native.protocol import LibraryIdentity
 from ds4py.engine.events import Loaded, Prefill, Saved, Token
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.engine.session import Engine, Session
@@ -24,14 +25,18 @@ def fake_engine(
     quant_bits: int = 0,
     payload_support: bool | None = None,
     restore_enabled: bool = True,
+    library_identity: LibraryIdentity | None = None,
 ) -> Engine:
     info = replace(FakeNative()._info, model_id=model_id, routed_quant_bits=quant_bits)
-    native = FakeNative(
-        info=info,
-        payload_support=payload_support,
-        restore_enabled=restore_enabled,
-        script=reply(b"same"),
-    )
+    options: dict[str, Any] = {
+        "info": info,
+        "payload_support": payload_support,
+        "restore_enabled": restore_enabled,
+        "script": reply(b"same"),
+    }
+    if library_identity is not None:
+        options["library_identity"] = library_identity
+    native = FakeNative(**options)
     return ds4py.open("f.gguf", ctx=ctx, native=native)
 
 
@@ -51,7 +56,7 @@ def positive_prefills(events: list[Any]) -> list[Prefill]:
 
 def cache_files(home: Path) -> list[Path]:
     directory = home / "sysprompt"
-    return sorted(directory.glob("*.kv")) if directory.is_dir() else []
+    return sorted(path for path in directory.glob("*.kv") if path.is_file()) if directory.is_dir() else []
 
 
 def start_with_tools(
@@ -142,6 +147,16 @@ def test_cache_key_covers_engine_identity_context_and_exact_tokens(
         ("model", {"model_id": 9}, None),
         ("quantization", {"quant_bits": 4}, None),
         ("context", {"ctx": 2048}, None),
+        (
+            "library-commit",
+            {"library_identity": LibraryIdentity(source_commit="changed", library_sha256="0" * 64)},
+            None,
+        ),
+        (
+            "library-hash",
+            {"library_identity": LibraryIdentity(source_commit="fake", library_sha256="f" * 64)},
+            None,
+        ),
         ("tokens-ab", {}, "ab"),
         ("tokens-ba", {}, "ba"),
     )
@@ -160,9 +175,43 @@ def test_cache_key_covers_engine_identity_context_and_exact_tokens(
     assert len(set(names)) == len(cases)
 
 
+def test_rebuilt_library_gets_a_separate_cache_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    first_identity = LibraryIdentity(source_commit="first", library_sha256="a" * 64)
+    second_identity = LibraryIdentity(source_commit="second", library_sha256="b" * 64)
+    prefix, _segments, _events, first_path = start_with_tools(
+        home,
+        monkeypatch,
+        library_identity=first_identity,
+    )
+
+    second_prefix, _segments, events, second_path = start_with_tools(
+        home,
+        monkeypatch,
+        library_identity=second_identity,
+        previous_paths=(first_path,),
+    )
+    assert second_prefix == prefix
+    assert second_path != first_path
+    assert positive_prefills(events)[0].cached_prefix == 0
+    assert len(cache_files(home)) == 2
+
+
 @pytest.mark.parametrize(
     "damage",
-    ["unreadable", "bad_magic", "bad_version", "short_header", "short_payload", "extra_data", "corrupt_payload"],
+    [
+        "unreadable",
+        "directory",
+        "bad_magic",
+        "bad_version",
+        "short_header",
+        "short_payload",
+        "extra_data",
+        "corrupt_payload",
+    ],
 )
 def test_invalid_caches_are_rebuilt_and_replaced(
     tmp_path: Path,
@@ -175,6 +224,9 @@ def test_invalid_caches_are_rebuilt_and_replaced(
 
     if damage == "unreadable":
         path.chmod(0)
+    elif damage == "directory":
+        path.unlink()
+        path.mkdir()
     elif damage == "bad_magic":
         path.write_bytes(b"NOTDS4KV" + valid[8:])
     elif damage == "bad_version":
@@ -200,6 +252,12 @@ def test_invalid_caches_are_rebuilt_and_replaced(
         assert len(prefills) == 1
         assert prefills[0].cached_prefix == 0
         assert prefills[0].total == len(prefix)
+
+    if damage == "directory":
+        assert path.is_dir()
+        assert cache_files(home) == []
+        assert list((home / "sysprompt").glob("*.tmp")) == []
+        return
 
     assert path.read_bytes() == valid
     assert SessionStore().read_kv_header(path) == len(prefix) * PAYLOAD_STRIDE

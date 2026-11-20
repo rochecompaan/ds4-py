@@ -25,7 +25,8 @@ def test_runtime_new_uses_the_same_prefix_cache(tmp_path: Path) -> None:
             session = model.session
             system_length = max(segment.end for segment in session.transcript.segments if segment.kind == "system")
             prefix = session.transcript.tokens[:system_length]
-            assert len(list((tmp_path / "ds4py-home" / "sysprompt").glob("*.kv"))) == 1
+            assert len(list((store.root / "sysprompt").glob("*.kv"))) == 1
+            assert not (tmp_path / "ds4py-home" / "sysprompt").exists()
 
             await runtime.new()
             events: list[Any] = []

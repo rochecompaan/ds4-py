@@ -171,6 +171,22 @@ def test_rebuilt_library_without_payload_probe_loads_absent_and_uses_legacy_supp
     assert api.file_payloads_supported(loaded, 1) is True
 
 
+def test_loaded_library_identity_uses_the_validated_manifest(
+    make_manifest: Any,
+    tmp_path: Path,
+    upstream_headers: Any,
+    stub_dlopen: Any,
+) -> None:
+    lib, m = make_manifest(tmp_path, upstream_headers, bindings=all_bindings())
+    m.source_commit = "abc123"
+    m.write(manifest_path(lib))
+    loaded = load_library(lib)
+
+    identity = api.LibNative(loaded).library_identity
+    assert identity.source_commit == "abc123"
+    assert identity.library_sha256 == m.library_sha256
+
+
 def test_legacy_manifest_without_payload_probe_record_requires_rebuild(
     make_manifest: Any,
     tmp_path: Path,

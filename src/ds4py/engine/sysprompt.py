@@ -23,7 +23,11 @@ if TYPE_CHECKING:
 def system_prefix_path(store: SessionStore, engine: Engine, tokens: Sequence[int]) -> Path:
     """Return the one cache filename for this engine identity and exact tokens."""
     info = engine.info
-    identity = f"{info.model_id}\n{info.routed_quant_bits}\n{engine.config.ctx}\n{token_digest(tokens)}"
+    library = engine.native.library_identity
+    identity = (
+        f"{info.model_id}\n{info.routed_quant_bits}\n{engine.config.ctx}\n"
+        f"{library.source_commit or ''}\n{library.library_sha256}\n{token_digest(tokens)}"
+    )
     digest = hashlib.sha256(identity.encode("ascii")).hexdigest()
     return store.sysprompt_path(digest)
 
@@ -69,7 +73,7 @@ def sync_system_prefix(session: Session, tokens: tuple[int, ...]) -> None:
         _prefill(session, tokens)
         return
 
-    store = SessionStore()
+    store = session._system_prefix_store
     path = system_prefix_path(store, session.engine, tokens)
     try:
         _load(session, store, path, tokens)
