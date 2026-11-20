@@ -50,7 +50,7 @@ def test_effective_pending_notes_guard_the_complete_request_boundary(
             messages: list[ModelMessage] = [ModelRequest([UserPromptPart("go")])]
             notes.notes(messages)
             response = await model.request(messages, None, ModelRequestParameters())
-            assert len(session.transcript) == 205
+            assert len(session.transcript) == 229
             if configuration == "reassigned":
                 notes = DS4SystemNotes(session, hints=True, clock=lambda: "replacement")
                 notes.notes(messages)
@@ -58,7 +58,7 @@ def test_effective_pending_notes_guard_the_complete_request_boundary(
             notes.hints_enabled = False
             if configuration == "cleared":
                 model.note_provider = None
-            pending = ModelRequest([ToolReturnPart("read_big", "x" * 7954, tool_call_id="one")])
+            pending = ModelRequest([ToolReturnPart("read_big", "x" * 7930, tool_call_id="one")])
             messages.extend([response, pending])
             pending_notes = notes.pending(messages)
             before = (session.transcript.tokens, model.binder.records())
@@ -81,7 +81,7 @@ def test_effective_pending_notes_guard_the_complete_request_boundary(
             assert owner.requests == ([] if configuration == "cleared" else [ContextRequest(94, "tool_result")])
             part = pending.parts[0]
             assert isinstance(part, ToolReturnPart)
-            assert part.content == ("x" * 7954 if configuration == "cleared" else TOOL_RESULT_DOES_NOT_FIT)
+            assert part.content == ("x" * 7930 if configuration == "cleared" else TOOL_RESULT_DOES_NOT_FIT)
             assert notes.pending(messages) == pending_notes
             fitted = model.binder.project_request(messages, bound=True)
             async with model.request_stream(messages, None, ModelRequestParameters()):

@@ -65,7 +65,7 @@ def glm_expected(schemas: Any) -> str:
         "# Tools\n\n"
         f"<tools>{schemas}</tools>\n\n"
         "Call example:\n"
-        "<tool_call>read<arg_key>path</arg_key><arg_value>README.md</arg_value></tool_call>\n\n"
+        "<tool_call>$TOOL_NAME<arg_key>$PARAMETER_NAME</arg_key><arg_value>$PARAMETER_VALUE</arg_value></tool_call>\n\n"
         "Escape literal </arg_value> as &lt;/arg_value>; write &lt;/arg_value> literally as "
         "&amp;lt;/arg_value>. Other entities stay unchanged.\n"
     )
@@ -76,7 +76,7 @@ def qwen_expected(schemas: Any) -> str:
         "# Tools\n\n"
         f"<tools>{schemas}</tools>\n\n"
         "Call example:\n"
-        "<tool_call>\n<function=read>\n<parameter=path>\nREADME.md\n</parameter>\n"
+        "<tool_call>\n<function=$TOOL_NAME>\n<parameter=$PARAMETER_NAME>\n$PARAMETER_VALUE\n</parameter>\n"
         "</function>\n</tool_call>\n\n"
         "Escape literal </parameter> as &lt;/parameter>; write &lt;/parameter> literally as "
         "&amp;lt;/parameter>. Other entities stay unchanged.\n"
@@ -138,6 +138,20 @@ def test_generator_does_not_copy_c_tool_contracts_or_edit_upto() -> None:
             assert forbidden not in prompt
 
 
+@pytest.mark.parametrize("family", ["glm", "qwen"])
+def test_call_example_uses_placeholders_instead_of_unregistered_read(family: str) -> None:
+    definition = ToolDefinition("read_file", "Read a file.", {"type": "object"})
+    prompt = ToolPromptGenerator(family).generate([definition])
+
+    example = prompt.split("Call example:\n", 1)[1].split("\n\n", 1)[0]
+
+    assert "$TOOL_NAME" in example
+    assert "$PARAMETER_NAME" in example
+    assert "$PARAMETER_VALUE" in example
+    assert "read" not in example
+    assert "README.md" not in example
+
+
 def test_unknown_family_is_an_error() -> None:
     with pytest.raises(ValueError, match="unknown tool prompt family: other"):
         ToolPromptGenerator("other").generate(DEFINITIONS)
@@ -160,6 +174,11 @@ def test_every_generated_example_executes_the_intended_call(family: Any) -> None
         )
     else:
         examples = prompt.split("Call example:\n", 1)[1].split("\n\n", 1)[0]
+        examples = (
+            examples.replace("$TOOL_NAME", "read")
+            .replace("$PARAMETER_NAME", "path")
+            .replace("$PARAMETER_VALUE", "README.md")
+        )
     factory = {"glm": Glm, "qwen": Qwen}.get(family, lambda: Dsml(v41=family == "deepseek41"))
     # No prose or unsupported teaching stanza may be silently skipped.
     examples = examples.splitlines() if family == "glm" else [examples]

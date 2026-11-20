@@ -130,12 +130,12 @@ def test_runtime_reserve_history_survives_continuation_save_switch(
 @pytest.mark.parametrize(
     ("result_size", "needs_error", "needed", "old_history"),
     [
-        (6000, True, 4813, True),
-        (3900, True, 613, True),
-        (3800, False, 413, True),
-        (3594, False, 1, True),
-        (3500, False, -187, True),
-        (6000, True, 4199, False),
+        (6000, True, 4837, True),
+        (3900, True, 637, True),
+        (3800, False, 437, True),
+        (3594, False, 25, True),
+        (3500, False, -163, True),
+        (6000, True, 4223, False),
     ],
 )
 def test_combined_glm_tool_results_recover_before_native_sync(
@@ -188,7 +188,7 @@ def test_combined_glm_tool_results_recover_before_native_sync(
             returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
             assert len(returns) == 2
             assert reasons == (["tool_result"] if needed > 0 and old_history else [])
-            # Native prefix 944 (330 without old turn) + bodies + headers 2*26 + separator 2
+            # Native prefix 968 (354 without old turn) + bodies + headers 2*26 + separator 2
             # + grouped wrapper 3 + assistant prefix 3 + generation reserve 1.
             assert requests == ([ContextRequest(needed, "tool_result")] if needed > 0 else [])
             assert [p.content for p in returns] == [
