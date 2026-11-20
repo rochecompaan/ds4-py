@@ -22,7 +22,7 @@ from pydantic_ai.messages import (
 
 import ds4py
 from ds4py import ThinkMode
-from ds4py._native.fake import FAKE_EOS, FakeNative
+from ds4py._native.fake import FAKE_EOS, FakeNative, FakeSession
 from ds4py._native.fake_chat import tokenize_rendered
 from ds4py.engine.decode import PlainStep
 from ds4py.engine.sampling import SamplingPolicy
@@ -46,6 +46,7 @@ def fake_engine(
     family: Any = "qwen",
     model_id: Any = 7,
     quant_bits: Any = None,
+    payload_support: Any = None,
 ) -> Engine:
     info = replace(
         FakeNative()._info,
@@ -58,7 +59,11 @@ def fake_engine(
     )
     if quant_bits is not None:
         info = replace(info, routed_quant_bits=quant_bits)
-    native = FakeNative(info=info) if script is None else FakeNative(info=info, script=script)
+    native = (
+        FakeNative(info=info, payload_support=payload_support)
+        if script is None
+        else FakeNative(info=info, script=script, payload_support=payload_support)
+    )
     return ds4py.open("f.gguf", ctx=65536, think=ThinkMode.NONE, native=native)
 
 
@@ -452,7 +457,11 @@ def test_stripped_legacy_note_without_text_fails_instead_of_regenerating(
 
 
 @pytest.mark.parametrize("hints", [False, True])
-def test_stripped_payload_switch_renders_fresh_with_full_prefill(tmp_path: Path, hints: Any) -> None:
+def test_stripped_payload_switch_reuses_only_validated_system_prefix(
+    tmp_path: Path,
+    hints: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     project, store, record, saved = saved_session(tmp_path, hints=hints)
     session_id = saved["session_id"]
 
@@ -468,7 +477,14 @@ def test_stripped_payload_switch_renders_fresh_with_full_prefill(tmp_path: Path,
             asyncio.run(runtime.close())
 
     zero_payload_kv(store, session_id)
+    loaded_paths = []
+    original_load = FakeSession.load_payload
 
+    def track_load(self: Any, file: Any, payload_bytes: Any) -> Any:
+        loaded_paths.append(Path(file.name))
+        return original_load(self, file, payload_bytes)
+
+    monkeypatch.setattr(FakeSession, "load_payload", track_load)
     with fake_engine(script=scripted_rounds("second answer")) as engine:
         model = make_model(engine)
         runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
@@ -477,7 +493,7 @@ def test_stripped_payload_switch_renders_fresh_with_full_prefill(tmp_path: Path,
             restored = asyncio.run(runtime.switch(session_id))
 
             assert restored == record
-            assert during_switch == []  # the switch itself never renders
+            assert during_switch == []  # the switch itself never renders or loads
             assert len(model.session.transcript) == 0
             assert not model.session.transcript.chat
             assert dump(runtime.messages) == dump(saved["messages"])
@@ -486,10 +502,16 @@ def test_stripped_payload_switch_renders_fresh_with_full_prefill(tmp_path: Path,
             requests = capture(runtime, {"Synced"})
             output = asyncio.run(runtime.run("second answer")).output
             synced = engine_events(requests, "Synced")
-            assert synced[0].plan.kind == "rebuild"
-            assert synced[0].prefilled == synced[0].pos  # full prefill
+            system_length = max(
+                segment.end for segment in model.session.transcript.segments if segment.kind == "system"
+            )
+            assert synced[0].plan.kind == "extend"
+            assert synced[0].plan.reused == system_length
+            assert synced[0].prefilled == synced[0].pos - system_length
             rebuilt = list(model.session.transcript.tokens[: len(saved["tokens"])])
             assert rebuilt == saved["tokens"]
+            assert loaded_paths and all(path.parent.name == "sysprompt" for path in loaded_paths)
+            assert all(path.name != "session.kv" for path in loaded_paths)
             note_subtypes = [
                 segment.meta.get("subtype") for segment in model.session.transcript.segments if segment.kind == "note"
             ]
@@ -503,6 +525,34 @@ def test_stripped_payload_switch_renders_fresh_with_full_prefill(tmp_path: Path,
     switched = [line for line in events if line["kind"] == "switched"]
     assert switched and switched[-1]["payload"]["restore_path"] == "render"
     assert "payload" in switched[-1]["payload"]["mismatch"]
+
+
+def test_stripped_payload_switch_without_file_support_still_fully_prefills(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, store, _record, saved = saved_session(tmp_path)
+    session_id = saved["session_id"]
+    zero_payload_kv(store, session_id)
+
+    def forbid_load(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("unsupported rendered restore must not load session or system KV")
+
+    monkeypatch.setattr(FakeSession, "load_payload", forbid_load)
+    with fake_engine(script=scripted_rounds("second answer"), payload_support=False) as engine:
+        model = make_model(engine)
+        runtime = AgentRuntime(model, project, store=store, clock=fixed_clock)
+        try:
+            asyncio.run(runtime.switch(session_id))
+            requests = capture(runtime, {"Synced"})
+            output = asyncio.run(runtime.run("second answer")).output
+            synced = engine_events(requests, "Synced")
+            assert synced[0].plan.kind == "rebuild"
+            assert synced[0].prefilled == synced[0].pos
+            assert list(model.session.transcript.tokens[: len(saved["tokens"])]) == saved["tokens"]
+            assert output == "second answer"
+        finally:
+            asyncio.run(runtime.close())
 
 
 def test_newer_kv_than_record_takes_the_render_path_and_reports_the_mismatch(

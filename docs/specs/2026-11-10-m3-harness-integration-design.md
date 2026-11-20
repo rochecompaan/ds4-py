@@ -827,10 +827,16 @@ load or identity/state mutation:
 - `False` changes a planned KV restore to the existing rendered restore, with a
   mismatch explanation that the live engine does not support file payloads.
 
-Rendered restore keeps the saved message history and provenance and performs a
-full rebuild prefill on the next request. It does not call `load_payload`.
-Corrupt records, incompatible models, and invalid provenance remain errors;
-the fallback is not a way to bypass validation.
+Rendered restore keeps the saved message history and provenance. It never calls
+`load_payload` for the session's own `session.kv`. When
+`file_payloads_supported` is `True`, its normal chat initialization may load
+the separate system-prefix cache after exact token validation; the restored
+message tail is then rendered and prefilled on top of that system prefix. A
+missing, invalid, or mismatched prefix cache falls back to ordinary rendering
+and a full rebuild prefill. With `file_payloads_supported=False`, rendered
+restore performs that full rebuild without reading either KV file. Corrupt
+records, incompatible models, and invalid provenance remain errors; the
+fallback is not a way to bypass validation.
 
 The separate `bench/restore_plan.py` validator is KV-only and outside M3
 acceptance. This design does not claim that it validates record-only stripped

@@ -20,10 +20,11 @@ from typing import TYPE_CHECKING
 from ds4py.errors import EngineError
 
 from . import rebind, session_operations
-from .events import Checkpointed, Interrupted
+from .events import Checkpointed
 from .prompt import PromptBuilder
+from .sysprompt import sync_system_prefix
 from .transcript import Transcript, TranscriptReplacement, TranscriptView
-from .worker import SYSTEM, CheckpointJob, SyncJob
+from .worker import SYSTEM, CheckpointJob
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
@@ -334,12 +335,11 @@ class SessionHistory:
                 self._transcript.append(segment.tokens, segment.kind)
 
     def _sync_chat(self) -> None:
-        """Sync the staged preamble and hold its system checkpoint without the lock."""
+        """Load or sync the staged preamble and hold its system checkpoint."""
         tokens = self._transcript.tokens
         if not tokens:
             return
-        if any(isinstance(event, Interrupted) for event in self._session._job_events(SyncJob(tokens))):
-            raise EngineError("chat start was interrupted")
+        sync_system_prefix(self._session, tokens)
         self._checkpoint_native(SYSTEM)
 
     def _set_chat(self) -> None:

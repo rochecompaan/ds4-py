@@ -63,11 +63,12 @@ class ResetJob:
 
 @dataclass(frozen=True)
 class SavePayloadJob:
-    """Sync the transcript, then write the caller header and native payload."""
+    """Sync unless already current, then write the caller header and native payload."""
 
     tokens: tuple[int, ...]
     header: bytes
     file: BinaryIO
+    already_synced: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.header, bytes):
@@ -76,11 +77,12 @@ class SavePayloadJob:
 
 @dataclass(frozen=True)
 class LoadPayloadJob:
-    """Read one payload after the caller's header and replace the transcript."""
+    """Read one payload after the caller's header, optionally checking its tokens."""
 
     file: BinaryIO
     payload_bytes: int
-    transcript: Transcript
+    transcript: Transcript | None
+    expected_tokens: tuple[int, ...] | None = None
 
 
 Job = SyncJob | CheckpointJob | ResetJob | GenerateJob | SummaryJob | SavePayloadJob | LoadPayloadJob
@@ -371,9 +373,10 @@ class EngineWorker:
         job: SavePayloadJob,
         emit: Callable[[Event], None],
     ) -> None:
-        status = self._sync(session, job.tokens, emit)
-        if status is not SyncStatus.DONE:
-            raise EngineError("save was interrupted before staging the payload")
+        if not job.already_synced:
+            status = self._sync(session, job.tokens, emit)
+            if status is not SyncStatus.DONE:
+                raise EngineError("save was interrupted before staging the payload")
         staged = session.stage_payload()
         try:
             payload_bytes = staged.bytes
@@ -395,10 +398,14 @@ class EngineWorker:
     ) -> None:
         session.load_payload(job.file, job.payload_bytes)
         tokens = session.tokens()
-        job.transcript.reset()
-        if tokens:
-            job.transcript.append(tokens, "system")
-        job.transcript.set_chat()
+        if job.expected_tokens is not None and tuple(tokens) != job.expected_tokens:
+            self._reset(session)
+            raise EngineError("loaded system-prefix tokens do not match the rendered prefix")
+        if job.transcript is not None:
+            job.transcript.reset()
+            if tokens:
+                job.transcript.append(tokens, "system")
+            job.transcript.set_chat()
         self._close_checkpoints()
         emit(Loaded(len(tokens), job.payload_bytes))
 

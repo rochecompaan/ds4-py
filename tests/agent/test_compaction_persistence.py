@@ -249,14 +249,13 @@ def test_compacted_history_renders_fresh_without_payload(runtime: AgentRuntime, 
         assert syncs == []
         result = await runtime.run("continue")
         assert result.output == "continued"
-        assert len(syncs) == 2  # Fresh preamble setup, then history plus the new request.
-        assert (syncs[0].plan.kind, syncs[0].plan.reused, syncs[0].prefilled) == ("rebuild", 0, preamble)
-        assert (syncs[1].plan.kind, syncs[1].plan.reused, syncs[1].prefilled) == (
+        assert len(syncs) == 1  # Cached preamble, then history plus the new request.
+        assert (syncs[0].plan.kind, syncs[0].plan.reused, syncs[0].prefilled) == (
             "extend",
             preamble,
             len(tokens) - preamble + 33,
         )
-        assert sum(event.prefilled for event in syncs) == len(tokens) + 33
+        assert sum(event.prefilled for event in syncs) == len(tokens) - preamble + 33
         assert result.usage.input_tokens == len(tokens) - preamble + 33
         assert runtime.model.session.transcript.tokens[: len(tokens)] == tokens
         assert len(runtime.model.session.transcript) == len(tokens) + 43
