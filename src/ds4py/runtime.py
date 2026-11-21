@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from ds4py.engine.prefix import PrefixTurn
     from ds4py.engine.session import Session
     from ds4py.model import DS4Model
+from ds4py.runtime_persistence import build_save_record, build_save_snapshot
 from ds4py.runtime_restore import (
     RestorePlan,
     RestoreResult,
@@ -65,7 +66,6 @@ from ds4py.store import (
     KV_VERSION,
     SaveRecord,
     SessionStore,
-    token_digest,
 )
 
 _PLACEHOLDER_HEADER = KV_HEADER.pack(KV_MAGIC, KV_VERSION, 0)
@@ -566,13 +566,7 @@ class AgentRuntime:
                     f"the native payload covers {written.get('tokens')} tokens, the transcript has {len(tokens)}"
                 )
 
-        snapshot = ContinuableSnapshot(
-            run_id=run_id,
-            step_index=0,
-            messages=deepcopy(list(self._messages)),
-            conversation_id=session_id,
-            agent_name="ds4py",
-        )
+        snapshot = build_save_snapshot(run_id=run_id, session_id=session_id, messages=self._messages)
         await holder.current.register_run(
             StepRunRecord(
                 run_id=run_id,
@@ -583,11 +577,9 @@ class AgentRuntime:
         await holder.current.save_snapshot(snapshot)
 
         info = self._session.engine.info
-        record = SaveRecord(
+        record = build_save_record(
+            snapshot=snapshot,
             session_id=session_id,
-            conversation_id=session_id,
-            run_id=run_id,
-            step_index=snapshot.step_index,
             model_id=info.model_id,
             quant_bits=info.routed_quant_bits,
             ctx=self._session.engine.config.ctx,
@@ -595,8 +587,7 @@ class AgentRuntime:
             created_at=self._created_at,
             last_used=self._timestamp(),
             payload_bytes=payload_bytes,
-            tokens=len(tokens),
-            tokens_sha256=token_digest(tokens),
+            tokens=tokens,
             segments=self.model.binder.export_segments(),
         )
         self.store.write_record_atomic(session_dir / "save.json", record)
