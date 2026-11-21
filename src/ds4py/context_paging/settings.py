@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeIs
 
+from ds4py.errors import ContextSelectionError
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
@@ -40,11 +42,48 @@ class RollingWindowSettings:
         _boolean(self.trim_to_explicit, "trim_to_explicit")
 
 
+@dataclass(frozen=True, slots=True)
+class ContextTokenLimits:
+    budget_tokens: int
+    trim_to_tokens: int
+    model_limit: int
+    explicit_target_at_budget: bool = False
+
+
 def default_trim_to(token_budget: int) -> int:
     """Return five eighths of a budget without floating-point rounding."""
 
     budget = _positive_safe_integer(token_budget, "token_budget")
     return max(1, budget * 5 // 8)
+
+
+def resolve_token_limits(settings: RollingWindowSettings, model_context: int) -> ContextTokenLimits:
+    """Cap configured limits by the model window using exact integer arithmetic."""
+
+    try:
+        model_limit = _positive_safe_integer(model_context, "model_context")
+        budget_value = _positive_safe_integer(settings.token_budget, "token_budget")
+        target = _positive_safe_integer(settings.trim_to, "trim_to")
+    except ValueError as error:
+        message = str(error)
+        if "model_context" in message:
+            code = "INVALID_MODEL_CONTEXT"
+            diagnostic = "The active model context-window estimate is invalid."
+        elif "token_budget" in message:
+            code = "INVALID_TOKEN_BUDGET"
+            diagnostic = "The token budget must be a positive safe integer."
+        else:
+            code = "INVALID_TRIM_TARGET"
+            diagnostic = "The trim target must be a positive safe integer."
+        raise ContextSelectionError(code, diagnostic) from error
+    budget = min(budget_value, model_limit)
+    effective_target = budget if target >= budget_value else max(1, target * budget // budget_value)
+    return ContextTokenLimits(
+        budget,
+        effective_target,
+        model_limit,
+        settings.trim_to_explicit and target >= budget_value,
+    )
 
 
 def _read_json(path: Path) -> object:

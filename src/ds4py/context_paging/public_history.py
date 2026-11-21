@@ -90,7 +90,7 @@ def _has_only_nested_paging_calls(result: ToolResultPart) -> bool:
     )
 
 
-def _excluded_call_ids(turn: ModelTurnHistoryItem) -> set[str]:
+def paging_tool_call_ids(turn: ModelTurnHistoryItem) -> set[str]:
     excluded = {
         exchange.call.tool_call_id for exchange in turn.exchanges if exchange.call.tool_name in PAGING_TOOL_NAMES
     }
@@ -157,7 +157,7 @@ def _public_result(
 
 
 def _public_model_turn(turn: ModelTurnHistoryItem) -> PublicModelTurn | None:
-    excluded = _excluded_call_ids(turn)
+    excluded = paging_tool_call_ids(turn)
     if not _has_public_work(turn, excluded):
         return None
     visible_calls = _visible_calls(turn, excluded)
@@ -230,5 +230,6 @@ __all__ = [
     "PublicToolCall",
     "PublicToolResult",
     "PublicUser",
+    "paging_tool_call_ids",
     "project_public_history",
 ]
