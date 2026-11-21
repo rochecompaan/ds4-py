@@ -1,0 +1,4309 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "selection-fallback-without-raw-history",
+      "input": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "old-A request",
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "text",
+                "text": "old-A answer"
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": "old-B request",
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "text",
+                "text": "old-B answer"
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": "old-C request",
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "text",
+                "text": "old-C answer"
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": "live request",
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "toolCall",
+                "id": "call-live-1",
+                "name": "read",
+                "arguments": {
+                  "path": "live-1.txt"
+                }
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "toolUse",
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call-live-1",
+            "toolName": "read",
+            "content": [
+              {
+                "type": "text",
+                "text": "live-1 output"
+              }
+            ],
+            "isError": false,
+            "timestamp": 2
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "toolCall",
+                "id": "call-live-2",
+                "name": "read",
+                "arguments": {
+                  "path": "live-2.txt"
+                }
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "toolUse",
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call-live-2",
+            "toolName": "read",
+            "content": [
+              {
+                "type": "text",
+                "text": "live-2 output"
+              }
+            ],
+            "isError": false,
+            "timestamp": 2
+          }
+        ],
+        "systemPrompt": "",
+        "activeTools": [],
+        "tokenBudget": 1000,
+        "trimToTokens": 600,
+        "modelContextWindow": 1000,
+        "contextTokens": 2200,
+        "tokenEstimates": {
+          "residentTokens": 0,
+          "messageTokens": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ]
+        }
+      },
+      "expected": {
+        "value": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 1,000-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.",
+              "timestamp": 0
+            },
+            {
+              "role": "user",
+              "content": "live request",
+              "timestamp": 0
+            },
+            {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-2",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-2.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            {
+              "role": "toolResult",
+              "toolCallId": "call-live-2",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "live-2 output"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          ],
+          "estimatedTokens": 716,
+          "budgetTokens": 1000,
+          "mode": "paged",
+          "cutFallbackReason": "raw-history-unavailable"
+        }
+      }
+    },
+    {
+      "id": "selection-keyless-backward-snap",
+      "input": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "old-A request",
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "text",
+                "text": "old-A answer"
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "custom",
+            "customType": "fixture",
+            "content": "keyless old request",
+            "display": true,
+            "details": {},
+            "timestamp": 1792368000000
+          },
+          {
+            "role": "user",
+            "content": "live request",
+            "timestamp": 0
+          }
+        ],
+        "rawHistoryItems": [
+          {
+            "id": "user-old-A",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "old-A request",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-old-A",
+            "kind": "modelTurn",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "old-A answer"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "user-live",
+            "kind": "user",
+            "sequence": 2,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "live request",
+              "timestamp": 0
+            }
+          }
+        ],
+        "systemPrompt": "",
+        "activeTools": [],
+        "tokenBudget": 700,
+        "trimToTokens": 100,
+        "modelContextWindow": 700,
+        "contextTokens": 800,
+        "tokenEstimates": {
+          "residentTokens": 0,
+          "messageTokens": [
+            200,
+            200,
+            200,
+            200
+          ]
+        }
+      },
+      "expected": {
+        "value": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 700-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-old-A\".",
+              "timestamp": 0
+            },
+            {
+              "role": "custom",
+              "customType": "fixture",
+              "content": "keyless old request",
+              "display": true,
+              "details": {},
+              "timestamp": 1792368000000
+            },
+            {
+              "role": "user",
+              "content": "live request",
+              "timestamp": 0
+            }
+          ],
+          "estimatedTokens": 526,
+          "budgetTokens": 700,
+          "mode": "paged",
+          "cutState": {
+            "frontier": {
+              "kind": "completedTurn",
+              "lastEvicted": {
+                "historyId": "turn-old-A"
+              }
+            },
+            "notice": {
+              "role": "user",
+              "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 700-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-old-A\".",
+              "timestamp": 0
+            }
+          }
+        }
+      },
+      "replay": {
+        "input": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "old-A request",
+              "timestamp": 0
+            },
+            {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "old-A answer"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1
+            },
+            {
+              "role": "custom",
+              "customType": "fixture",
+              "content": "keyless old request",
+              "display": true,
+              "details": {},
+              "timestamp": 1792368000000
+            },
+            {
+              "role": "user",
+              "content": "live request",
+              "timestamp": 0
+            }
+          ],
+          "rawHistoryItems": [
+            {
+              "id": "user-old-A",
+              "kind": "user",
+              "sequence": 0,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "userMessage": {
+                "role": "user",
+                "content": "old-A request",
+                "timestamp": 0
+              }
+            },
+            {
+              "id": "turn-old-A",
+              "kind": "modelTurn",
+              "sequence": 1,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "old-A answer"
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "stop",
+                "timestamp": 1
+              },
+              "toolResults": [],
+              "metadata": {
+                "tools": [],
+                "files": [],
+                "failed": false
+              }
+            },
+            {
+              "id": "user-live",
+              "kind": "user",
+              "sequence": 2,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "userMessage": {
+                "role": "user",
+                "content": "live request",
+                "timestamp": 0
+              }
+            }
+          ],
+          "systemPrompt": "",
+          "activeTools": [],
+          "tokenBudget": 700,
+          "trimToTokens": 100,
+          "modelContextWindow": 700,
+          "contextTokens": 800,
+          "tokenEstimates": {
+            "residentTokens": 0,
+            "messageTokens": [
+              200,
+              200,
+              200,
+              200
+            ]
+          },
+          "cutState": {
+            "frontier": {
+              "kind": "completedTurn",
+              "lastEvicted": {
+                "historyId": "turn-old-A"
+              }
+            },
+            "notice": {
+              "role": "user",
+              "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 700-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-old-A\".",
+              "timestamp": 0
+            }
+          }
+        },
+        "expected": {
+          "value": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 700-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-old-A\".",
+                "timestamp": 0
+              },
+              {
+                "role": "custom",
+                "customType": "fixture",
+                "content": "keyless old request",
+                "display": true,
+                "details": {},
+                "timestamp": 1792368000000
+              },
+              {
+                "role": "user",
+                "content": "live request",
+                "timestamp": 0
+              }
+            ],
+            "estimatedTokens": 526,
+            "budgetTokens": 700,
+            "mode": "paged",
+            "cutState": {
+              "frontier": {
+                "kind": "completedTurn",
+                "lastEvicted": {
+                  "historyId": "turn-old-A"
+                }
+              },
+              "notice": {
+                "role": "user",
+                "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 700-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-old-A\".",
+                "timestamp": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "selection-model-capped-target",
+      "input": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "old-A request",
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "text",
+                "text": "old-A answer"
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": "old-B request",
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "text",
+                "text": "old-B answer"
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": "old-C request",
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "text",
+                "text": "old-C answer"
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": "live request",
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "toolCall",
+                "id": "call-live-1",
+                "name": "read",
+                "arguments": {
+                  "path": "live-1.txt"
+                }
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "toolUse",
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call-live-1",
+            "toolName": "read",
+            "content": [
+              {
+                "type": "text",
+                "text": "live-1 output"
+              }
+            ],
+            "isError": false,
+            "timestamp": 2
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "toolCall",
+                "id": "call-live-2",
+                "name": "read",
+                "arguments": {
+                  "path": "live-2.txt"
+                }
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "toolUse",
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call-live-2",
+            "toolName": "read",
+            "content": [
+              {
+                "type": "text",
+                "text": "live-2 output"
+              }
+            ],
+            "isError": false,
+            "timestamp": 2
+          }
+        ],
+        "rawHistoryItems": [
+          {
+            "id": "user-old-A",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "old-A request",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-old-A",
+            "kind": "modelTurn",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "old-A answer"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "user-old-B",
+            "kind": "user",
+            "sequence": 2,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "old-B request",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-old-B",
+            "kind": "modelTurn",
+            "sequence": 3,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "old-B answer"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "user-old-C",
+            "kind": "user",
+            "sequence": 4,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "old-C request",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-old-C",
+            "kind": "modelTurn",
+            "sequence": 5,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "old-C answer"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "user-live",
+            "kind": "user",
+            "sequence": 6,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "live request",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-live-1",
+            "kind": "modelTurn",
+            "sequence": 7,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-1",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-1.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-live-1",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "live-1 output"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "live-1.txt"
+              ],
+              "failed": false
+            }
+          },
+          {
+            "id": "turn-live-2",
+            "kind": "modelTurn",
+            "sequence": 8,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-2",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-2.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-live-2",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "live-2 output"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "live-2.txt"
+              ],
+              "failed": false
+            }
+          }
+        ],
+        "systemPrompt": "",
+        "activeTools": [],
+        "tokenBudget": 1200,
+        "trimToTokens": 750,
+        "modelContextWindow": 800,
+        "contextTokens": 2200,
+        "tokenEstimates": {
+          "residentTokens": 0,
+          "messageTokens": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ]
+        }
+      },
+      "expected": {
+        "value": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 800-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-live-1\".\nTool name: read.\nRead evicted tool output with read_context_output({\"historyId\":\"turn-live-1\",\"source\":\"toolResult\",\"toolCallId\":\"call-live-1\"}).",
+              "timestamp": 0
+            },
+            {
+              "role": "user",
+              "content": "live request",
+              "timestamp": 0
+            },
+            {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-2",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-2.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            {
+              "role": "toolResult",
+              "toolCallId": "call-live-2",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "live-2 output"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          ],
+          "estimatedTokens": 762,
+          "budgetTokens": 800,
+          "mode": "paged",
+          "cutState": {
+            "frontier": {
+              "kind": "partialTurn",
+              "lastEvicted": {
+                "historyId": "turn-live-1",
+                "toolCallId": "call-live-1"
+              },
+              "userHistoryId": "user-live"
+            },
+            "notice": {
+              "role": "user",
+              "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 800-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-live-1\".\nTool name: read.\nRead evicted tool output with read_context_output({\"historyId\":\"turn-live-1\",\"source\":\"toolResult\",\"toolCallId\":\"call-live-1\"}).",
+              "timestamp": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "selection-partial-active-turn",
+      "input": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "live request",
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "toolCall",
+                "id": "call-live-1",
+                "name": "read",
+                "arguments": {
+                  "path": "live-1.txt"
+                }
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "toolUse",
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call-live-1",
+            "toolName": "read",
+            "content": [
+              {
+                "type": "text",
+                "text": "live-1 output"
+              }
+            ],
+            "isError": false,
+            "timestamp": 2
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "toolCall",
+                "id": "call-live-2",
+                "name": "read",
+                "arguments": {
+                  "path": "live-2.txt"
+                }
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "toolUse",
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call-live-2",
+            "toolName": "read",
+            "content": [
+              {
+                "type": "text",
+                "text": "live-2 output"
+              }
+            ],
+            "isError": false,
+            "timestamp": 2
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "toolCall",
+                "id": "call-live-3",
+                "name": "read",
+                "arguments": {
+                  "path": "live-3.txt"
+                }
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "toolUse",
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call-live-3",
+            "toolName": "read",
+            "content": [
+              {
+                "type": "text",
+                "text": "live-3 output"
+              }
+            ],
+            "isError": false,
+            "timestamp": 2
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "toolCall",
+                "id": "call-live-4",
+                "name": "read",
+                "arguments": {
+                  "path": "live-4.txt"
+                }
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "toolUse",
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call-live-4",
+            "toolName": "read",
+            "content": [
+              {
+                "type": "text",
+                "text": "live-4 output"
+              }
+            ],
+            "isError": false,
+            "timestamp": 2
+          }
+        ],
+        "rawHistoryItems": [
+          {
+            "id": "user-live",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "live request",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-live-1",
+            "kind": "modelTurn",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-1",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-1.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-live-1",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "live-1 output"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "live-1.txt"
+              ],
+              "failed": false
+            }
+          },
+          {
+            "id": "turn-live-2",
+            "kind": "modelTurn",
+            "sequence": 2,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-2",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-2.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-live-2",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "live-2 output"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "live-2.txt"
+              ],
+              "failed": false
+            }
+          },
+          {
+            "id": "turn-live-3",
+            "kind": "modelTurn",
+            "sequence": 3,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-3",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-3.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-live-3",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "live-3 output"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "live-3.txt"
+              ],
+              "failed": false
+            }
+          },
+          {
+            "id": "turn-live-4",
+            "kind": "modelTurn",
+            "sequence": 4,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-4",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-4.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-live-4",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "live-4 output"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "live-4.txt"
+              ],
+              "failed": false
+            }
+          }
+        ],
+        "systemPrompt": "",
+        "activeTools": [],
+        "tokenBudget": 1000,
+        "trimToTokens": 600,
+        "modelContextWindow": 1000,
+        "contextTokens": 1800,
+        "tokenEstimates": {
+          "residentTokens": 0,
+          "messageTokens": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ]
+        }
+      },
+      "expected": {
+        "value": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 1,000-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-live-3\".\nTool name: read.\nRead evicted tool output with read_context_output({\"historyId\":\"turn-live-3\",\"source\":\"toolResult\",\"toolCallId\":\"call-live-3\"}).",
+              "timestamp": 0
+            },
+            {
+              "role": "user",
+              "content": "live request",
+              "timestamp": 0
+            },
+            {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-4",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-4.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            {
+              "role": "toolResult",
+              "toolCallId": "call-live-4",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "live-4 output"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          ],
+          "estimatedTokens": 763,
+          "budgetTokens": 1000,
+          "mode": "paged",
+          "cutState": {
+            "frontier": {
+              "kind": "partialTurn",
+              "lastEvicted": {
+                "historyId": "turn-live-3",
+                "toolCallId": "call-live-3"
+              },
+              "userHistoryId": "user-live"
+            },
+            "notice": {
+              "role": "user",
+              "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 1,000-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-live-3\".\nTool name: read.\nRead evicted tool output with read_context_output({\"historyId\":\"turn-live-3\",\"source\":\"toolResult\",\"toolCallId\":\"call-live-3\"}).",
+              "timestamp": 0
+            }
+          }
+        }
+      },
+      "replay": {
+        "input": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "live request",
+              "timestamp": 0
+            },
+            {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-1",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-1.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            {
+              "role": "toolResult",
+              "toolCallId": "call-live-1",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "live-1 output"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            },
+            {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-2",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-2.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            {
+              "role": "toolResult",
+              "toolCallId": "call-live-2",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "live-2 output"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            },
+            {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-3",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-3.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            {
+              "role": "toolResult",
+              "toolCallId": "call-live-3",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "live-3 output"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            },
+            {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-4",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-4.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            {
+              "role": "toolResult",
+              "toolCallId": "call-live-4",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "live-4 output"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          ],
+          "rawHistoryItems": [
+            {
+              "id": "user-live",
+              "kind": "user",
+              "sequence": 0,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "userMessage": {
+                "role": "user",
+                "content": "live request",
+                "timestamp": 0
+              }
+            },
+            {
+              "id": "turn-live-1",
+              "kind": "modelTurn",
+              "sequence": 1,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "call-live-1",
+                    "name": "read",
+                    "arguments": {
+                      "path": "live-1.txt"
+                    }
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "toolUse",
+                "timestamp": 1
+              },
+              "toolResults": [
+                {
+                  "role": "toolResult",
+                  "toolCallId": "call-live-1",
+                  "toolName": "read",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "live-1 output"
+                    }
+                  ],
+                  "isError": false,
+                  "timestamp": 2
+                }
+              ],
+              "metadata": {
+                "tools": [
+                  "read"
+                ],
+                "files": [
+                  "live-1.txt"
+                ],
+                "failed": false
+              }
+            },
+            {
+              "id": "turn-live-2",
+              "kind": "modelTurn",
+              "sequence": 2,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "call-live-2",
+                    "name": "read",
+                    "arguments": {
+                      "path": "live-2.txt"
+                    }
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "toolUse",
+                "timestamp": 1
+              },
+              "toolResults": [
+                {
+                  "role": "toolResult",
+                  "toolCallId": "call-live-2",
+                  "toolName": "read",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "live-2 output"
+                    }
+                  ],
+                  "isError": false,
+                  "timestamp": 2
+                }
+              ],
+              "metadata": {
+                "tools": [
+                  "read"
+                ],
+                "files": [
+                  "live-2.txt"
+                ],
+                "failed": false
+              }
+            },
+            {
+              "id": "turn-live-3",
+              "kind": "modelTurn",
+              "sequence": 3,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "call-live-3",
+                    "name": "read",
+                    "arguments": {
+                      "path": "live-3.txt"
+                    }
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "toolUse",
+                "timestamp": 1
+              },
+              "toolResults": [
+                {
+                  "role": "toolResult",
+                  "toolCallId": "call-live-3",
+                  "toolName": "read",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "live-3 output"
+                    }
+                  ],
+                  "isError": false,
+                  "timestamp": 2
+                }
+              ],
+              "metadata": {
+                "tools": [
+                  "read"
+                ],
+                "files": [
+                  "live-3.txt"
+                ],
+                "failed": false
+              }
+            },
+            {
+              "id": "turn-live-4",
+              "kind": "modelTurn",
+              "sequence": 4,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "call-live-4",
+                    "name": "read",
+                    "arguments": {
+                      "path": "live-4.txt"
+                    }
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "toolUse",
+                "timestamp": 1
+              },
+              "toolResults": [
+                {
+                  "role": "toolResult",
+                  "toolCallId": "call-live-4",
+                  "toolName": "read",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "live-4 output"
+                    }
+                  ],
+                  "isError": false,
+                  "timestamp": 2
+                }
+              ],
+              "metadata": {
+                "tools": [
+                  "read"
+                ],
+                "files": [
+                  "live-4.txt"
+                ],
+                "failed": false
+              }
+            }
+          ],
+          "systemPrompt": "",
+          "activeTools": [],
+          "tokenBudget": 1000,
+          "trimToTokens": 600,
+          "modelContextWindow": 1000,
+          "contextTokens": 1800,
+          "tokenEstimates": {
+            "residentTokens": 0,
+            "messageTokens": [
+              200,
+              200,
+              200,
+              200,
+              200,
+              200,
+              200,
+              200,
+              200
+            ]
+          },
+          "cutState": {
+            "frontier": {
+              "kind": "partialTurn",
+              "lastEvicted": {
+                "historyId": "turn-live-3",
+                "toolCallId": "call-live-3"
+              },
+              "userHistoryId": "user-live"
+            },
+            "notice": {
+              "role": "user",
+              "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 1,000-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-live-3\".\nTool name: read.\nRead evicted tool output with read_context_output({\"historyId\":\"turn-live-3\",\"source\":\"toolResult\",\"toolCallId\":\"call-live-3\"}).",
+              "timestamp": 0
+            }
+          }
+        },
+        "expected": {
+          "value": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 1,000-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-live-3\".\nTool name: read.\nRead evicted tool output with read_context_output({\"historyId\":\"turn-live-3\",\"source\":\"toolResult\",\"toolCallId\":\"call-live-3\"}).",
+                "timestamp": 0
+              },
+              {
+                "role": "user",
+                "content": "live request",
+                "timestamp": 0
+              },
+              {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "call-live-4",
+                    "name": "read",
+                    "arguments": {
+                      "path": "live-4.txt"
+                    }
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "toolUse",
+                "timestamp": 1
+              },
+              {
+                "role": "toolResult",
+                "toolCallId": "call-live-4",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "live-4 output"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "estimatedTokens": 763,
+            "budgetTokens": 1000,
+            "mode": "paged",
+            "cutState": {
+              "frontier": {
+                "kind": "partialTurn",
+                "lastEvicted": {
+                  "historyId": "turn-live-3",
+                  "toolCallId": "call-live-3"
+                },
+                "userHistoryId": "user-live"
+              },
+              "notice": {
+                "role": "user",
+                "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 1,000-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-live-3\".\nTool name: read.\nRead evicted tool output with read_context_output({\"historyId\":\"turn-live-3\",\"source\":\"toolResult\",\"toolCallId\":\"call-live-3\"}).",
+                "timestamp": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "selection-protected-overflow",
+      "input": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "live request",
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "toolCall",
+                "id": "call-old",
+                "name": "read",
+                "arguments": {
+                  "path": "old.txt"
+                }
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "toolUse",
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call-old",
+            "toolName": "read",
+            "content": [
+              {
+                "type": "text",
+                "text": "old output"
+              }
+            ],
+            "isError": false,
+            "timestamp": 2
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "toolCall",
+                "id": "call-newest",
+                "name": "read",
+                "arguments": {
+                  "path": "newest.txt"
+                }
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "toolUse",
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call-newest",
+            "toolName": "read",
+            "content": [
+              {
+                "type": "text",
+                "text": "newest output"
+              }
+            ],
+            "isError": false,
+            "timestamp": 2
+          }
+        ],
+        "rawHistoryItems": [
+          {
+            "id": "user-live",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "live request",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-old",
+            "kind": "modelTurn",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-old",
+                  "name": "read",
+                  "arguments": {
+                    "path": "old.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-old",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "old output"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "old.txt"
+              ],
+              "failed": false
+            }
+          },
+          {
+            "id": "turn-newest",
+            "kind": "modelTurn",
+            "sequence": 2,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-newest",
+                  "name": "read",
+                  "arguments": {
+                    "path": "newest.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-newest",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "newest output"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "newest.txt"
+              ],
+              "failed": false
+            }
+          }
+        ],
+        "systemPrompt": "",
+        "activeTools": [],
+        "tokenBudget": 100,
+        "trimToTokens": 50,
+        "modelContextWindow": 400,
+        "contextTokens": 260,
+        "tokenEstimates": {
+          "residentTokens": 0,
+          "messageTokens": [
+            20,
+            20,
+            20,
+            20,
+            180
+          ]
+        }
+      },
+      "expected": {
+        "value": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "[Context paging notice — generated by the extension]\nThe newest tool-result exchange is present in full for this follow-up call.\nThe normal rolling budget is 100 estimated tokens.\nThis exchange can leave context after this call.\nUse search_history or browse_history, then load_history or read_context_output, to recover it.",
+              "timestamp": 0
+            },
+            {
+              "role": "user",
+              "content": "live request",
+              "timestamp": 0
+            },
+            {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-newest",
+                  "name": "read",
+                  "arguments": {
+                    "path": "newest.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            {
+              "role": "toolResult",
+              "toolCallId": "call-newest",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "newest output"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          ],
+          "estimatedTokens": 301,
+          "budgetTokens": 100,
+          "mode": "protected-overflow",
+          "cutState": {
+            "frontier": {
+              "kind": "partialTurn",
+              "lastEvicted": {
+                "historyId": "turn-old",
+                "toolCallId": "call-old"
+              },
+              "userHistoryId": "user-live"
+            },
+            "notice": {
+              "role": "user",
+              "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 100-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-old\".\nTool name: read.\nRead evicted tool output with read_context_output({\"historyId\":\"turn-old\",\"source\":\"toolResult\",\"toolCallId\":\"call-old\"}).",
+              "timestamp": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "selection-protected-recovery",
+      "input": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "live request",
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "toolCall",
+                "id": "call-old",
+                "name": "read",
+                "arguments": {
+                  "path": "old.txt"
+                }
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "toolUse",
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call-old",
+            "toolName": "read",
+            "content": [
+              {
+                "type": "text",
+                "text": "old output"
+              }
+            ],
+            "isError": false,
+            "timestamp": 2
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "toolCall",
+                "id": "call-newest",
+                "name": "read",
+                "arguments": {
+                  "path": "newest.txt"
+                }
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "toolUse",
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call-newest",
+            "toolName": "read",
+            "content": [
+              {
+                "type": "text",
+                "text": "newest output"
+              }
+            ],
+            "isError": false,
+            "timestamp": 2
+          }
+        ],
+        "rawHistoryItems": [
+          {
+            "id": "user-live",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "live request",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-old",
+            "kind": "modelTurn",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-old",
+                  "name": "read",
+                  "arguments": {
+                    "path": "old.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-old",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "old output"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "old.txt"
+              ],
+              "failed": false
+            }
+          },
+          {
+            "id": "turn-newest",
+            "kind": "modelTurn",
+            "sequence": 2,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-newest",
+                  "name": "read",
+                  "arguments": {
+                    "path": "newest.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-newest",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "newest output"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "newest.txt"
+              ],
+              "failed": false
+            }
+          }
+        ],
+        "systemPrompt": "",
+        "activeTools": [],
+        "tokenBudget": 100,
+        "trimToTokens": 50,
+        "modelContextWindow": 200,
+        "contextTokens": 260,
+        "tokenEstimates": {
+          "residentTokens": 0,
+          "messageTokens": [
+            20,
+            20,
+            20,
+            20,
+            180
+          ]
+        }
+      },
+      "expected": {
+        "value": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "[Context paging notice — generated by the extension]\nThe newest tool-result payloads were replaced with recovery references or exclusion notices because they exceeded the active model context window.\nFor recoverable results, use read_context_output with the exact arguments in their replacements.",
+              "timestamp": 0
+            },
+            {
+              "role": "user",
+              "content": "live request",
+              "timestamp": 0
+            },
+            {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-newest",
+                  "name": "read",
+                  "arguments": {
+                    "path": "newest.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            {
+              "role": "toolResult",
+              "toolCallId": "call-newest",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "[Context paging recovery — generated by the extension]\nThis tool result exceeded the active model context window.\nRead the exact stored result with read_context_output({\"historyId\":\"turn-newest\",\"source\":\"toolResult\",\"toolCallId\":\"call-newest\"})."
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          ],
+          "estimatedTokens": 176,
+          "budgetTokens": 100,
+          "mode": "recovery",
+          "cutState": {
+            "frontier": {
+              "kind": "partialTurn",
+              "lastEvicted": {
+                "historyId": "turn-old",
+                "toolCallId": "call-old"
+              },
+              "userHistoryId": "user-live"
+            },
+            "notice": {
+              "role": "user",
+              "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 100-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-old\".\nTool name: read.\nRead evicted tool output with read_context_output({\"historyId\":\"turn-old\",\"source\":\"toolResult\",\"toolCallId\":\"call-old\"}).",
+              "timestamp": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "selection-stable-completed-turn",
+      "input": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "old-A request",
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "text",
+                "text": "old-A answer"
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": "old-B request",
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "text",
+                "text": "old-B answer"
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": "old-C request",
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "text",
+                "text": "old-C answer"
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "stop",
+            "timestamp": 1
+          },
+          {
+            "role": "user",
+            "content": "live request",
+            "timestamp": 0
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "toolCall",
+                "id": "call-live-1",
+                "name": "read",
+                "arguments": {
+                  "path": "live-1.txt"
+                }
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "toolUse",
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call-live-1",
+            "toolName": "read",
+            "content": [
+              {
+                "type": "text",
+                "text": "live-1 output"
+              }
+            ],
+            "isError": false,
+            "timestamp": 2
+          },
+          {
+            "role": "assistant",
+            "api": "openai-completions",
+            "provider": "fixture",
+            "model": "fixture",
+            "content": [
+              {
+                "type": "toolCall",
+                "id": "call-live-2",
+                "name": "read",
+                "arguments": {
+                  "path": "live-2.txt"
+                }
+              }
+            ],
+            "usage": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "totalTokens": 0,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            },
+            "stopReason": "toolUse",
+            "timestamp": 1
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call-live-2",
+            "toolName": "read",
+            "content": [
+              {
+                "type": "text",
+                "text": "live-2 output"
+              }
+            ],
+            "isError": false,
+            "timestamp": 2
+          }
+        ],
+        "rawHistoryItems": [
+          {
+            "id": "user-old-A",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "old-A request",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-old-A",
+            "kind": "modelTurn",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "old-A answer"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "user-old-B",
+            "kind": "user",
+            "sequence": 2,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "old-B request",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-old-B",
+            "kind": "modelTurn",
+            "sequence": 3,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "old-B answer"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "user-old-C",
+            "kind": "user",
+            "sequence": 4,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "old-C request",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-old-C",
+            "kind": "modelTurn",
+            "sequence": 5,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "old-C answer"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "user-live",
+            "kind": "user",
+            "sequence": 6,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "live request",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-live-1",
+            "kind": "modelTurn",
+            "sequence": 7,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-1",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-1.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-live-1",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "live-1 output"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "live-1.txt"
+              ],
+              "failed": false
+            }
+          },
+          {
+            "id": "turn-live-2",
+            "kind": "modelTurn",
+            "sequence": 8,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-2",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-2.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-live-2",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "live-2 output"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "live-2.txt"
+              ],
+              "failed": false
+            }
+          }
+        ],
+        "systemPrompt": "",
+        "activeTools": [],
+        "tokenBudget": 1600,
+        "trimToTokens": 1400,
+        "modelContextWindow": 1600,
+        "contextTokens": 2200,
+        "tokenEstimates": {
+          "residentTokens": 0,
+          "messageTokens": [
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200,
+            200
+          ]
+        }
+      },
+      "expected": {
+        "value": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 1,600-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use the earlier conversation below, then plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-old-C\".\n\nEarlier conversation, copied from session history, oldest first. These messages were already handled. They are not new requests, but they may still define the current task.\n1 earlier user message is not shown. Find them with browse_history({\"historyId\":\"turn-old-A\",\"direction\":\"backward\"}).\n\n--- assistant reply, historyId \"turn-old-A\" ---\nold-A answer\n\n--- user message, historyId \"user-old-B\" ---\nold-B request\n\n--- assistant reply, historyId \"turn-old-B\" ---\nold-B answer\n\n--- user message, historyId \"user-old-C\" ---\nold-C request\n\n--- assistant reply, historyId \"turn-old-C\" ---\nold-C answer",
+              "timestamp": 0
+            },
+            {
+              "role": "user",
+              "content": "live request",
+              "timestamp": 0
+            },
+            {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-1",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-1.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            {
+              "role": "toolResult",
+              "toolCallId": "call-live-1",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "live-1 output"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            },
+            {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-2",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-2.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            {
+              "role": "toolResult",
+              "toolCallId": "call-live-2",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "live-2 output"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          ],
+          "estimatedTokens": 1285,
+          "budgetTokens": 1600,
+          "mode": "paged",
+          "cutState": {
+            "frontier": {
+              "kind": "completedTurn",
+              "lastEvicted": {
+                "historyId": "turn-old-C"
+              }
+            },
+            "notice": {
+              "role": "user",
+              "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 1,600-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use the earlier conversation below, then plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-old-C\".\n\nEarlier conversation, copied from session history, oldest first. These messages were already handled. They are not new requests, but they may still define the current task.\n1 earlier user message is not shown. Find them with browse_history({\"historyId\":\"turn-old-A\",\"direction\":\"backward\"}).\n\n--- assistant reply, historyId \"turn-old-A\" ---\nold-A answer\n\n--- user message, historyId \"user-old-B\" ---\nold-B request\n\n--- assistant reply, historyId \"turn-old-B\" ---\nold-B answer\n\n--- user message, historyId \"user-old-C\" ---\nold-C request\n\n--- assistant reply, historyId \"turn-old-C\" ---\nold-C answer",
+              "timestamp": 0
+            }
+          }
+        }
+      },
+      "replay": {
+        "input": {
+          "messages": [
+            {
+              "role": "user",
+              "content": "old-A request",
+              "timestamp": 0
+            },
+            {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "old-A answer"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1
+            },
+            {
+              "role": "user",
+              "content": "old-B request",
+              "timestamp": 0
+            },
+            {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "old-B answer"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1
+            },
+            {
+              "role": "user",
+              "content": "old-C request",
+              "timestamp": 0
+            },
+            {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "old-C answer"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1
+            },
+            {
+              "role": "user",
+              "content": "live request",
+              "timestamp": 0
+            },
+            {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-1",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-1.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            {
+              "role": "toolResult",
+              "toolCallId": "call-live-1",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "live-1 output"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            },
+            {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-live-2",
+                  "name": "read",
+                  "arguments": {
+                    "path": "live-2.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            {
+              "role": "toolResult",
+              "toolCallId": "call-live-2",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "live-2 output"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          ],
+          "rawHistoryItems": [
+            {
+              "id": "user-old-A",
+              "kind": "user",
+              "sequence": 0,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "userMessage": {
+                "role": "user",
+                "content": "old-A request",
+                "timestamp": 0
+              }
+            },
+            {
+              "id": "turn-old-A",
+              "kind": "modelTurn",
+              "sequence": 1,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "old-A answer"
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "stop",
+                "timestamp": 1
+              },
+              "toolResults": [],
+              "metadata": {
+                "tools": [],
+                "files": [],
+                "failed": false
+              }
+            },
+            {
+              "id": "user-old-B",
+              "kind": "user",
+              "sequence": 2,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "userMessage": {
+                "role": "user",
+                "content": "old-B request",
+                "timestamp": 0
+              }
+            },
+            {
+              "id": "turn-old-B",
+              "kind": "modelTurn",
+              "sequence": 3,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "old-B answer"
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "stop",
+                "timestamp": 1
+              },
+              "toolResults": [],
+              "metadata": {
+                "tools": [],
+                "files": [],
+                "failed": false
+              }
+            },
+            {
+              "id": "user-old-C",
+              "kind": "user",
+              "sequence": 4,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "userMessage": {
+                "role": "user",
+                "content": "old-C request",
+                "timestamp": 0
+              }
+            },
+            {
+              "id": "turn-old-C",
+              "kind": "modelTurn",
+              "sequence": 5,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "old-C answer"
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "stop",
+                "timestamp": 1
+              },
+              "toolResults": [],
+              "metadata": {
+                "tools": [],
+                "files": [],
+                "failed": false
+              }
+            },
+            {
+              "id": "user-live",
+              "kind": "user",
+              "sequence": 6,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "userMessage": {
+                "role": "user",
+                "content": "live request",
+                "timestamp": 0
+              }
+            },
+            {
+              "id": "turn-live-1",
+              "kind": "modelTurn",
+              "sequence": 7,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "call-live-1",
+                    "name": "read",
+                    "arguments": {
+                      "path": "live-1.txt"
+                    }
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "toolUse",
+                "timestamp": 1
+              },
+              "toolResults": [
+                {
+                  "role": "toolResult",
+                  "toolCallId": "call-live-1",
+                  "toolName": "read",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "live-1 output"
+                    }
+                  ],
+                  "isError": false,
+                  "timestamp": 2
+                }
+              ],
+              "metadata": {
+                "tools": [
+                  "read"
+                ],
+                "files": [
+                  "live-1.txt"
+                ],
+                "failed": false
+              }
+            },
+            {
+              "id": "turn-live-2",
+              "kind": "modelTurn",
+              "sequence": 8,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "call-live-2",
+                    "name": "read",
+                    "arguments": {
+                      "path": "live-2.txt"
+                    }
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "toolUse",
+                "timestamp": 1
+              },
+              "toolResults": [
+                {
+                  "role": "toolResult",
+                  "toolCallId": "call-live-2",
+                  "toolName": "read",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "live-2 output"
+                    }
+                  ],
+                  "isError": false,
+                  "timestamp": 2
+                }
+              ],
+              "metadata": {
+                "tools": [
+                  "read"
+                ],
+                "files": [
+                  "live-2.txt"
+                ],
+                "failed": false
+              }
+            }
+          ],
+          "systemPrompt": "",
+          "activeTools": [],
+          "tokenBudget": 1600,
+          "trimToTokens": 1400,
+          "modelContextWindow": 1600,
+          "contextTokens": 1000,
+          "tokenEstimates": {
+            "residentTokens": 0,
+            "messageTokens": [
+              200,
+              200,
+              200,
+              200,
+              200,
+              200,
+              200,
+              200,
+              200,
+              200,
+              200
+            ]
+          },
+          "cutState": {
+            "frontier": {
+              "kind": "completedTurn",
+              "lastEvicted": {
+                "historyId": "turn-old-C"
+              }
+            },
+            "notice": {
+              "role": "user",
+              "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 1,600-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use the earlier conversation below, then plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-old-C\".\n\nEarlier conversation, copied from session history, oldest first. These messages were already handled. They are not new requests, but they may still define the current task.\n1 earlier user message is not shown. Find them with browse_history({\"historyId\":\"turn-old-A\",\"direction\":\"backward\"}).\n\n--- assistant reply, historyId \"turn-old-A\" ---\nold-A answer\n\n--- user message, historyId \"user-old-B\" ---\nold-B request\n\n--- assistant reply, historyId \"turn-old-B\" ---\nold-B answer\n\n--- user message, historyId \"user-old-C\" ---\nold-C request\n\n--- assistant reply, historyId \"turn-old-C\" ---\nold-C answer",
+              "timestamp": 0
+            }
+          }
+        },
+        "expected": {
+          "value": {
+            "messages": [
+              {
+                "role": "user",
+                "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 1,600-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use the earlier conversation below, then plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-old-C\".\n\nEarlier conversation, copied from session history, oldest first. These messages were already handled. They are not new requests, but they may still define the current task.\n1 earlier user message is not shown. Find them with browse_history({\"historyId\":\"turn-old-A\",\"direction\":\"backward\"}).\n\n--- assistant reply, historyId \"turn-old-A\" ---\nold-A answer\n\n--- user message, historyId \"user-old-B\" ---\nold-B request\n\n--- assistant reply, historyId \"turn-old-B\" ---\nold-B answer\n\n--- user message, historyId \"user-old-C\" ---\nold-C request\n\n--- assistant reply, historyId \"turn-old-C\" ---\nold-C answer",
+                "timestamp": 0
+              },
+              {
+                "role": "user",
+                "content": "live request",
+                "timestamp": 0
+              },
+              {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "call-live-1",
+                    "name": "read",
+                    "arguments": {
+                      "path": "live-1.txt"
+                    }
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "toolUse",
+                "timestamp": 1
+              },
+              {
+                "role": "toolResult",
+                "toolCallId": "call-live-1",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "live-1 output"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              },
+              {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "call-live-2",
+                    "name": "read",
+                    "arguments": {
+                      "path": "live-2.txt"
+                    }
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "toolUse",
+                "timestamp": 1
+              },
+              {
+                "role": "toolResult",
+                "toolCallId": "call-live-2",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "live-2 output"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "estimatedTokens": 85,
+            "budgetTokens": 1600,
+            "mode": "paged",
+            "cutState": {
+              "frontier": {
+                "kind": "completedTurn",
+                "lastEvicted": {
+                  "historyId": "turn-old-C"
+                }
+              },
+              "notice": {
+                "role": "user",
+                "content": "[Context paging notice — generated by the extension]\nThis is context paging, not compaction. Nothing was summarized.\nOlder context left the 1,600-token rolling window. Raw session history is unchanged.\nContinue the current task. Do not stop or ask the user for direction because of this notice.\nTo recover detail, first use the earlier conversation below, then plan or notes files, then search_history or browse_history.\nUse load_history for exact items or read_context_output for exact output pages.\nRecent evicted historyId: \"turn-old-C\".\n\nEarlier conversation, copied from session history, oldest first. These messages were already handled. They are not new requests, but they may still define the current task.\n1 earlier user message is not shown. Find them with browse_history({\"historyId\":\"turn-old-A\",\"direction\":\"backward\"}).\n\n--- assistant reply, historyId \"turn-old-A\" ---\nold-A answer\n\n--- user message, historyId \"user-old-B\" ---\nold-B request\n\n--- assistant reply, historyId \"turn-old-B\" ---\nold-B answer\n\n--- user message, historyId \"user-old-C\" ---\nold-C request\n\n--- assistant reply, historyId \"turn-old-C\" ---\nold-C answer",
+                "timestamp": 0
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
