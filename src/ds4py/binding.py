@@ -24,6 +24,7 @@ from ds4py.binding_plan import (
     plan_transition,
     request_instructions,
 )
+from ds4py.binding_projection import build_request_projection
 from ds4py.binding_provenance import (
     BoundMessage,
     _content_hash,
@@ -48,6 +49,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestParameters
 
     from ds4py.binding_plan import BindingBoundary
+    from ds4py.binding_projection import RequestProjection
     from ds4py.binding_provenance import PreparedProvenance
     from ds4py.capabilities.system_notes import DS4SystemNotes
     from ds4py.engine.history import BindingTransaction
@@ -522,6 +524,25 @@ class MessageBinder:
         config = self._configured_config(tools, instructions)
         plan = self._plan(prepared, config, self.note_provider, system_changed=self._system_changed(config))
         return plan.projected_tokens
+
+    def project_request_view(
+        self,
+        *,
+        canonical_messages: Sequence[ModelMessage],
+        candidate_messages: Sequence[ModelMessage],
+        params: ModelRequestParameters,
+    ) -> RequestProjection:
+        """Project only the candidate view through the exact scratch planner."""
+        prepared = self.prepare_messages(candidate_messages)
+        effective = request_instructions(prepared.targets, params)
+        config = self._configured_config(params.declared_tool_defs.values(), effective)
+        plan = self._plan(prepared, config, self.note_provider, system_changed=self._system_changed(config))
+        return build_request_projection(
+            engine=self.session.engine,
+            live_tokens=self.session.transcript.tokens,
+            canonical_messages=canonical_messages,
+            plan=plan,
+        )
 
     def reserve_overflow(self, projected_tokens: int) -> int:
         """Return the tokens the projection still needs to admit the response reserve.
