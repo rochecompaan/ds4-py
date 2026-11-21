@@ -121,8 +121,17 @@ class TUI:
         print_formatted_text(str(text), output=self.output)
 
     def _receive_event(self, event: SessionEvent) -> None:
-        if self._loop is not None:
-            self._loop.call_soon_threadsafe(self._events.put_nowait, event)
+        loop = self._loop
+        if loop is None:
+            return
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        if running_loop is loop:
+            self._events.put_nowait(event)
+        else:
+            loop.call_soon_threadsafe(self._events.put_nowait, event)
 
     async def _render_events(self) -> None:
         while True:
@@ -131,6 +140,8 @@ class TUI:
                 self.renderer.handle_event(event.payload["event"])
             elif event.kind == "run_end":
                 self.renderer.flush()
+            elif event.kind == "context_paging_warning":
+                self.show_message(f"warning: {event.payload['message']}")
             self.session.app.invalidate()
 
     def _ensure_prompt(self) -> asyncio.Task[str]:
@@ -292,6 +303,11 @@ class TUI:
         self._in_loop = True
         event_task = asyncio.create_task(self._render_events())
         try:
+            refresh = getattr(self.runtime, "_refresh_context_paging", None)
+            if callable(refresh):
+                refresh()
+            # Let startup status and warnings reach the renderer before prompting.
+            await asyncio.sleep(0)
             with patch_stdout(raw=True):
                 if initial is not None:
                     self._queued.append(initial)

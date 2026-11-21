@@ -190,6 +190,7 @@ class AgentRuntime:
         question_answerer: QuestionAnswerer | None = None,
         request_limit: int = 50,
         context: ContextComposition | None = None,
+        project_trusted: bool = False,
         before_identity_change: Callable[[], None] | None = None,
         after_identity_change: Callable[[], None] | None = None,
     ) -> None:
@@ -239,6 +240,13 @@ class AgentRuntime:
             self._on_engine_event,
             kinds={"Interrupted", "Stopped", "trace_error"},
         )
+        owner = self.model.context_owner
+        if isinstance(owner, RollingWindow):
+            owner.initialize(
+                project_dir=self.project_dir,
+                store_root=self.store.root,
+                project_trusted=project_trusted,
+            )
 
     @property
     def messages(self) -> list[ModelMessage]:
@@ -499,6 +507,33 @@ class AgentRuntime:
         activity = self._active
         if activity is not None and activity.kind != "close":
             self._cancel_activity(activity)
+
+    def _refresh_context_paging(self) -> None:
+        """Replay current status and any undelivered initial warning to a newly subscribed frontend."""
+        owner = self.model.context_owner
+        if isinstance(owner, RollingWindow):
+            owner._session_controller.refresh()
+
+    def context_paging(self, action: str | None = None) -> str:
+        """Inspect or change RollingWindow policy while the runtime is idle."""
+        if (reason := self._rejection()) is not None:
+            raise EngineError(reason)
+        owner = self.model.context_owner
+        if not isinstance(owner, RollingWindow):
+            raise EngineError("context paging is unavailable for the selected context owner")
+        return owner.command(action)
+
+    async def context_paging_stats(self) -> object:
+        """Collect read-only statistics through the current session's public store API."""
+        if (reason := self._rejection()) is not None:
+            raise EngineError(reason)
+        owner = self.model.context_owner
+        if not isinstance(owner, RollingWindow):
+            raise EngineError("context paging is unavailable for the selected context owner")
+        return await owner._session_controller.statistics(
+            store=self._holder().current,
+            session_dir=self.store.session_dir(self.session_id),
+        )
 
     def set_hints(self, enabled: bool) -> None:
         """Change the system-note setting used by the next request."""

@@ -257,7 +257,8 @@ state.
 Saving writes the compacted current history and matching native payload.
 Switch and fork preserve its keys and provenance. Existing step snapshots
 retain the removed messages, so compaction is not a deletion or redaction of
-older run records. Save-record v1 and old step snapshot formats are unchanged.
+older run records. Save-record v1 remains readable; v2 adds an optional exact
+RollingWindow request view. Old step snapshot formats are unchanged.
 An exact compatible native KV payload is reused with no restore prefill; the
 next request extends the loaded state. With an absent, stripped, or
 incompatible payload, the compacted messages are rendered again and the next
@@ -282,6 +283,76 @@ Two scope gaps remain:
 
 The trigger rules and covered continuation behavior do not imply complete C
 parity. Other deferred milestone work is not made complete by compaction.
+
+## Rolling context paging
+
+`RollingWindow` is a view-only alternative to automatic compaction. It keeps
+canonical history intact and selects a bounded request view. Older exchanges
+remain available through the `search_history`, `browse_history`, `load_history`,
+and `read_context_output` tools. Portable tests cover this policy with
+`FakeNative`; they do not prove native inference or live replay parity.
+
+The shared agent CLI uses compaction by default. Select rolling paging with:
+
+```bash
+uv run ds4py agent --context-strategy rolling \
+  --context-token-budget 100000 --context-trim-to 62500
+```
+
+`--context-token-budget` and `--context-trim-to` accept positive integers.
+Rolling selection opens the native session with `ctx=min(--ctx, token_budget)`,
+even when paging starts disabled. This reserves the smaller native window so a
+later enable needs no native resize. On/off commands never resize a live
+session. The raw engine CLI does not have these agent flags.
+
+### Settings and project trust
+
+The `contextPaging` JSON object supports `enabled`, `tokenBudget`, and
+`trimToTokens`. Settings resolve in this order, with later sources taking
+precedence:
+
+1. trusted project `.ds4py/settings.json`;
+2. global `<SessionStore.root>/settings.json` (`DS4PY_HOME`, then `~/.ds4py`);
+3. explicit `RollingWindow` constructor values.
+
+Project settings are ignored by default. Pass `--trust-project-settings`, or
+`project_trusted=True` to `AgentRuntime`, to read them. This flag grants no
+other permission. Invalid file values fall through to the next source; invalid
+direct values raise. A file read or JSON parse error emits a paging diagnostic
+and aborts startup instead of silently selecting compaction.
+
+Programmatic composition uses `ContextComposition.rolling(...)`. This is the
+supported path for combining RollingWindow with the default agent builder. A
+programmatic caller must allocate a suitably sized native `Session` itself;
+only the shared CLI applies the automatic `ctx` clamp. When paging is disabled,
+the owner delegates tool overflow and reserve recovery to `LLMCompaction`.
+
+### Commands, status, and lifecycle
+
+A RollingWindow runtime registers `/context-paging [on|off|status]`. No argument
+and `status` report `paging on` or `paging off`. Repeating the current choice,
+requesting status, and invalid usage do not reset the cut or accounting. An
+actual on/off change resets both and publishes the new status. Commands are
+idle-only.
+
+The footer status key is `context-paging`. Every `session_end` clears it, and a
+successful new or restored session publishes its current state. Trim-target
+warnings use `context_paging_warning`; the TUI displays them and noninteractive
+runs write `warning: <message>` to stderr. Warning deduplication lasts for the
+runtime process.
+
+`/new`, `/switch`, and fork reset session-scoped overrides and accounting.
+Manual compaction clears accounting when it starts; only a successful commit
+resets the rolling cut. Cancellation and failure preserve the cut. A
+`model_changed` event resets cut and accounting but preserves the enabled
+override and warning history.
+
+Saving a RollingWindow session writes full canonical snapshots and, when
+available, the exact bound request view in save-record v2. A compatible restore
+binds that view without prefill and derives its frontier from validated
+provenance. A disabled owner, legacy record, missing payload, or incompatible
+preamble fresh-renders full canonical history without feeding transient paging
+messages to compaction.
 
 ## Choose a backend
 

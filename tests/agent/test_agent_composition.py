@@ -249,6 +249,8 @@ def test_noninteractive_extension_receives_one_typed_options_value(
         "interactive": False,
         "question_answerer": None,
         "request_limit": 7,
+        "context": None,
+        "project_trusted": False,
         "before_identity_change": extension.before_identity_change,
         "after_identity_change": extension.after_identity_change,
     }

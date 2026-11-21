@@ -5,6 +5,7 @@ import sys
 from typing import TYPE_CHECKING, TextIO
 
 if TYPE_CHECKING:
+    from ds4py.engine.lifecycle import SessionEvent
     from ds4py.runtime import AgentRuntime
 
 
@@ -34,7 +35,17 @@ async def run_noninteractive(
     output = sys.stdout if out is None else out
     errors = sys.stderr if err is None else err
     code = 0
+
+    def warning(event: SessionEvent) -> None:
+        if event.kind == "context_paging_warning":
+            _report(errors, f"warning: {event.payload['message']}", program)
+
+    subscribe = getattr(runtime, "on_event", None)
+    unsubscribe = subscribe(warning, kinds={"context_paging_warning"}) if callable(subscribe) else (lambda: None)
     try:
+        refresh = getattr(runtime, "_refresh_context_paging", None)
+        if callable(refresh):
+            refresh()
         try:
             result = await runtime.run(prompt)
         except asyncio.CancelledError, KeyboardInterrupt:
@@ -53,6 +64,7 @@ async def run_noninteractive(
                 code = 1
                 _report(errors, f"output failed: {exc}", program)
     finally:
+        unsubscribe()
         try:
             await runtime.save()
         except asyncio.CancelledError, KeyboardInterrupt:

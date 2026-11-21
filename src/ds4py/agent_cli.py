@@ -61,6 +61,10 @@ def parser(extension: AgentExtension | None = None) -> argparse.ArgumentParser:
     result.add_argument("-c", "--ctx", type=int, default=100_000)
     result.add_argument("-n", "--tokens", type=int, default=50_000)
     result.add_argument("--request-limit", type=_positive_int, default=100)
+    result.add_argument("--context-strategy", choices=("compaction", "rolling"), default="compaction")
+    result.add_argument("--context-token-budget", type=_positive_int)
+    result.add_argument("--context-trim-to", type=_positive_int)
+    result.add_argument("--trust-project-settings", action="store_true")
     result.add_argument("--temp", type=float)
     result.add_argument("--top-k", type=int)
     result.add_argument("--top-p", type=float)
@@ -123,15 +127,28 @@ def open_runtime(
     extension_config: object = None,
 ) -> Generator[AgentRuntime]:
     """Open the canonical agent stack with its CLI interaction services."""
+    from ds4py.capabilities.context import ContextComposition
     from ds4py.model import DS4Model
     from ds4py.runtime import AgentRuntime
 
     hooks_configured = extension is not None
     extension = DefaultAgentExtension() if extension is None else extension
     project_dir = Path(project_dir)
+    rolling_settings = None
+    if args.context_strategy == "rolling":
+        from ds4py.context_paging.settings import resolve_settings
+        from ds4py.store import SessionStore
+
+        rolling_settings = resolve_settings(
+            project_dir=project_dir,
+            store_root=SessionStore().root,
+            project_trusted=args.trust_project_settings,
+            token_budget=args.context_token_budget,
+            trim_to=args.context_trim_to,
+        )
     options = EngineOpenOptions(
         model=args.model,
-        ctx=args.ctx,
+        ctx=args.ctx if rolling_settings is None else min(args.ctx, rolling_settings.token_budget),
         backend=args.backend,
         think=_think_mode(args),
         seed=args.seed,
@@ -154,6 +171,16 @@ def open_runtime(
             interactive=options.interactive,
             question_answerer=_question_answerer if options.interactive else None,
             request_limit=args.request_limit,
+            context=(
+                None
+                if rolling_settings is None
+                else ContextComposition.rolling(
+                    enabled=rolling_settings.enabled,
+                    token_budget=rolling_settings.token_budget,
+                    trim_to=rolling_settings.trim_to,
+                )
+            ),
+            project_trusted=args.trust_project_settings,
             before_identity_change=extension.before_identity_change if hooks_configured else None,
             after_identity_change=extension.after_identity_change if hooks_configured else None,
         )

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast, override
 
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
@@ -11,6 +11,7 @@ from pydantic_ai.messages import ModelRequest, ToolReturnPart
 from ds4py.binding_plan import request_instructions
 from ds4py.binding_provenance import ensure_message_keys
 from ds4py.capabilities.context import TOOL_RESULT_DOES_NOT_FIT, ContextRequest, ContextStrategy, RoomResult
+from ds4py.capabilities.rolling_window_session import RollingWindowSession
 from ds4py.context_paging.history import PAGING_TOOL_NAMES, project_history
 from ds4py.context_paging.meter import RequestMeter
 from ds4py.context_paging.selection import (
@@ -27,6 +28,7 @@ from ds4py.message_metadata import DS4_CONTEXT_PAGING, DS4_KEY, DS4_VIEW_OF
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
     from pydantic_ai.messages import ModelMessage, ToolCallPart
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -44,6 +46,9 @@ class _RollingState:
     request_view: tuple[ModelMessage, ...] | None = None
     canonical_messages: tuple[ModelMessage, ...] = ()
     request_params: ModelRequestParameters | None = None
+    accounting: dict[str, int] = field(default_factory=dict)
+    navigation: dict[str, int] = field(default_factory=dict)
+    restore_ids: set[str] = field(default_factory=set)
 
 
 class RollingWindow(ContextStrategy):
@@ -74,14 +79,69 @@ class RollingWindow(ContextStrategy):
             history_source=lambda: self._state.canonical_messages,
         )
         self._initial_settings = settings
+        self._base_settings = settings
+        self._enabled_override = enabled
+        self._budget_override = token_budget
+        self._trim_override = trim_to
+        self._session_controller = RollingWindowSession(self)
 
     @property
     def _state(self) -> _RollingState:
-        return self.binder.session.state("rolling_window", lambda: _RollingState(self._initial_settings))
+        return self.binder.session.state("rolling_window", lambda: _RollingState(self._base_settings))
 
     @property
     def enabled(self) -> bool:
         return self._state.settings.enabled
+
+    def initialize(self, *, project_dir: Path, store_root: Path, project_trusted: bool) -> None:
+        """Resolve file and constructor settings after the session event bus exists."""
+        self._session_controller.initialize(
+            project_dir=project_dir,
+            store_root=store_root,
+            project_trusted=project_trusted,
+        )
+
+    def command(self, action: str | None) -> str:
+        return self._session_controller.command(action)
+
+    def reset_cut(self) -> None:
+        self._state.selection = None
+
+    def reset_accounting(self) -> None:
+        self._state.accounting.clear()
+
+    def statistics_state(self) -> dict[str, object]:
+        """Expose an immutable-by-convention snapshot for the statistics adapter."""
+        state = self._state
+        return {
+            "enabled": state.settings.enabled,
+            "settings": state.settings,
+            "selection": state.selection,
+            "accounting": dict(state.accounting),
+        }
+
+    def reset_after_fork(self) -> None:
+        """Retain canonical identity and KV while resetting per-session policy accounting."""
+        from ds4py.binding_provenance import prepare_request_view_provenance  # noqa: PLC0415 - Restore-only validation path.
+        from ds4py.context_paging.history import derive_frontier  # noqa: PLC0415 - Avoid the history/selection cycle.
+
+        state = self._state
+        state.settings = self._base_settings
+        self.reset_accounting()
+        state.navigation.clear()
+        state.restore_ids.clear()
+        state.request_view = self.binder.request_view()
+        if not state.canonical_messages or not state.request_view:
+            state.selection = None
+            return
+        prepared = prepare_request_view_provenance(
+            canonical_messages=state.canonical_messages,
+            request_view=state.request_view,
+            segments=self.binder.export_segments(),
+            loaded=None,
+        )
+        frontier = derive_frontier(state.canonical_messages, prepared)
+        state.selection = None if frontier is None else SelectionState(frontier, None)
 
     def restore_state(
         self,
@@ -90,10 +150,14 @@ class RollingWindow(ContextStrategy):
     ) -> None:
         """Adopt validated canonical identity and the binder's freshly restored view."""
         state = self._state
+        state.settings = self._base_settings
         state.canonical_messages = tuple(canonical_messages)
         state.selection = None if frontier is None else SelectionState(frontier, None)
         state.request_params = None
         state.request_view = self.binder.request_view()
+        self.reset_accounting()
+        state.navigation.clear()
+        state.restore_ids.clear()
 
     @override
     def get_toolset(self) -> FunctionToolset[object]:
