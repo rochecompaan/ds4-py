@@ -92,7 +92,8 @@ def test_compact_save_switch_restores_exact_kv_and_preserves_old_run(runtime: Ag
         saved = await runtime.save()
         directory = runtime.store.session_dir(saved.session_id)
         data = json.loads((directory / "save.json").read_text())
-        assert saved.version == data["version"] == 1
+        assert saved.version == data["version"] == 2
+        assert "request_view" not in data
         assert set(data) == {
             "version",
             "session_id",

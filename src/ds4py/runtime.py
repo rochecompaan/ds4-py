@@ -36,6 +36,7 @@ from pydantic_ai_harness.step_persistence import (
 from ds4py.agent import QuestionAnswerer, build_agent_components
 from ds4py.async_session import await_retained, drain_operation
 from ds4py.capabilities.context import ContextComposition
+from ds4py.capabilities.rolling_window import RollingWindow
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.errors import EngineError, StoreError
@@ -53,13 +54,7 @@ if TYPE_CHECKING:
     from ds4py.engine.session import Session
     from ds4py.model import DS4Model
 from ds4py.runtime_persistence import build_save_record, build_save_snapshot
-from ds4py.runtime_restore import (
-    RestorePlan,
-    RestoreResult,
-    plan_restore,
-    restore_snapshot,
-    validate_restore_snapshot,
-)
+from ds4py.runtime_restore import RestoreResult, plan_restore, prepare_restore_case, restore_snapshot
 from ds4py.store import (
     KV_HEADER,
     KV_MAGIC,
@@ -589,6 +584,11 @@ class AgentRuntime:
             payload_bytes=payload_bytes,
             tokens=tokens,
             segments=self.model.binder.export_segments(),
+            request_view=(
+                self.model.binder.request_view()
+                if isinstance(self.model.context_owner, RollingWindow) and self.model.context_owner.enabled
+                else None
+            ),
         )
         self.store.write_record_atomic(session_dir / "save.json", record)
         if not payloads_supported:
@@ -614,6 +614,9 @@ class AgentRuntime:
         """Leave the committed target empty, never paired with old native state."""
         self._session.reconcile_round(0)
         self.model.binder.forget()
+        owner = self.model.context_owner
+        if isinstance(owner, RollingWindow):
+            owner.restore_state(snapshot.messages)
         if self._notes is not None:
             self._notes.sync_from_segments(())
         self._messages = list(snapshot.messages)
@@ -642,14 +645,17 @@ class AgentRuntime:
                 f"step {record.step_index}, which is missing"
             )
         plan = plan_restore(record, session_dir, self.store)
-        validate_restore_snapshot(
+        owner = self.model.context_owner
+        case, frontier = prepare_restore_case(
             binder=self.model.binder,
             snapshot=snapshot,
             record=record,
             session_dir=session_dir,
+            plan=plan,
+            rolling_enabled=isinstance(owner, RollingWindow) and owner.enabled,
+            payload_support=self._session.file_payloads_supported,
         )
-        if plan.path == "kv" and not self._session.file_payloads_supported():
-            plan = RestorePlan("render", None, "the live engine does not support file payloads")
+        plan = case.plan
         if self._identity_hooks_configured:
             self._before_identity()
         elif self._record is not None:
@@ -668,11 +674,15 @@ class AgentRuntime:
                     snapshot=snapshot,
                     plan=plan,
                     session_dir=session_dir,
+                    use_request_view=case.use_request_view,
+                    ignore_view_segments=case.ignore_view_segments,
                 )
             except BaseException:
                 self._abort_restore(snapshot, record)
                 raise
             outcome.update(result)
+            if isinstance(owner, RollingWindow):
+                owner.restore_state(snapshot.messages, frontier if case.use_request_view else None)
             self._messages = list(snapshot.messages)
             self._title = record.title
             self._created_at = record.created_at
@@ -715,6 +725,9 @@ class AgentRuntime:
         self._status = "idle"
         self._created_at = self._timestamp()
         self.model.binder.forget()
+        owner = self.model.context_owner
+        if isinstance(owner, RollingWindow):
+            owner.restore_state(())
         if self._record is not None:
             self._record.relocate(self.store.session_dir(session_id) / "events.jsonl")
         if self._notes is not None:

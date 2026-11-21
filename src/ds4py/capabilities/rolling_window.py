@@ -13,7 +13,13 @@ from ds4py.binding_provenance import ensure_message_keys
 from ds4py.capabilities.context import TOOL_RESULT_DOES_NOT_FIT, ContextRequest, ContextStrategy, RoomResult
 from ds4py.context_paging.history import PAGING_TOOL_NAMES, project_history
 from ds4py.context_paging.meter import RequestMeter
-from ds4py.context_paging.selection import OverflowMode, SelectionResult, SelectionState, select_view
+from ds4py.context_paging.selection import (
+    ContextCutFrontier,
+    OverflowMode,
+    SelectionResult,
+    SelectionState,
+    select_view,
+)
 from ds4py.context_paging.settings import DEFAULT_TOKEN_BUDGET, RollingWindowSettings, default_trim_to
 from ds4py.context_paging.tools import create_context_paging_toolset
 from ds4py.errors import ContextExhausted, ContextSelectionError
@@ -76,6 +82,18 @@ class RollingWindow(ContextStrategy):
     @property
     def enabled(self) -> bool:
         return self._state.settings.enabled
+
+    def restore_state(
+        self,
+        canonical_messages: Sequence[ModelMessage],
+        frontier: ContextCutFrontier | None = None,
+    ) -> None:
+        """Adopt validated canonical identity and the binder's freshly restored view."""
+        state = self._state
+        state.canonical_messages = tuple(canonical_messages)
+        state.selection = None if frontier is None else SelectionState(frontier, None)
+        state.request_params = None
+        state.request_view = self.binder.request_view()
 
     @override
     def get_toolset(self) -> FunctionToolset[object]:

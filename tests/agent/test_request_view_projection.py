@@ -73,6 +73,24 @@ def test_exact_tokens_and_unit_spans_match_the_following_prepared_request() -> N
         assert candidate == messages
 
 
+def test_binder_returns_isolated_exact_bound_view_and_empty_before_binding() -> None:
+    with fake_engine() as engine:
+        from ds4py.binding import MessageBinder
+
+        binder = MessageBinder(engine.session())
+        assert binder.request_view() == ()
+        messages: list[ModelMessage] = [_notice(), _user("canonical", "u1")]
+        bound = binder.prepare_model_request(messages, ModelRequestParameters())
+
+        saved = binder.request_view()
+        assert saved == tuple(bound)
+        assert saved[0] is not bound[0]
+        cast("Any", saved[0].parts[0]).content = "changed"
+        assert binder.request_view()[0] == bound[0]
+        binder.forget()
+        assert binder.request_view() == ()
+
+
 def test_notice_and_replacement_costs_remain_exact_and_separate() -> None:
     canonical: list[ModelMessage] = [_user("old", "u1"), _response("old answer", "r1"), _user("live request", "u2")]
     replacement = _user(

@@ -369,6 +369,11 @@ def _canonical_identities(messages: Sequence[ModelMessage]) -> dict[str, tuple[M
     return identities
 
 
+def validate_canonical_snapshot(messages: Sequence[ModelMessage]) -> None:
+    """Validate canonical schema, media, and stable key identity without token segments."""
+    _canonical_identities(messages)
+
+
 def _request_view_identity(
     message: ModelMessage,
     canonical: Mapping[str, tuple[ModelMessage, str]],

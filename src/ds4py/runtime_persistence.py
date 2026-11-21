@@ -46,6 +46,7 @@ def build_save_record(  # noqa: PLR0913 - The pure builder mirrors the save reco
     payload_bytes: int,
     tokens: Sequence[int],
     segments: Sequence[SegmentProvenance],
+    request_view: Sequence[ModelMessage] | None = None,
 ) -> SaveRecord:
     """Build one save record, computing only token count and digest."""
     return SaveRecord(
@@ -63,4 +64,5 @@ def build_save_record(  # noqa: PLR0913 - The pure builder mirrors the save reco
         tokens=len(tokens),
         tokens_sha256=token_digest(tokens),
         segments=tuple(segments),
+        request_view=None if request_view is None else tuple(request_view),
     )

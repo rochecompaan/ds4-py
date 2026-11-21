@@ -15,6 +15,7 @@ from ds4py.context_paging.history import (
     HistoryProjection,
     ModelTurnHistoryItem,
     UserHistoryItem,
+    project_history,
 )
 from ds4py.context_paging.notice import (
     EvictedConversation,
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
 
     from ds4py.binding_projection import RequestProjection
+    from ds4py.binding_provenance import PreparedRequestViewProvenance
     from ds4py.context_paging.public_history import PublicHistoryItem
 
 type CutKind = Literal["prefix", "completedTurn", "partialTurn"]
@@ -629,6 +631,31 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
         None,
         warning,
     )
+
+
+def derive_validated_frontier(
+    canonical_messages: Sequence[ModelMessage],
+    prepared_view: PreparedRequestViewProvenance,
+) -> ContextCutFrontier | None:
+    """Derive a saved cut by replaying legal groups against validated identities."""
+    positions = {(message.metadata or {}).get(DS4_KEY): index for index, message in enumerate(canonical_messages)}
+    targets = [identity.canonical_key for identity in prepared_view.messages if identity.canonical_key is not None]
+    if not targets:
+        raise EngineError("a saved request view must retain at least one canonical message")
+    last_retained = max(positions[target] for target in targets)
+    grouped = _group(project_history(canonical_messages[: last_retained + 1]))
+    view = _view(grouped)
+    for count in range(len(view.units) + 1):
+        candidate = _candidate(view, count, None)
+        candidate_keys = [(message.metadata or {}).get(DS4_KEY) for message in candidate]
+        if candidate_keys != targets:
+            continue
+        if count == 0:
+            return None
+        frontier = _frontier(view.units[count - 1], view)
+        if frontier is not None:
+            return frontier
+    raise EngineError("the saved request view does not replay to one legal canonical frontier")
 
 
 __all__ = [

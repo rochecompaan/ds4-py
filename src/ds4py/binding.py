@@ -127,6 +127,10 @@ class MessageBinder:
         self._restored = False
         self._restored_notes = {}
 
+    def request_view(self) -> tuple[ModelMessage, ...]:
+        """Return isolated copies of the exact last successfully bound request view."""
+        return tuple(deepcopy(message) for message in self._bound_messages)
+
     def restore_notes(self, segments: Sequence[SegmentProvenance]) -> None:
         """Schedule exact saved notes before the message keys that followed them."""
         restored: dict[str, list[tuple[str, str | None]]] = {}

@@ -21,6 +21,9 @@ from ds4py.message_metadata import DS4_KEY
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from ds4py.binding_provenance import PreparedRequestViewProvenance
+    from ds4py.context_paging.selection import ContextCutFrontier
+
 PAGING_TOOL_NAMES = ("search_history", "browse_history", "load_history", "read_context_output")
 
 type HistoryProjectionErrorCode = Literal[
@@ -233,6 +236,16 @@ def project_history(
     return HistoryProjection(canonical, tuple(items))
 
 
+def derive_frontier(
+    canonical_messages: Sequence[ModelMessage],
+    prepared_view: PreparedRequestViewProvenance,
+) -> ContextCutFrontier | None:
+    """Derive a frontier only after canonical view provenance has been validated."""
+    from ds4py.context_paging.selection import derive_validated_frontier  # noqa: PLC0415 - Break the history/selection module cycle.
+
+    return derive_validated_frontier(canonical_messages, prepared_view)
+
+
 __all__ = [
     "PAGING_TOOL_NAMES",
     "HistoryExchange",
@@ -241,5 +254,6 @@ __all__ = [
     "HistoryProjectionError",
     "ModelTurnHistoryItem",
     "UserHistoryItem",
+    "derive_frontier",
     "project_history",
 ]
