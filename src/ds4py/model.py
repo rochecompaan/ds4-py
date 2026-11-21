@@ -223,6 +223,8 @@ class DS4Model(Model):
         run_context: RunContext[object] | None = None,
     ) -> AsyncGenerator[DS4StreamedResponse]:
         policy, max_tokens, stop_sequences = self._request_config(settings)
+        if self.context_owner is not None:
+            messages = self.context_owner.request_messages(messages, run_context)
         messages = self.binder.prepare_model_request(messages, params, note_provider=self.note_provider)
         response = DS4StreamedResponse(
             self,

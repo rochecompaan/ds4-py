@@ -544,6 +544,36 @@ class MessageBinder:
             plan=plan,
         )
 
+    def render_request_view(
+        self,
+        messages: Sequence[ModelMessage],
+        params: ModelRequestParameters,
+    ) -> TranscriptReplacement:
+        """Render a replacement for reserve recovery without publishing a new request."""
+        prepared = self.prepare_messages(messages)
+        effective = request_instructions(prepared.targets, params)
+        config = self._configured_config(params.declared_tool_defs.values(), effective)
+        plan = self._plan(prepared, config, self.note_provider, system_changed=self._system_changed(config))
+        current = TranscriptReplacement(self.session.transcript.tokens, self.session.transcript.segments)
+        parts = [current.slice(0, plan.change.start), plan.initial.appends]
+        if plan.reset_chat:
+            scratch = ScratchSession(self.session.engine)
+            scratch.start_chat(plan.definitions, plan.instructions)
+            parts.append(TranscriptReplacement(scratch.transcript.tokens, scratch.transcript.segments))
+        parts.extend(boundary.appends for boundary in plan.boundaries)
+        replacement = TranscriptReplacement.concat(*parts)
+        sampled_start = self.session.open_assistant_start()
+        if sampled_start is not None and not any(
+            segment.kind == "assistant_prefix" and not segment.meta.get("key") for segment in replacement.segments
+        ):
+            prefix_start = next(
+                segment.start
+                for segment in current.segments
+                if segment.kind == "assistant_prefix" and segment.end == sampled_start and not segment.meta.get("key")
+            )
+            replacement = TranscriptReplacement.concat(replacement, current.slice(prefix_start))
+        return replacement
+
     def reserve_overflow(self, projected_tokens: int) -> int:
         """Return the tokens the projection still needs to admit the response reserve.
 

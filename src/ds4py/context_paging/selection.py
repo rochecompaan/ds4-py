@@ -440,6 +440,23 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
         floor = _measure(history, meter, floor_candidate)
         notice_characters = max(0, budget - floor.total_tokens) * 4
 
+        def bounded_notice(
+            history_id: str | None,
+            tool: ToolRecoveryReference | None,
+            current_view: _View,
+            count: int,
+        ) -> tuple[PagingNotice, tuple[ModelMessage, ...], RequestProjection]:
+            notice = build_paging_notice(budget, history_id, tool, conversation, notice_characters)
+            candidate = _candidate(current_view, count, notice)
+            measurement = _measure(history, meter, candidate)
+            if measurement.total_tokens > budget:
+                header_only = build_paging_notice(budget, history_id, tool)
+                if header_only.content != notice.content:
+                    notice = header_only
+                    candidate = _candidate(current_view, count, notice)
+                    measurement = _measure(history, meter, candidate)
+            return notice, candidate, measurement
+
         if measurement.total_tokens <= budget:
             return _RunResult(
                 candidate,
@@ -466,9 +483,7 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
             unit = view.units[count] if count < len(view.units) else None
             if unit is None or (protected is not None and unit.items == (protected,)):
                 if count == 0 and previous is not None and measurement.total_tokens > budget:
-                    notice = build_paging_notice(budget, evicted_id, tool_reference, conversation, notice_characters)
-                    candidate = _candidate(view, count, notice)
-                    measurement = _measure(history, meter, candidate)
+                    notice, candidate, measurement = bounded_notice(evicted_id, tool_reference, view, count)
                 if measurement.total_tokens <= budget:
                     return _RunResult(candidate, measurement, "paged", notice, count, last_keyed, last_was_keyless)
                 if protected is not None:
@@ -533,10 +548,11 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
             conversation_grew = unit.kind == "completedTurn" and conversation.add_turn(public_for_unit(unit))
             next_key = paging_notice_key(evicted_id, tool_reference)
             if conversation_grew or next_key != notice_key or notice is None:
-                notice = build_paging_notice(budget, evicted_id, tool_reference, conversation, notice_characters)
+                notice, candidate, measurement = bounded_notice(evicted_id, tool_reference, view, count)
                 notice_key = next_key
-            candidate = _candidate(view, count, notice)
-            measurement = _measure(history, meter, candidate)
+            else:
+                candidate = _candidate(view, count, notice)
+                measurement = _measure(history, meter, candidate)
             if stateful:
                 frontier = _frontier(unit, view)
                 last_was_keyless = frontier is None

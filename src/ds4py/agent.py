@@ -19,6 +19,7 @@ from pydantic_ai_harness.ask_user import Answerer as QuestionAnswerer
 
 from ds4py.agent_prompt import DEFAULT_CODING_AGENT_INSTRUCTIONS
 from ds4py.capabilities.compaction import LLMCompaction
+from ds4py.capabilities.context import ContextStrategy
 from ds4py.capabilities.file_system import DS4FileSystem
 from ds4py.capabilities.harness_events import HarnessEventBridge
 from ds4py.capabilities.run_record import DS4RunRecord
@@ -57,7 +58,10 @@ def build_agent_components(  # noqa: PLR0913 - Agent composition mirrors the run
     """Build the default capability list and the harness agent."""
     project_dir = Path(project_dir)
     compactor = LLMCompaction(model.binder)
-    owner = context.owner if context is not None and context.owner is not None else compactor
+    selected = context.owner if context is not None else None
+    if selected is not None and not isinstance(selected, ContextStrategy):
+        selected = selected(model.binder, compactor)
+    owner = compactor if selected is None else selected
     model.context_owner = owner
 
     notes = DS4SystemNotes(model.session)

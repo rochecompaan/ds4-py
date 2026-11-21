@@ -163,6 +163,12 @@ def _ensure_key(message: ModelMessage) -> str:
     return key
 
 
+def ensure_message_keys(messages: Sequence[ModelMessage]) -> None:
+    """Assign stable keys to canonical messages without rendering or native mutation."""
+    for message in messages:
+        _ensure_key(message)
+
+
 def keyed_messages(
     messages: Sequence[ModelMessage],
     records: Sequence[BoundMessage],
