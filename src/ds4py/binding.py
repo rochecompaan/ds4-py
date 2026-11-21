@@ -38,6 +38,7 @@ from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.tool_prompt import ToolDefinition
 from ds4py.engine.transcript import TranscriptReplacement
 from ds4py.errors import EngineError
+from ds4py.message_metadata import DS4_KEY, DS4_SAMPLED, DS4_SOURCE
 from ds4py.message_rendering import MessageRenderer
 from ds4py.store import SegmentProvenance
 
@@ -161,7 +162,7 @@ class MessageBinder:
         adopted = []
         for candidate in candidates:
             adopted_candidate = candidate
-            key = (candidate.metadata or {}).get("ds4.key")
+            key = (candidate.metadata or {}).get(DS4_KEY)
             index = bound.get(key) if key is not None else None
             if index is None and not key:
                 matches = recoverable.get(_key_recovery_hash(candidate), [])
@@ -170,10 +171,10 @@ class MessageBinder:
             if index is not None and _content_hash(candidate) != self._records[index].content_hash:
                 adopted_candidate = deepcopy(self._bound_messages[index])
             elif index is not None:
-                sampled = (self._bound_messages[index].metadata or {}).get("ds4.sampled")
+                sampled = (self._bound_messages[index].metadata or {}).get(DS4_SAMPLED)
                 if sampled is not None:
                     metadata = dict(adopted_candidate.metadata or {})
-                    metadata["ds4.sampled"] = deepcopy(sampled)
+                    metadata[DS4_SAMPLED] = deepcopy(sampled)
                     adopted_candidate.metadata = metadata
             adopted.append(adopted_candidate)
         keyed_messages(adopted, self._records)
@@ -184,7 +185,7 @@ class MessageBinder:
         bound_keys = {record.key for record in self._records}
         adopted = self.adopt(messages)
         bound_indices = [
-            index for index, message in enumerate(adopted) if (message.metadata or {}).get("ds4.key") in bound_keys
+            index for index, message in enumerate(adopted) if (message.metadata or {}).get(DS4_KEY) in bound_keys
         ]
         if not bound_indices:
             return []
@@ -201,7 +202,7 @@ class MessageBinder:
         changed = False
         for message in messages:
             matches: list[list[ModelMessage]] = []
-            if isinstance(message, ModelRequest) and not (message.metadata or {}).get("ds4.key"):
+            if isinstance(message, ModelRequest) and not (message.metadata or {}).get(DS4_KEY):
                 for start, first in enumerate(self._bound_messages):
                     if not isinstance(first, ModelRequest):
                         continue
@@ -534,7 +535,7 @@ class MessageBinder:
         key = _ensure_key(response)
         if response.metadata is None:
             raise AssertionError("_ensure_key must initialize metadata")
-        response.metadata["ds4.source"] = "sampled"
+        response.metadata[DS4_SOURCE] = "sampled"
         content_hash = _content_hash(response)
         segments = self.session.transcript.segments
         prefix_index = max(
@@ -547,7 +548,7 @@ class MessageBinder:
             if segment.kind in ("assistant", "eos")
         ]
         sampled_start = trailing[0].start if trailing else len(self.session.transcript)
-        response.metadata["ds4.sampled"] = {
+        response.metadata[DS4_SAMPLED] = {
             "content_hash": content_hash,
             "segments": [
                 {

@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
 
 from ds4py.engine.prompt import PromptBuilder, RenderedSegment
 from ds4py.engine.tool_syntax.render import render_tool_call
+from ds4py.message_metadata import DS4_SAMPLED, DS4_SOURCE
 
 if TYPE_CHECKING:
     from ds4py.engine.session import Engine
@@ -53,7 +54,7 @@ def stable_text(value: object) -> str:
 
 
 def _is_sampled(message: ModelResponse) -> bool:
-    return bool((message.metadata or {}).get("ds4.source") == "sampled")
+    return bool((message.metadata or {}).get(DS4_SOURCE) == "sampled")
 
 
 def _content_parts(message: ModelResponse) -> list[object]:
@@ -84,7 +85,7 @@ def _recorded_sampled_segments(
     content_hash: str,
 ) -> list[RenderedSegment] | None:
     """Return exact sampled IDs when they still belong to this response content."""
-    record = (message.metadata or {}).get("ds4.sampled")
+    record = (message.metadata or {}).get(DS4_SAMPLED)
     if record is None:
         return None
     if not isinstance(record, Mapping):

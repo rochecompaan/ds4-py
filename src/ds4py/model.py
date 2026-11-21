@@ -59,6 +59,7 @@ from ds4py.engine.events import (
 )
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.errors import EngineError
+from ds4py.message_metadata import DS4_KEY, DS4_SOURCE
 from ds4py.reserve_settlement import ReserveSettlement
 
 if TYPE_CHECKING:
@@ -295,7 +296,7 @@ class DS4StreamedResponse(StreamedResponse):
         self._binder = model.binder
         self._timestamp = datetime.now(UTC)
         self._response_key = uuid4().hex
-        self.metadata = {"ds4.key": self._response_key, "ds4.source": "sampled"}
+        self.metadata = {DS4_KEY: self._response_key, DS4_SOURCE: "sampled"}
         self._round = self._session.run_round(
             max_tokens=max_tokens,
             sampling=sampling,
@@ -394,13 +395,13 @@ class DS4StreamedResponse(StreamedResponse):
             return
         self._partial_published = True
         response = self.get()
-        key = (response.metadata or {}).get("ds4.key")
+        key = (response.metadata or {}).get(DS4_KEY)
         if key is None:
             # Defensive only: the binder initializes a stable key for every
             # bound response. A keyless response cannot be deduplicated safely,
             # so keep it out of canonical history rather than append a duplicate.
             return
-        if any((message.metadata or {}).get("ds4.key") == key for message in run_context.messages):
+        if any((message.metadata or {}).get(DS4_KEY) == key for message in run_context.messages):
             return
         run_context.messages.append(response)
 

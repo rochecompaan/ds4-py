@@ -17,6 +17,7 @@ from ds4py.compaction_commit import commit_compaction
 from ds4py.engine.compaction import SUMMARY_PROMPT, summary_budget, summary_suffix
 from ds4py.engine.transcript import TranscriptReplacement
 from ds4py.errors import EngineError
+from ds4py.message_metadata import DS4_KEY
 from ds4py.summary_usage import summary_usage
 
 if TYPE_CHECKING:
@@ -130,7 +131,7 @@ class LLMCompaction(ContextStrategy):
                     ),
                     None,
                 ),
-                metadata={"ds4.key": key},
+                metadata={DS4_KEY: key},
             )
             prefix = TranscriptReplacement(session.transcript.tokens, session.transcript.segments).slice(
                 0, tail.system_end_tokens

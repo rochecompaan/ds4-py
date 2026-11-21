@@ -10,6 +10,7 @@ from pydantic_ai.messages import RetryPromptPart, ToolCallPart, ToolReturnPart
 
 from ds4py.engine.transcript import TranscriptReplacement
 from ds4py.errors import EngineError
+from ds4py.message_metadata import DS4_KEY
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -75,7 +76,7 @@ def _bottom_tokens(
         (
             starts[key]
             for message in messages[cut_messages:]
-            if isinstance(key := (message.metadata or {}).get("ds4.key"), str) and key in starts
+            if isinstance(key := (message.metadata or {}).get(DS4_KEY), str) and key in starts
         ),
         open_start_tokens if open_start_tokens is not None else total_tokens,
     )
@@ -121,7 +122,7 @@ def plan_tail(binder: MessageBinder, messages: Sequence[ModelMessage]) -> Compac
     positions = {
         key: index
         for index, message in enumerate(snapshot)
-        if isinstance(key := (message.metadata or {}).get("ds4.key"), str)
+        if isinstance(key := (message.metadata or {}).get(DS4_KEY), str)
     }
     if any(record.key not in positions for record in records):
         raise EngineError("compaction history does not cover the bound transcript")
