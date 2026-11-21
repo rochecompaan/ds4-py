@@ -14,8 +14,14 @@ from test_context_strategy import fake_engine, make_model, sequential_text
 
 from ds4py.capabilities.compaction import LLMCompaction
 from ds4py.capabilities.rolling_window import RollingWindow
+from ds4py.context_paging.stats import InputTokenReading, read_request_input
 from ds4py.engine.prompt import PromptBuilder
-from ds4py.message_metadata import DS4_CONTEXT_PAGING, DS4_KEY
+from ds4py.message_metadata import (
+    DS4_CONTEXT_PAGING,
+    DS4_KEY,
+    DS4_PAGING_INPUT_TOKENS,
+    DS4_REQUEST_SYNC_COUNT,
+)
 
 
 def user(text: str, key: str) -> ModelRequest:
@@ -60,6 +66,12 @@ def test_reserve_rebinds_a_smaller_view_and_continues_the_same_response() -> Non
                 response = stream.get()
 
             assert "".join(part.content for part in response.parts if isinstance(part, TextPart)) == "ab"
+            exact = owner.statistics_state().input_tokens
+            assert exact is not None
+            assert response.metadata is not None
+            assert response.metadata[DS4_PAGING_INPUT_TOKENS] == exact
+            assert response.metadata[DS4_REQUEST_SYNC_COUNT] > 1
+            assert read_request_input(response) == InputTokenReading("exact", exact)
             assert len(session.transcript) < prompt_length
             assert canonical == before
             view = owner.request_messages([], ctx)

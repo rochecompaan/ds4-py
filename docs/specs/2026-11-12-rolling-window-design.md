@@ -718,7 +718,7 @@ Preserve the baseline report sections and unavailable/zero semantics.
 - **Input tokens:** latest exact `RequestProjection.total_tokens` for the live
   selection. RollingWindow also records that value as a validated non-negative
   safe integer in the final canonical response's
-  `metadata['ds4.context_paging.input_tokens']`, so restore does not confuse
+  `metadata['ds4.paging_input_tokens']`, so restore does not confuse
   aggregate work counters with one selected request total. For an older saved
   response proven to represent one request sync, reconstruct the total as
   `usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens`:

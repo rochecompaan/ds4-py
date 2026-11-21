@@ -16,7 +16,7 @@ from ds4py.summary_usage import summary_usage
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from pydantic_ai.messages import ModelMessage, ToolCallPart
+    from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.tools import RunContext, ToolDefinition
 
@@ -152,6 +152,10 @@ class ContextStrategy(AbstractCapability, ABC):
     ) -> list[ModelMessage]:
         """Custom/view-only owners recover within the actual model request view."""
         return request_messages
+
+    def record_response(self, response: ModelResponse) -> None:
+        """Attach owner-specific request provenance to the final canonical response."""
+        del response
 
     def _tool_return_part(self, call: ToolCallPart, result: object) -> ToolReturnPart:
         content = result.return_value if isinstance(result, ToolReturn) else result

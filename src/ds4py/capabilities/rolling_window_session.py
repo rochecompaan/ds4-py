@@ -95,11 +95,12 @@ class RollingWindowSession:
                 self.publish_status()
         return "paging on" if self.owner.enabled else "paging off"
 
-    async def statistics(self, *, store: FileStepStore, session_dir: Path) -> object:
+    async def statistics(self, *, store: FileStepStore, session_dir: Path) -> str:
         """Provide the storage seam used by the read-only statistics report."""
         from ds4py.context_paging.stats import collect_statistics  # noqa: PLC0415 - Statistics are an optional command path.
 
-        return await collect_statistics(store=store, session_dir=session_dir, current=self.owner.statistics_state())
+        report = await collect_statistics(store=store, session_dir=session_dir, current=self.owner.statistics_state())
+        return report.render()
 
     def _receive(self, event: SessionEvent) -> None:
         if event.kind == "session_end":

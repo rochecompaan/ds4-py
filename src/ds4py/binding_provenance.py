@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -33,8 +34,6 @@ from ds4py.message_metadata import DS4_CONTEXT_PAGING, DS4_KEY, DS4_SOURCE, DS4_
 from ds4py.message_rendering import stable_text
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
-
     from pydantic_ai.messages import ModelMessage
 
     from ds4py._json import JsonValue
@@ -43,7 +42,7 @@ if TYPE_CHECKING:
 
 class _ProjectionPart(TypedDict, total=False):
     kind: str
-    content: str
+    content: object
     name: str
     args: dict[str, JsonValue]
     id: str
@@ -104,6 +103,17 @@ def _arguments(args: str | Mapping[str, JsonValue] | None) -> dict[str, JsonValu
     return converted
 
 
+def _json_safe_content(value: object) -> object:
+    """Project restored media without embedding bytes in provenance JSON."""
+    if isinstance(value, bytes):
+        return {"sha256": hashlib.sha256(value).hexdigest()}
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe_content(child) for key, child in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_json_safe_content(child) for child in value]
+    return value
+
+
 def _projection(message: ModelMessage) -> _MessageProjection:
     dumped = ModelMessagesTypeAdapter.dump_python([message], warnings=False)[0]
     projected: _MessageProjection = {"kind": dumped["kind"], "parts": []}
@@ -112,7 +122,7 @@ def _projection(message: ModelMessage) -> _MessageProjection:
     for part in dumped["parts"]:
         kind = part["part_kind"]
         if kind in ("system-prompt", "instruction", "user-prompt", "text", "thinking"):
-            projected["parts"].append({"kind": kind, "content": part["content"]})
+            projected["parts"].append({"kind": kind, "content": _json_safe_content(part["content"])})
         elif kind == "tool-call":
             item: _ProjectionPart = {
                 "kind": kind,
@@ -130,7 +140,7 @@ def _projection(message: ModelMessage) -> _MessageProjection:
                 {
                     "kind": kind,
                     "name": part["tool_name"],
-                    "content": stable_text(part["content"]),
+                    "content": stable_text(_json_safe_content(part["content"])),
                     "id": part["tool_call_id"],
                 }
             )

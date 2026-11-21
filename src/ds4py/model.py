@@ -59,7 +59,7 @@ from ds4py.engine.events import (
 )
 from ds4py.engine.sampling import SamplingPolicy
 from ds4py.errors import EngineError
-from ds4py.message_metadata import DS4_KEY, DS4_SOURCE
+from ds4py.message_metadata import DS4_KEY, DS4_REQUEST_SYNC_COUNT, DS4_SOURCE
 from ds4py.reserve_settlement import ReserveSettlement
 
 if TYPE_CHECKING:
@@ -313,6 +313,7 @@ class DS4StreamedResponse(StreamedResponse):
         self._prefilled = 0
         self._cached = 0
         self._output_tokens = 0
+        self._sync_count = 0
         self._tool_index = 0
         self._in_tool_syntax = False
         self._pull_lock = asyncio.Lock()
@@ -383,12 +384,18 @@ class DS4StreamedResponse(StreamedResponse):
             output_tokens=self._output_tokens + settlement.summary_tokens,
             details={"prefill_tokens": prefilled},
         )
+        if self.metadata is None:
+            self.metadata = {}
+        self.metadata[DS4_REQUEST_SYNC_COUNT] = self._sync_count
+        response = self.get()
+        if self._model.context_owner is not None:
+            self._model.context_owner.record_response(response)
         # A round that never reached its first sync never opened a response: its
         # assistant prefix (if any) was rolled back, so the only assistant/eos
         # segments left belong to an earlier response and must keep their
         # provenance. Only a started round owns the trailing response boundary.
         if self._sampled_start is not None:
-            self._binder.bind_response(self.get())
+            self._binder.bind_response(response)
         self._bound = True
 
     def _publish(self, run_context: RunContext[object] | None) -> None:
@@ -477,6 +484,7 @@ class DS4StreamedResponse(StreamedResponse):
         elif isinstance(event, Token):
             self._output_tokens += 1
         elif isinstance(event, Synced):
+            self._sync_count += 1
             if self._sampled_start is None:
                 self._sampled_start = event.pos
             # A reserve-resumed round may sync again; that later sync reports

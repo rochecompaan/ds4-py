@@ -329,7 +329,7 @@ the owner delegates tool overflow and reserve recovery to `LLMCompaction`.
 
 ### Commands, status, and lifecycle
 
-A RollingWindow runtime registers `/context-paging [on|off|status]`. No argument
+A RollingWindow runtime registers `/context-paging [on|off|status|stats]`. No argument
 and `status` report `paging on` or `paging off`. Repeating the current choice,
 requesting status, and invalid usage do not reset the cut or accounting. An
 actual on/off change resets both and publishes the new status. Commands are
@@ -353,6 +353,28 @@ binds that view without prefill and derives its frontier from validated
 provenance. A disabled owner, legacy record, missing payload, or incompatible
 preamble fresh-renders full canonical history without feeding transient paging
 messages to compaction.
+
+### Statistics and request-input provenance
+
+`/context-paging stats` reports stored history size, estimated whole-session
+history tokens, latest request input, the effective paging budget and model
+window, and whole-session cache totals. Stored size covers regular files under
+`steps/`, including content-addressed media once, but excludes `events.jsonl`,
+KV payloads, and save records. Snapshot reads use `FileStepStore`'s media-aware
+`list_snapshots` API, so externalized text is restored before hashing and
+counting; the store's documented damaged-snapshot skipping is preserved.
+Repeated snapshots deduplicate messages by stable key and content hash.
+
+History tokens are display estimates marked with `~`. Input and cache counters
+are not estimates. RollingWindow stamps exact selected input as
+`ds4.paging_input_tokens` on the final canonical response, and every response
+records its observed `ds4.request_sync_count`. An older response without exact
+input is reconstructible only when that count is one and input, cache-read, and
+cache-write counters are all present. Ambiguous or damaged records show
+`unavailable`. Explicit zero cache counters remain zero; a missing or invalid
+required counter makes only the affected total unavailable. Statistics use the
+current store explicitly and do not call the model or native engine or mutate
+canonical history, cuts, navigation, accounting, settings, or status.
 
 ## Choose a backend
 

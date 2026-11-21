@@ -6,7 +6,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast, override
 
-from pydantic_ai.messages import ModelRequest, ToolReturnPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, ToolReturnPart
 
 from ds4py.binding_plan import request_instructions
 from ds4py.binding_provenance import ensure_message_keys
@@ -22,9 +22,10 @@ from ds4py.context_paging.selection import (
     select_view,
 )
 from ds4py.context_paging.settings import DEFAULT_TOKEN_BUDGET, RollingWindowSettings, default_trim_to
+from ds4py.context_paging.stats import RollingWindowStatisticsState
 from ds4py.context_paging.tools import create_context_paging_toolset
 from ds4py.errors import ContextExhausted, ContextSelectionError
-from ds4py.message_metadata import DS4_CONTEXT_PAGING, DS4_KEY, DS4_VIEW_OF
+from ds4py.message_metadata import DS4_CONTEXT_PAGING, DS4_KEY, DS4_PAGING_INPUT_TOKENS, DS4_VIEW_OF
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -46,6 +47,7 @@ class _RollingState:
     request_view: tuple[ModelMessage, ...] | None = None
     canonical_messages: tuple[ModelMessage, ...] = ()
     request_params: ModelRequestParameters | None = None
+    request_input_tokens: int | None = None
     accounting: dict[str, int] = field(default_factory=dict)
     navigation: dict[str, int] = field(default_factory=dict)
     restore_ids: set[str] = field(default_factory=set)
@@ -110,15 +112,15 @@ class RollingWindow(ContextStrategy):
     def reset_accounting(self) -> None:
         self._state.accounting.clear()
 
-    def statistics_state(self) -> dict[str, object]:
-        """Expose an immutable-by-convention snapshot for the statistics adapter."""
+    def statistics_state(self) -> RollingWindowStatisticsState:
+        """Copy only the live values needed by the read-only report."""
         state = self._state
-        return {
-            "enabled": state.settings.enabled,
-            "settings": state.settings,
-            "selection": state.selection,
-            "accounting": dict(state.accounting),
-        }
+        return RollingWindowStatisticsState(
+            enabled=state.settings.enabled,
+            token_budget=state.settings.token_budget,
+            model_window=self.binder.session.engine.config.ctx,
+            input_tokens=state.request_input_tokens,
+        )
 
     def reset_after_fork(self) -> None:
         """Retain canonical identity and KV while resetting per-session policy accounting."""
@@ -127,6 +129,7 @@ class RollingWindow(ContextStrategy):
 
         state = self._state
         state.settings = self._base_settings
+        state.request_input_tokens = None
         self.reset_accounting()
         state.navigation.clear()
         state.restore_ids.clear()
@@ -154,6 +157,7 @@ class RollingWindow(ContextStrategy):
         state.canonical_messages = tuple(canonical_messages)
         state.selection = None if frontier is None else SelectionState(frontier, None)
         state.request_params = None
+        state.request_input_tokens = None
         state.request_view = self.binder.request_view()
         self.reset_accounting()
         state.navigation.clear()
@@ -173,6 +177,17 @@ class RollingWindow(ContextStrategy):
         if not state.settings.enabled or state.request_view is None:
             return request_messages
         return list(state.request_view)
+
+    @override
+    def record_response(self, response: ModelResponse) -> None:
+        """Stamp the exact selected input on the final canonical response only."""
+        tokens = self._state.request_input_tokens
+        if not self._state.settings.enabled or tokens is None:
+            return
+        if response.metadata is None:
+            response.metadata = {}
+        # Mutate the shared metadata mapping so later canonical copies retain it.
+        response.metadata[DS4_PAGING_INPUT_TOKENS] = tokens
 
     @override
     def reserve_messages(
@@ -196,6 +211,7 @@ class RollingWindow(ContextStrategy):
             result = await self.disabled_owner.before_model_request(ctx, request_context)
             state.canonical_messages = tuple(ctx.messages)
             state.request_view = None
+            state.request_input_tokens = None
             return result
         params = request_context.model_request_parameters
         selected = self._select_with_tool_fallback(ctx.messages, params, state.selection)
@@ -206,10 +222,14 @@ class RollingWindow(ContextStrategy):
         )
         if self.binder.reserve_overflow(projected) > 0:
             raise ContextExhausted("selected rolling-window request does not fit the model context")
+        tokens = selected.measurement.total_tokens
+        if isinstance(tokens, bool) or not isinstance(tokens, int) or not 0 <= tokens <= 2**53 - 1:
+            raise ValueError("selected rolling-window input must be a non-negative safe integer")
         state.canonical_messages = tuple(ctx.messages)
         state.request_params = params
         state.selection = selected.state
         state.request_view = selected.candidate_messages
+        state.request_input_tokens = tokens
         return request_context
 
     def _select_with_tool_fallback(

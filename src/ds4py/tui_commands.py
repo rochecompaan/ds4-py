@@ -112,16 +112,19 @@ def _install_context_paging_command(registry: SlashCommandRegistry, runtime: Age
     if not isinstance(getattr(model, "context_owner", None), RollingWindow):
         return
 
-    def context_paging(*args: str) -> str:
-        if len(args) > 1 or (args and args[0] not in {"on", "off", "status"}):
-            _usage("/context-paging [on|off|status]")
-        return runtime.context_paging(args[0] if args else None)
+    async def context_paging(*args: str) -> str:
+        if len(args) > 1 or (args and args[0] not in {"on", "off", "status", "stats"}):
+            _usage("/context-paging [on|off|status|stats]")
+        action = args[0] if args else None
+        if action == "stats":
+            return str(await runtime.context_paging_stats())
+        return runtime.context_paging(action)
 
     registry.register(
         "context-paging",
         context_paging,
         description="Inspect or toggle rolling context paging",
-        usage="/context-paging [on|off|status]",
+        usage="/context-paging [on|off|status|stats]",
     )
 
 
