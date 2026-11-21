@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast, override
 
+import pytest
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import FunctionModel
@@ -21,6 +22,7 @@ from ds4py.agent import build_agent_components
 from ds4py.capabilities.compaction import LLMCompaction
 from ds4py.capabilities.context import ContextComposition
 from ds4py.capabilities.rolling_window import RollingWindow
+from ds4py.context_paging.notice import NOTICE_VIEW_KEY
 from ds4py.context_paging.selection import SelectionResult, SelectionState
 from ds4py.message_metadata import DS4_CONTEXT_PAGING, DS4_KEY
 
@@ -262,6 +264,65 @@ def test_open_stream_binds_the_ordinary_view_not_the_recovery_view() -> None:
             assert bound == [selected]
             assert bound[0][0].metadata == {DS4_KEY: "selected-key"}
             assert cast("UserPromptPart", normalized[0].parts[0]).content == "normalized view"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("resident_first", [False, True])
+def test_real_rolling_binds_selected_view_with_distinct_normalized_input(resident_first: bool) -> None:
+    async def scenario() -> None:
+        with fake_engine(script=sequential_text("ok")) as engine:
+            model = make_model(engine.session())
+            owner = RollingWindow(
+                model.binder,
+                disabled_owner=LLMCompaction(model.binder),
+                token_budget=16000,
+                trim_to=15800,
+            )
+            model.context_owner = owner
+            resident = ModelRequest([SystemPromptPart("resident")], metadata={DS4_KEY: "resident"})
+            canonical: list[ModelMessage] = [
+                *([resident] if resident_first else []),
+                user("old " * 20000, "old-user"),
+                ModelResponse([TextPart("old answer " * 20000)], metadata={DS4_KEY: "old-response"}),
+                user("canonical current", "current"),
+            ]
+            before = deepcopy(canonical)
+            normalized = deepcopy(canonical)
+            normalized_request = normalized[-1]
+            assert isinstance(normalized_request, ModelRequest)
+            normalized_part = normalized_request.parts[0]
+            assert isinstance(normalized_part, UserPromptPart)
+            normalized_part.content = "normalized current"
+            ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=canonical)
+            await owner.before_model_request(ctx, request_context(model, canonical))
+            expected = owner.request_messages([], ctx)
+            assert expected != canonical
+            assert expected != normalized
+            assert normalized != canonical
+            notice = next(
+                message for message in expected if (message.metadata or {}).get(DS4_CONTEXT_PAGING) == "notice"
+            )
+            assert notice.metadata is not None and notice.metadata[DS4_KEY] == NOTICE_VIEW_KEY
+
+            bound: list[list[ModelMessage]] = []
+            prepare = model.binder.prepare_model_request
+
+            def capture(messages: list[ModelMessage], *args: Any, **kwargs: Any) -> list[ModelMessage]:
+                bound.append(deepcopy(messages))
+                return prepare(messages, *args, **kwargs)
+
+            cast("Any", model.binder).prepare_model_request = capture
+            async with model.request_stream(normalized, None, ModelRequestParameters(), run_context=ctx) as stream:
+                async for _ in stream:
+                    pass
+
+            assert bound == [expected]
+            assert [message.metadata for message in bound[0]] == [message.metadata for message in expected]
+            assert [message.parts for message in bound[0]] == [message.parts for message in expected]
+            assert canonical == before
+            assert all((message.metadata or {}).get(DS4_CONTEXT_PAGING) is None for message in canonical)
+            assert normalized_part.content == "normalized current"
 
     asyncio.run(scenario())
 

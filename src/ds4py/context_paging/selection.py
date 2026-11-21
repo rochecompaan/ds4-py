@@ -410,6 +410,16 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
     def public_for_unit(unit: _EvictionUnit) -> tuple[PublicHistoryItem, ...]:
         return tuple(public_by_id[item.history_id] for item in unit.items if item.history_id in public_by_id)
 
+    def latest_tool_reference(item: HistoryItem) -> ToolRecoveryReference | None:
+        if not isinstance(item, ModelTurnHistoryItem) or item.history_id not in recoverable_ids:
+            return None
+        excluded = paging_tool_call_ids(item)
+        reference = None
+        for exchange in item.exchanges:
+            if isinstance(exchange.result, ToolReturnPart) and exchange.call.tool_call_id not in excluded:
+                reference = ToolRecoveryReference(item.history_id, exchange.call.tool_call_id, exchange.call.tool_name)
+        return reference
+
     def run(view: _View, destination: int, previous: SelectionState | None, *, stateful: bool) -> _RunResult:  # noqa: C901, PLR0912, PLR0915 - FIFO transitions stay in one executor so their safety rules cannot drift.
         count = 0
         notice = previous.notice if previous else None
@@ -421,6 +431,15 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
             else None
         )
         tool_reference: ToolRecoveryReference | None = None
+        if previous is not None and previous.notice is None:
+            # A restored frontier has no serialized notice. Replay the evicted
+            # tool scan so its rebuilt notice keeps the same recovery reference.
+            for item in history.items:
+                reference = latest_tool_reference(item)
+                if reference is not None:
+                    tool_reference = reference
+                if item.history_id == previous.frontier.last_evicted.history_id:
+                    break
         notice_key: str | None = None
         last_keyed = (
             _Boundary(0, previous.frontier, notice, candidate, measurement)
@@ -458,6 +477,10 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
                     candidate = _candidate(current_view, count, notice)
                     measurement = _measure(history, meter, candidate)
             return notice, candidate, measurement
+
+        if previous is not None and notice is None:
+            notice, candidate, measurement = bounded_notice(evicted_id, tool_reference, view, count)
+            last_keyed = _Boundary(count, previous.frontier, notice, candidate, measurement)
 
         if measurement.total_tokens <= budget:
             return _RunResult(
@@ -540,13 +563,9 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
             for item in unit.items:
                 if item.history_id in recoverable_ids:
                     evicted_id = item.history_id
-                if isinstance(item, ModelTurnHistoryItem) and item.history_id in recoverable_ids:
-                    excluded = paging_tool_call_ids(item)
-                    for exchange in item.exchanges:
-                        if isinstance(exchange.result, ToolReturnPart) and exchange.call.tool_call_id not in excluded:
-                            tool_reference = ToolRecoveryReference(
-                                item.history_id, exchange.call.tool_call_id, exchange.call.tool_name
-                            )
+                reference = latest_tool_reference(item)
+                if reference is not None:
+                    tool_reference = reference
             conversation_grew = unit.kind == "completedTurn" and conversation.add_turn(public_for_unit(unit))
             next_key = paging_notice_key(evicted_id, tool_reference)
             if conversation_grew or next_key != notice_key or notice is None:

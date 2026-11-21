@@ -350,9 +350,11 @@ override and warning history.
 Saving a RollingWindow session writes full canonical snapshots and, when
 available, the exact bound request view in save-record v2. A compatible restore
 binds that view without prefill and derives its frontier from validated
-provenance. A disabled owner, legacy record, missing payload, or incompatible
-preamble fresh-renders full canonical history without feeding transient paging
-messages to compaction.
+provenance. The next selection rebuilds the transient notice and its tool
+recovery reference from evicted canonical history; a stable retained view then
+extends the loaded KV. A disabled owner, legacy record, missing payload, or
+incompatible preamble fresh-renders full canonical history without feeding
+transient paging messages to compaction.
 
 ### Statistics and request-input provenance
 

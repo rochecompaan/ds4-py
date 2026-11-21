@@ -816,8 +816,9 @@ Use real capabilities and `FakeNative` to prove:
   status before the next successful initialization publishes it;
 - v1 records still restore, v2 records preserve full history plus exact view,
   bad view provenance is atomic, and notice/replacement saves reach case 1;
-  `/strip`, disabled-Rolling, and non-Rolling restores validate canonical history
-  independently and take case 2 without feeding transient messages to compaction;
+  missing-payload (strip-equivalent), disabled-Rolling, and non-Rolling restores
+  validate canonical history independently and take case 2 without feeding
+  transient messages to compaction;
 - all conformance items 1–9 pass, with RollingWindow satisfying items 1–5;
 - command/status/stats behavior and disabled tool refusal, including a real
   `FileStepStore` snapshot with externalized text, its documented damaged
