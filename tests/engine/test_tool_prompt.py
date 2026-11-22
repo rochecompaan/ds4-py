@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -150,6 +152,46 @@ def test_call_example_uses_placeholders_instead_of_unregistered_read(family: str
     assert "$PARAMETER_VALUE" in example
     assert "read" not in example
     assert "README.md" not in example
+
+
+def test_hermes_prompt_matches_reference_and_keeps_schema_plain() -> None:
+    fixture = json.loads((Path(__file__).parents[1] / "fixtures" / "hermes_prompt.json").read_text())
+    definitions = [ToolDefinition(**item) for item in fixture["definitions"]]
+    generator = ToolPromptGenerator("hermes")
+    assert generator.generate(definitions) == fixture["tools"]
+    spans = generator.spans(definitions)
+    schema = json.dumps(
+        {
+            "name": definitions[0].name,
+            "description": definitions[0].description,
+            "parameters": definitions[0].parameters,
+        },
+        ensure_ascii=False,
+    )
+    assert (schema.removesuffix("}"), False) in [(span.text, span.rendered) for span in spans]
+    assert any(span.text.endswith('{"type": "function", "function": ') and span.rendered for span in spans)
+
+
+def test_hermes_prompt_preserves_unicode_and_insertion_order() -> None:
+    definition = ToolDefinition("ordered", "Edit ✓", {"z": 0, "a": 1})
+    prompt = ToolPromptGenerator("hermes").generate([definition])
+    assert "Edit ✓" in prompt
+    assert "\\u2713" not in prompt
+    assert '"parameters": {"z": 0, "a": 1}' in prompt
+    assert '<tools>\n</tools>' in ToolPromptGenerator("hermes").generate(())
+
+
+def test_hermes_call_example_executes_after_placeholder_substitution() -> None:
+    from ds4py.engine.tool_syntax.hermes import Hermes
+
+    prompt = ToolPromptGenerator("hermes").generate(())
+    example = prompt.rsplit("XML tags:\n", 1)[1]
+    example = example.replace("<function-name>", '"read"').replace("<args-json-object>", '{"path": "README.md"}')
+    parser = Hermes()
+    parser.feed(example.encode())
+    snapshot = parser.finish()
+    assert snapshot.state == "DONE", snapshot.error
+    assert [(call.name, dict(call.args)) for call in snapshot.calls] == [("read", {"path": "README.md"})]
 
 
 def test_unknown_family_is_an_error() -> None:

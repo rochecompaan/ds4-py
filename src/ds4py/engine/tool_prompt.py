@@ -37,6 +37,19 @@ class ToolPromptGenerator:
 
     def spans(self, definitions: Iterable[ToolDefinition]) -> list[ToolPromptSpan]:
         """Separate trusted template markup from plain serialized definitions."""
+        if self.family == "hermes":
+            schemas = [
+                json.dumps(
+                    {
+                        "name": item.name,
+                        "description": item.description,
+                        "parameters": item.parameters,
+                    },
+                    ensure_ascii=False,
+                )
+                for item in definitions
+            ]
+            return self._hermes(schemas)
         schemas = [
             json.dumps(
                 {
@@ -114,6 +127,33 @@ class ToolPromptGenerator:
             "&amp;lt;/arg_value>. Other entities stay unchanged.\n"
         )
         return cls._schema_spans(schemas, "# Tools\n\n<tools>", suffix)
+
+    @staticmethod
+    def _hermes(schemas: Iterable[str]) -> list[ToolPromptSpan]:
+        spans = [
+            ToolPromptSpan(
+                "# Tools\n\nYou may call one or more functions to assist with the user query.\n\n"
+                "You are provided with function signatures within <tools></tools> XML tags:\n<tools>",
+                True,
+            )
+        ]
+        for schema in schemas:
+            spans.extend(
+                (
+                    ToolPromptSpan('\n{"type": "function", "function": ', True),
+                    ToolPromptSpan(schema.removesuffix("}"), False),
+                    ToolPromptSpan(', "strict": false}}', True),
+                )
+            )
+        spans.append(
+            ToolPromptSpan(
+                "\n</tools>\n\nFor each function call, return a json object with function name and arguments "
+                "within <tool_call></tool_call> XML tags:\n<tool_call>\n"
+                '{"name": <function-name>, "arguments": <args-json-object>}\n</tool_call>',
+                True,
+            )
+        )
+        return spans
 
     @classmethod
     def _qwen(cls, schemas: Iterable[str]) -> list[ToolPromptSpan]:

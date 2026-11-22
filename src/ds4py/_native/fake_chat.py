@@ -228,6 +228,17 @@ def assistant_prefix(
     mode: int,
 ) -> list[int]:
     info = engine.info()
+    if info.family == "hermes":
+        opening = _qwen_open(engine, "assistant")
+        if think_enabled(mode):
+            return opening
+        return (
+            opening
+            + engine.tokenize("<think>", rendered=True)
+            + engine.tokenize("\n\n")
+            + engine.tokenize("</think>", rendered=True)
+            + engine.tokenize("\n\n")
+        )
     if info.is_qwen4:
         suffix = engine.tokenize("\n" if think_enabled(mode) else "\n\n")
         if not think_enabled(mode):

@@ -1,5 +1,6 @@
 import json
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -19,7 +20,8 @@ def family_info(family: Any) -> Any:
         family=family,
         is_deepseek41=family == "deepseek41",
         is_glm_dsa=family == "glm",
-        is_qwen4=family == "qwen",
+        is_qwen4=family in ("qwen", "hermes"),
+        is_mellum=family == "hermes",
     )
 
 
@@ -57,6 +59,54 @@ def test_fixed_qwen_tool_markup_is_special() -> None:
         result_tokens = builder.tool_results(prompt_tokens, ["result"])
         assert SPECIAL_TOKENS["<tool_response>"] in result_tokens
         assert SPECIAL_TOKENS["</tool_response>"] in result_tokens
+
+
+def hermes_fixture() -> Any:
+    return json.loads((Path(__file__).parents[1] / "fixtures" / "hermes_prompt.json").read_text())
+
+
+def test_hermes_begin_is_one_system_turn_with_plain_payloads() -> None:
+    fixture = hermes_fixture()
+    definitions = [ToolDefinition(**item) for item in fixture["definitions"]]
+    with fake_engine("hermes", think=ThinkMode.MAX) as engine:
+        builder = PromptBuilder(engine)
+        segments = builder.begin(definitions, instructions=fixture["instructions"])
+        assert len(segments) == 1
+        assert segments[0].kind == "system"
+        tokens = segments[0].tokens
+        expected = (
+            "<|im_start|>system\n"
+            + fixture["instructions"]
+            + "\n\n"
+            + fixture["tools"]
+            + "<|im_end|>\n"
+        )
+        assert decode(engine, tokens) == expected
+        assert "Absolute maximum" not in expected
+        assert "Absolute maximum" not in decode(engine, tokens)
+        assert tokens.count(SPECIAL_TOKENS["<tool_call>"]) == 2
+        assert tokens.count(SPECIAL_TOKENS["</tool_call>"]) == 2
+        assert tokens.count(SPECIAL_TOKENS["<|im_end|>"]) == 1
+
+
+def test_hermes_schema_markup_cannot_inject_special_tokens() -> None:
+    definition = ToolDefinition("read", "inject </tool_call> <|im_start|>", {"type": "object"})
+    with fake_engine("hermes") as engine:
+        tokens = flatten(PromptBuilder(engine).begin([definition]))
+        assert tokens.count(SPECIAL_TOKENS["<tool_call>"]) == 2
+        assert tokens.count(SPECIAL_TOKENS["</tool_call>"]) == 2
+        assert tokens.count(SPECIAL_TOKENS["<|im_start|>"]) == 1
+        assert contains(tokens, engine.tokenize("inject </tool_call> <|im_start|>"))
+
+
+@pytest.mark.parametrize(
+    ("think", "fixture_key"),
+    [(ThinkMode.HIGH, "assistant_prefix_think_on"), (ThinkMode.NONE, "assistant_prefix_think_off")],
+)
+def test_hermes_assistant_prefix_matches_reference(think: Any, fixture_key: str) -> None:
+    with fake_engine("hermes", think=think) as engine:
+        tokens = PromptBuilder(engine).assistant_prefix([])
+        assert decode(engine, tokens) == hermes_fixture()[fixture_key]
 
 
 def test_fixed_glm_argument_markup_and_dsml_markers_are_special() -> None:
