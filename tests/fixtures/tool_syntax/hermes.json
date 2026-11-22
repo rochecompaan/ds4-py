@@ -212,6 +212,20 @@
     ]
   },
   {
+    "source": "missing_arguments_defaults_to_empty_object",
+    "input": "<tool_call>\n{\"name\": \"list\"}\n</tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "list",
+        "args": {}
+      }
+    ],
+    "raw": [
+      "<tool_call>\n{\"name\": \"list\"}\n</tool_call>"
+    ]
+  },
+  {
     "source": "missing_name",
     "input": "<tool_call>\n{\"arguments\": {\"path\": \"x\"}}\n</tool_call>",
     "state": "ERROR",

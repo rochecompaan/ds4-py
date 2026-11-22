@@ -139,7 +139,22 @@ def test_hermes_imported_reasoning_is_dropped_at_first_close() -> None:
         )
         assert decode(engine, direct) == fixture["assistant_expected"]
         assert decode(engine, restored) == fixture["assistant_expected"]
-        assert restored[-2:] == [SPECIAL_TOKENS["<|im_end|>"], ord("\n") + 1]
+        assert restored[-2:] == [SPECIAL_TOKENS["<|im_end|>"], *engine.tokenize("\n")]
+
+
+def test_hermes_reasoning_close_inside_body_does_not_duplicate_trusted_close() -> None:
+    with fake_engine("hermes") as engine:
+        tokens = PromptBuilder(engine).restored_assistant(
+            [],
+            [
+                ("<think>", True),
+                ("reason </think> more", False),
+                ("</think>", True),
+                ("answer", False),
+            ],
+        )
+        assert decode(engine, tokens) == "<|im_start|>assistant\n moreanswer<|im_end|>\n"
+        assert tokens.count(SPECIAL_TOKENS["</think>"]) == 0
 
 
 def test_fixed_glm_argument_markup_and_dsml_markers_are_special() -> None:

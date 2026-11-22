@@ -162,14 +162,17 @@ def test_hermes_prompt_matches_reference_and_keeps_schema_plain() -> None:
     spans = generator.spans(definitions)
     schema = json.dumps(
         {
-            "name": definitions[0].name,
-            "description": definitions[0].description,
-            "parameters": definitions[0].parameters,
+            "type": "function",
+            "function": {
+                "name": definitions[0].name,
+                "description": definitions[0].description,
+                "parameters": definitions[0].parameters,
+                "strict": False,
+            },
         },
         ensure_ascii=False,
     )
-    assert (schema.removesuffix("}"), False) in [(span.text, span.rendered) for span in spans]
-    assert any(span.text.endswith('{"type": "function", "function": ') and span.rendered for span in spans)
+    assert (schema, False) in [(span.text, span.rendered) for span in spans]
 
 
 def test_hermes_prompt_preserves_unicode_and_insertion_order() -> None:

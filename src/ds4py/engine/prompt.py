@@ -110,7 +110,8 @@ class PromptBuilder:
                 continue
             suffix = text.split("</think>", 1)[1].lstrip("\n")
             remainder = [(suffix, rendered)] if suffix else []
-            return [*remainder, *items[index + 1 :]]
+            following = [item for item in items[index + 1 :] if item != ("</think>", True)]
+            return [*remainder, *following]
         return items
 
     def _hermes_assistant(self, text: str) -> list[int]:

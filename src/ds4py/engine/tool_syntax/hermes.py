@@ -484,5 +484,6 @@ class Hermes(ToolParser):
         if not self._active:
             return super().wants_greedy_sampling()
         if self._after_call:
-            return False
+            tail = bytes(self.raw)
+            return any(_START.startswith(tail[-size:]) for size in range(2, min(len(_START), len(tail) + 1)))
         return self.state == "STRUCTURAL"

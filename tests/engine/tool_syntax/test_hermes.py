@@ -134,6 +134,16 @@ def test_prose_after_call_waits_for_finish_and_allows_another_call() -> None:
     assert [call.name for call in snapshot.calls] == ["read", "bash"]
 
 
+def test_partial_opener_after_call_requests_greedy_sampling() -> None:
+    parser = Hermes()
+    parser.feed(b'<tool_call>{"name":"read","arguments":{}}</tool_call>prose <tool_')
+    assert parser.wants_greedy_sampling()
+    parser.feed(b'call>{"name":"bash","arguments":{}}</tool_call>')
+    snapshot = parser.finish()
+    assert snapshot.state == "DONE", snapshot.error
+    assert [call.name for call in snapshot.calls] == ["read", "bash"]
+
+
 def test_partial_opener_after_call_is_prose_at_finish() -> None:
     parser = Hermes()
     parser.feed(b'<tool_call>{"name":"read","arguments":{}}</tool_call>see <tool_ca')

@@ -50,6 +50,7 @@ def test_valid_call_does_not_need_repair() -> None:
 REFUSALS = [
     '{"name": "write", "arguments": {"path": "a"b.py", "content": "x"}}',
     '{"name": "write", "arguments": {"path": "a.py", "content": "x", "path": "b.py", "content": "say "y""}}',
+    '{"name": "write", "arguments": {"path": "a.py", "content": "x", "edits": [{"oldText": "y"}], "other": "say "z""}}',
     '{"name": "edit", "arguments": {"path": "r.py", "edits": [{"oldText": "say "a"", "newText": "b"}, {"oldText": "z"}]}}',
     '{"name": "edit", "arguments": {"path": "r.py", "edits": [{"oldText": "say "a", "path": "x", "newText": "b"}]}}',
     '{"name": "edit", "arguments": {"path": "r.py", "oldText": "say "a", "path": "x", "newText": "b"}}',

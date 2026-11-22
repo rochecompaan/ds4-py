@@ -37,31 +37,24 @@ class ToolPromptGenerator:
 
     def spans(self, definitions: Iterable[ToolDefinition]) -> list[ToolPromptSpan]:
         """Separate trusted template markup from plain serialized definitions."""
+        payloads = [
+            {
+                "name": item.name,
+                "description": item.description,
+                "parameters": item.parameters,
+            }
+            for item in definitions
+        ]
         if self.family == "hermes":
             schemas = [
                 json.dumps(
-                    {
-                        "name": item.name,
-                        "description": item.description,
-                        "parameters": item.parameters,
-                    },
+                    {"type": "function", "function": {**payload, "strict": False}},
                     ensure_ascii=False,
                 )
-                for item in definitions
+                for payload in payloads
             ]
             return self._hermes(schemas)
-        schemas = [
-            json.dumps(
-                {
-                    "name": item.name,
-                    "description": item.description,
-                    "parameters": item.parameters,
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-            for item in definitions
-        ]
+        schemas = [json.dumps(payload, ensure_ascii=False, separators=(",", ":")) for payload in payloads]
         if self.family in ("deepseek4", "deepseek41"):
             return self._deepseek(schemas, v41=self.family == "deepseek41")
         if self.family == "glm":
@@ -138,13 +131,7 @@ class ToolPromptGenerator:
             )
         ]
         for schema in schemas:
-            spans.extend(
-                (
-                    ToolPromptSpan('\n{"type": "function", "function": ', True),
-                    ToolPromptSpan(schema.removesuffix("}"), False),
-                    ToolPromptSpan(', "strict": false}}', True),
-                )
-            )
+            spans.extend((ToolPromptSpan("\n", True), ToolPromptSpan(schema, False)))
         spans.append(
             ToolPromptSpan(
                 "\n</tools>\n\nFor each function call, return a json object with function name and arguments "

@@ -86,10 +86,13 @@ function/parameter lifecycle does not fit one JSON object per call. Buffer and
 scan one `<tool_call>` object at a time, publish a call only after its matching
 close, and preserve the exact stanza as `ToolCall.raw`.
 
-Use strict RFC 8259 decoding with non-finite constants rejected, typed nested
-values, a JSON string containing an arguments object, unknown top-level members
-skipped, a 256-level value-depth bound, and NUL rejection. JSON recursion errors
-become parser errors, never exceptions escaping `feed()`. Prose and multiple
+Use reference-compatible JSON decoding with non-finite constants rejected,
+typed nested values, a JSON string containing an arguments object, unknown
+top-level members skipped, a 256-level value-depth bound, and NUL rejection.
+Missing `arguments` defaults to `{}` as in the reference. Raw control
+characters inside strings follow the reference's repair vectors; other JSON
+syntax remains strict. JSON recursion errors become parser errors, never
+exceptions escaping `feed()`. Prose and multiple
 calls follow the reference. A call opener inside `<think>` retains ds4-py's
 existing cross-family rejection rule rather than the C agent's ignore-and-warn
 behavior. Snapshot capture/restore/fork must include every incremental scanner
