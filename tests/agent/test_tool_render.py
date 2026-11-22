@@ -111,6 +111,22 @@ def test_restored_hermes_call_escapes_payload_special_tokens() -> None:
         assert b"\\u003c/tool_call>\\u003c|im_end|>" in decode(engine, tokens)
 
 
+def test_restored_hermes_content_before_call_has_reference_newline() -> None:
+    response = ModelResponse(
+        [
+            TextPart("I will read it."),
+            ToolCallPart("read", {"path": "a.py"}, tool_call_id="one"),
+        ]
+    )
+    with fake_engine("hermes") as engine:
+        session = engine.session()
+        MessageBinder(session).prepare([response])
+        assistant = next(s for s in session.transcript.segments if s.kind == "assistant")
+        text = decode(engine, session.transcript.tokens[assistant.start : assistant.end]).decode()
+        call = render_tool_call("hermes", "read", {"path": "a.py"})
+        assert text == "<|im_start|>assistant\nI will read it.\n" + call + "<|im_end|>\n"
+
+
 def test_restored_hermes_adjacent_calls_have_one_newline() -> None:
     response = ModelResponse(
         [

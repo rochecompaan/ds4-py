@@ -193,12 +193,10 @@ class MessageRenderer:
     @staticmethod
     def _append_call_markup(
         spans: list[tuple[str, bool]],
-        parts: Sequence[object],
-        index: int,
         family: str,
         markup: str,
     ) -> None:
-        if family == "hermes" and index > 0 and isinstance(parts[index - 1], ToolCallPart):
+        if family == "hermes" and any(text for text, _ in spans):
             spans.append(("\n", True))
         spans.append((markup, True))
 
@@ -322,7 +320,7 @@ class MessageRenderer:
                         part.args,
                     )
                 )
-                self._append_call_markup(spans, parts, index, family, markup)
+                self._append_call_markup(spans, family, markup)
                 index += 1
         if sampled:
             body = []
