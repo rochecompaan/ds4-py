@@ -212,9 +212,9 @@ class PiToolset(WrapperToolset[object]):
             new = _string(string_item, "newText")
             if not old:
                 raise ModelRetry("oldText must not be empty")
-            start = text.find(old)
-            if start < 0 or text.find(old, start + 1) >= 0:
+            if text.count(old) != 1:
                 raise ModelRetry("every oldText must match exactly once in the original file")
+            start = text.find(old)
             ranges.append((start, start + len(old)))
             replacements.append((start, new))
         ordered = sorted(zip(ranges, replacements, strict=True))

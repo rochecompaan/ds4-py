@@ -200,6 +200,15 @@ def test_pi_write_and_nonincremental_batch_edit_round_trip(tmp_path: Path) -> No
     assert len(returns(result)) == 2
 
 
+def test_pi_edit_counts_nonoverlapping_occurrences(tmp_path: Path) -> None:
+    (tmp_path / "data.txt").write_text("aaa")
+    run_profile(
+        tmp_path,
+        [("edit", {"path": "data.txt", "edits": [{"oldText": "aa", "newText": "x"}]})],
+    )
+    assert (tmp_path / "data.txt").read_text() == "xa"
+
+
 @pytest.mark.parametrize(
     ("original", "edits"),
     [
