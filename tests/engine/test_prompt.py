@@ -74,13 +74,7 @@ def test_hermes_begin_is_one_system_turn_with_plain_payloads() -> None:
         assert len(segments) == 1
         assert segments[0].kind == "system"
         tokens = segments[0].tokens
-        expected = (
-            "<|im_start|>system\n"
-            + fixture["instructions"]
-            + "\n\n"
-            + fixture["tools"]
-            + "<|im_end|>\n"
-        )
+        expected = "<|im_start|>system\n" + fixture["instructions"] + "\n\n" + fixture["tools"] + "<|im_end|>\n"
         assert decode(engine, tokens) == expected
         assert "Absolute maximum" not in expected
         assert "Absolute maximum" not in decode(engine, tokens)

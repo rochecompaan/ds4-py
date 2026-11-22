@@ -50,12 +50,7 @@ class PromptBuilder:
         append("system", self.engine._chat_begin())
         if self.family == "hermes":
             instruction_tokens = self.engine.tokenize(instructions + "\n\n") if bool(instructions) else []
-            tokens = (
-                self._qwen_open("system")
-                + instruction_tokens
-                + self._tool_tokens(tools)
-                + self._qwen_close()
-            )
+            tokens = self._qwen_open("system") + instruction_tokens + self._tool_tokens(tools) + self._qwen_close()
             append("system", tokens)
             return segments
         if self.family == "qwen":

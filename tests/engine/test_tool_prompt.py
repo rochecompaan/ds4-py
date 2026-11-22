@@ -178,7 +178,7 @@ def test_hermes_prompt_preserves_unicode_and_insertion_order() -> None:
     assert "Edit ✓" in prompt
     assert "\\u2713" not in prompt
     assert '"parameters": {"z": 0, "a": 1}' in prompt
-    assert '<tools>\n</tools>' in ToolPromptGenerator("hermes").generate(())
+    assert "<tools>\n</tools>" in ToolPromptGenerator("hermes").generate(())
 
 
 def test_hermes_call_example_executes_after_placeholder_substitution() -> None:
