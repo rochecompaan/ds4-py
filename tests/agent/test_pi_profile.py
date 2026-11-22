@@ -2,6 +2,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -12,11 +13,14 @@ from pydantic_ai_harness.filesystem import FileReadEvent
 from test_context_strategy import StubBinder
 
 from ds4py.agent import build_agent_components
+from ds4py.agent_composition import ToolProfile
 from ds4py.agent_prompt_pi import PI_CODING_AGENT_INSTRUCTIONS
 
 
 class MockSession:
-    def __init__(self) -> None:
+    def __init__(self, family: str | None = None) -> None:
+        if family is not None:
+            self.engine = SimpleNamespace(info=SimpleNamespace(family=family))
         self.states = {}
         self.listeners = []
 
@@ -43,6 +47,8 @@ def run_profile(
     *,
     read_only: bool = False,
     system: str | None = None,
+    profile: ToolProfile = "pi",
+    family: str | None = None,
     monkeypatch: pytest.MonkeyPatch | None = None,
     shell_timeouts: list[Any] | None = None,
     events: list[Any] | None = None,
@@ -84,7 +90,7 @@ def run_profile(
         monkeypatch.setattr(ShellToolset, "run_command", spy)
 
     model: Any = FunctionModel(scripted, stream_function=stream_function)
-    model.session = MockSession()
+    model.session = MockSession(family)
     model.binder = StubBinder([0] * 100, transcript_tokens=0, ctx=65536)
     if events is not None:
         model.session.on_event(events.append)
@@ -93,7 +99,7 @@ def run_profile(
         tmp_path,
         read_only=read_only,
         system=system,
-        tool_profile="pi",
+        tool_profile=profile,
     )
     result = asyncio.run(components.agent.run("run the requested tools"))
     return result, exposed
@@ -228,6 +234,36 @@ def test_pi_workspace_refuses_escape(tmp_path: Path) -> None:
     workspace.mkdir()
     run_profile(workspace, [("write", {"path": "../outside.txt", "content": "no"})])
     assert not outside.exists()
+
+
+def test_auto_hermes_selects_pi_as_development_hypothesis(tmp_path: Path) -> None:
+    _, exposed = run_profile(tmp_path, profile="auto", family="hermes")
+    assert list(exposed) == ["read", "bash", "edit", "write"]
+
+
+@pytest.mark.parametrize("family", ["qwen", "deepseek4"])
+def test_auto_existing_families_stay_native(tmp_path: Path, family: str) -> None:
+    _, exposed = run_profile(tmp_path, profile="auto", family=family)
+    assert "read_file" in exposed
+    assert "run_command" in exposed
+    assert "read" not in exposed
+
+
+def test_explicit_native_on_hermes_stays_native(tmp_path: Path) -> None:
+    _, exposed = run_profile(tmp_path, profile="native", family="hermes")
+    assert "read_file" in exposed
+    assert "read" not in exposed
+
+
+def test_explicit_pi_on_qwen_selects_pi(tmp_path: Path) -> None:
+    _, exposed = run_profile(tmp_path, profile="pi", family="qwen")
+    assert list(exposed) == ["read", "bash", "edit", "write"]
+
+
+def test_auto_engine_less_double_stays_native(tmp_path: Path) -> None:
+    _, exposed = run_profile(tmp_path, profile="auto")
+    assert "read_file" in exposed
+    assert "read" not in exposed
 
 
 def test_pi_uses_existing_result_text_and_file_events(tmp_path: Path) -> None:

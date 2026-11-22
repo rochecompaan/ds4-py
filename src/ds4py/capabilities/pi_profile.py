@@ -16,6 +16,9 @@ from pydantic_ai_harness.filesystem import Replacement
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from typing import Literal
+
+    from ds4py.agent_composition import ToolProfile
 
 from .file_system import DS4FileSystem
 
@@ -110,6 +113,13 @@ class EditArgs(TypedDict):
 class WriteArgs(TypedDict):
     path: str
     content: str
+
+
+def resolve_tool_profile(requested: ToolProfile, *, family: str) -> Literal["native", "pi"]:
+    """Resolve auto as a development hypothesis pending the tool comparison."""
+    if requested == "auto":
+        return "pi" if family == "hermes" else "native"
+    return requested
 
 
 _VALIDATORS = {

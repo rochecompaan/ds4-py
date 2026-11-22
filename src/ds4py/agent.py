@@ -22,7 +22,7 @@ from ds4py.agent_prompt_pi import PI_CODING_AGENT_INSTRUCTIONS
 from ds4py.capabilities.compaction import LLMCompaction
 from ds4py.capabilities.file_system import DS4FileSystem
 from ds4py.capabilities.harness_events import HarnessEventBridge
-from ds4py.capabilities.pi_profile import PiProfile
+from ds4py.capabilities.pi_profile import PiProfile, resolve_tool_profile
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.shell_jobs import DS4ShellJobs
 from ds4py.capabilities.system_notes import DS4SystemNotes
@@ -66,6 +66,8 @@ def build_agent_components(  # noqa: PLR0913 - Agent composition mirrors the run
 
     notes = DS4SystemNotes(model.session)
     model.note_provider = notes
+    family = getattr(getattr(getattr(model.session, "engine", None), "info", None), "family", "")
+    tool_profile = resolve_tool_profile(tool_profile, family=family)
 
     components: list[AbstractCapability] = [LocalWorkspace(project_dir, read_only=read_only)]
     if tool_profile == "pi":
