@@ -54,6 +54,8 @@ def _validate_name(family: str, value: object, kind: str) -> None:
         )
     elif family == "qwen":
         invalid = invalid or (isinstance(value, str) and (value != value.strip(" \t\r\n") or ">" in value))
+    elif family == "hermes":
+        invalid = invalid or (isinstance(value, str) and "\x00" in value)
     if invalid:
         raise ValueError(f"{family} cannot preserve {kind} {value!r}")
 
@@ -111,6 +113,25 @@ def _qwen(name: str, args: Mapping[str, object]) -> str:
     return "\n".join(lines)
 
 
+def _hermes(name: str, args: Mapping[str, object]) -> str:
+    _validate_json(args)
+    pending: list[object] = [args]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, str) and "\x00" in value:
+            raise ValueError("Hermes cannot preserve NUL in a tool call")
+        if isinstance(value, list):
+            pending.extend(value)
+        elif isinstance(value, dict):
+            pending.extend(value.values())
+    body = json.dumps(
+        {"name": name, "arguments": args},
+        ensure_ascii=False,
+        allow_nan=False,
+    ).replace("<", "\\u003c")
+    return f"<tool_call>\n{body}\n</tool_call>"
+
+
 def render_tool_call(
     family: str,
     name: str,
@@ -118,7 +139,7 @@ def render_tool_call(
 ) -> str:
     """Render one call in the model family's existing native syntax."""
     arguments = _arguments(args)
-    if family not in ("deepseek4", "deepseek41", "glm", "qwen"):
+    if family not in ("deepseek4", "deepseek41", "glm", "qwen", "hermes"):
         raise ValueError(f"unknown tool syntax family: {family}")
     _validate_name(family, name, "tool name")
     for key in arguments:
@@ -131,4 +152,6 @@ def render_tool_call(
         return _glm(name, arguments)
     if family == "qwen":
         return _qwen(name, arguments)
+    if family == "hermes":
+        return _hermes(name, arguments)
     raise ValueError(f"unknown tool syntax family: {family}")

@@ -138,6 +138,13 @@ class MessageRenderer:
                 segments.append(RenderedSegment(kind, tokens))
                 prefix = (*prefix, *tokens)
 
+        def append_results(results: list[str]) -> None:
+            nonlocal prefix
+            tokens = builder.tool_results(prefix, results)
+            if tokens:
+                segments.append(RenderedSegment("tool", tokens))
+                prefix = (*prefix, *tokens)
+
         parts = list(message.parts)
         index = 0
         while index < len(parts):
@@ -163,7 +170,10 @@ class MessageRenderer:
                     else:
                         results.append(_retry_text(cast("RetryPromptPart", current)))
                     index += 1
-                append("tool", "\n\n".join(results))
+                if self.engine.info.family == "hermes":
+                    append_results(results)
+                else:
+                    append("tool", "\n\n".join(results))
         return segments
 
     def _dsml_calls(self, parts: Sequence[ToolCallPart], sampled: bool) -> str:
@@ -179,6 +189,18 @@ class MessageRenderer:
             markup = render_tool_call(family, part.tool_name, part.args)
             stanzas.append("\n".join(markup.split("\n")[1:-1]))
         return f"<｜DSML｜{calls}>\n{'\n'.join(stanzas)}\n</｜DSML｜{calls}>"
+
+    @staticmethod
+    def _append_call_markup(
+        spans: list[tuple[str, bool]],
+        parts: Sequence[object],
+        index: int,
+        family: str,
+        markup: str,
+    ) -> None:
+        if family == "hermes" and index > 0 and isinstance(parts[index - 1], ToolCallPart):
+            spans.append(("\n", True))
+        spans.append((markup, True))
 
     def _response_text(self, parts: Sequence[object], index: int, sampled: bool) -> str:
         """Keep a sampled DSML opener only in the tool-call group that owns it."""
@@ -295,7 +317,7 @@ class MessageRenderer:
                         part.args,
                     )
                 )
-                spans.append((markup, True))
+                self._append_call_markup(spans, parts, index, family, markup)
                 index += 1
         if sampled:
             body = []

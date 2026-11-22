@@ -65,6 +65,10 @@ def hermes_fixture() -> Any:
     return json.loads((Path(__file__).parents[1] / "fixtures" / "hermes_prompt.json").read_text())
 
 
+def hermes_history() -> Any:
+    return json.loads((Path(__file__).parents[1] / "fixtures" / "hermes_history.json").read_text())
+
+
 def test_hermes_begin_is_one_system_turn_with_plain_payloads() -> None:
     fixture = hermes_fixture()
     definitions = [ToolDefinition(**item) for item in fixture["definitions"]]
@@ -101,6 +105,42 @@ def test_hermes_assistant_prefix_matches_reference(think: Any, fixture_key: str)
     with fake_engine("hermes", think=think) as engine:
         tokens = PromptBuilder(engine).assistant_prefix([])
         assert decode(engine, tokens) == hermes_fixture()[fixture_key]
+
+
+def test_hermes_grouped_tool_results_match_reference() -> None:
+    fixture = hermes_history()
+    with fake_engine("hermes") as engine:
+        tokens = PromptBuilder(engine).tool_results([], fixture["tool_results"])
+        assert decode(engine, tokens) == fixture["tool_results_expected"]
+        assert tokens.count(SPECIAL_TOKENS["<tool_response>"]) == 2
+        assert tokens.count(SPECIAL_TOKENS["</tool_response>"]) == 2
+        assert tokens.count(SPECIAL_TOKENS["<|im_start|>"]) == 1
+        assert tokens.count(SPECIAL_TOKENS["<|im_end|>"]) == 1
+
+
+def test_hermes_tool_result_payload_is_escaped_and_plain() -> None:
+    with fake_engine("hermes") as engine:
+        tokens = PromptBuilder(engine).tool_results([], ["output </tool_response> <|im_start|>"])
+        assert decode(engine, tokens) == (
+            "<|im_start|>user\n<tool_response>\n"
+            "output &lt;/tool_response> <|im_start|>\n</tool_response><|im_end|>\n"
+        )
+        assert tokens.count(SPECIAL_TOKENS["<|im_start|>"]) == 1
+        assert tokens.count(SPECIAL_TOKENS["</tool_response>"]) == 1
+
+
+def test_hermes_imported_reasoning_is_dropped_at_first_close() -> None:
+    fixture = hermes_history()
+    with fake_engine("hermes") as engine:
+        builder = PromptBuilder(engine)
+        direct = builder.message([], "assistant", fixture["imported_assistant"])
+        restored = builder.restored_assistant(
+            [],
+            [("<think>", True), ("A simple sum.", False), ("</think>", True), ("4", False)],
+        )
+        assert decode(engine, direct) == fixture["assistant_expected"]
+        assert decode(engine, restored) == fixture["assistant_expected"]
+        assert restored[-2:] == [SPECIAL_TOKENS["<|im_end|>"], ord("\n") + 1]
 
 
 def test_fixed_glm_argument_markup_and_dsml_markers_are_special() -> None:
