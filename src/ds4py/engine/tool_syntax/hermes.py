@@ -133,7 +133,7 @@ def _repair_shape(text: str) -> _RepairShape | None:
         return None
     try:
         path, after_path = json.JSONDecoder().raw_decode(text, position)
-    except (ValueError, RecursionError):
+    except ValueError, RecursionError:
         return None
     if not isinstance(path, str) or "\x00" in path:
         return None
@@ -401,7 +401,7 @@ class Hermes(ToolParser):
             if repaired is None:
                 return False
             self._pending_call = _decode_call(repaired)
-        except (UnicodeDecodeError, TypeError, ValueError):
+        except UnicodeDecodeError, TypeError, ValueError:
             return False
         self._deferred_error = None
         return True

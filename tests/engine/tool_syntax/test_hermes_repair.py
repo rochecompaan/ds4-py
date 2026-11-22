@@ -9,7 +9,9 @@ WRITE_REPAIRED = '{"name": "write", "arguments": {"path": "a.py", "content": "pr
 EDIT_BODY = '{"name": "edit", "arguments": {"path": "r.py", "edits": [{"oldText": "",".join(str(v) for v in r)", "newText": "", ".join(str(v) for v in r)"}, {"oldText": "say "a"", "newText": "say \'a\'"}]}}'
 EDIT_REPAIRED = '{"name": "edit", "arguments": {"path": "r.py", "edits": [{"oldText": "\\",\\".join(str(v) for v in r)", "newText": "\\", \\".join(str(v) for v in r)"}, {"oldText": "say \\"a\\"", "newText": "say \'a\'"}]}}'
 LEGACY_BODY = '{"name": "edit", "arguments": {"path": "r.py", "oldText": "",".join(r)", "newText": "", ".join(r)"}}'
-LEGACY_REPAIRED = '{"name": "edit", "arguments": {"path": "r.py", "oldText": "\\",\\".join(r)", "newText": "\\", \\".join(r)"}}'
+LEGACY_REPAIRED = (
+    '{"name": "edit", "arguments": {"path": "r.py", "oldText": "\\",\\".join(r)", "newText": "\\", \\".join(r)"}}'
+)
 
 
 @pytest.mark.parametrize(
