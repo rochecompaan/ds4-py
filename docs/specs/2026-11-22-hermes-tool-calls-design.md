@@ -134,8 +134,9 @@ compaction edit is expected unless those tests expose a concrete gap.
 - Add `message_rendering.py` so restored consecutive tool results retain their
   individual boundaries and adjacent calls retain the reference newline. This
   is the authorized RollingWindow overlap.
-- Update the exact ABI binding census and declare the new predicate in the fork
-  fixture header; the older plan did not list those current-code guards.
+- Update the exact ABI binding census and keep the new predicate absent from
+  both pinned header fixtures; neither fixture is the Mellum reference. The
+  older plan did not list those current-code guards.
 - Extend the fake chat vocabulary/prefix behavior for portable Hermes tests.
 - Keep the existing parser error for a tool call inside `<think>` instead of
   adopting the C agent's ignore-and-warn path.

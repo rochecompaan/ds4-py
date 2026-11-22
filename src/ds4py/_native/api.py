@@ -232,10 +232,11 @@ class NativeEngine(_Handle):
             return self._call("ds4_engine_" + name)
 
         deep, glm, qwen = get("is_deepseek41"), get("is_glm_dsa"), get("is_qwen4")
+        mellum = get("is_mellum") if self._lib.has("ds4_engine_is_mellum") else False
         return EngineInfo(
             get("model_name").decode(),
             get("model_id"),
-            family_of(deepseek41=deep, glm=glm, qwen=qwen),
+            family_of(deepseek41=deep, glm=glm, qwen=qwen, mellum=mellum),
             deep,
             glm,
             qwen,
@@ -243,6 +244,7 @@ class NativeEngine(_Handle):
             get("routed_quant_bits"),
             get("mtp_draft_tokens"),
             get("vocab_size"),
+            mellum,
         )
 
     def tokenize(self, text: str, *, rendered: bool = False) -> list[int]:

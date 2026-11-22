@@ -7,13 +7,14 @@ import pytest
 from ds4py._native import bindings, typemap
 
 
-def test_core_bindings_include_the_optional_payload_probe() -> None:
+def test_core_bindings_include_the_optional_probes() -> None:
     names = [b.name for b in bindings.CORE_BINDINGS]
-    assert len(names) == len(set(names)) == 53
-    assert all(b.required for b in bindings.CORE_BINDINGS if b.name != "ds4_session_supports_payload")
-    probe = next(b for b in bindings.CORE_BINDINGS if b.name == "ds4_session_supports_payload")
-    assert not probe.required
-    assert probe.source == "core"
+    assert len(names) == len(set(names)) == 54
+    optional = {"ds4_engine_is_mellum", "ds4_session_supports_payload"}
+    assert all(b.required for b in bindings.CORE_BINDINGS if b.name not in optional)
+    probes = [b for b in bindings.CORE_BINDINGS if b.name in optional]
+    assert len(probes) == 2
+    assert all(not probe.required and probe.source == "core" for probe in probes)
     assert {
         "ds4_session_sync",
         "ds4_session_save_snapshot",

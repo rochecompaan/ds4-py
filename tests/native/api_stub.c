@@ -103,7 +103,17 @@ const char *ds4_engine_model_name(ds4_engine *e) { (void)e; info_reads++; return
 int ds4_engine_model_id(ds4_engine *e) { (void)e; return 17; }
 bool ds4_engine_is_deepseek41(ds4_engine *e) { (void)e; return false; }
 bool ds4_engine_is_glm_dsa(ds4_engine *e) { (void)e; return true; }
-bool ds4_engine_is_qwen4(ds4_engine *e) { (void)e; return false; }
+bool ds4_engine_is_qwen4(ds4_engine *e) {
+    (void)e;
+#ifdef STUB_MELLUM
+    return true;
+#else
+    return false;
+#endif
+}
+#ifdef STUB_MELLUM
+bool ds4_engine_is_mellum(ds4_engine *e) { (void)e; return true; }
+#endif
 bool ds4_engine_has_vision(ds4_engine *e) { (void)e; return false; }
 int ds4_engine_routed_quant_bits(ds4_engine *e) { (void)e; return 4; }
 int ds4_engine_mtp_draft_tokens(ds4_engine *e) { (void)e; return 1; }

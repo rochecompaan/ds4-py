@@ -18,7 +18,7 @@ from ds4py._native.api import (
 )
 from ds4py._native.loader import load_library
 from ds4py._native.modelcheck import NATIVE_REFUSED, PYTHON_ERROR, exit_error
-from ds4py._native.protocol import EngineConfig, ThinkMode
+from ds4py._native.protocol import EngineConfig, ThinkMode, family_of
 from ds4py.errors import (
     AbiMismatch,
     EmptyPromptError,
@@ -463,6 +463,29 @@ def test_open_rechecks_shader_files_after_library_load(
         native.open_engine(EngineConfig(tmp_path / "model", backend="metal"))
     assert dict(os.environ) == before
     InstanceLock.acquire(tmp_path / "native.lock").close()
+
+
+def test_mellum_identity_is_optional_and_precedes_qwen(stub_engine: Any, stub_mellum_engine: Any) -> None:
+    legacy, _ = stub_engine
+    mellum, _ = stub_mellum_engine
+    assert legacy.info().is_mellum is False
+    assert legacy.info().family == "glm"
+    assert mellum.info().is_mellum is True
+    assert mellum.info().is_qwen4 is True
+    assert mellum.info().family == "hermes"
+
+
+@pytest.mark.parametrize(
+    ("deepseek41", "glm", "qwen", "expected"),
+    [(True, True, True, "deepseek41"), (False, True, True, "glm"), (False, False, True, "qwen"), (False, False, False, "deepseek4")],
+)
+def test_existing_family_precedence_is_unchanged(deepseek41: bool, glm: bool, qwen: bool, expected: str) -> None:
+    assert family_of(deepseek41=deepseek41, glm=glm, qwen=qwen) == expected
+    assert family_of(deepseek41=deepseek41, glm=glm, qwen=qwen, mellum=False) == expected
+
+
+def test_mellum_family_precedes_qwen() -> None:
+    assert family_of(deepseek41=False, glm=False, qwen=True, mellum=True) == "hermes"
 
 
 def test_info_captured_once_on_open(stub_engine: Any) -> None:

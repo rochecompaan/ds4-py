@@ -41,7 +41,6 @@
 - Modify: `tests/native/conftest.py`
 - Modify: `tests/native/test_bindings.py`
 - Modify: `tests/abi/test_probe.py`, `tests/abi/test_manifest.py`, `tests/abi/test_check.py`, `tests/abi/test_build.py`
-- Modify: `tests/fixtures/ds4-headers/fork/ds4.h`
 - Test: `tests/native/test_api.py`, `tests/engine/tool_syntax/test_qwen.py`
 
 **Interfaces:**
@@ -60,7 +59,7 @@ assert mellum.info().is_qwen4 is True
 assert mellum.info().family == "hermes"
 ```
 
-Keep the existing info-read-once assertion and add direct cases proving every old `family_of` result is unchanged when `mellum` is omitted or false. Update the exact binding census, optional-absent sets, ABI report lines, and build assertion to expect the new optional predicate; declare it in the fork fixture header, leaving the upstream fixture header without it.
+Keep the existing info-read-once assertion and add direct cases proving every old `family_of` result is unchanged when `mellum` is omitted or false. Update the exact binding census, optional-absent sets, ABI report lines, and build assertion to expect the new optional predicate. Keep it absent from both pinned header fixtures: their upstream and non-Mellum fork pins must not be rewritten to advertise a symbol they do not have.
 
 - [ ] **Step 2: Run and verify RED**
 
@@ -79,7 +78,7 @@ Expected: PASS; all ABI census checks and existing DeepSeek, GLM, and Qwen cases
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/ds4py/_native/protocol.py src/ds4py/_native/bindings.py src/ds4py/_native/api.py tests/native/api_stub.c tests/native/conftest.py tests/native/test_api.py tests/native/test_bindings.py tests/abi/test_probe.py tests/abi/test_manifest.py tests/abi/test_check.py tests/abi/test_build.py tests/fixtures/ds4-headers/fork/ds4.h
+git add src/ds4py/_native/protocol.py src/ds4py/_native/bindings.py src/ds4py/_native/api.py tests/native/api_stub.c tests/native/conftest.py tests/native/test_api.py tests/native/test_bindings.py tests/abi/test_probe.py tests/abi/test_manifest.py tests/abi/test_check.py tests/abi/test_build.py docs/plans/2026-11-22-hermes-tool-calls.md docs/specs/2026-11-22-hermes-tool-calls-design.md
 git commit -m "feat(native): identify Mellum and select the hermes protocol family"
 ```
 

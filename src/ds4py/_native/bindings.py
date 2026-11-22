@@ -38,6 +38,11 @@ CORE_BINDINGS: tuple[Binding, ...] = (
     Binding("ds4_engine_is_deepseek41", "bool ds4_engine_is_deepseek41(ds4_engine *e)"),
     Binding("ds4_engine_is_glm_dsa", "bool ds4_engine_is_glm_dsa(ds4_engine *e)"),
     Binding("ds4_engine_is_qwen4", "bool ds4_engine_is_qwen4(ds4_engine *e)"),
+    Binding(
+        "ds4_engine_is_mellum",
+        "bool ds4_engine_is_mellum(ds4_engine *e)",
+        required=False,
+    ),
     Binding("ds4_engine_has_vision", "bool ds4_engine_has_vision(ds4_engine *e)"),
     Binding(
         "ds4_engine_routed_quant_bits",
