@@ -1,6 +1,7 @@
 """Incremental Hermes JSON tool-call parser."""
 
 import json
+import re
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Never, override
@@ -21,7 +22,9 @@ def _reject_constant(value: str) -> Never:
 
 def _loads(text: str) -> object:
     try:
-        return json.loads(text, parse_constant=_reject_constant)
+        # The reference accepts raw control bytes inside strings during the
+        # bounded repair path; NUL remains explicitly rejected below.
+        return json.loads(text, parse_constant=_reject_constant, strict=False)
     except (ValueError, RecursionError) as error:
         raise ValueError(f"invalid JSON in Hermes tool call: {error}") from error
 
@@ -76,6 +79,146 @@ def _decode_call(body: str) -> ToolCall:
         _validate_depth(item)
         copied[key] = item
     return ToolCall(name, MappingProxyType(copied), "")
+
+
+def _eat(text: str, position: int, pattern: str, end: int) -> int | None:
+    for char in pattern:
+        if char == " ":
+            while position < end and text[position] in " \t\r\n":
+                position += 1
+        elif position < end and text[position] == char:
+            position += 1
+        else:
+            return None
+    return position
+
+
+def _bare_quote(text: str, position: int, start: int) -> bool:
+    backslashes = 0
+    while position - backslashes > start and text[position - backslashes - 1] == "\\":
+        backslashes += 1
+    return text[position] == '"' and backslashes % 2 == 0
+
+
+def _folds_member(text: str, start: int, end: int) -> bool:
+    for position in range(start, end):
+        if not _bare_quote(text, position, start):
+            continue
+        for key in ("path", "content", "edits", "oldText", "newText"):
+            if _eat(text, position, f'" , "{key}" :', end) is not None:
+                return True
+    return False
+
+
+def _edit_boundary(text: str, position: int, end: int, *, to_new: bool) -> int | None:
+    pattern = '" , "newText" : "' if to_new else '" } , { "oldText" : "'
+    return _eat(text, position, pattern, end)
+
+
+@dataclass(frozen=True)
+class _RepairShape:
+    value_start: int
+    value_end: int
+    edit: bool
+    legacy: bool
+
+
+def _repair_shape(text: str) -> _RepairShape | None:
+    end = len(text)
+    position = _eat(text, 0, ' { "name" : "write" , "arguments" : { "path" : ', end)
+    edit = position is None
+    if edit:
+        position = _eat(text, 0, ' { "name" : "edit" , "arguments" : { "path" : ', end)
+    if position is None:
+        return None
+    try:
+        path, after_path = json.JSONDecoder().raw_decode(text, position)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(path, str) or "\x00" in path:
+        return None
+    legacy = False
+    if edit:
+        value_start = _eat(text, after_path, ' , "edits" : [ { "oldText" : "', end)
+        legacy = value_start is None
+        if legacy:
+            value_start = _eat(text, after_path, ' , "oldText" : "', end)
+    else:
+        value_start = _eat(text, after_path, ' , "content" : "', end)
+    if value_start is None:
+        return None
+    tail_pattern = r'"\s*\}\s*\]\s*\}\s*\}\s*\Z' if edit and not legacy else r'"\s*\}\s*\}\s*\Z'
+    tail = re.search(tail_pattern, text)
+    return None if tail is None else _RepairShape(value_start, tail.start(), edit, legacy)
+
+
+def _repair_cuts(text: str, shape: _RepairShape) -> list[int] | None:
+    cuts = [shape.value_start]
+    to_new = True
+    if shape.edit:
+        position = shape.value_start
+        while position < shape.value_end:
+            if _bare_quote(text, position, shape.value_start):
+                boundary = _edit_boundary(text, position, shape.value_end, to_new=to_new)
+                if boundary is not None and not (shape.legacy and not to_new):
+                    cuts.extend((position, boundary))
+                    position = boundary
+                    to_new = not to_new
+                    continue
+                opposite = _edit_boundary(text, position, shape.value_end, to_new=not to_new)
+                if boundary is not None or opposite is not None:
+                    return None
+            position += 1
+        if to_new:
+            return None
+    cuts.append(shape.value_end)
+    if any(_folds_member(text, cuts[index], cuts[index + 1]) for index in range(0, len(cuts), 2)):
+        return None
+    return cuts
+
+
+def _escape_repair_cuts(text: str, cuts: list[int]) -> str | None:
+    output = []
+    copied = 0
+    changed = False
+    for index in range(0, len(cuts), 2):
+        start, stop = cuts[index], cuts[index + 1]
+        output.append(text[copied:start])
+        for position in range(start, stop):
+            if _bare_quote(text, position, start):
+                output.append("\\")
+                changed = True
+            output.append(text[position])
+        copied = stop
+    output.append(text[copied:])
+    return "".join(output) if changed else None
+
+
+def repair_hermes_quotes(text: str) -> str | None:
+    """Escape bare quotes only in the reference's unambiguous write/edit forms."""
+    shape = _repair_shape(text)
+    if shape is None:
+        return None
+    cuts = _repair_cuts(text, shape)
+    return None if cuts is None else _escape_repair_cuts(text, cuts)
+
+
+def _key_before(data: bytes | bytearray, start: int, position: int) -> str:
+    cursor = position
+    while cursor > start and data[cursor - 1] in _ASCII_SPACE:
+        cursor -= 1
+    if cursor <= start or data[cursor - 1] != ord(":"):
+        return ""
+    cursor -= 1
+    while cursor > start and data[cursor - 1] in _ASCII_SPACE:
+        cursor -= 1
+    if cursor <= start or data[cursor - 1] != ord('"'):
+        return ""
+    close = cursor - 1
+    opening = data.rfind(b'"', start, close)
+    if opening < 0:
+        return ""
+    return bytes(data[opening + 1 : close]).decode(errors="replace")
 
 
 @dataclass(frozen=True)
@@ -212,7 +355,8 @@ class Hermes(ToolParser):
                 self._fail("NUL is not allowed in a Hermes tool call")
                 return
             if byte == ord("`"):
-                self._fail("argument is delimited with backticks; JSON strings need double quotes")
+                key = _key_before(self.raw, self._body_start, index)
+                self._fail(f'argument "{key}" is delimited with backticks; JSON strings need double quotes')
                 return
             if not self._containers and byte in _ASCII_SPACE:
                 self._body_start = index + 1
@@ -245,9 +389,26 @@ class Hermes(ToolParser):
             self._pending_call = None
             self._deferred_error = str(error)
 
+    def _repair_pending(self, close_end: int) -> bool:
+        body_end = self._body_end
+        if body_end is None:
+            body_end = close_end - len(_CLOSE)
+            while body_end > self._body_start and self.raw[body_end - 1] in _ASCII_SPACE:
+                body_end -= 1
+        try:
+            body = bytes(self.raw[self._body_start : body_end]).decode()
+            repaired = repair_hermes_quotes(body)
+            if repaired is None:
+                return False
+            self._pending_call = _decode_call(repaired)
+        except (UnicodeDecodeError, TypeError, ValueError):
+            return False
+        self._deferred_error = None
+        return True
+
     def _publish_or_fail(self, close_end: int) -> None:
-        if self._deferred_error is not None:
-            self._fail(self._deferred_error)
+        if self._deferred_error is not None and not self._repair_pending(close_end):
+            self._fail(self._deferred_error or "invalid JSON in Hermes tool call")
             return
         if self._pending_call is None:
             raise AssertionError("completed Hermes call requires a pending value")
@@ -304,6 +465,15 @@ class Hermes(ToolParser):
     def _finish_active(self) -> None:
         if self._after_call:
             self.state = "DONE"
+            return
+        close_end = len(self.raw)
+        while close_end > 0 and self.raw[close_end - 1] in _ASCII_SPACE:
+            close_end -= 1
+        if self._body_end is None and self.raw.startswith(_CLOSE, close_end - len(_CLOSE)):
+            self._deferred_error = self._deferred_error or "invalid JSON in Hermes tool call"
+            self._publish_or_fail(close_end)
+            if self.state != "ERROR":
+                self.state = "DONE"
             return
         self._fail(self._deferred_error or "incomplete Hermes tool-call stanza")
 
