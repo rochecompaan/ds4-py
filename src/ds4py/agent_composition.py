@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager, ExitStack
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, Self
+from typing import TYPE_CHECKING, Literal, Protocol, Self
 
 from ds4py.engine.sampling import SamplingPolicy
+
+type ToolProfile = Literal["auto", "native", "pi"]
 
 if TYPE_CHECKING:
     from argparse import ArgumentParser, Namespace
@@ -35,6 +37,7 @@ class EngineOpenOptions:
     top_k: int | None
     top_p: float | None
     min_p: float | None
+    tool_profile: ToolProfile = "auto"
 
 
 @dataclass(frozen=True)

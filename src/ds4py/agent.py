@@ -27,6 +27,7 @@ from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.capabilities.tool_errors import ToolErrorRecovery
 
 if TYPE_CHECKING:
+    from ds4py.agent_composition import ToolProfile
     from ds4py.capabilities.context import ContextComposition
     from ds4py.model import DS4Model
 
@@ -53,6 +54,7 @@ def build_agent_components(  # noqa: PLR0913 - Agent composition mirrors the run
     question_answerer: QuestionAnswerer | None = None,
     session_dir: str | Path | None = None,
     context: ContextComposition | None = None,
+    tool_profile: ToolProfile = "auto",
 ) -> AgentComponents:
     """Build the default capability list and the harness agent."""
     project_dir = Path(project_dir)
