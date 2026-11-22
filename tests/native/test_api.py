@@ -477,7 +477,12 @@ def test_mellum_identity_is_optional_and_precedes_qwen(stub_engine: Any, stub_me
 
 @pytest.mark.parametrize(
     ("deepseek41", "glm", "qwen", "expected"),
-    [(True, True, True, "deepseek41"), (False, True, True, "glm"), (False, False, True, "qwen"), (False, False, False, "deepseek4")],
+    [
+        (True, True, True, "deepseek41"),
+        (False, True, True, "glm"),
+        (False, False, True, "qwen"),
+        (False, False, False, "deepseek4"),
+    ],
 )
 def test_existing_family_precedence_is_unchanged(deepseek41: bool, glm: bool, qwen: bool, expected: str) -> None:
     assert family_of(deepseek41=deepseek41, glm=glm, qwen=qwen) == expected
