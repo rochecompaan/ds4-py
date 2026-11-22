@@ -228,6 +228,7 @@ class HermesState:
     scan_pos: int
     body_end: int | None
     after_call: bool
+    prose_start: int
     in_string: bool
     escape: bool
     containers: tuple[str, ...]
@@ -245,6 +246,7 @@ class Hermes(ToolParser):
         self._scan_pos = 0
         self._body_end: int | None = None
         self._after_call = False
+        self._prose_start = 0
         self._in_string = False
         self._escape = False
         self._containers: list[str] = []
@@ -265,6 +267,7 @@ class Hermes(ToolParser):
             self._scan_pos,
             self._body_end,
             self._after_call,
+            self._prose_start,
             self._in_string,
             self._escape,
             tuple(self._containers),
@@ -282,6 +285,7 @@ class Hermes(ToolParser):
         self._scan_pos = state.scan_pos
         self._body_end = state.body_end
         self._after_call = state.after_call
+        self._prose_start = state.prose_start
         self._in_string = state.in_string
         self._escape = state.escape
         self._containers = list(state.containers)
@@ -417,6 +421,7 @@ class Hermes(ToolParser):
         self._calls.append(ToolCall(pending.name, pending.args, raw))
         self._pending_call = None
         self._after_call = True
+        self._prose_start = close_end
         self.parse_pos = close_end
 
     def _parse_close(self) -> bool:
@@ -437,9 +442,16 @@ class Hermes(ToolParser):
         return self.state != "ERROR"
 
     def _parse_after_call(self) -> bool:
+        prose = bytes(self.raw[self._prose_start :])
+        for match in re.finditer(b"<think>|</think>", prose):
+            self.in_think = match.group() == b"<think>"
         position = self.raw.find(_START, self.parse_pos)
         if position < 0:
             self.parse_pos = max(self.parse_pos, len(self.raw) - len(_START) + 1)
+            return False
+        if self.in_think:
+            self.dsml_in_think = True
+            self._fail("tool calling is not allowed inside <think></think>")
             return False
         self._begin_call(position, present=True)
         return True

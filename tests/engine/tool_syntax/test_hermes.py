@@ -152,6 +152,33 @@ def test_partial_opener_after_call_is_prose_at_finish() -> None:
     assert len(snapshot.calls) == 1
 
 
+@pytest.mark.parametrize("bytewise", [False, True])
+def test_second_call_inside_think_is_rejected_after_first_call(bytewise: bool) -> None:
+    data = (
+        b'<tool_call>{"name":"read","arguments":{}}</tool_call>'
+        b'<think>plan<tool_call>{"name":"write","arguments":{}}</tool_call>'
+    )
+    chunks = [bytes([byte]) for byte in data] if bytewise else [data]
+    snapshot = parse_chunks(chunks)
+    assert snapshot.state == "ERROR"
+    assert snapshot.calls == ()
+    assert snapshot.in_think
+    assert snapshot.error is not None and "inside <think>" in snapshot.error
+
+
+def test_second_call_after_closed_think_is_allowed() -> None:
+    snapshot = parse_chunks(
+        [
+            (
+                b'<tool_call>{"name":"read","arguments":{}}</tool_call>'
+                b'<think>plan</think><tool_call>{"name":"write","arguments":{}}</tool_call>'
+            )
+        ]
+    )
+    assert snapshot.state == "DONE", snapshot.error
+    assert [call.name for call in snapshot.calls] == ["read", "write"]
+
+
 def test_make_parser_selects_hermes_before_qwen() -> None:
     info = replace(FakeNative()._info, family="hermes", is_qwen4=True, is_mellum=True)
     assert isinstance(make_parser(info), Hermes)
