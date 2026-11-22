@@ -71,7 +71,7 @@ def build_agent_components(  # noqa: PLR0913 - Agent composition mirrors the run
 
     components: list[AbstractCapability] = [LocalWorkspace(project_dir, read_only=read_only)]
     if tool_profile == "pi":
-        components.append(PiProfile(project_dir))
+        components.extend([PiProfile(project_dir), RepoContext(workspace_dir=project_dir)])
         default_instructions = PI_CODING_AGENT_INSTRUCTIONS
     else:
         components.extend(
@@ -95,6 +95,7 @@ def build_agent_components(  # noqa: PLR0913 - Agent composition mirrors the run
                 ),
                 Shell(cwd=project_dir),
                 DS4ShellJobs(model.session, project_dir),
+                RepoContext(workspace_dir=project_dir),
                 Skills(
                     directories=[
                         project_dir / ".claude" / "skills",
@@ -109,7 +110,6 @@ def build_agent_components(  # noqa: PLR0913 - Agent composition mirrors the run
         default_instructions = DEFAULT_CODING_AGENT_INSTRUCTIONS
     components.extend(
         [
-            RepoContext(workspace_dir=project_dir),
             ToolErrorRecovery(),
             HarnessEventBridge(model.session),
             DS4RunRecord(model.session, Path(session_dir or project_dir) / "events.jsonl"),
