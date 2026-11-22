@@ -176,11 +176,7 @@ def test_pi_write_requires_an_existing_parent_and_says_so(tmp_path: Path) -> Non
     )
     assert "Parent directories must already exist" in exposed["write"].description
     assert not (tmp_path / "nested" / "data.txt").exists()
-    assert any(
-        isinstance(part, RetryPromptPart)
-        for message in result.all_messages()
-        for part in message.parts
-    )
+    assert any(isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts)
 
 
 def test_pi_write_and_nonincremental_batch_edit_round_trip(tmp_path: Path) -> None:
