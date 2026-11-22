@@ -74,3 +74,8 @@ def test_hermes_render_escapes_markup_without_changing_json_values() -> None:
 def test_hermes_render_rejects_nul() -> None:
     with pytest.raises(ValueError, match="NUL"):
         render_tool_call("hermes", "read", {"path": "a\x00b"})
+
+
+def test_hermes_render_rejects_nul_in_nested_key_inside_list() -> None:
+    with pytest.raises(ValueError, match="NUL"):
+        render_tool_call("hermes", "read", {"outer": [{"bad\x00key": 1}]})

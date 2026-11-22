@@ -123,6 +123,7 @@ def _hermes(name: str, args: Mapping[str, object]) -> str:
         if isinstance(value, list):
             pending.extend(value)
         elif isinstance(value, dict):
+            pending.extend(value.keys())
             pending.extend(value.values())
     body = json.dumps(
         {"name": name, "arguments": args},
