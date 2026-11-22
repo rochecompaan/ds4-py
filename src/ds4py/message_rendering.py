@@ -202,6 +202,12 @@ class MessageRenderer:
             spans.append(("\n", True))
         spans.append((markup, True))
 
+    @staticmethod
+    def _sampled_thinking_spans(content: str, family: str) -> tuple[list[tuple[str, bool]], bool]:
+        if family == "hermes":
+            return [("<think>\n", True), (content, False), ("\n</think>\n\n", True)], False
+        return [(content, True)], True
+
     def _response_text(self, parts: Sequence[object], index: int, sampled: bool) -> str:
         """Keep a sampled DSML opener only in the tool-call group that owns it."""
         text = cast("TextPart", parts[index]).content
@@ -286,9 +292,8 @@ class MessageRenderer:
                 index += 1
             elif isinstance(part, ThinkingPart):
                 if sampled:
-                    # The native assistant prefix already opened this span.
-                    spans.append((part.content, True))
-                    in_thinking = True
+                    thinking_spans, in_thinking = self._sampled_thinking_spans(part.content, family)
+                    spans.extend(thinking_spans)
                 else:
                     spans.extend((("<think>", True), (part.content, False), ("</think>", True)))
                 index += 1

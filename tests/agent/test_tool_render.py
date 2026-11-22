@@ -131,6 +131,23 @@ def test_restored_hermes_adjacent_calls_have_one_newline() -> None:
         assert [call.name for call in snapshot.calls] == ["first", "second"]
 
 
+def test_sampled_hermes_thinking_reconstruction_wraps_plain_reasoning() -> None:
+    response = ModelResponse(
+        [ThinkingPart("reason <tool_call> <|im_end|>"), TextPart("answer")],
+        metadata={"ds4.source": "sampled"},
+    )
+    with fake_engine("hermes", think=ThinkMode.HIGH) as engine:
+        session = engine.session()
+        MessageBinder(session).prepare([response])
+        assistant = next(s for s in session.transcript.segments if s.kind == "assistant")
+        tokens = session.transcript.tokens[assistant.start : assistant.end]
+        assert decode(engine, tokens).decode() == ("<think>\nreason <tool_call> <|im_end|>\n</think>\n\nanswer")
+        assert tokens.count(SPECIAL_TOKENS["<think>"]) == 1
+        assert tokens.count(SPECIAL_TOKENS["</think>"]) == 1
+        assert SPECIAL_TOKENS["<tool_call>"] not in tokens
+        assert SPECIAL_TOKENS["<|im_end|>"] not in tokens
+
+
 def test_sampled_hermes_raw_call_is_preserved() -> None:
     raw = '<tool_call>\n{"name":"read", "arguments": {"path": "a.py"}}\n</tool_call>'
     response = ModelResponse(
