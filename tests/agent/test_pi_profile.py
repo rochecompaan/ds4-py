@@ -169,6 +169,20 @@ def test_pi_read_defaults_to_2000_lines(tmp_path: Path) -> None:
     assert "offset=2000" in content
 
 
+def test_pi_write_requires_an_existing_parent_and_says_so(tmp_path: Path) -> None:
+    result, exposed = run_profile(
+        tmp_path,
+        [("write", {"path": "nested/data.txt", "content": "no"})],
+    )
+    assert "Parent directories must already exist" in exposed["write"].description
+    assert not (tmp_path / "nested" / "data.txt").exists()
+    assert any(
+        isinstance(part, RetryPromptPart)
+        for message in result.all_messages()
+        for part in message.parts
+    )
+
+
 def test_pi_write_and_nonincremental_batch_edit_round_trip(tmp_path: Path) -> None:
     result, _ = run_profile(
         tmp_path,
