@@ -76,7 +76,12 @@ _SCHEMAS = {
         },
     },
 }
-_DESCRIPTIONS = {"read": _READ_DESCRIPTION, "bash": _BASH_DESCRIPTION, "edit": _EDIT_DESCRIPTION, "write": _WRITE_DESCRIPTION}
+_DESCRIPTIONS = {
+    "read": _READ_DESCRIPTION,
+    "bash": _BASH_DESCRIPTION,
+    "edit": _EDIT_DESCRIPTION,
+    "write": _WRITE_DESCRIPTION,
+}
 _NAMES = ("read", "bash", "edit", "write")
 _ORIGINAL_NAMES = {"read": "read_file", "bash": "run_command", "edit": "edit_file", "write": "write_file"}
 
@@ -250,7 +255,5 @@ class PiProfile(AbstractCapability[object]):
     @override
     def get_toolset(self) -> AbstractToolset[object]:
         if self._toolset is None:
-            self._toolset = PiToolset(
-                CombinedToolset([self._filesystem.get_toolset(), self._shell.get_toolset()])
-            )
+            self._toolset = PiToolset(CombinedToolset([self._filesystem.get_toolset(), self._shell.get_toolset()]))
         return self._toolset

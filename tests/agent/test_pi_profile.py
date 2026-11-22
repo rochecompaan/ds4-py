@@ -101,10 +101,7 @@ def run_profile(
 
 def returns(result: Any) -> list[Any]:
     return [
-        part.content
-        for message in result.all_messages()
-        for part in message.parts
-        if isinstance(part, ToolReturnPart)
+        part.content for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
     ]
 
 
@@ -143,7 +140,9 @@ def test_pi_system_override_wins(tmp_path: Path) -> None:
     assert first.instructions == "custom rules"
 
 
-@pytest.mark.parametrize(("offset", "shown", "hidden"), [(0, "line-1", "line-2"), (1, "line-1", "line-2"), (2, "line-2", "line-1")])
+@pytest.mark.parametrize(
+    ("offset", "shown", "hidden"), [(0, "line-1", "line-2"), (1, "line-1", "line-2"), (2, "line-2", "line-1")]
+)
 def test_pi_read_offset_conversion(tmp_path: Path, offset: int, shown: str, hidden: str) -> None:
     (tmp_path / "lines.txt").write_text("line-1\nline-2\n")
     result, _ = run_profile(tmp_path, [("read", {"path": "lines.txt", "offset": offset, "limit": 1})])
@@ -204,9 +203,7 @@ def test_pi_edit_refuses_ambiguity_and_overlap_without_writing(
     assert (tmp_path / "data.txt").read_text() == original
 
 
-def test_pi_bash_round_trip_and_timeout_forwarding(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_pi_bash_round_trip_and_timeout_forwarding(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     timeouts = []
     result, _ = run_profile(
         tmp_path,
