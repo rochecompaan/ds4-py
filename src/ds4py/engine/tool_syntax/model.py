@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 class ToolCall:
     """One parsed call; raw is its canonical stanza, not the enclosing block.
 
-    DSML raw contains only its invoke stanza; GLM/Qwen include tool_call tags.
+    DSML raw contains only its invoke stanza; GLM/Qwen/Hermes include tool_call tags.
     Payload spelling is preserved, while args contains unescaped/typed values.
     """
 
