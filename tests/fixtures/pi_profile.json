@@ -26,7 +26,7 @@
   },
   {
     "name": "bash",
-    "description": "Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last 2000 lines or 50,000 characters (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.",
+    "description": "Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.",
     "parameters": {
       "type": "object",
       "required": [
@@ -76,9 +76,9 @@
                 "type": "string",
                 "description": "Replacement text for this targeted edit."
               }
-            },
-            "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead."
-          }
+            }
+          },
+          "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead."
         }
       }
     },

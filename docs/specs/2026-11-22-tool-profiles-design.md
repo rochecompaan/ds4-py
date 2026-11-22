@@ -120,7 +120,11 @@ re-pinned if the final ruling changes `auto`.
   implementation; no new file-edit engine.
 - Keep existing ds4-py result text rather than copying C result formatting.
   Pi mode omits `ToolOutputLimits` spill/`read_tool_result` and the native
-  read-file-specific edit-error enrichment to preserve exactly four tools.
+  read-file-specific edit-error enrichment to preserve exactly four tools. The
+  reference's bash temp-file sentence remains schema text, but existing shell
+  truncation does not spill. Existing read continuation hints remain zero-based
+  although the Pi schema is one-based; following one repeats a line, never skips
+  content.
 - The Hermes `auto` mapping is explicitly provisional, not a measurement claim.
 - The open-decisions report is absent from the downstream main branch; its
   feature-branch copy supplied no additional PR B ruling.

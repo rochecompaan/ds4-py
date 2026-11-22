@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.filesystem import FileReadEvent
@@ -126,6 +126,9 @@ def test_pi_definitions_match_reference_exactly(tmp_path: Path) -> None:
     ]
     assert observed == fixture
     assert all(tool.tool_kind is None for tool in exposed.values())
+    edits = exposed["edit"].parameters_json_schema["properties"]["edits"]
+    assert list(edits) == ["type", "items", "description"]
+    assert "description" not in edits["items"]
 
 
 def test_pi_instructions_name_only_the_four_tools(tmp_path: Path) -> None:
@@ -207,6 +210,19 @@ def test_pi_edit_refuses_ambiguity_and_overlap_without_writing(
     (tmp_path / "data.txt").write_text(original)
     run_profile(tmp_path, [("edit", {"path": "data.txt", "edits": edits})])
     assert (tmp_path / "data.txt").read_text() == original
+
+
+@pytest.mark.parametrize("binary", [False, True], ids=["missing", "binary"])
+def test_pi_edit_missing_or_binary_file_requests_retry(tmp_path: Path, binary: bool) -> None:
+    path = tmp_path / "data.txt"
+    if binary:
+        path.write_bytes(b"\xff\xfe")
+    result, _ = run_profile(
+        tmp_path,
+        [("edit", {"path": "data.txt", "edits": [{"oldText": "a", "newText": "b"}]})],
+    )
+    retries = [part for message in result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)]
+    assert len(retries) == 1
 
 
 def test_pi_bash_round_trip_and_timeout_forwarding(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

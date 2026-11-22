@@ -8,9 +8,10 @@ from typing import TYPE_CHECKING, NotRequired, Required, TypedDict, override
 
 from pydantic import TypeAdapter
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, ToolFailed
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetTool, WrapperToolset
+from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness import Shell
 from pydantic_ai_harness.filesystem import Replacement
 
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 from .file_system import DS4FileSystem
 
 _READ_DESCRIPTION = "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50,000 characters (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete."
-_BASH_DESCRIPTION = "Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last 2000 lines or 50,000 characters (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds."
+_BASH_DESCRIPTION = "Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds."
 _EDIT_DESCRIPTION = "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes."
 _WRITE_DESCRIPTION = "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories."
 
@@ -65,8 +66,8 @@ _SCHEMAS = {
                         },
                         "newText": {"type": "string", "description": "Replacement text for this targeted edit."},
                     },
-                    "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead.",
                 },
+                "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead.",
             },
         },
     },
@@ -191,7 +192,12 @@ class PiToolset(WrapperToolset[object]):
         edits = args.get("edits")
         if not isinstance(edits, list) or not edits:
             raise ModelRetry("edits must be a non-empty array")
-        text = (await ctx.workspace.read_bytes(path)).decode()
+        try:
+            text = (await ctx.workspace.read_bytes(path)).decode()
+        except (OSError, UnicodeDecodeError) as error:
+            raise ModelRetry(f"Cannot edit {path}: {error}") from error
+        except WorkspaceError as error:
+            raise ToolFailed(f"Cannot edit {path}: {error}") from error
         replacements = []
         ranges = []
         for item in edits:
@@ -243,8 +249,6 @@ class PiToolset(WrapperToolset[object]):
             converted = await self._edit_args(tool_args, ctx)
         else:
             converted = {"path": _string(tool_args, "path"), "content": _string(tool_args, "content")}
-        # Keep the Pi tool name on the run context so capability-event
-        # validation sees the capability that contributed this call.
         return await self.wrapped.call_tool(original_name, converted, ctx, original_tool)
 
 
