@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.tools import RunContext
 
+    from ds4py.agent_composition import ToolProfile
     from ds4py.capabilities.compaction import CompactionResult
     from ds4py.engine.lifecycle import Listener, SessionEvent
     from ds4py.engine.prefix import PrefixTurn
@@ -195,6 +196,7 @@ class AgentRuntime:
         question_answerer: QuestionAnswerer | None = None,
         request_limit: int = 50,
         context: ContextComposition | None = None,
+        tool_profile: ToolProfile = "auto",
         before_identity_change: Callable[[], None] | None = None,
         after_identity_change: Callable[[], None] | None = None,
     ) -> None:
@@ -226,6 +228,7 @@ class AgentRuntime:
             question_answerer=question_answerer,
             session_dir=self._session_dir,
             context=context if context is not None else ContextComposition(),
+            tool_profile=tool_profile,
         )
         self._agent = self.components.agent
         self._notes = next(

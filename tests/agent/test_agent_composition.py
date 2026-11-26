@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast, override
@@ -6,8 +7,39 @@ from typing import Any, cast, override
 import pytest
 
 import ds4py
+from ds4py._native.fake import FakeNative
 from ds4py.agent_composition import ConfiguredSession
 from ds4py.engine.sampling import SamplingPolicy
+
+
+@pytest.mark.parametrize("profile", ["auto", "native", "pi"])
+def test_tool_profile_parser_accepts_each_profile(profile: str) -> None:
+    from ds4py import agent_cli
+
+    assert agent_cli.parser().parse_args([]).tool_profile == "auto"
+    assert agent_cli.parser().parse_args(["--tool-profile", profile]).tool_profile == profile
+
+
+def test_runtime_forwards_tool_profile_to_composition(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import ds4py.runtime as runtime_module
+    from ds4py.model import DS4Model
+    from ds4py.runtime import AgentRuntime
+
+    observed = []
+    original = runtime_module.build_agent_components
+
+    def record(*args: Any, **kwargs: Any) -> Any:
+        observed.append(kwargs["tool_profile"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(runtime_module, "build_agent_components", record)
+    with ds4py.open("f.gguf", native=FakeNative()) as engine:
+        model = DS4Model(engine.session(), sampling=SamplingPolicy())
+        runtime = AgentRuntime(model, tmp_path, tool_profile="pi")
+        try:
+            assert observed == ["pi"]
+        finally:
+            asyncio.run(runtime.close())
 
 
 @pytest.mark.parametrize(
@@ -209,6 +241,8 @@ def test_noninteractive_extension_receives_one_typed_options_value(
             "0",
             "--request-limit",
             "7",
+            "--tool-profile",
+            "pi",
             "--system",
             "rules",
             "--read-only",
@@ -234,6 +268,7 @@ def test_noninteractive_extension_receives_one_typed_options_value(
             top_k=0,
             top_p=0.0,
             min_p=0.0,
+            tool_profile="pi",
         )
     ]
     assert extension.project_dirs == [tmp_path]
@@ -249,6 +284,7 @@ def test_noninteractive_extension_receives_one_typed_options_value(
         "interactive": False,
         "question_answerer": None,
         "request_limit": 7,
+        "tool_profile": "pi",
         "before_identity_change": extension.before_identity_change,
         "after_identity_change": extension.after_identity_change,
     }

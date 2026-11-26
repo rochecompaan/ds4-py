@@ -57,6 +57,7 @@ def parser(extension: AgentExtension | None = None) -> argparse.ArgumentParser:
     result.add_argument("--prefix-file", type=Path)
     result.add_argument("--trace", type=Path)
     result.add_argument("--read-only", action="store_true")
+    result.add_argument("--tool-profile", choices=("auto", "native", "pi"), default="auto")
     result.add_argument("-m", "--model", default="ds4flash.gguf")
     result.add_argument("-c", "--ctx", type=int, default=100_000)
     result.add_argument("-n", "--tokens", type=int, default=50_000)
@@ -143,6 +144,7 @@ def open_runtime(
         top_k=args.top_k,
         top_p=args.top_p,
         min_p=args.min_p,
+        tool_profile=args.tool_profile,
     )
     with extension.open_session(options, project_dir, extension_config) as configured:
         model = DS4Model(configured.session, sampling=configured.sampling, max_tokens=options.tokens)
@@ -154,6 +156,7 @@ def open_runtime(
             interactive=options.interactive,
             question_answerer=_question_answerer if options.interactive else None,
             request_limit=args.request_limit,
+            tool_profile=options.tool_profile,
             before_identity_change=extension.before_identity_change if hooks_configured else None,
             after_identity_change=extension.after_identity_change if hooks_configured else None,
         )
