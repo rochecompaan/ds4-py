@@ -6,17 +6,18 @@ import pytest
 
 from ds4py.engine.tool_syntax.dsml import Dsml
 from ds4py.engine.tool_syntax.glm import Glm
+from ds4py.engine.tool_syntax.hermes import Hermes
 from ds4py.engine.tool_syntax.qwen import Qwen
 
 
 def load_cases() -> Any:
     cases = []
     fixture_root = Path(__file__).parents[2] / "fixtures" / "tool_syntax"
-    for syntax in ("dsml", "glm", "qwen"):
+    for syntax in ("dsml", "glm", "qwen", "hermes"):
         for index, case in enumerate(json.loads((fixture_root / f"{syntax}.json").read_text())):
             item = dict(case, syntax=syntax, id=f"{syntax}-{index}:{case['source']}")
             cases.append(item)
-    for syntax in ("dsml", "glm", "qwen"):
+    for syntax in ("dsml", "glm", "qwen", "hermes"):
         valid = next(case for case in cases if case["syntax"] == syntax and case["state"] == "DONE")
         cases.append(
             dict(
@@ -33,6 +34,8 @@ def new_parser(case: Any) -> Any:
         return Dsml(v41=case.get("v41", False))
     if case["syntax"] == "glm":
         return Glm()
+    if case["syntax"] == "hermes":
+        return Hermes()
     return Qwen()
 
 

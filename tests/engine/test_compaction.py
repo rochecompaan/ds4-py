@@ -161,19 +161,31 @@ def test_summary_does_not_leak_dsml(leak: bytes) -> None:
         assert b"DSML" not in b"".join(getattr(e, "text_bytes", b"") for e in observed)
 
 
-def test_summary_masks_dedicated_tool_tokens_before_argmax(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("family", "marker"),
+    [("deepseek4", "<tool_call>"), ("hermes", "<tool_call>"), ("hermes", "</tool_call>")],
+)
+def test_summary_masks_dedicated_tool_tokens_before_argmax(
+    monkeypatch: pytest.MonkeyPatch, family: str, marker: str
+) -> None:
     def distribution(self: FakeSession) -> list[float]:
         logits = [0.0] * self._engine.info().vocab_size
         generated = len(self._tokens) - self._prompt_length
         logits[FAKE_EOS if generated else 121] = 1.0
         if not generated:
-            logits[SPECIAL_TOKENS["<tool_call>"]] = 2.0
+            logits[SPECIAL_TOKENS[marker]] = 2.0
         if self._logits is None:
             self._logits = logits
         return self._logits
 
     monkeypatch.setattr(FakeSession, "_distribution", distribution)
-    with ds4py.open("f.gguf", ctx=4096, native=FakeNative()) as engine:
+    info = replace(
+        FakeNative()._info,
+        family=family,
+        is_qwen4=family == "hermes",
+        is_mellum=family == "hermes",
+    )
+    with ds4py.open("f.gguf", ctx=4096, native=FakeNative(info=info)) as engine:
         session = engine.session()
         seed(session)
         result = session.prepare_summary(2)
@@ -448,6 +460,8 @@ def test_summary_restores_full_invalid_native_state(outcome: str) -> None:
         ("qwen", "</function>"),
         ("qwen", "<parameter="),
         ("qwen", "</parameter>"),
+        ("hermes", "<tool_call>"),
+        ("hermes", "</tool_call>"),
     ],
 )
 @pytest.mark.parametrize("layout", ["bytes", "mixed", "split"])
@@ -480,7 +494,12 @@ def test_summary_sanitizes_literal_tool_delimiters(
             return (121, 122, FAKE_EOS)[min(len(generated), 2)]
 
         monkeypatch.setattr(FakeEngine, "token_text", text)
-        info = replace(FakeNative()._info, family=family, is_qwen4=family == "qwen")
+        info = replace(
+            FakeNative()._info,
+            family=family,
+            is_qwen4=family in ("qwen", "hermes"),
+            is_mellum=family == "hermes",
+        )
         with ds4py.open("f.gguf", ctx=4096, native=FakeNative(script=script, info=info)) as engine:
             session = engine.session()
             observed: list[object] = []

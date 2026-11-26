@@ -70,6 +70,14 @@ unzip -l dist/*.whl
 actionlint .github/workflows/ci.yml
 ```
 
+## Model tool-call formats
+
+ds4-py owns the tool-call format for each model family: DSML, GLM, Qwen, and Hermes. Each format includes a parser in `src/ds4py/engine/tool_syntax/`, a tool prompt block, and history rendering. These parts depend on the chat template and token transcript that ds4-py already drives. Downstream agents set model policy, such as sampling and decode controls, but do not ship tool-call parsers.
+
+Mellum uses the Hermes tool-call format.
+
+`make_parser` selects a parser from the native `EngineInfo` fields. It checks `is_mellum` before `is_qwen4`, because Mellum also reports `is_qwen4`. To add a format, add its parser beside the others and select it in `make_parser`. Implement its tool prompt and history rendering, and add fixtures from the reference implementation.
+
 ## Context compaction
 
 The default agent registers `LLMCompaction` as its automatic context owner.

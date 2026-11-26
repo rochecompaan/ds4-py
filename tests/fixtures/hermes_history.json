@@ -1,0 +1,15 @@
+{
+  "source": "d2d9338:tests/mellum_chat_ids.inc",
+  "imported_assistant": "<think>\nA simple sum.\n</think>\n\n4",
+  "assistant_expected": "<|im_start|>assistant\n4<|im_end|>\n",
+  "call_name": "read",
+  "call_args": {
+    "path": "hello.py"
+  },
+  "call_expected": "<tool_call>\n{\"name\": \"read\", \"arguments\": {\"path\": \"hello.py\"}}\n</tool_call>",
+  "tool_results": [
+    "print(\"hello, world\")\n",
+    "second result: 7 files\n"
+  ],
+  "tool_results_expected": "<|im_start|>user\n<tool_response>\nprint(\"hello, world\")\n\n</tool_response>\n<tool_response>\nsecond result: 7 files\n\n</tool_response><|im_end|>\n"
+}

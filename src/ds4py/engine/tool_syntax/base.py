@@ -279,6 +279,10 @@ def make_parser(info: EngineInfo) -> ToolParser:
     """Select a fresh parser from engine family flags; performs no native calls."""
     from .dsml import Dsml  # noqa: PLC0415 - Lazy parser registration avoids family import cycles.
 
+    if info.is_mellum:
+        from .hermes import Hermes  # noqa: PLC0415 - Lazy parser registration avoids family import cycles.
+
+        return Hermes()
     if info.is_qwen4:
         from .qwen import Qwen  # noqa: PLC0415 - Lazy parser registration avoids family import cycles.
 

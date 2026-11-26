@@ -70,6 +70,7 @@ def test_report_known_headers_and_optional_core_binding() -> None:
         "headers:  known",
         "layouts:  ok",
         f"bindings: {sum(b.required for b in CORE_BINDINGS)} required ok",
+        "optional: ds4_engine_is_mellum  present  (core)",
         "optional: ds4_session_supports_payload  present  (core)",
         "restore:  not verified (run `ds4py check --live --model PATH`)",
     ]

@@ -57,9 +57,12 @@ class EngineInfo:
     routed_quant_bits: int
     mtp_draft_tokens: int
     vocab_size: int
+    is_mellum: bool = False
 
 
-def family_of(*, deepseek41: bool, glm: bool, qwen: bool) -> str:
+def family_of(*, deepseek41: bool, glm: bool, qwen: bool, mellum: bool = False) -> str:
+    if mellum:
+        return "hermes"
     return "deepseek41" if deepseek41 else "glm" if glm else "qwen" if qwen else "deepseek4"
 
 

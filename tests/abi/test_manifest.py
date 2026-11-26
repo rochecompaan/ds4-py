@@ -18,7 +18,7 @@ def test_matching_manifest_is_accepted(make_manifest: Any, tmp_path: Path, upstr
     lib, m = make_manifest(tmp_path, upstream_headers)
     v = manifest.validate(m, lib_sha256=manifest.file_sha256(lib), bindings=CORE_BINDINGS, layouts=LAYOUTS)
     assert v.available == {b.name for b in CORE_BINDINGS if b.required}
-    assert v.absent == {"ds4_session_supports_payload"}
+    assert v.absent == {"ds4_engine_is_mellum", "ds4_session_supports_payload"}
     assert v.warnings == ()
 
 
@@ -125,7 +125,7 @@ def test_absent_optional_binding_is_listed(
         bindings=all_bindings(),
         layouts=LAYOUTS,
     )
-    assert v.absent == {"ds4_engine_sampling_defaults", "ds4_session_supports_payload"}
+    assert v.absent == {"ds4_engine_is_mellum", "ds4_engine_sampling_defaults", "ds4_session_supports_payload"}
     assert "ds4_engine_layer_count" in v.available
 
 

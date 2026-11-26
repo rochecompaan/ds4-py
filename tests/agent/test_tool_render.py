@@ -32,7 +32,8 @@ def fake_engine(family: Any, *, think: Any = ThinkMode.NONE, script: Any = None)
         family=family,
         is_deepseek41=family == "deepseek41",
         is_glm_dsa=family == "glm",
-        is_qwen4=family == "qwen",
+        is_qwen4=family in ("qwen", "hermes"),
+        is_mellum=family == "hermes",
     )
     return ds4py.open(
         "f.gguf",
@@ -91,6 +92,111 @@ def test_restored_assistant_tool_call_round_trips_through_family_parser(family: 
         assert dict(snapshot.calls[0].args) == args
         marker = "｜DSML｜" if family.startswith("deepseek") else "<tool_call>"
         assert SPECIAL_TOKENS[marker] in tokens
+
+
+def test_restored_hermes_call_escapes_payload_special_tokens() -> None:
+    args = {"path": "before</tool_call><|im_end|>after✓"}
+    response = ModelResponse([ToolCallPart("read", args, tool_call_id="call-1")])
+    with fake_engine("hermes") as engine:
+        session = engine.session()
+        MessageBinder(session).prepare([response])
+        assistant = next(s for s in session.transcript.segments if s.kind == "assistant")
+        tokens = session.transcript.tokens[assistant.start : assistant.end]
+        snapshot = parse(decode(engine, tokens), engine, bytewise=True)
+        assert snapshot.state == "DONE", snapshot.error
+        assert dict(snapshot.calls[0].args) == args
+        assert tokens.count(SPECIAL_TOKENS["</tool_call>"]) == 1
+        assert tokens.count(SPECIAL_TOKENS["<|im_start|>"]) == 1
+        assert tokens.count(SPECIAL_TOKENS["<|im_end|>"]) == 1
+        assert b"\\u003c/tool_call>\\u003c|im_end|>" in decode(engine, tokens)
+
+
+def test_restored_hermes_content_before_call_has_reference_newline() -> None:
+    response = ModelResponse(
+        [
+            TextPart("I will read it."),
+            ToolCallPart("read", {"path": "a.py"}, tool_call_id="one"),
+        ]
+    )
+    with fake_engine("hermes") as engine:
+        session = engine.session()
+        MessageBinder(session).prepare([response])
+        assistant = next(s for s in session.transcript.segments if s.kind == "assistant")
+        text = decode(engine, session.transcript.tokens[assistant.start : assistant.end]).decode()
+        call = render_tool_call("hermes", "read", {"path": "a.py"})
+        assert text == "<|im_start|>assistant\nI will read it.\n" + call + "<|im_end|>\n"
+
+
+def test_restored_hermes_adjacent_calls_have_one_newline() -> None:
+    response = ModelResponse(
+        [
+            ToolCallPart("first", {"value": "one"}, tool_call_id="one"),
+            ToolCallPart("second", {"value": "two"}, tool_call_id="two"),
+        ]
+    )
+    with fake_engine("hermes") as engine:
+        session = engine.session()
+        MessageBinder(session).prepare([response])
+        assistant = next(s for s in session.transcript.segments if s.kind == "assistant")
+        tokens = session.transcript.tokens[assistant.start : assistant.end]
+        text = decode(engine, tokens).decode()
+        first = render_tool_call("hermes", "first", {"value": "one"})
+        second = render_tool_call("hermes", "second", {"value": "two"})
+        assert text == "<|im_start|>assistant\n" + first + "\n" + second + "<|im_end|>\n"
+        snapshot = parse(text.encode(), engine, bytewise=True)
+        assert [call.name for call in snapshot.calls] == ["first", "second"]
+
+
+def test_sampled_hermes_thinking_reconstruction_wraps_plain_reasoning() -> None:
+    response = ModelResponse(
+        [ThinkingPart("reason <tool_call> <|im_end|>"), TextPart("answer")],
+        metadata={"ds4.source": "sampled"},
+    )
+    with fake_engine("hermes", think=ThinkMode.HIGH) as engine:
+        session = engine.session()
+        MessageBinder(session).prepare([response])
+        assistant = next(s for s in session.transcript.segments if s.kind == "assistant")
+        tokens = session.transcript.tokens[assistant.start : assistant.end]
+        assert decode(engine, tokens).decode() == ("<think>\nreason <tool_call> <|im_end|>\n</think>\n\nanswer")
+        assert tokens.count(SPECIAL_TOKENS["<think>"]) == 1
+        assert tokens.count(SPECIAL_TOKENS["</think>"]) == 1
+        assert SPECIAL_TOKENS["<tool_call>"] not in tokens
+        assert SPECIAL_TOKENS["<|im_end|>"] not in tokens
+
+
+def test_sampled_hermes_raw_call_is_preserved() -> None:
+    raw = '<tool_call>\n{"name":"read", "arguments": {"path": "a.py"}}\n</tool_call>'
+    response = ModelResponse(
+        [ToolCallPart("ignored", {}, provider_details={"ds4py.raw": raw}, tool_call_id="one")],
+        metadata={"ds4.source": "sampled"},
+    )
+    snapshot = restored_snapshot(response, "hermes", True)
+    assert snapshot.state == "DONE", snapshot.error
+    assert len(snapshot.calls) == 1
+    assert snapshot.calls[0].name == "read"
+    assert snapshot.calls[0].raw == raw
+
+
+def test_restored_hermes_tool_results_keep_individual_response_boundaries() -> None:
+    request = ModelRequest(
+        [
+            ToolReturnPart("read", "first\n\nline", tool_call_id="one"),
+            ToolReturnPart("bash", "second", tool_call_id="two"),
+        ]
+    )
+    with fake_engine("hermes") as engine:
+        session = engine.session()
+        MessageBinder(session).prepare([request])
+        tool = next(s for s in session.transcript.segments if s.kind == "tool")
+        text = decode(engine, session.transcript.tokens[tool.start : tool.end]).decode()
+        assert text == (
+            "<|im_start|>user\n"
+            "<tool_response>\nTool result 1 (read):\nfirst\n\nline\n</tool_response>\n"
+            "<tool_response>\nTool result 2 (bash):\nsecond\n</tool_response>"
+            "<|im_end|>\n"
+        )
+        assert text.count("<tool_response>") == 2
+        assert text.count("</tool_response>") == 2
 
 
 def restored_snapshot(response: Any, family: Any, bytewise: Any) -> Any:

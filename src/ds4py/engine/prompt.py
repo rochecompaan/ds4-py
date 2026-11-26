@@ -48,6 +48,11 @@ class PromptBuilder:
                 prefix.extend(tokens)
 
         append("system", self.engine._chat_begin())
+        if self.family == "hermes":
+            instruction_tokens = self.engine.tokenize(instructions + "\n\n") if bool(instructions) else []
+            tokens = self._qwen_open("system") + instruction_tokens + self._tool_tokens(tools) + self._qwen_close()
+            append("system", tokens)
+            return segments
         if self.family == "qwen":
             effort = self.engine._qwen_reasoning_effort(self.engine.think)
             if bool(effort):
@@ -91,9 +96,29 @@ class PromptBuilder:
                 return self.engine._render_message(prefix, "system", "") + self.engine.tokenize(text)
             if role == "assistant":
                 return self._glm_assistant(prefix, text)
-        elif self.family == "qwen" and role == "assistant":
+        elif self.family in ("qwen", "hermes") and role == "assistant":
+            if self.family == "hermes":
+                return self._hermes_assistant(text)
             return self._qwen_open("assistant") + self.engine.tokenize(text) + self._qwen_close()
         return self.engine._render_message(prefix, role, text)
+
+    @staticmethod
+    def _without_hermes_reasoning(spans: Iterable[tuple[str, bool]]) -> list[tuple[str, bool]]:
+        items = list(spans)
+        for index, (text, rendered) in enumerate(items):
+            if "</think>" not in text:
+                continue
+            suffix = text.split("</think>", 1)[1].lstrip("\n")
+            remainder = [(suffix, rendered)] if suffix else []
+            following = [item for item in items[index + 1 :] if item != ("</think>", True)]
+            return [*remainder, *following]
+        return items
+
+    def _hermes_assistant(self, text: str) -> list[int]:
+        tokens = self._qwen_open("assistant")
+        for span, rendered in self._without_hermes_reasoning([(text, False)]):
+            tokens.extend(self.engine.tokenize(span, rendered=rendered))
+        return tokens + self._qwen_close()
 
     def _glm_assistant(self, prefix: Sequence[int], text: str) -> list[int]:
         if text.startswith(("<think>", "</think>")):
@@ -113,6 +138,8 @@ class PromptBuilder:
                 raise EngineError("native GLM tool template has an unexpected closing delimiter")
             escaped = escape_tool_text(text, "</tool_response>")
             return rendered[: -len(closing)] + self.engine.tokenize(escaped) + closing
+        if self.family == "hermes":
+            return self._hermes_tool_results([text])
         if self.family == "qwen":
             escaped = escape_tool_text(text, "</tool_response>")
             return (
@@ -137,11 +164,13 @@ class PromptBuilder:
         assistant text uses message(), which never renders payload markup.
         """
         tokens = self.message(prefix, "assistant", "")
-        closing = self._qwen_close() if self.family == "qwen" else []
+        closing = self._qwen_close() if self.family in ("qwen", "hermes") else []
         if closing:
             if tokens[-len(closing) :] != closing:
                 raise EngineError("native Qwen assistant template has an unexpected close")
             tokens = tokens[: -len(closing)]
+        if self.family == "hermes":
+            spans = self._without_hermes_reasoning(spans)
         for text, rendered in spans:
             if text:
                 tokens.extend(self.engine.tokenize(text, rendered=rendered))
@@ -151,8 +180,23 @@ class PromptBuilder:
         """Build the family/mode assistant opener through the worker."""
         return self.engine._assistant_prefix(prefix, self.engine.think)
 
+    def _hermes_tool_results(self, results: Iterable[str]) -> list[int]:
+        tokens = self._qwen_open("user")
+        for index, result in enumerate(results):
+            if index:
+                tokens.extend(self.engine.tokenize("\n"))
+            escaped = escape_tool_text(result, "</tool_response>")
+            tokens.extend(self.engine.tokenize("<tool_response>", rendered=True))
+            tokens.extend(self.engine.tokenize("\n"))
+            tokens.extend(self.engine.tokenize(escaped))
+            tokens.extend(self.engine.tokenize("\n"))
+            tokens.extend(self.engine.tokenize("</tool_response>", rendered=True))
+        return tokens + self._qwen_close()
+
     def tool_results(self, prefix: Sequence[int], results: Iterable[str]) -> list[int]:
-        """Render all results as one message joined by two newlines."""
+        """Render all results in the family's native tool-message form."""
+        if self.family == "hermes":
+            return self._hermes_tool_results(results)
         return self._tool_message(prefix, "\n\n".join(results))
 
     def append_assistant_end(self) -> list[int]:

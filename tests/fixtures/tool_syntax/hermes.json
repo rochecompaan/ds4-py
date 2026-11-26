@@ -1,0 +1,312 @@
+[
+  {
+    "source": "simple_read",
+    "input": "<tool_call>\n{\"name\": \"read\", \"arguments\": {\"path\": \"hello.py\"}}\n</tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "read",
+        "args": {
+          "path": "hello.py"
+        }
+      }
+    ],
+    "raw": [
+      "<tool_call>\n{\"name\": \"read\", \"arguments\": {\"path\": \"hello.py\"}}\n</tool_call>"
+    ]
+  },
+  {
+    "source": "strings_and_two_calls",
+    "input": "<tool_call>\n{\"name\": \"write\", \"arguments\": {\"path\": \"a.py\", \"content\": \"q=\\\"x\\\"\\nline2\\t\\\\ \\ud83d\\ude00 \\u00e9 café\"}}\n</tool_call>\n<tool_call>\n{\"name\": \"bash\", \"arguments\": {\"command\": \"ls\"}}\n</tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "write",
+        "args": {
+          "path": "a.py",
+          "content": "q=\"x\"\nline2\t\\ 😀 é café"
+        }
+      },
+      {
+        "name": "bash",
+        "args": {
+          "command": "ls"
+        }
+      }
+    ],
+    "raw": [
+      "<tool_call>\n{\"name\": \"write\", \"arguments\": {\"path\": \"a.py\", \"content\": \"q=\\\"x\\\"\\nline2\\t\\\\ \\ud83d\\ude00 \\u00e9 café\"}}\n</tool_call>",
+      "<tool_call>\n{\"name\": \"bash\", \"arguments\": {\"command\": \"ls\"}}\n</tool_call>"
+    ]
+  },
+  {
+    "source": "markers_inside_strings",
+    "input": "<tool_call>\n{\"name\": \"write\", \"arguments\": {\"path\": \"p\", \"content\": \"</tool_call> </think> <think> \\\"} }} </tool_call> <|im_end|>\"}}\n</tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "write",
+        "args": {
+          "path": "p",
+          "content": "</tool_call> </think> <think> \"} }} </tool_call> <|im_end|>"
+        }
+      }
+    ],
+    "raw": [
+      "<tool_call>\n{\"name\": \"write\", \"arguments\": {\"path\": \"p\", \"content\": \"</tool_call> </think> <think> \\\"} }} </tool_call> <|im_end|>\"}}\n</tool_call>"
+    ]
+  },
+  {
+    "source": "typed_nested_values",
+    "input": "<tool_call>\n{\"name\": \"edit\", \"arguments\": {\"path\": \"f\", \"offset\": -1.5e3, \"enabled\": true, \"none\": null, \"edits\": [{\"oldText\": \"a\\\"b]}\", \"newText\": \"c\"}], \"nested\": {\"a\": [1, 2.5, false]}}}\n</tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "edit",
+        "args": {
+          "path": "f",
+          "offset": -1500.0,
+          "enabled": true,
+          "none": null,
+          "edits": [
+            {
+              "oldText": "a\"b]}",
+              "newText": "c"
+            }
+          ],
+          "nested": {
+            "a": [
+              1,
+              2.5,
+              false
+            ]
+          }
+        }
+      }
+    ],
+    "raw": [
+      "<tool_call>\n{\"name\": \"edit\", \"arguments\": {\"path\": \"f\", \"offset\": -1.5e3, \"enabled\": true, \"none\": null, \"edits\": [{\"oldText\": \"a\\\"b]}\", \"newText\": \"c\"}], \"nested\": {\"a\": [1, 2.5, false]}}}\n</tool_call>"
+    ]
+  },
+  {
+    "source": "arguments_as_json_string",
+    "input": "<tool_call>\n{\"name\": \"read\", \"arguments\": \"{\\\"path\\\": \\\"a b.py\\\", \\\"offset\\\": 3}\"}\n</tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "read",
+        "args": {
+          "path": "a b.py",
+          "offset": 3
+        }
+      }
+    ],
+    "raw": [
+      "<tool_call>\n{\"name\": \"read\", \"arguments\": \"{\\\"path\\\": \\\"a b.py\\\", \\\"offset\\\": 3}\"}\n</tool_call>"
+    ]
+  },
+  {
+    "source": "unknown_keys_and_reversed_order",
+    "input": "<tool_call>\n{\"id\": \"c1\", \"arguments\": {\"path\": \"x\"}, \"name\": \"read\", \"meta\": {\"a\": [1, \"}\"]}}\n</tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "read",
+        "args": {
+          "path": "x"
+        }
+      }
+    ],
+    "raw": [
+      "<tool_call>\n{\"id\": \"c1\", \"arguments\": {\"path\": \"x\"}, \"name\": \"read\", \"meta\": {\"a\": [1, \"}\"]}}\n</tool_call>"
+    ]
+  },
+  {
+    "source": "duplicate_arguments_later_wins",
+    "input": "<tool_call>\n{\"name\": \"read\", \"arguments\": {\"path\": \"first\"}, \"arguments\": {\"path\": \"second\", \"offset\": 2}}\n</tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "read",
+        "args": {
+          "path": "second",
+          "offset": 2
+        }
+      }
+    ],
+    "raw": [
+      "<tool_call>\n{\"name\": \"read\", \"arguments\": {\"path\": \"first\"}, \"arguments\": {\"path\": \"second\", \"offset\": 2}}\n</tool_call>"
+    ]
+  },
+  {
+    "source": "duplicate_argument_member_later_wins",
+    "input": "<tool_call>\n{\"name\": \"read\", \"arguments\": {\"path\": \"first\", \"path\": \"second\"}}\n</tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "read",
+        "args": {
+          "path": "second"
+        }
+      }
+    ],
+    "raw": [
+      "<tool_call>\n{\"name\": \"read\", \"arguments\": {\"path\": \"first\", \"path\": \"second\"}}\n</tool_call>"
+    ]
+  },
+  {
+    "source": "prose_around_calls",
+    "input": "before\n<tool_call>\n{\"name\": \"read\", \"arguments\": {\"path\": \"a.py\"}}\n</tool_call>\nbetween\n<tool_call>\n{\"name\": \"bash\", \"arguments\": {\"command\": \"ls\"}}\n</tool_call>\nafter",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "read",
+        "args": {
+          "path": "a.py"
+        }
+      },
+      {
+        "name": "bash",
+        "args": {
+          "command": "ls"
+        }
+      }
+    ],
+    "raw": [
+      "<tool_call>\n{\"name\": \"read\", \"arguments\": {\"path\": \"a.py\"}}\n</tool_call>",
+      "<tool_call>\n{\"name\": \"bash\", \"arguments\": {\"command\": \"ls\"}}\n</tool_call>"
+    ]
+  },
+  {
+    "source": "backtick_inside_string",
+    "input": "<tool_call>\n{\"name\": \"write\", \"arguments\": {\"path\": \"a.md\", \"content\": \"use `x`\"}}\n</tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "write",
+        "args": {
+          "path": "a.md",
+          "content": "use `x`"
+        }
+      }
+    ],
+    "raw": [
+      "<tool_call>\n{\"name\": \"write\", \"arguments\": {\"path\": \"a.md\", \"content\": \"use `x`\"}}\n</tool_call>"
+    ]
+  },
+  {
+    "source": "escaped_backslash_before_u0000",
+    "input": "<tool_call>\n{\"name\": \"write\", \"arguments\": {\"path\": \"x\", \"content\": \"a\\\\u0000b\"}}\n</tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "write",
+        "args": {
+          "path": "x",
+          "content": "a\\u0000b"
+        }
+      }
+    ],
+    "raw": [
+      "<tool_call>\n{\"name\": \"write\", \"arguments\": {\"path\": \"x\", \"content\": \"a\\\\u0000b\"}}\n</tool_call>"
+    ]
+  },
+  {
+    "source": "missing_arguments_defaults_to_empty_object",
+    "input": "<tool_call>\n{\"name\": \"list\"}\n</tool_call>",
+    "state": "DONE",
+    "calls": [
+      {
+        "name": "list",
+        "args": {}
+      }
+    ],
+    "raw": [
+      "<tool_call>\n{\"name\": \"list\"}\n</tool_call>"
+    ]
+  },
+  {
+    "source": "missing_name",
+    "input": "<tool_call>\n{\"arguments\": {\"path\": \"x\"}}\n</tool_call>",
+    "state": "ERROR",
+    "calls": [],
+    "error": "name"
+  },
+  {
+    "source": "empty_name",
+    "input": "<tool_call>\n{\"name\": \"\", \"arguments\": {}}\n</tool_call>",
+    "state": "ERROR",
+    "calls": [],
+    "error": "name"
+  },
+  {
+    "source": "non_string_name",
+    "input": "<tool_call>\n{\"name\": 5, \"arguments\": {}}\n</tool_call>",
+    "state": "ERROR",
+    "calls": [],
+    "error": "name"
+  },
+  {
+    "source": "arguments_array",
+    "input": "<tool_call>\n{\"name\": \"read\", \"arguments\": [1]}\n</tool_call>",
+    "state": "ERROR",
+    "calls": [],
+    "error": "arguments"
+  },
+  {
+    "source": "arguments_string_not_object",
+    "input": "<tool_call>\n{\"name\": \"read\", \"arguments\": \"[1]\"}\n</tool_call>",
+    "state": "ERROR",
+    "calls": [],
+    "error": "arguments"
+  },
+  {
+    "source": "trailing_comma_in_arguments",
+    "input": "<tool_call>\n{\"name\": \"read\", \"arguments\": {\"path\": \"x\",}}\n</tool_call>",
+    "state": "ERROR",
+    "calls": [],
+    "error": "JSON"
+  },
+  {
+    "source": "trailing_comma_in_call",
+    "input": "<tool_call>\n{\"name\": \"read\", \"arguments\": {\"path\": \"x\"},}\n</tool_call>",
+    "state": "ERROR",
+    "calls": [],
+    "error": "JSON"
+  },
+  {
+    "source": "backtick_delimited_value",
+    "input": "<tool_call>\n{\"name\": \"write\", \"arguments\": {\"path\": \"a.md\", \"content\": `x`}}\n</tool_call>",
+    "state": "ERROR",
+    "calls": [],
+    "error": "backticks"
+  },
+  {
+    "source": "escaped_nul",
+    "input": "<tool_call>\n{\"name\": \"write\", \"arguments\": {\"path\": \"x\", \"content\": \"a\\u0000b\"}}\n</tool_call>",
+    "state": "ERROR",
+    "calls": [],
+    "error": "NUL"
+  },
+  {
+    "source": "raw_nul",
+    "input": "<tool_call>\n{\"name\": \"write\", \"arguments\": {\"path\": \"x\", \"content\": \"a\u0000b\"}}\n</tool_call>",
+    "state": "ERROR",
+    "calls": [],
+    "error": "NUL"
+  },
+  {
+    "source": "truncated_call",
+    "input": "<tool_call>\n{\"name\": \"write\", \"arguments\": {\"path\": \"x\", \"content\": \"abc",
+    "state": "ERROR",
+    "calls": [],
+    "error": "incomplete"
+  },
+  {
+    "source": "call_inside_think",
+    "input": "<think>plan <tool_call>\n{\"name\": \"read\", \"arguments\": {\"path\": \"x\"}}\n</tool_call>",
+    "state": "ERROR",
+    "calls": [],
+    "error": "inside <think>"
+  }
+]

@@ -37,7 +37,9 @@ def test_core_bindings_compile_against_both_pins(
     for inc in (upstream_headers, fork_headers):
         results = probe.probe_signatures(inc, CORE_BINDINGS, cc, tmp_path / inc.name)
         assert set(results) == {binding.name for binding in CORE_BINDINGS}
-        expected_absent = {"ds4_session_supports_payload"} if inc == upstream_headers else set()
+        expected_absent = {"ds4_engine_is_mellum"}
+        if inc == upstream_headers:
+            expected_absent.add("ds4_session_supports_payload")
         assert {n for n, r in results.items() if not r.ok} == expected_absent
 
 
@@ -61,7 +63,7 @@ def test_changed_argument_type_fails_its_probe(cc: Any, tmp_path: Path) -> None:
     results = probe.probe_signatures(inc, CORE_BINDINGS, cc, tmp_path / "w")
     assert not results["ds4_session_eval"].ok
     assert "incompatible" in results["ds4_session_eval"].message
-    allowed_failures = {"ds4_session_eval", "ds4_session_supports_payload"}
+    allowed_failures = {"ds4_session_eval", "ds4_engine_is_mellum", "ds4_session_supports_payload"}
     assert all(r.ok for n, r in results.items() if n not in allowed_failures)
 
 
