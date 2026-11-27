@@ -196,6 +196,33 @@ def test_bytes_tool_results_are_metadata_only_across_recovery_tools() -> None:
         assert "b'\\x00" not in encoded
 
 
+@pytest.mark.parametrize("nested", [False, True], ids=["direct", "nested"])
+def test_non_image_binary_tool_results_are_metadata_only_across_recovery_tools(nested: bool) -> None:
+    binary = BinaryContent(b"%PDF", media_type="application/pdf")
+    content: object = {"document": [binary]} if nested else binary
+    messages = [
+        ModelResponse([ToolCallPart("read", {}, tool_call_id="binary-call")], metadata={DS4_KEY: "binary-turn"}),
+        ModelRequest(
+            [ToolReturnPart("read", content, tool_call_id="binary-call")],
+            metadata={DS4_KEY: "binary-result"},
+        ),
+    ]
+    toolset = create_context_paging_toolset(is_enabled=lambda: True, history_source=lambda: messages)
+
+    searched = _payload(_call(toolset, "search_history", {"query": "read"}))
+    loaded = _payload(_call(toolset, "load_history", {"historyIds": ["binary-turn"]}))
+    parts = _payload(_call(toolset, "read_context_output", {"historyId": "binary-turn", "mode": "parts"}))
+    binary_part = next(part for part in parts["parts"] if "application/pdf" in json.dumps(part))
+    page = _value(_call(toolset, "read_context_output", dict(binary_part["read"], mode="text")))
+
+    encoded = json.dumps([searched, loaded, parts, page], separators=(",", ":"))
+    assert '"type":"bytes"' in encoded or '\\"type\\":\\"bytes\\"' in encoded
+    assert '"bytes":4' in encoded or '\\"bytes\\":4' in encoded
+    assert "application/pdf" in encoded
+    assert "%PDF" not in encoded
+    assert "BinaryContent" not in encoded
+
+
 @pytest.mark.parametrize("image_type", [BinaryContent, BinaryImage])
 def test_real_image_tool_results_are_metadata_only_across_recovery_tools(image_type: Any) -> None:
     payload = b"IMAGEBYTES"

@@ -184,6 +184,8 @@ def _json_safe_content(value: object) -> object:
             "data": base64.b64encode(value.data).decode("ascii"),
             "mimeType": value.media_type,
         }
+    if isinstance(value, (BinaryContent, BinaryImage)):
+        return {"type": "bytes", "bytes": len(value.data), "mimeType": value.media_type}
     if isinstance(value, (bytes, bytearray, memoryview)):
         return {"type": "bytes", "bytes": len(value)}
     if isinstance(value, Mapping):
