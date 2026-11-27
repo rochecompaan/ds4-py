@@ -437,6 +437,70 @@ def test_oversized_pending_result_view_keeps_original_canonical_provenance() -> 
     assert cast("ToolReturnPart", replacement.parts[0]).content == TOOL_RESULT_DOES_NOT_FIT
 
 
+def test_reserve_after_pending_result_fallback_continues_in_actual_view() -> None:
+    from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+
+    import ds4py
+    from ds4py import ThinkMode
+    from ds4py._native.fake import FakeNative
+    from ds4py.capabilities.context import TOOL_RESULT_DOES_NOT_FIT
+    from ds4py.engine.prompt import PromptBuilder
+    from ds4py.message_metadata import DS4_VIEW_OF
+
+    canonical: list[ModelMessage] = [
+        user("current", "current"),
+        ModelResponse([ToolCallPart("read", {}, tool_call_id="one")], metadata={DS4_KEY: "calls"}),
+        ModelRequest(
+            [ToolReturnPart("read", "oversized result " * 500, tool_call_id="one")],
+            metadata={DS4_KEY: "results"},
+        ),
+    ]
+    before = deepcopy(canonical)
+
+    async def scenario() -> None:
+        with ds4py.open(
+            "f.gguf", ctx=1200, think=ThinkMode.NONE, native=FakeNative(script=sequential_text("abc"))
+        ) as engine:
+            model = make_model(engine.session())
+            owner = RollingWindow(
+                model.binder, disabled_owner=LLMCompaction(model.binder), token_budget=1024, trim_to=800
+            )
+            model.context_owner = owner
+            make_room = owner.make_room
+
+            async def recover(messages: list[ModelMessage], request: Any) -> Any:
+                result = await make_room(messages, request)
+                # Restore the fake native limit after the real replacement, as in the reserve controller tests.
+                model.session._worker.call(lambda _engine, native: setattr(native, "_ctx", engine.config.ctx)).result()
+                return result
+
+            cast("Any", owner).make_room = recover
+            ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=canonical)
+            await owner.before_model_request(ctx, request_context(model, list(canonical)))
+
+            async with model.request_stream(canonical, None, ModelRequestParameters(), run_context=ctx) as stream:
+                prompt_length = len(model.session.transcript)
+                prefix = len(PromptBuilder(engine).assistant_prefix(model.session.transcript.tokens))
+                model.session._worker.call(
+                    lambda _engine, native: setattr(native, "_ctx", prompt_length + prefix + 2)
+                ).result()
+                async for _ in stream:
+                    pass
+                response = stream.get()
+
+            assert cast("TextPart", response.parts[-1]).content == "abc"
+            replacement = owner.request_messages([], ctx)[-1]
+            assert replacement.metadata == {
+                DS4_KEY: "results:rejected:1",
+                DS4_CONTEXT_PAGING: "recovery",
+                DS4_VIEW_OF: "results",
+            }
+            assert cast("ToolReturnPart", replacement.parts[0]).content == TOOL_RESULT_DOES_NOT_FIT
+
+    asyncio.run(scenario())
+    assert canonical == before
+
+
 @pytest.mark.parametrize("code", ["RESIDENT_INPUT_TOO_LARGE", "INVALID_MESSAGE_STRUCTURE"])
 def test_pending_results_preserve_non_tail_selection_errors(monkeypatch: Any, code: str) -> None:
     from pydantic_ai.messages import ToolCallPart, ToolReturnPart

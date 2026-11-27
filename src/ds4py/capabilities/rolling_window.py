@@ -256,9 +256,11 @@ class RollingWindow(ContextStrategy):
         messages: Sequence[ModelMessage],
         params: ModelRequestParameters,
         remembered: SelectionState | None,
+        *,
+        overflow: OverflowMode = "normal",
     ) -> SelectionResult:
         try:
-            return self._select(messages, params, remembered)
+            return self._select(messages, params, remembered, overflow=overflow)
         except ContextSelectionError as selection_error:
             if selection_error.code != "ACTIVE_REQUEST_TOO_LARGE":
                 raise
@@ -298,7 +300,7 @@ class RollingWindow(ContextStrategy):
                         tool_part = cast("ToolReturnPart", candidate)
                         tool_part.content = TOOL_RESULT_DOES_NOT_FIT
                 try:
-                    return self._select(working, params, remembered, provenance_messages=messages)
+                    return self._select(working, params, remembered, overflow=overflow, provenance_messages=messages)
                 except ContextSelectionError:
                     continue
             raise ContextExhausted("pending tool errors do not fit the rolling-window context") from selection_error
@@ -335,7 +337,7 @@ class RollingWindow(ContextStrategy):
         if params is None:
             raise ContextSelectionError("REQUEST_PARAMETERS_UNAVAILABLE", "Reserve selection lacks request parameters.")
         try:
-            selected = self._select(
+            selected = self._select_with_tool_fallback(
                 canonical,
                 params,
                 state.selection,
