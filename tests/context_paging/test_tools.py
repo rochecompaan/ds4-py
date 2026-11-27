@@ -1,6 +1,8 @@
 import asyncio
 import json
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -276,6 +278,26 @@ def test_multimodal_tool_results_are_metadata_only_across_recovery_tools(
             image_read = media_part["read"]
         with pytest.raises(EngineError, match="image recovery requires M5 vision support"):
             _call(toolset, "read_context_output", image_read)
+
+
+@pytest.mark.parametrize("content", [datetime(2026, 11, 27, tzinfo=UTC), Decimal("1.5")])
+def test_search_rejects_non_json_results_with_a_recovery_reply(content: object) -> None:
+    messages = [
+        ModelResponse([ToolCallPart("read", {}, tool_call_id="value-call")], metadata={DS4_KEY: "value-turn"}),
+        ModelRequest(
+            [ToolReturnPart("read", {"value": content}, tool_call_id="value-call")],
+            metadata={DS4_KEY: "value-result"},
+        ),
+    ]
+    toolset = create_context_paging_toolset(is_enabled=lambda: True, history_source=lambda: messages)
+
+    for name, arguments in [
+        ("search_history", {"query": "read"}),
+        ("load_history", {"historyIds": ["value-turn"]}),
+    ]:
+        result = _call(toolset, name, arguments)
+        text = _value(result)["content"][0]["text"]
+        assert "Recovery input error: Recovery part contains a value that is not public JSON data." in text
 
 
 @pytest.mark.parametrize("image_type", [BinaryContent, BinaryImage])

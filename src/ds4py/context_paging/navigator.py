@@ -88,7 +88,10 @@ def _search_safe(value: object) -> object:
 
 
 def _serialized(value: object) -> str:
-    return compact_json(_search_safe(value))
+    try:
+        return compact_json(_search_safe(value))
+    except (TypeError, ValueError) as error:
+        raise ValueError("Recovery part contains a value that is not public JSON data.") from error
 
 
 def _content_text(content: object) -> str:

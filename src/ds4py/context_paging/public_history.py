@@ -217,7 +217,9 @@ def _json_safe_content(value: object) -> object:
         return {key: _json_safe_content(child) for key, child in value.items()}
     if isinstance(value, Sequence) and not isinstance(value, str):
         return [_json_safe_content(child) for child in value]
-    return deepcopy(value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise ValueError("Recovery part contains a value that is not public JSON data.")
 
 
 def _milliseconds(value: datetime | None) -> int:
