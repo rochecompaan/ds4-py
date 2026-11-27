@@ -9,15 +9,20 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pydantic_ai.messages import (
+    AudioUrl,
     BinaryContent,
     BinaryImage,
+    DocumentUrl,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
+    VideoUrl,
 )
 
 from ds4py.context_paging.history import (
@@ -177,7 +182,7 @@ def _visible_calls(turn: ModelTurnHistoryItem, excluded: set[str]) -> list[tuple
     ]
 
 
-def _json_safe_content(value: object) -> object:
+def _media_content(value: object) -> dict[str, object] | None:
     if isinstance(value, (BinaryContent, BinaryImage)) and value.media_type.startswith("image/"):
         return {
             "type": "image",
@@ -186,8 +191,28 @@ def _json_safe_content(value: object) -> object:
         }
     if isinstance(value, (BinaryContent, BinaryImage)):
         return {"type": "bytes", "bytes": len(value.data), "mimeType": value.media_type}
+    if isinstance(value, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
+        return {
+            "type": value.kind.removesuffix("-url"),
+            "url": value.url,
+            "mimeType": value.media_type or "application/octet-stream",
+        }
+    if isinstance(value, UploadedFile):
+        return {
+            "type": "file",
+            "fileId": value.file_id,
+            "providerName": value.provider_name,
+            "mimeType": value.media_type or "application/octet-stream",
+        }
     if isinstance(value, (bytes, bytearray, memoryview)):
         return {"type": "bytes", "bytes": len(value)}
+    return None
+
+
+def _json_safe_content(value: object) -> object:
+    media = _media_content(value)
+    if media is not None:
+        return media
     if isinstance(value, Mapping):
         return {key: _json_safe_content(child) for key, child in value.items()}
     if isinstance(value, Sequence) and not isinstance(value, str):

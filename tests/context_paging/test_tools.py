@@ -6,14 +6,19 @@ from typing import Any
 
 import pytest
 from pydantic_ai.messages import (
+    AudioUrl,
     BinaryContent,
     BinaryImage,
+    DocumentUrl,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
@@ -221,6 +226,56 @@ def test_non_image_binary_tool_results_are_metadata_only_across_recovery_tools(n
     assert "application/pdf" in encoded
     assert "%PDF" not in encoded
     assert "BinaryContent" not in encoded
+
+
+@pytest.mark.parametrize(
+    ("content", "expected_type", "expected_reference"),
+    [
+        (ImageUrl("https://example.test/shot.png"), "image", "https://example.test/shot.png"),
+        (AudioUrl("https://example.test/sound.mp3"), "audio", "https://example.test/sound.mp3"),
+        (DocumentUrl("https://example.test/doc.pdf"), "document", "https://example.test/doc.pdf"),
+        (VideoUrl("https://example.test/movie.mp4"), "video", "https://example.test/movie.mp4"),
+        (UploadedFile("file-123", provider_name="openai", media_type="application/pdf"), "file", "file-123"),
+    ],
+    ids=["image-url", "audio-url", "document-url", "video-url", "uploaded-file"],
+)
+@pytest.mark.parametrize("nested", [False, True], ids=["direct", "nested"])
+def test_multimodal_tool_results_are_metadata_only_across_recovery_tools(
+    content: object, expected_type: str, expected_reference: str, nested: bool
+) -> None:
+    wrapped = {"attachment": [content]} if nested else content
+    messages = [
+        ModelResponse([ToolCallPart("read", {}, tool_call_id="media-call")], metadata={DS4_KEY: "media-turn"}),
+        ModelRequest(
+            [ToolReturnPart("read", wrapped, tool_call_id="media-call")],
+            metadata={DS4_KEY: "media-result"},
+        ),
+    ]
+    toolset = create_context_paging_toolset(is_enabled=lambda: True, history_source=lambda: messages)
+
+    searched = _payload(_call(toolset, "search_history", {"query": "read"}))
+    loaded = _payload(_call(toolset, "load_history", {"historyIds": ["media-turn"]}))
+    parts = _payload(_call(toolset, "read_context_output", {"historyId": "media-turn", "mode": "parts"}))
+    if isinstance(content, ImageUrl) and nested:
+        media_part = next(part for part in parts["parts"] if part["part"] == "/toolResults/0/content")
+    else:
+        media_part = next(part for part in parts["parts"] if expected_reference in json.dumps(part))
+    page = _value(_call(toolset, "read_context_output", dict(media_part["read"], mode="text")))
+
+    encoded = json.dumps([searched, loaded, parts, page], separators=(",", ":"))
+    assert f'"type":"{expected_type}"' in encoded or f'\\"type\\":\\"{expected_type}\\"' in encoded
+    assert expected_reference in encoded
+    assert type(content).__name__ not in encoded
+    if isinstance(content, ImageUrl):
+        assert loaded["items"][0]["deferred"] is True
+        if nested:
+            recovered = json.loads(page["content"][1]["text"])
+            image_read = recovered["attachment"][0]["read"]
+        else:
+            assert media_part["type"] == "image"
+            image_read = media_part["read"]
+        with pytest.raises(EngineError, match="image recovery requires M5 vision support"):
+            _call(toolset, "read_context_output", image_read)
 
 
 @pytest.mark.parametrize("image_type", [BinaryContent, BinaryImage])

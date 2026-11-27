@@ -48,6 +48,7 @@ class ImageMetadata(TypedDict):
     mimeType: str
     bytes: int
     read: PartReadHandle
+    url: NotRequired[str]
 
 
 class HistoryPartDescription(TypedDict):
@@ -56,6 +57,7 @@ class HistoryPartDescription(TypedDict):
     bytes: int
     preview: NotRequired[str]
     read: PartReadHandle
+    url: NotRequired[str]
 
 
 class RecoveryPartText(TypedDict):
@@ -90,7 +92,7 @@ def is_recovery_image(value: object) -> TypeIs[Mapping[str, object]]:
     return (
         isinstance(value, Mapping)
         and value.get("type") == "image"
-        and isinstance(value.get("data"), str)
+        and (isinstance(value.get("data"), str) or isinstance(value.get("url"), str))
         and isinstance(value.get("mimeType"), str)
     )
 
@@ -266,17 +268,23 @@ def history_parts(item: PublicHistoryItem) -> list[HistoryPart]:
 
 
 def _image_metadata(image: Mapping[str, object], history_id: str, part: str) -> ImageMetadata:
-    data = image["data"]
+    data = image.get("data")
+    url = image.get("url")
     mime_type = image["mimeType"]
-    if not isinstance(data, str) or not isinstance(mime_type, str):
-        raise TypeError("Image data and MIME type must be strings.")
-    padding = 2 if data.endswith("==") else 1 if data.endswith("=") else 0
-    return {
+    if (not isinstance(data, str) and not isinstance(url, str)) or not isinstance(mime_type, str):
+        raise TypeError("Image data or URL and MIME type must be strings.")
+    metadata: ImageMetadata = {
         "type": "image",
         "mimeType": mime_type,
-        "bytes": max(0, utf16_length(data) * 3 // 4 - padding),
+        "bytes": 0,
         "read": {"historyId": history_id, "part": part, "mode": "image"},
     }
+    if isinstance(data, str):
+        padding = 2 if data.endswith("==") else 1 if data.endswith("=") else 0
+        metadata["bytes"] = max(0, utf16_length(data) * 3 // 4 - padding)
+    if isinstance(url, str):
+        metadata["url"] = url
+    return metadata
 
 
 def _image_safe(value: object, history_id: str, path: str) -> object:
@@ -319,12 +327,15 @@ def recovery_part_text(item: PublicHistoryItem, pointer: str) -> RecoveryPartTex
 def describe_history_part(item: PublicHistoryItem, part: HistoryPart) -> HistoryPartDescription:
     if is_recovery_image(part.value):
         metadata = _image_metadata(part.value, item.history_id, part.part)
-        return {
+        description: HistoryPartDescription = {
             "part": part.part,
             "type": "image",
             "bytes": metadata["bytes"],
             "read": metadata["read"],
         }
+        if "url" in metadata:
+            description["url"] = metadata["url"]
+        return description
     recovery = recovery_part_text(item, part.part)
     value_type = "json"
     if recovery["format"] == "text":
