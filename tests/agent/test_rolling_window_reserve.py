@@ -212,6 +212,11 @@ def test_reserve_selection_accounts_for_sampled_response_tokens(monkeypatch: pyt
                 sampled_start = session.open_assistant_start()
                 assert sampled_start is not None
                 sampled = len(session.transcript.tokens) - sampled_start
+
+                def reject_fresh_projection(*args: Any, **kwargs: Any) -> Any:
+                    raise AssertionError("strict reserve recovery must not project a fresh request")
+
+                monkeypatch.setattr(model.binder, "project_request", reject_fresh_projection)
                 result = await make_room(messages, request)
                 assert selection_contexts[-1] == engine.config.ctx - sampled - RESPONSE_RESERVE
                 return result
