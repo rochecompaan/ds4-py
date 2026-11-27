@@ -399,6 +399,38 @@ def test_oversized_pending_results_are_rejected_only_on_view_clones(monkeypatch:
     assert cast("ToolReturnPart", clone.parts[1]).content == TOOL_RESULT_DOES_NOT_FIT
 
 
+@pytest.mark.parametrize("code", ["RESIDENT_INPUT_TOO_LARGE", "INVALID_MESSAGE_STRUCTURE"])
+def test_pending_results_preserve_non_tail_selection_errors(monkeypatch: Any, code: str) -> None:
+    from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+
+    from ds4py.errors import ContextSelectionError
+
+    canonical: list[ModelMessage] = [
+        user("current", "current"),
+        ModelResponse([ToolCallPart("read", {}, tool_call_id="one")], metadata={DS4_KEY: "calls"}),
+        ModelRequest([ToolReturnPart("read", "result", tool_call_id="one")], metadata={DS4_KEY: "results"}),
+    ]
+    error = ContextSelectionError(code, "preserve this diagnostic")
+
+    def select(_history: Any, **kwargs: Any) -> Any:
+        raise error
+
+    monkeypatch.setattr("ds4py.capabilities.rolling_window.select_view", select)
+    binder = StubBinder([0] * 100, transcript_tokens=0, ctx=65536)
+    session: Any = MockSession()
+    session.transcript = binder.session.transcript
+    session.engine = binder.session.engine
+    binder.session = session
+    owner = RollingWindow(cast("Any", binder), disabled_owner=LLMCompaction(cast("Any", binder)), token_budget=10)
+    model = SimpleNamespace(binder=binder)
+    ctx = RunContext(deps=None, model=cast("Any", model), usage=RunUsage(), messages=canonical)
+
+    with pytest.raises(ContextSelectionError) as caught:
+        asyncio.run(owner.before_model_request(ctx, request_context(model, list(canonical))))
+
+    assert caught.value is error
+
+
 def test_disabled_owner_delegates_policy_and_disables_only_recovery_tools() -> None:
     async def scenario() -> None:
         binder = StubBinder([0] * 100, transcript_tokens=0, ctx=65536)

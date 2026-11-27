@@ -256,6 +256,8 @@ class RollingWindow(ContextStrategy):
         try:
             return self._select(messages, params, remembered)
         except ContextSelectionError as selection_error:
+            if selection_error.code != "ACTIVE_REQUEST_TOO_LARGE":
+                raise
             pending = messages[-1] if messages and isinstance(messages[-1], ModelRequest) else None
             results = (
                 [
