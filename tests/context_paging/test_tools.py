@@ -141,6 +141,21 @@ def test_search_load_lists_unloaded_ids_and_read_modes_preserve_handles() -> Non
     assert blocks[1]["text"]
 
 
+def test_model_incorrect_read_input_returns_guidance_instead_of_crashing() -> None:
+    toolset = _toolset([PublicUser("user-1", 0, 0, ("needle",))])
+
+    result = _call(
+        toolset,
+        "read_context_output",
+        {"historyId": "user-1", "source": "assistant"},
+    )
+
+    text = _value(result)["content"][0]["text"]
+    assert "Recovery input error:" in text
+    assert "not a model turn" in text
+    assert "part handle" in text
+
+
 def test_valid_image_mode_raises_m5_error_without_exposing_bytes() -> None:
     image = PublicModelTurn(
         "turn-image",

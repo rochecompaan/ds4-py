@@ -14,6 +14,7 @@ from ds4py.context_paging.navigator import HistoryNavigator, HistoryReference
 from ds4py.context_paging.public_history import PublicHistoryItem, PublicUser, project_public_history
 from ds4py.context_paging.recovery_parts import (
     HistoryPartDescription,
+    RecoveryInputError,
     context_output_texts,
     describe_history_part,
     history_parts,
@@ -183,7 +184,10 @@ def create_context_paging_toolset(  # noqa: C901, PLR0915 - The four public tool
     def disabled_result(operation: Callable[[], ToolReturn]) -> ToolReturn:
         if not is_enabled():
             return ToolReturn(return_value=_DISABLED)
-        return operation()
+        try:
+            return operation()
+        except (ValueError, RecoveryInputError) as error:
+            return _tool_return(recovery_text_reply([f"Recovery input error: {error}"]))
 
     def search_history(  # noqa: PLR0913, PLR0917 - The schema fixes all public arguments.
         query: Annotated[str, Field(max_length=200)],

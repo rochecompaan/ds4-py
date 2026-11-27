@@ -27,6 +27,10 @@ _PARTS_HINT = 'Use read_context_output with mode "parts" to list every public pa
 _PLAIN_TEXT_FIELD_COUNT = 2
 
 
+class RecoveryInputError(Exception):
+    """A model-correctable recovery request that does not fit legacy selectors."""
+
+
 @dataclass(frozen=True, slots=True)
 class HistoryPart:
     part: str
@@ -374,7 +378,9 @@ def _selected_part(
     source = input_value.get("source")
     item = public_history_item(items, history_id)
     if not isinstance(item, PublicModelTurn):
-        raise TypeError(f"History ID {history_id} is not a model turn.")
+        raise RecoveryInputError(
+            f"History ID {history_id} is not a model turn; use an exact part handle for this item."
+        )
     if source == "assistant":
         if input_value.get("toolCallId") is not None:
             raise ValueError("Assistant output does not accept toolCallId.")
