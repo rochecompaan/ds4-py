@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
 from functools import partial
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
@@ -90,6 +91,15 @@ def _tool_digest(tools: Iterable[ToolDefinition]) -> str:
 
 # The one response token a round keeps after the request projection.
 RESPONSE_RESERVE = 1
+
+
+@dataclass(frozen=True, slots=True)
+class RenderedRequestView:
+    """A reserve replacement plus the exact plan to publish after installation."""
+
+    replacement: TranscriptReplacement
+    prepared: PreparedMessages
+    plan: BindingPlan
 
 
 class MessageBinder:
@@ -552,7 +562,7 @@ class MessageBinder:
         self,
         messages: Sequence[ModelMessage],
         params: ModelRequestParameters,
-    ) -> TranscriptReplacement:
+    ) -> RenderedRequestView:
         """Render a replacement for reserve recovery without publishing a new request."""
         prepared = self.prepare_messages(messages)
         effective = request_instructions(prepared.targets, params)
@@ -575,7 +585,7 @@ class MessageBinder:
             )
             if plan.change.start <= prefix_start:
                 replacement = TranscriptReplacement.concat(replacement, current.slice(prefix_start))
-        return replacement
+        return RenderedRequestView(replacement, prepared, plan)
 
     def reserve_overflow(self, projected_tokens: int) -> int:
         """Return the tokens the projection still needs to admit the response reserve.
@@ -626,11 +636,16 @@ class MessageBinder:
             self._records.append(record)
             self._bound_messages.append(deepcopy(response))
 
-    def adopt_rendered_view(self, messages: Sequence[ModelMessage]) -> None:
-        """Adopt a successfully installed reserve replacement and its exact provenance."""
-        prepared = prepare_provenance(messages, self.export_segments(), loaded=None)
-        self._records = list(prepared.records)
-        self._bound_messages = list(prepared.bound_messages)
+    def adopt_rendered_view(self, rendered: RenderedRequestView) -> None:
+        """Publish the prepared plan after its replacement installs successfully."""
+        plan = rendered.plan
+        provider = self.note_provider
+        targets = rendered.prepared.targets
+        self._signature = plan.signature
+        self._restored = False
+        self._publish_boundary(plan.initial, provider, targets, plan)
+        for boundary in plan.boundaries:
+            self._publish_boundary(boundary, provider, targets, plan)
 
     def export_segments(self) -> tuple[SegmentProvenance, ...]:
         exported = []

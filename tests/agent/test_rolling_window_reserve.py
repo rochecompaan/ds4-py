@@ -6,6 +6,7 @@ import asyncio
 from copy import deepcopy
 from dataclasses import replace
 
+import pytest
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.tools import RunContext
@@ -15,6 +16,7 @@ from test_context_strategy import fake_engine, make_model, sequential_text
 from ds4py.binding_provenance import prepare_request_view_provenance
 from ds4py.capabilities.compaction import LLMCompaction
 from ds4py.capabilities.rolling_window import RollingWindow
+from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.context_paging.stats import InputTokenReading, read_request_input
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.message_metadata import (
@@ -60,8 +62,8 @@ def test_recovery_render_keeps_the_open_tail_after_a_historical_response() -> No
                         and not segment.meta.get("key")
                     )
                     expected = session.transcript.tokens[prefix_start:]
-                    replacement = model.binder.render_request_view(canonical[2:], params)
-                    assert replacement.tokens[-len(expected) :] == expected
+                    rendered = model.binder.render_request_view(canonical[2:], params)
+                    assert rendered.replacement.tokens[-len(expected) :] == expected
                     checked = True
                 stream.get()
             assert checked
@@ -69,12 +71,21 @@ def test_recovery_render_keeps_the_open_tail_after_a_historical_response() -> No
     asyncio.run(scenario())
 
 
-def test_reserve_rebinds_a_smaller_view_and_continues_the_same_response() -> None:
+@pytest.mark.parametrize("note_mode", ["hint", "restored"])
+def test_reserve_rebinds_a_smaller_view_and_continues_the_same_response(note_mode: str) -> None:
     async def scenario() -> None:
         with fake_engine(script=sequential_text("ab")) as engine:
             session = engine.session()
+            engine.config = replace(engine.config, ctx=32768)
             model = make_model(session)
-            owner = RollingWindow(model.binder, disabled_owner=LLMCompaction(model.binder))
+            notes = DS4SystemNotes(session, hints=True, clock=lambda: "fixed")
+            model.note_provider = notes
+            owner = RollingWindow(
+                model.binder,
+                disabled_owner=LLMCompaction(model.binder),
+                token_budget=16000,
+                trim_to=15800,
+            )
             model.context_owner = owner
             canonical = [
                 user("old " * 500, "old-user"),
@@ -99,6 +110,10 @@ def test_reserve_rebinds_a_smaller_view_and_continues_the_same_response() -> Non
 
             async with model.request_stream(canonical, None, params, run_context=ctx) as stream:
                 prompt_length = len(session.transcript)
+                if note_mode == "hint":
+                    notes.hints_enabled = False
+                else:
+                    model.binder.restore_notes(model.binder.export_segments())
                 prefix = len(PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens))
                 engine.config = replace(engine.config, ctx=prompt_length + prefix)
                 session._worker.call(
@@ -129,6 +144,21 @@ def test_reserve_rebinds_a_smaller_view_and_continues_the_same_response() -> Non
             assert canonical[0] not in view and canonical[1] not in view
             assert view[0].metadata is not None
             assert view[0].metadata[DS4_CONTEXT_PAGING] == "notice"
+            note_kinds = [
+                segment.kind
+                for segment in model.binder.export_segments()
+                if segment.kind == "system_note" or segment.kind.startswith("system_note:")
+            ]
+            if note_mode == "hint":
+                assert note_kinds.count("system_note:hints_off") == 1
+            assert notes.pending(view) == []
+            model.binder.prepare(view)
+            followup_note_kinds = [
+                segment.kind
+                for segment in model.binder.export_segments()
+                if segment.kind == "system_note" or segment.kind.startswith("system_note:")
+            ]
+            assert followup_note_kinds == note_kinds
 
     asyncio.run(scenario())
 

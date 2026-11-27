@@ -346,9 +346,9 @@ class RollingWindow(ContextStrategy):
                 raise ContextExhausted("selected rolling-window reserve view does not fit the model context")
             if request.operations is None:
                 raise ContextExhausted("rolling-window reserve recovery requires retained operations")
-            replacement = self.binder.render_request_view(selected.candidate_messages, params)
-            await request.operations.replace_transcript_async(replacement, reason="context_paging")
-            self.binder.adopt_rendered_view(selected.candidate_messages)
+            rendered = self.binder.render_request_view(selected.candidate_messages, params)
+            await request.operations.replace_transcript_async(rendered.replacement, reason="context_paging")
+            self.binder.adopt_rendered_view(rendered)
         state.selection = selected.state
         state.request_view = selected.candidate_messages
         state.request_input_tokens = selected.measurement.total_tokens
