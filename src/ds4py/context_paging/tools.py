@@ -292,7 +292,6 @@ def create_context_paging_toolset(  # noqa: C901, PLR0915 - The four public tool
             image = select_history_part(item, part)
             if not is_recovery_image(image):
                 raise ValueError("The selected public part is not an image.")
-            describe_history_part(item, next(candidate for candidate in history_parts(item) if candidate.part == part))
             raise EngineError("image recovery requires M5 vision support")
 
         return disabled_result(execute)

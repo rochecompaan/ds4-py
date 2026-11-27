@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from ds4py.engine.prefix import PrefixTurn
     from ds4py.engine.session import Session
     from ds4py.model import DS4Model
-from ds4py.runtime_persistence import build_save_record, build_save_snapshot
+from ds4py.runtime_persistence import build_save_record, build_save_snapshot, validate_save_messages
 from ds4py.runtime_restore import RestoreResult, plan_restore, prepare_restore_case, restore_snapshot
 from ds4py.store import (
     KV_HEADER,
@@ -389,6 +389,9 @@ class AgentRuntime:
             self._messages = self.model.binder.adopt_failed(messages)
         else:
             self._messages = self.model.binder.adopt(messages)
+        owner = self.model.context_owner
+        if isinstance(owner, RollingWindow):
+            owner.adopt_history(self._messages)
         if snapshot is None:
             snapshot = await self._latest(run_id)
         if snapshot is not None:
@@ -570,6 +573,12 @@ class AgentRuntime:
         await self._stop_active()
         session_id = self._session.id
         session_dir = self.store.session_dir(session_id)
+        request_view = (
+            self.model.binder.request_view()
+            if isinstance(self.model.context_owner, RollingWindow) and self.model.context_owner.enabled
+            else None
+        )
+        validate_save_messages(self._messages, () if request_view is None else request_view)
         tokens = list(self._session.transcript.tokens)
         if not tokens:
             raise StoreError("cannot save a session with an empty transcript")
@@ -619,11 +628,7 @@ class AgentRuntime:
             payload_bytes=payload_bytes,
             tokens=tokens,
             segments=self.model.binder.export_segments(),
-            request_view=(
-                self.model.binder.request_view()
-                if isinstance(self.model.context_owner, RollingWindow) and self.model.context_owner.enabled
-                else None
-            ),
+            request_view=request_view,
         )
         self.store.write_record_atomic(session_dir / "save.json", record)
         if not payloads_supported:

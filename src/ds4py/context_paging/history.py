@@ -4,20 +4,17 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai.messages import (
-    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
-    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
 
-from ds4py.binding_provenance import message_content_hash, validate_messages
+from ds4py.binding_provenance import is_resident_message, message_content_hash, validate_messages
 from ds4py.errors import EngineError
 from ds4py.message_metadata import DS4_KEY
 
@@ -242,11 +239,7 @@ def project_history(
         if not isinstance(message, ModelRequest):
             raise TypeError(f"unsupported canonical message type: {type(message).__name__}")
         validate_messages([message])
-        if (
-            message.parts
-            and not any(isinstance(part, UserPromptPart) for part in message.parts)
-            and all(isinstance(part, (SystemPromptPart, InstructionPart)) for part in message.parts)
-        ):
+        if is_resident_message(message):
             resident.append(message)
         else:
             items.append(

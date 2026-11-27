@@ -126,6 +126,10 @@ class RollingWindow(ContextStrategy):
             input_tokens=state.request_input_tokens,
         )
 
+    def adopt_history(self, canonical_messages: Sequence[ModelMessage]) -> None:
+        """Track the runtime's authoritative history after terminal run adoption."""
+        self._state.canonical_messages = tuple(canonical_messages)
+
     def reset_after_fork(self) -> None:
         """Retain canonical identity and KV while resetting per-session policy accounting."""
         from ds4py.binding_provenance import prepare_request_view_provenance  # noqa: PLC0415 - Restore-only validation path.

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from pydantic_ai.messages import (
     BinaryContent,
+    BinaryImage,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -144,13 +145,11 @@ def paging_tool_call_ids(turn: ModelTurnHistoryItem) -> set[str]:
 
 
 def _has_public_work(turn: ModelTurnHistoryItem, excluded: set[str]) -> bool:
+    if any(isinstance(part, TextPart) for part in turn.response.parts):
+        return True
     if not excluded:
         return True
-    return any(
-        exchange.call.tool_call_id not in excluded
-        or (exchange.result is not None and exchange.call.tool_call_id not in excluded)
-        for exchange in turn.exchanges
-    )
+    return any(exchange.call.tool_call_id not in excluded for exchange in turn.exchanges)
 
 
 def _collect_files(value: object, files: list[str], seen: set[str]) -> None:
@@ -179,6 +178,12 @@ def _visible_calls(turn: ModelTurnHistoryItem, excluded: set[str]) -> list[tuple
 
 
 def _json_safe_content(value: object) -> object:
+    if isinstance(value, (BinaryContent, BinaryImage)) and value.media_type.startswith("image/"):
+        return {
+            "type": "image",
+            "data": base64.b64encode(value.data).decode("ascii"),
+            "mimeType": value.media_type,
+        }
     if isinstance(value, (bytes, bytearray, memoryview)):
         return {"type": "bytes", "bytes": len(value)}
     if isinstance(value, Mapping):

@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -29,7 +30,7 @@ from ds4py.capabilities.context import ContextComposition
 from ds4py.capabilities.rolling_window import RollingWindow
 from ds4py.context_paging.history import HistoryProjectionError, derive_frontier, project_history
 from ds4py.context_paging.public_history import PublicModelTurn, project_public_history
-from ds4py.errors import StoreError
+from ds4py.errors import EngineError, StoreError
 from ds4py.message_metadata import DS4_CONTEXT_PAGING, DS4_KEY, DS4_VIEW_OF
 from ds4py.runtime import AgentRuntime
 from ds4py.store import SessionStore
@@ -87,6 +88,36 @@ def test_whole_turn_omissions_derive_the_last_completed_turn() -> None:
     assert frontier is not None
     assert frontier.kind == "completedTurn"
     assert frontier.last_evicted.history_id == "r2"
+
+
+def test_completed_run_fork_and_follow_up_keep_canonical_history_in_sync(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def scenario() -> None:
+        with runtime_engine(script=scripted_rounds("first answer", "second answer")) as engine:
+            runtime = AgentRuntime(
+                make_model(engine),
+                project_dir(tmp_path),
+                store=SessionStore(tmp_path / "home"),
+                clock=fixed_clock,
+                context=ContextComposition.rolling(token_budget=16000),
+            )
+            try:
+                await runtime.run("hello")
+                adopted = tuple(runtime.messages)
+                owner = runtime.model.context_owner
+                assert isinstance(owner, RollingWindow)
+
+                await runtime.fork()
+
+                assert "session event listener failed" not in capsys.readouterr().err
+                assert owner._state.canonical_messages == adopted
+                await runtime.run("follow up")
+                assert owner._state.canonical_messages == tuple(runtime.messages)
+            finally:
+                await runtime.close()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("continuation", ["switch", "fork"])
@@ -303,6 +334,43 @@ def test_active_partial_restore_completes_later_and_extends_loaded_view(tmp_path
                 assert reused > 0
                 current_tokens = runtime.model.session.transcript.tokens
                 assert current_tokens[:reused] == tokens[:reused]
+            finally:
+                await runtime.close()
+
+    asyncio.run(scenario())
+
+
+def test_save_refuses_image_bytes_in_the_bound_request_view(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scenario() -> None:
+        with runtime_engine(script=scripted_rounds("done")) as engine:
+            store = SessionStore(tmp_path / "home")
+            runtime = AgentRuntime(
+                make_model(engine),
+                project_dir(tmp_path),
+                store=store,
+                clock=fixed_clock,
+                context=ContextComposition.rolling(token_budget=16000),
+            )
+            try:
+                await runtime.run("hello")
+                payload = b"IMAGEBYTES"
+                image_result = ModelRequest(
+                    [ToolReturnPart("read", BinaryContent(payload, media_type="image/png"), tool_call_id="image")],
+                    metadata={DS4_KEY: "image-result"},
+                )
+                bound_view = (*runtime.model.binder.request_view(), image_result)
+                monkeypatch.setattr(runtime.model.binder, "request_view", lambda: bound_view)
+
+                with pytest.raises(EngineError, match="image input requires M5 vision support"):
+                    await runtime.save()
+
+                session_dir = store.session_dir(runtime.session_id)
+                assert not (session_dir / "save.json").exists()
+                for path in session_dir.rglob("*"):
+                    if path.is_file():
+                        contents = path.read_bytes()
+                        assert payload not in contents
+                        assert b"SU1BR0VCWVRFUw==" not in contents
             finally:
                 await runtime.close()
 

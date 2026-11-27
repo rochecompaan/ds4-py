@@ -12,7 +12,15 @@ from test_history import _message, _timestamp
 from ds4py.binding_plan import BindingChange
 from ds4py.binding_projection import RequestProjection
 from ds4py.context_paging.history import HistoryProjection, project_history
-from ds4py.context_paging.selection import OverflowMode, RollingWindowSettings, SelectionResult, select_view
+from ds4py.context_paging.notice import PagingNotice
+from ds4py.context_paging.selection import (
+    ContextCutFrontier,
+    ContextCutKey,
+    RollingWindowSettings,
+    SelectionResult,
+    SelectionState,
+    select_view,
+)
 from ds4py.context_paging.text_units import utf16_length
 from ds4py.message_metadata import DS4_CONTEXT_PAGING, DS4_KEY, DS4_TIMESTAMP
 
@@ -172,31 +180,56 @@ def _result_value(
     return value
 
 
-@pytest.mark.parametrize("fixture", FIXTURES, ids=lambda fixture: fixture["id"])
-def test_generated_selection_contract(fixture: dict[str, Any]) -> None:
-    input_value = fixture["input"]
-    history, meter, raw_by_id = _history(input_value)
-    expected_mode = fixture["expected"]["value"]["mode"]
-    overflow: OverflowMode = (
-        "protected-overflow"
-        if expected_mode == "protected-overflow"
-        else "recovery"
-        if expected_mode == "recovery"
-        else "normal"
+def _remembered(input_value: dict[str, Any]) -> SelectionState:
+    raw = input_value["cutState"]
+    frontier = raw["frontier"]
+    last_evicted = frontier["lastEvicted"]
+    return SelectionState(
+        ContextCutFrontier(
+            frontier["kind"],
+            ContextCutKey(last_evicted["historyId"], last_evicted.get("toolCallId")),
+            frontier.get("userHistoryId"),
+        ),
+        PagingNotice(raw["notice"]["content"], "fixture-replay") if raw["notice"] is not None else None,
     )
-    settings = RollingWindowSettings(
+
+
+def _settings(input_value: dict[str, Any]) -> RollingWindowSettings:
+    return RollingWindowSettings(
         enabled=True,
         token_budget=input_value["tokenBudget"],
         trim_to=input_value["trimToTokens"],
         trim_to_explicit=True,
     )
 
+
+@pytest.mark.parametrize("fixture", FIXTURES, ids=lambda fixture: fixture["id"])
+def test_generated_selection_contract(fixture: dict[str, Any]) -> None:
+    input_value = fixture["input"]
+    history, meter, raw_by_id = _history(input_value)
     result = select_view(
         history,
-        settings=settings,
+        settings=_settings(input_value),
         model_context=input_value["modelContextWindow"],
         meter=meter,
-        overflow=overflow,
     )
 
     assert _result_value(result, raw_by_id) == fixture["expected"]["value"]
+
+    if "replay" in fixture:
+        replay = fixture["replay"]
+        replay_input = replay["input"]
+        replay_history, replay_meter, replay_raw_by_id = _history(replay_input)
+        replayed = select_view(
+            replay_history,
+            settings=_settings(replay_input),
+            model_context=replay_input["modelContextWindow"],
+            meter=replay_meter,
+            remembered=_remembered(replay_input),
+        )
+        actual_replay = _result_value(replayed, replay_raw_by_id)
+        expected_replay = deepcopy(replay["expected"]["value"])
+        # Pi replays an additive estimate; ds4 measures the exact rebuilt request.
+        actual_replay.pop("estimatedTokens")
+        expected_replay.pop("estimatedTokens")
+        assert actual_replay == expected_replay

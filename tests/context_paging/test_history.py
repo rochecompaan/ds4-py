@@ -7,6 +7,8 @@ from typing import Any, cast
 import pytest
 from pydantic_ai.messages import (
     BinaryContent,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -144,6 +146,23 @@ def test_generated_history_contract(fixture: dict[str, Any]) -> None:
     assert [item.failed for item in public if isinstance(item, PublicModelTurn)] == [
         item["metadata"]["failed"] for item in expected_public if item is not None and item["kind"] == "modelTurn"
     ]
+
+
+@pytest.mark.parametrize(
+    "part",
+    [
+        InstructionBaselinePart(instructions=[]),
+        InstructionDeltaPart(id=None, content="additional rules"),
+    ],
+)
+def test_instruction_baseline_and_delta_are_resident_not_public_history(part: object) -> None:
+    request = ModelRequest([cast("Any", part)], metadata={DS4_KEY: "resident-instructions"})
+
+    projection = project_history([request])
+
+    assert projection.resident_messages == (request,)
+    assert projection.items == ()
+    assert project_public_history(projection) == ()
 
 
 def test_newest_incomplete_turn_is_retained_for_selection_but_not_public() -> None:

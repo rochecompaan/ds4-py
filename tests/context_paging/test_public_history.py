@@ -155,6 +155,27 @@ def test_paging_only_turns_disappear() -> None:
     assert project_public_history(project_history(_turn(calls, results))) == ()
 
 
+@pytest.mark.parametrize("nested_wrapper", [False, True], ids=["top-level-paging", "nested-paging-wrapper"])
+def test_public_text_survives_when_every_tool_exchange_is_paging(nested_wrapper: bool) -> None:
+    nested = {"complete": True, "calls": [{"id": "nested/1", "name": "load_history", "status": "ok"}]}
+    tool_name = "codemode" if nested_wrapper else "search_history"
+    messages = _turn(
+        [
+            TextPart("ordinary answer"),
+            ToolCallPart(tool_name, {"hidden": "paging-argument"}, tool_call_id="paging"),
+        ],
+        [_result("paging", tool_name, metadata={"nestedCalls": nested} if nested_wrapper else None)],
+    )
+
+    turn = _public_turn(messages)
+
+    assert turn.content == (PublicText("ordinary answer"), None)
+    assert turn.tool_results == ()
+    assert turn.tools == ()
+    assert "paging-argument" not in repr(turn)
+    assert "result for paging" not in repr(turn)
+
+
 def test_mixed_turn_retains_ordinary_work_and_recomputes_failure_metadata() -> None:
     nested = {"complete": True, "calls": [{"id": "nested/1", "name": "load_history", "status": "ok"}]}
     messages = _turn(

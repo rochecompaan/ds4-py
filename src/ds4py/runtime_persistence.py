@@ -5,8 +5,10 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
+from pydantic_ai.messages import BinaryContent, BinaryImage, ImageUrl, ToolReturnPart, UserPromptPart
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot
 
+from ds4py.errors import EngineError
 from ds4py.store import SaveRecord, token_digest
 
 if TYPE_CHECKING:
@@ -15,6 +17,29 @@ if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
 
     from ds4py.store import SegmentProvenance
+
+
+def _contains_image(content: object) -> bool:
+    if isinstance(content, (BinaryContent, BinaryImage)):
+        return content.media_type.startswith("image/")
+    if isinstance(content, ImageUrl):
+        return True
+    if isinstance(content, dict):
+        return any(_contains_image(value) for value in content.values())
+    if isinstance(content, (list, tuple)):
+        return any(_contains_image(value) for value in content)
+    return False
+
+
+def validate_save_messages(*message_groups: Sequence[ModelMessage]) -> None:
+    """Keep the existing M5 image-save refusal ahead of every save artifact."""
+    for messages in message_groups:
+        for message in messages:
+            for part in message.parts:
+                if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                    raise EngineError("image input requires M5 vision support")
+                if isinstance(part, ToolReturnPart) and _contains_image(part.content):
+                    raise EngineError("image input requires M5 vision support")
 
 
 def build_save_snapshot(

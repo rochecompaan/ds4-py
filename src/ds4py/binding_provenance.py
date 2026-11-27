@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
+from typing import TYPE_CHECKING, NotRequired, TypedDict, TypeIs, cast
 from uuid import uuid4
 
 from pydantic_ai.messages import (
@@ -248,6 +248,19 @@ def _validate(messages: Sequence[ModelMessage]) -> None:
 def validate_messages(messages: Sequence[ModelMessage]) -> None:
     """Validate supported parts and reject unsupported media at the model boundary."""
     _validate(messages)
+
+
+def is_resident_message(message: ModelMessage) -> TypeIs[ModelRequest]:
+    """Classify the complete instruction prefix shared by projection and selection."""
+    return (
+        isinstance(message, ModelRequest)
+        and bool(message.parts)
+        and not any(isinstance(part, UserPromptPart) for part in message.parts)
+        and all(
+            isinstance(part, (SystemPromptPart, InstructionPart, InstructionBaselinePart, InstructionDeltaPart))
+            for part in message.parts
+        )
+    )
 
 
 def _installed_segment(provenance: SegmentProvenance) -> Segment:

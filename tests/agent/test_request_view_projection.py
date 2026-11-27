@@ -2,7 +2,16 @@ from copy import deepcopy
 from typing import Any, cast
 
 import pytest
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    InstructionBaselinePart,
+    InstructionDeltaPart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from test_binding import fake_engine
 
@@ -71,6 +80,26 @@ def test_exact_tokens_and_unit_spans_match_the_following_prepared_request() -> N
         covered = projection.resident_tokens + sum(unit.end - unit.start for unit in projection.units)
         assert covered + assistant_prefix == projection.total_tokens
         assert candidate == messages
+
+
+@pytest.mark.parametrize(
+    "part",
+    [
+        InstructionBaselinePart(instructions=[]),
+        InstructionDeltaPart(id=None, content="additional rules"),
+    ],
+)
+def test_instruction_baseline_and_delta_stay_out_of_pageable_units(part: object) -> None:
+    resident = ModelRequest([cast("Any", part)], metadata={DS4_KEY: "resident-instructions"})
+    messages: list[ModelMessage] = [resident, _user("active", "u1")]
+    with fake_engine() as engine:
+        from ds4py.binding import MessageBinder
+
+        binder = MessageBinder(engine.session())
+        projection = _project(binder, messages, deepcopy(messages))
+
+        assert projection.resident_tokens > 0
+        assert [(unit.unit_key, unit.request_keys) for unit in projection.units] == [("u1", ("u1",))]
 
 
 def test_binder_returns_isolated_exact_bound_view_and_empty_before_binding() -> None:

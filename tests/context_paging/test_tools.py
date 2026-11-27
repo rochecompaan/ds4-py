@@ -5,7 +5,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturn, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    BinaryContent,
+    BinaryImage,
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
@@ -187,6 +196,40 @@ def test_bytes_tool_results_are_metadata_only_across_recovery_tools() -> None:
         assert "b'\\x00" not in encoded
 
 
+@pytest.mark.parametrize("image_type", [BinaryContent, BinaryImage])
+def test_real_image_tool_results_are_metadata_only_across_recovery_tools(image_type: Any) -> None:
+    payload = b"IMAGEBYTES"
+    messages = [
+        ModelResponse([ToolCallPart("read", {}, tool_call_id="image-call")], metadata={DS4_KEY: "image-turn"}),
+        ModelRequest(
+            [
+                ToolReturnPart(
+                    "read",
+                    image_type(payload, media_type="image/png"),
+                    tool_call_id="image-call",
+                )
+            ],
+            metadata={DS4_KEY: "image-result"},
+        ),
+    ]
+    toolset = create_context_paging_toolset(is_enabled=lambda: True, history_source=lambda: messages)
+
+    searched = _payload(_call(toolset, "search_history", {"query": "read"}))
+    assert searched["references"][0]["historyId"] == "image-turn"
+    loaded = _payload(_call(toolset, "load_history", {"historyIds": ["image-turn"]}))
+    assert loaded["items"][0]["deferred"] is True
+    parts = _payload(_call(toolset, "read_context_output", {"historyId": "image-turn", "mode": "parts"}))
+    image = next(part for part in parts["parts"] if part["type"] == "image")
+
+    page = _value(_call(toolset, "read_context_output", dict(image["read"], mode="text")))
+    encoded = json.dumps([searched, loaded, parts, page], separators=(",", ":"))
+    assert "SU1BR0VCWVRFUw==" not in encoded
+    assert "IMAGEBYTES" not in encoded
+    assert "image/png" in encoded
+    with pytest.raises(EngineError, match="image recovery requires M5 vision support"):
+        _call(toolset, "read_context_output", image["read"])
+
+
 def test_model_incorrect_read_input_returns_guidance_instead_of_crashing() -> None:
     toolset = _toolset([PublicUser("user-1", 0, 0, ("needle",))])
 
@@ -226,6 +269,38 @@ def test_valid_image_mode_raises_m5_error_without_exposing_bytes() -> None:
             "read_context_output",
             {"historyId": "turn-image", "part": "/toolResults/0/content/0", "mode": "image"},
         )
+
+
+def test_nested_image_handle_uses_the_stable_m5_error() -> None:
+    messages = [
+        ModelResponse([ToolCallPart("read", {}, tool_call_id="nested-image")], metadata={DS4_KEY: "nested-turn"}),
+        ModelRequest(
+            [
+                ToolReturnPart(
+                    "read",
+                    {"nested": BinaryContent(b"IMAGEBYTES", media_type="image/png")},
+                    tool_call_id="nested-image",
+                )
+            ],
+            metadata={DS4_KEY: "nested-result"},
+        ),
+    ]
+    toolset = create_context_paging_toolset(is_enabled=lambda: True, history_source=lambda: messages)
+
+    page = _value(
+        _call(
+            toolset,
+            "read_context_output",
+            {"historyId": "nested-turn", "part": "/toolResults/0/content", "mode": "text"},
+        )
+    )
+    nested = json.loads(page["content"][1]["text"])["nested"]
+    assert nested["read"]["part"] == "/toolResults/0/content/nested"
+    assert "data" not in nested
+    assert "IMAGEBYTES" not in json.dumps(page)
+
+    with pytest.raises(EngineError, match="image recovery requires M5 vision support"):
+        _call(toolset, "read_context_output", nested["read"])
 
 
 def test_paging_tool_calls_are_excluded_from_real_canonical_history() -> None:

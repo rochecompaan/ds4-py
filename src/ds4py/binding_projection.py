@@ -6,16 +6,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pydantic_ai.messages import (
-    InstructionPart,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
-    SystemPromptPart,
     ToolReturnPart,
-    UserPromptPart,
 )
 
-from ds4py.binding_provenance import message_content_hash
+from ds4py.binding_provenance import is_resident_message, message_content_hash
 from ds4py.engine.prompt import PromptBuilder
 from ds4py.errors import EngineError
 from ds4py.message_metadata import DS4_CONTEXT_PAGING, DS4_KEY, DS4_VIEW_OF
@@ -114,12 +111,7 @@ def _is_notice(message: ModelMessage) -> bool:
 
 
 def _is_resident(message: ModelMessage) -> bool:
-    return (
-        isinstance(message, ModelRequest)
-        and bool(message.parts)
-        and not any(isinstance(part, UserPromptPart) for part in message.parts)
-        and all(isinstance(part, (SystemPromptPart, InstructionPart)) for part in message.parts)
-    )
+    return is_resident_message(message)
 
 
 def _unit_groups(messages: Sequence[ModelMessage]) -> list[list[int]]:
