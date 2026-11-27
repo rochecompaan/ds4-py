@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast, override
 
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolReturnPart
 
+from ds4py.binding import RESPONSE_RESERVE
 from ds4py.binding_plan import request_instructions
 from ds4py.binding_provenance import ensure_message_keys
 from ds4py.capabilities.context import TOOL_RESULT_DOES_NOT_FIT, ContextRequest, ContextStrategy, RoomResult
@@ -259,8 +260,16 @@ class RollingWindow(ContextStrategy):
         *,
         overflow: OverflowMode = "normal",
     ) -> SelectionResult:
+        model_context: int | None = None
+        if overflow == "recovery":
+            session = self.binder.session
+            model_context = session.engine.config.ctx
+            sampled_start = session.open_assistant_start()
+            if sampled_start is not None:
+                sampled = len(session.transcript.tokens) - sampled_start
+                model_context = max(1, model_context - sampled - RESPONSE_RESERVE)
         try:
-            return self._select(messages, params, remembered, overflow=overflow)
+            return self._select(messages, params, remembered, overflow=overflow, model_context=model_context)
         except ContextSelectionError as selection_error:
             if selection_error.code != "ACTIVE_REQUEST_TOO_LARGE":
                 raise
@@ -303,7 +312,12 @@ class RollingWindow(ContextStrategy):
                     # Recovery already failed; each retry must keep its rejected results instead of
                     # replacing them with the same recovery references and rejecting their view-only key.
                     return self._select(
-                        working, params, remembered, overflow="protected-overflow", provenance_messages=messages
+                        working,
+                        params,
+                        remembered,
+                        overflow="protected-overflow",
+                        provenance_messages=messages,
+                        model_context=model_context,
                     )
                 except ContextSelectionError:
                     continue
@@ -313,7 +327,7 @@ class RollingWindow(ContextStrategy):
     def _instructions(messages: Sequence[ModelMessage], request_context: ModelRequestContext) -> str | None:
         return request_instructions(messages, request_context.model_request_parameters)
 
-    def _select(
+    def _select(  # noqa: PLR0913 - Tool fallback must share the exact recovery-window measurement.
         self,
         messages: Sequence[ModelMessage],
         params: ModelRequestParameters,
@@ -321,11 +335,14 @@ class RollingWindow(ContextStrategy):
         *,
         overflow: OverflowMode = "normal",
         provenance_messages: Sequence[ModelMessage] | None = None,
+        model_context: int | None = None,
     ) -> SelectionResult:
+        if model_context is None:
+            model_context = self.binder.session.engine.config.ctx
         return select_view(
             project_history(messages, restore_ids=self._state.restore_ids),
             settings=self._state.settings,
-            model_context=self.binder.session.engine.config.ctx,
+            model_context=model_context,
             meter=RequestMeter(self.binder, params, provenance_messages=provenance_messages),
             remembered=remembered,
             overflow=overflow,

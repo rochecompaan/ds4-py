@@ -14,6 +14,8 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from test_context_strategy import fake_engine, make_model, sequential_text
 
+import ds4py.capabilities.rolling_window as rolling_window_module
+from ds4py.binding import RESPONSE_RESERVE
 from ds4py.binding_provenance import prepare_request_view_provenance
 from ds4py.capabilities.compaction import LLMCompaction
 from ds4py.capabilities.rolling_window import RollingWindow
@@ -160,6 +162,73 @@ def test_reserve_rebinds_a_smaller_view_and_continues_the_same_response(note_mod
                 if segment.kind == "system_note" or segment.kind.startswith("system_note:")
             ]
             assert followup_note_kinds == note_kinds
+
+    asyncio.run(scenario())
+
+
+def test_reserve_selection_accounts_for_sampled_response_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scenario() -> None:
+        with fake_engine(family="qwen", script=sequential_text("ab")) as engine:
+            session = engine.session()
+            engine.config = replace(engine.config, ctx=32768)
+            model = make_model(session)
+            owner = RollingWindow(
+                model.binder,
+                disabled_owner=LLMCompaction(model.binder),
+                token_budget=16000,
+                trim_to=16000,
+            )
+            model.context_owner = owner
+            canonical = [
+                user("first old request " * 500, "first-old-user"),
+                ModelResponse([TextPart("first old answer " * 500)], metadata={DS4_KEY: "first-old-response"}),
+                user("second old request " * 400, "second-old-user"),
+                ModelResponse([TextPart("second old answer " * 400)], metadata={DS4_KEY: "second-old-response"}),
+                user("active request", "active-user"),
+            ]
+            before = deepcopy(canonical)
+            ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=canonical)
+            params = ModelRequestParameters()
+            await owner.before_model_request(
+                ctx,
+                ModelRequestContext(
+                    model=model,
+                    messages=canonical,
+                    model_settings=None,
+                    model_request_parameters=params,
+                ),
+            )
+            selection_contexts: list[int] = []
+            select_view = rolling_window_module.select_view
+
+            def capture_selection_context(*args: Any, **kwargs: Any) -> Any:
+                selection_contexts.append(kwargs["model_context"])
+                return select_view(*args, **kwargs)
+
+            monkeypatch.setattr(rolling_window_module, "select_view", capture_selection_context)
+            make_room = owner.make_room
+
+            async def check_recovery_context(messages: list[Any], request: Any) -> Any:
+                sampled_start = session.open_assistant_start()
+                assert sampled_start is not None
+                sampled = len(session.transcript.tokens) - sampled_start
+                result = await make_room(messages, request)
+                assert selection_contexts[-1] == engine.config.ctx - sampled - RESPONSE_RESERVE
+                return result
+
+            cast("Any", owner).make_room = check_recovery_context
+            async with model.request_stream(canonical, None, params, run_context=ctx) as stream:
+                prompt_length = len(session.transcript)
+                prefix = len(PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens))
+                session._worker.call(
+                    lambda _engine, native: setattr(native, "_ctx", prompt_length + prefix + 3)
+                ).result()
+                async for _ in stream:
+                    pass
+                response = stream.get()
+
+            assert "".join(part.content for part in response.parts if isinstance(part, TextPart)) == "ab"
+            assert canonical == before
 
     asyncio.run(scenario())
 
