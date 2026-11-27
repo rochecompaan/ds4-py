@@ -437,6 +437,60 @@ def test_oversized_pending_result_view_keeps_original_canonical_provenance() -> 
     assert cast("ToolReturnPart", replacement.parts[0]).content == TOOL_RESULT_DOES_NOT_FIT
 
 
+def test_oversized_parallel_results_keep_original_canonical_provenance() -> None:
+    from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+
+    import ds4py
+    from ds4py import ThinkMode
+    from ds4py._native.fake import FakeNative
+    from ds4py.capabilities.context import TOOL_RESULT_DOES_NOT_FIT
+    from ds4py.message_metadata import DS4_VIEW_OF
+
+    canonical: list[ModelMessage] = [
+        user("current", "current"),
+        ModelResponse(
+            [
+                ToolCallPart("read_file", {}, tool_call_id="one"),
+                ToolCallPart("read_file", {}, tool_call_id="two"),
+                ToolCallPart("find_files", {}, tool_call_id="three"),
+            ],
+            metadata={DS4_KEY: "calls"},
+        ),
+        ModelRequest(
+            [
+                ToolReturnPart("read_file", "README " * 500, tool_call_id="one"),
+                ToolReturnPart("read_file", "pyproject " * 800, tool_call_id="two"),
+                ToolReturnPart("find_files", "docs/agent.md\ndocs/development.md", tool_call_id="three"),
+            ],
+            metadata={DS4_KEY: "results"},
+        ),
+    ]
+    before = deepcopy(canonical)
+
+    async def scenario() -> None:
+        with ds4py.open("f.gguf", ctx=1600, think=ThinkMode.NONE, native=FakeNative()) as engine:
+            model = make_model(engine.session())
+            owner = RollingWindow(
+                model.binder, disabled_owner=LLMCompaction(model.binder), token_budget=1024, trim_to=800
+            )
+            ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=canonical)
+            await owner.before_model_request(ctx, request_context(model, list(canonical)))
+            replacement = owner.request_messages([], ctx)[-1]
+            metadata = replacement.metadata or {}
+            assert metadata == {
+                DS4_KEY: "results:rejected:3",
+                DS4_CONTEXT_PAGING: "recovery",
+                DS4_VIEW_OF: "results",
+            }
+            assert [part.content for part in replacement.parts if isinstance(part, ToolReturnPart)] == [
+                TOOL_RESULT_DOES_NOT_FIT
+            ] * 3
+            assert replacement not in canonical
+
+    asyncio.run(scenario())
+    assert canonical == before
+
+
 def test_reserve_after_pending_result_fallback_continues_in_actual_view() -> None:
     from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 

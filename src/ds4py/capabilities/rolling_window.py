@@ -300,7 +300,11 @@ class RollingWindow(ContextStrategy):
                         tool_part = cast("ToolReturnPart", candidate)
                         tool_part.content = TOOL_RESULT_DOES_NOT_FIT
                 try:
-                    return self._select(working, params, remembered, overflow=overflow, provenance_messages=messages)
+                    # Recovery already failed; each retry must keep its rejected results instead of
+                    # replacing them with the same recovery references and rejecting their view-only key.
+                    return self._select(
+                        working, params, remembered, overflow="protected-overflow", provenance_messages=messages
+                    )
                 except ContextSelectionError:
                     continue
             raise ContextExhausted("pending tool errors do not fit the rolling-window context") from selection_error
