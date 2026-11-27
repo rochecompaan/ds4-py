@@ -182,6 +182,21 @@ def _visible_calls(turn: ModelTurnHistoryItem, excluded: set[str]) -> list[tuple
     ]
 
 
+def _url_content(value: ImageUrl | AudioUrl | DocumentUrl | VideoUrl) -> dict[str, object]:
+    mime_type = value.media_type or "application/octet-stream"
+    if value.url.lower().startswith("data:"):
+        return {
+            "type": "image" if isinstance(value, ImageUrl) else "bytes",
+            "mimeType": mime_type,
+            "embedded": True,
+        }
+    return {
+        "type": value.kind.removesuffix("-url"),
+        "url": value.url,
+        "mimeType": mime_type,
+    }
+
+
 def _media_content(value: object) -> dict[str, object] | None:
     if isinstance(value, (BinaryContent, BinaryImage)) and value.media_type.startswith("image/"):
         return {
@@ -192,11 +207,7 @@ def _media_content(value: object) -> dict[str, object] | None:
     if isinstance(value, (BinaryContent, BinaryImage)):
         return {"type": "bytes", "bytes": len(value.data), "mimeType": value.media_type}
     if isinstance(value, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
-        return {
-            "type": value.kind.removesuffix("-url"),
-            "url": value.url,
-            "mimeType": value.media_type or "application/octet-stream",
-        }
+        return _url_content(value)
     if isinstance(value, UploadedFile):
         return {
             "type": "file",

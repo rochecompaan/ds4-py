@@ -280,6 +280,51 @@ def test_multimodal_tool_results_are_metadata_only_across_recovery_tools(
             _call(toolset, "read_context_output", image_read)
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        ImageUrl("data:image/png;base64,AAECAwQ="),
+        DocumentUrl("data:application/pdf;base64,AAECAwQ="),
+    ],
+    ids=["image", "document"],
+)
+@pytest.mark.parametrize("nested", [False, True], ids=["direct", "nested"])
+def test_data_url_tool_results_never_expose_embedded_payloads(content: object, nested: bool) -> None:
+    wrapped = {"attachment": [content]} if nested else content
+    messages = [
+        ModelResponse([ToolCallPart("read", {}, tool_call_id="embedded-call")], metadata={DS4_KEY: "embedded-turn"}),
+        ModelRequest(
+            [ToolReturnPart("read", wrapped, tool_call_id="embedded-call")],
+            metadata={DS4_KEY: "embedded-result"},
+        ),
+    ]
+    toolset = create_context_paging_toolset(is_enabled=lambda: True, history_source=lambda: messages)
+
+    searched = _payload(_call(toolset, "search_history", {"query": "read"}))
+    loaded = _payload(_call(toolset, "load_history", {"historyIds": ["embedded-turn"]}))
+    parts = _payload(_call(toolset, "read_context_output", {"historyId": "embedded-turn", "mode": "parts"}))
+    content_part = next(part for part in parts["parts"] if part["part"] == "/toolResults/0/content")
+    page = _value(_call(toolset, "read_context_output", dict(content_part["read"], mode="text")))
+
+    encoded = json.dumps([searched, loaded, parts, page], separators=(",", ":"))
+    assert "data:" not in encoded
+    assert "AAECAwQ=" not in encoded
+    assert "base64" not in encoded
+    if isinstance(content, ImageUrl):
+        assert loaded["items"][0]["deferred"] is True
+        if nested:
+            recovered = json.loads(page["content"][1]["text"])
+            image_read = recovered["attachment"][0]["read"]
+        else:
+            assert content_part["type"] == "image"
+            image_read = content_part["read"]
+        with pytest.raises(EngineError, match="image recovery requires M5 vision support"):
+            _call(toolset, "read_context_output", image_read)
+    else:
+        assert '"type":"bytes"' in encoded or '\\"type\\":\\"bytes\\"' in encoded
+        assert "application/pdf" in encoded
+
+
 @pytest.mark.parametrize("content", [datetime(2026, 11, 27, tzinfo=UTC), Decimal("1.5")])
 def test_search_rejects_non_json_results_with_a_recovery_reply(content: object) -> None:
     messages = [

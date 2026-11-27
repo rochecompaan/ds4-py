@@ -92,7 +92,7 @@ def is_recovery_image(value: object) -> TypeIs[Mapping[str, object]]:
     return (
         isinstance(value, Mapping)
         and value.get("type") == "image"
-        and (isinstance(value.get("data"), str) or isinstance(value.get("url"), str))
+        and (isinstance(value.get("data"), str) or isinstance(value.get("url"), str) or value.get("embedded") is True)
         and isinstance(value.get("mimeType"), str)
     )
 
@@ -271,8 +271,10 @@ def _image_metadata(image: Mapping[str, object], history_id: str, part: str) -> 
     data = image.get("data")
     url = image.get("url")
     mime_type = image["mimeType"]
-    if (not isinstance(data, str) and not isinstance(url, str)) or not isinstance(mime_type, str):
-        raise TypeError("Image data or URL and MIME type must be strings.")
+    if (not isinstance(data, str) and not isinstance(url, str) and image.get("embedded") is not True) or not isinstance(
+        mime_type, str
+    ):
+        raise TypeError("Image data, URL, or embedded marker and MIME type must be present.")
     metadata: ImageMetadata = {
         "type": "image",
         "mimeType": mime_type,
