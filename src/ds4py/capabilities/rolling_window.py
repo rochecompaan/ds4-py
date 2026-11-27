@@ -331,6 +331,7 @@ class RollingWindow(ContextStrategy):
                 raise ContextExhausted("rolling-window reserve recovery requires retained operations")
             replacement = self.binder.render_request_view(selected.candidate_messages, params)
             await request.operations.replace_transcript_async(replacement, reason="context_paging")
+            self.binder.adopt_rendered_view(selected.candidate_messages)
         state.selection = selected.state
         state.request_view = selected.candidate_messages
         messages[:] = selected.candidate_messages

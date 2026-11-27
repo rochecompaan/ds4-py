@@ -567,15 +567,14 @@ class MessageBinder:
         parts.extend(boundary.appends for boundary in plan.boundaries)
         replacement = TranscriptReplacement.concat(*parts)
         sampled_start = self.session.open_assistant_start()
-        if sampled_start is not None and not any(
-            segment.kind == "assistant_prefix" and not segment.meta.get("key") for segment in replacement.segments
-        ):
+        if sampled_start is not None:
             prefix_start = next(
                 segment.start
                 for segment in current.segments
                 if segment.kind == "assistant_prefix" and segment.end == sampled_start and not segment.meta.get("key")
             )
-            replacement = TranscriptReplacement.concat(replacement, current.slice(prefix_start))
+            if plan.change.start <= prefix_start:
+                replacement = TranscriptReplacement.concat(replacement, current.slice(prefix_start))
         return replacement
 
     def reserve_overflow(self, projected_tokens: int) -> int:
@@ -626,6 +625,12 @@ class MessageBinder:
         else:
             self._records.append(record)
             self._bound_messages.append(deepcopy(response))
+
+    def adopt_rendered_view(self, messages: Sequence[ModelMessage]) -> None:
+        """Adopt a successfully installed reserve replacement and its exact provenance."""
+        prepared = prepare_provenance(messages, self.export_segments(), loaded=None)
+        self._records = list(prepared.records)
+        self._bound_messages = list(prepared.bound_messages)
 
     def export_segments(self) -> tuple[SegmentProvenance, ...]:
         exported = []

@@ -130,6 +130,38 @@ def test_equality_and_values_between_target_and_budget_do_not_advance() -> None:
         assert keys(selected.candidate_messages) == ["u1", "r1"]
 
 
+def test_reserve_recovery_advances_a_remembered_view_at_its_target() -> None:
+    messages = [
+        user("evicted-user", 5),
+        response("evicted-response", 5),
+        user("retained-user", 15),
+        response("retained-response", 15),
+        user("active-user", 5),
+    ]
+    initial = select(messages, budget=50, target=50)
+    assert initial.state is not None
+    assert initial.state.frontier.last_evicted.history_id == "evicted-response"
+    assert keys(initial.candidate_messages) == [
+        "context-paging-notice",
+        "retained-user",
+        "retained-response",
+        "active-user",
+    ]
+
+    recovered = select_view(
+        project_history(messages),
+        settings=make_settings(50, 50),
+        model_context=1000,
+        meter=AdditiveMeter(),
+        remembered=initial.state,
+        overflow="recovery",
+    )
+
+    assert recovered.frontier is not None
+    assert recovered.frontier.last_evicted.history_id == "retained-response"
+    assert keys(recovered.candidate_messages) == ["context-paging-notice", "active-user"]
+
+
 def test_fifo_protects_active_request_and_newest_unread_exchange() -> None:
     messages = [
         response("prefix", 400),

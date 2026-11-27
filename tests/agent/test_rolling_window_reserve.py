@@ -12,6 +12,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from test_context_strategy import fake_engine, make_model, sequential_text
 
+from ds4py.binding_provenance import prepare_request_view_provenance
 from ds4py.capabilities.compaction import LLMCompaction
 from ds4py.capabilities.rolling_window import RollingWindow
 from ds4py.context_paging.stats import InputTokenReading, read_request_input
@@ -21,11 +22,51 @@ from ds4py.message_metadata import (
     DS4_KEY,
     DS4_PAGING_INPUT_TOKENS,
     DS4_REQUEST_SYNC_COUNT,
+    DS4_SOURCE,
 )
 
 
 def user(text: str, key: str) -> ModelRequest:
     return ModelRequest([UserPromptPart(text)], metadata={DS4_KEY: key})
+
+
+def test_recovery_render_keeps_the_open_tail_after_a_historical_response() -> None:
+    async def scenario() -> None:
+        with fake_engine(script=sequential_text("abcdef")) as engine:
+            session = engine.session()
+            model = make_model(session)
+            canonical = [
+                user("evicted request", "evicted-user"),
+                ModelResponse([TextPart("evicted answer")], metadata={DS4_KEY: "evicted-response"}),
+                user("old request", "old-user"),
+                ModelResponse(
+                    [TextPart("old answer")],
+                    metadata={DS4_KEY: "old-response", DS4_SOURCE: "sampled"},
+                ),
+                user("active request", "active-user"),
+            ]
+            params = ModelRequestParameters()
+            checked = False
+            async with model.request_stream(canonical, None, params) as stream:
+                async for _ in stream:
+                    sampled_start = session.open_assistant_start()
+                    if sampled_start is None or checked:
+                        continue
+                    prefix_start = next(
+                        segment.start
+                        for segment in session.transcript.segments
+                        if segment.kind == "assistant_prefix"
+                        and segment.end == sampled_start
+                        and not segment.meta.get("key")
+                    )
+                    expected = session.transcript.tokens[prefix_start:]
+                    replacement = model.binder.render_request_view(canonical[2:], params)
+                    assert replacement.tokens[-len(expected) :] == expected
+                    checked = True
+                stream.get()
+            assert checked
+
+    asyncio.run(scenario())
 
 
 def test_reserve_rebinds_a_smaller_view_and_continues_the_same_response() -> None:
@@ -79,5 +120,65 @@ def test_reserve_rebinds_a_smaller_view_and_continues_the_same_response() -> Non
             assert canonical[0] not in view and canonical[1] not in view
             assert view[0].metadata is not None
             assert view[0].metadata[DS4_CONTEXT_PAGING] == "notice"
+
+    asyncio.run(scenario())
+
+
+def test_reserve_shrinks_a_remembered_view_after_output_fills_the_context() -> None:
+    async def scenario() -> None:
+        with fake_engine(script=sequential_text("ab" * 1000)) as engine:
+            session = engine.session()
+            model = make_model(session)
+            owner = RollingWindow(
+                model.binder,
+                disabled_owner=LLMCompaction(model.binder),
+                token_budget=7000,
+                trim_to=6800,
+            )
+            model.context_owner = owner
+            canonical = [
+                user("evicted " * 500, "evicted-user"),
+                ModelResponse([TextPart("evicted answer")], metadata={DS4_KEY: "evicted-response"}),
+                user("old " * 1300, "old-user"),
+                ModelResponse([TextPart("old answer")], metadata={DS4_KEY: "old-response"}),
+                user("active request", "active-user"),
+            ]
+            before = deepcopy(canonical)
+            ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=canonical)
+            params = ModelRequestParameters()
+            await owner.before_model_request(
+                ctx,
+                ModelRequestContext(
+                    model=model,
+                    messages=canonical,
+                    model_settings=None,
+                    model_request_parameters=params,
+                ),
+            )
+            assert owner._state.selection is not None
+            assert owner._state.request_input_tokens is not None
+            assert 5000 < owner._state.request_input_tokens < 6800
+
+            async with model.request_stream(canonical, None, params, run_context=ctx) as stream:
+                prompt_length = len(session.transcript)
+                session._worker.call(lambda _engine, native: setattr(native, "_ctx", 8192)).result()
+                async for _ in stream:
+                    pass
+                response = stream.get()
+
+            assert "".join(part.content for part in response.parts if isinstance(part, TextPart)) == "ab" * 1000
+            assert canonical == before
+            view = owner.request_messages([], ctx)
+            assert all(message not in view for message in canonical[:-1])
+            assert view[-1] is canonical[-1]
+            assert len(session.transcript) < prompt_length + 2000
+            bound_view = model.binder.request_view()
+            assert len(bound_view) == len(view) + 1
+            prepare_request_view_provenance(
+                canonical_messages=[*canonical, response],
+                request_view=bound_view,
+                segments=model.binder.export_segments(),
+                loaded=None,
+            )
 
     asyncio.run(scenario())

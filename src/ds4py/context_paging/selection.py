@@ -482,7 +482,7 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
             notice, candidate, measurement = bounded_notice(evicted_id, tool_reference, view, count)
             last_keyed = _Boundary(count, previous.frontier, notice, candidate, measurement)
 
-        if measurement.total_tokens <= budget:
+        if measurement.total_tokens <= budget and overflow != "recovery":
             return _RunResult(
                 candidate,
                 measurement,
@@ -504,7 +504,7 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
                     budget,
                 )
 
-        while measurement.total_tokens > min(destination, budget):
+        while measurement.total_tokens > min(destination, budget) or (overflow == "recovery" and count == 0):
             unit = view.units[count] if count < len(view.units) else None
             if unit is None or (protected is not None and unit.items == (protected,)):
                 if count == 0 and previous is not None and measurement.total_tokens > budget:
