@@ -22,7 +22,9 @@ from ds4py.agent import build_agent_components
 from ds4py.capabilities.compaction import LLMCompaction
 from ds4py.capabilities.context import ContextComposition
 from ds4py.capabilities.rolling_window import RollingWindow
+from ds4py.context_paging.history import project_history
 from ds4py.context_paging.notice import NOTICE_VIEW_KEY
+from ds4py.context_paging.public_history import PublicUser, project_public_history
 from ds4py.context_paging.selection import SelectionResult, SelectionState
 from ds4py.message_metadata import DS4_CONTEXT_PAGING, DS4_KEY
 
@@ -300,6 +302,11 @@ def test_real_rolling_binds_selected_view_with_distinct_normalized_input(residen
             assert expected != canonical
             assert expected != normalized
             assert normalized != canonical
+            assert (resident in expected) is resident_first
+            public_users = [
+                item for item in project_public_history(project_history(canonical)) if isinstance(item, PublicUser)
+            ]
+            assert all(item.content for item in public_users)
             notice = next(
                 message for message in expected if (message.metadata or {}).get(DS4_CONTEXT_PAGING) == "notice"
             )

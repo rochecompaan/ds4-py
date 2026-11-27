@@ -109,6 +109,7 @@ class _Grouped:
     completed: tuple[_CompletedUnit, ...]
     active_request: UserHistoryItem | None
     active_exchanges: tuple[ModelTurnHistoryItem, ...]
+    resident: tuple[ModelMessage, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +173,7 @@ def _group(history: HistoryProjection) -> _Grouped:
     items = [item for item in history.items if _eligible(item)]
     users = [index for index, item in enumerate(items) if isinstance(item, UserHistoryItem)]
     if not users:
-        return _Grouped(tuple((item,) for item in items), (), None, ())
+        return _Grouped(tuple((item,) for item in items), (), None, (), history.resident_messages)
     prefixes = tuple((item,) for item in items[: users[0]])
     completed = tuple(_CompletedUnit(tuple(items[start:end]), items[start].sequence) for start, end in pairwise(users))
     active_items = items[users[-1] :]
@@ -188,6 +189,7 @@ def _group(history: HistoryProjection) -> _Grouped:
         completed,
         active_request,
         tuple(item for item in active_items[1:] if isinstance(item, ModelTurnHistoryItem)),
+        history.resident_messages,
     )
 
 
@@ -207,7 +209,9 @@ def _candidate(
     notice: PagingNotice | None,
     replacement: tuple[ModelTurnHistoryItem, tuple[ModelRequest, ...]] | None = None,
 ) -> tuple[ModelMessage, ...]:
-    messages: list[ModelMessage] = [notice.as_message()] if notice is not None else []
+    messages: list[ModelMessage] = list(view.grouped.resident)
+    if notice is not None:
+        messages.append(notice.as_message())
     for unit in view.units[count : view.active_start]:
         for item in unit.items:
             messages.extend(_item_messages(item))
@@ -266,10 +270,18 @@ def _apply_frontier(view: _View, frontier: ContextCutFrontier) -> _View | None: 
         if frontier.kind == "prefix":
             return _view(
                 _Grouped(
-                    grouped.prefixes[index + 1 :], grouped.completed, grouped.active_request, grouped.active_exchanges
+                    grouped.prefixes[index + 1 :],
+                    grouped.completed,
+                    grouped.active_request,
+                    grouped.active_exchanges,
+                    grouped.resident,
                 )
             )
-        return _view(_Grouped((), grouped.completed[index + 1 :], grouped.active_request, grouped.active_exchanges))
+        return _view(
+            _Grouped(
+                (), grouped.completed[index + 1 :], grouped.active_request, grouped.active_exchanges, grouped.resident
+            )
+        )
 
     completed_candidates: list[tuple[int, int]] = []
     for unit_index, unit in enumerate(grouped.completed):
@@ -286,7 +298,7 @@ def _apply_frontier(view: _View, frontier: ContextCutFrontier) -> _View | None: 
         if frontier.user_history_id is not None and (active is None or active.history_id != frontier.user_history_id):
             return None
         index = active_candidates[0]
-        return _view(_Grouped((), (), active, grouped.active_exchanges[index + 1 :]))
+        return _view(_Grouped((), (), active, grouped.active_exchanges[index + 1 :], grouped.resident))
 
     unit_index, item_index = completed_candidates[0]
     original = grouped.completed[unit_index]
@@ -302,6 +314,7 @@ def _apply_frontier(view: _View, frontier: ContextCutFrontier) -> _View | None: 
             (remainder, *grouped.completed[unit_index + 1 :]),
             grouped.active_request,
             grouped.active_exchanges,
+            grouped.resident,
         )
     )
 

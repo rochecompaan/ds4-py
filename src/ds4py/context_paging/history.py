@@ -4,14 +4,17 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai.messages import (
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 
 from ds4py.binding_provenance import message_content_hash, validate_messages
@@ -115,6 +118,7 @@ class HistoryProjection:
 
     canonical_messages: tuple[ModelMessage, ...]
     items: tuple[HistoryItem, ...]
+    resident_messages: tuple[ModelRequest, ...] = ()
 
 
 def _history_id(message: ModelMessage) -> str:
@@ -225,6 +229,7 @@ def project_history(
 
     canonical = tuple(messages)
     items: list[HistoryItem] = []
+    resident: list[ModelRequest] = []
     index = 0
     while index < len(canonical):
         message = canonical[index]
@@ -237,9 +242,18 @@ def project_history(
         if not isinstance(message, ModelRequest):
             raise TypeError(f"unsupported canonical message type: {type(message).__name__}")
         validate_messages([message])
-        items.append(UserHistoryItem(_history_id(message), len(items), message, index, message_content_hash(message)))
+        if (
+            message.parts
+            and not any(isinstance(part, UserPromptPart) for part in message.parts)
+            and all(isinstance(part, (SystemPromptPart, InstructionPart)) for part in message.parts)
+        ):
+            resident.append(message)
+        else:
+            items.append(
+                UserHistoryItem(_history_id(message), len(items), message, index, message_content_hash(message))
+            )
         index += 1
-    return HistoryProjection(canonical, tuple(items))
+    return HistoryProjection(canonical, tuple(items), tuple(resident))
 
 
 def derive_frontier(

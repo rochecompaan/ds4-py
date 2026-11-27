@@ -5,7 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import (
+    InstructionPart,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    SystemPromptPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 
 from ds4py.binding_provenance import message_content_hash
 from ds4py.engine.prompt import PromptBuilder
@@ -105,13 +113,22 @@ def _is_notice(message: ModelMessage) -> bool:
     return bool((message.metadata or {}).get(DS4_CONTEXT_PAGING) == "notice")
 
 
+def _is_resident(message: ModelMessage) -> bool:
+    return (
+        isinstance(message, ModelRequest)
+        and bool(message.parts)
+        and not any(isinstance(part, UserPromptPart) for part in message.parts)
+        and all(isinstance(part, (SystemPromptPart, InstructionPart)) for part in message.parts)
+    )
+
+
 def _unit_groups(messages: Sequence[ModelMessage]) -> list[list[int]]:
     groups: list[list[int]] = []
     current: list[int] = []
     index = 0
     while index < len(messages):
         message = messages[index]
-        if _is_notice(message):
+        if _is_notice(message) or _is_resident(message):
             index += 1
             continue
         current.append(index)
