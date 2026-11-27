@@ -399,6 +399,44 @@ def test_oversized_pending_results_are_rejected_only_on_view_clones(monkeypatch:
     assert cast("ToolReturnPart", clone.parts[1]).content == TOOL_RESULT_DOES_NOT_FIT
 
 
+def test_oversized_pending_result_view_keeps_original_canonical_provenance() -> None:
+    from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+
+    import ds4py
+    from ds4py._native.fake import FakeNative
+    from ds4py.binding import MessageBinder
+    from ds4py.capabilities.context import TOOL_RESULT_DOES_NOT_FIT
+    from ds4py.message_metadata import DS4_VIEW_OF
+
+    canonical: list[ModelMessage] = [
+        user("current", "current"),
+        ModelResponse([ToolCallPart("read", {}, tool_call_id="one")], metadata={DS4_KEY: "calls"}),
+        ModelRequest(
+            [ToolReturnPart("read", "oversized result " * 500, tool_call_id="one")],
+            metadata={DS4_KEY: "results"},
+        ),
+    ]
+    before = deepcopy(canonical)
+
+    with ds4py.open("f.gguf", ctx=1200, native=FakeNative()) as engine:
+        binder = MessageBinder(engine.session())
+        owner = RollingWindow(binder, disabled_owner=LLMCompaction(binder), token_budget=1024, trim_to=800)
+        model = SimpleNamespace(binder=binder)
+        ctx = RunContext(deps=None, model=cast("Any", model), usage=RunUsage(), messages=canonical)
+
+        asyncio.run(owner.before_model_request(ctx, request_context(model, list(canonical))))
+        view = owner.request_messages([], ctx)
+
+    assert canonical == before
+    replacement = view[-1]
+    assert replacement.metadata == {
+        DS4_KEY: "results:rejected:1",
+        DS4_CONTEXT_PAGING: "recovery",
+        DS4_VIEW_OF: "results",
+    }
+    assert cast("ToolReturnPart", replacement.parts[0]).content == TOOL_RESULT_DOES_NOT_FIT
+
+
 @pytest.mark.parametrize("code", ["RESIDENT_INPUT_TOO_LARGE", "INVALID_MESSAGE_STRUCTURE"])
 def test_pending_results_preserve_non_tail_selection_errors(monkeypatch: Any, code: str) -> None:
     from pydantic_ai.messages import ToolCallPart, ToolReturnPart

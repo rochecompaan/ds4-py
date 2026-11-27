@@ -298,7 +298,7 @@ class RollingWindow(ContextStrategy):
                         tool_part = cast("ToolReturnPart", candidate)
                         tool_part.content = TOOL_RESULT_DOES_NOT_FIT
                 try:
-                    return self._select(working, params, remembered)
+                    return self._select(working, params, remembered, provenance_messages=messages)
                 except ContextSelectionError:
                     continue
             raise ContextExhausted("pending tool errors do not fit the rolling-window context") from selection_error
@@ -314,12 +314,13 @@ class RollingWindow(ContextStrategy):
         remembered: SelectionState | None,
         *,
         overflow: OverflowMode = "normal",
+        provenance_messages: Sequence[ModelMessage] | None = None,
     ) -> SelectionResult:
         return select_view(
             project_history(messages, restore_ids=self._state.restore_ids),
             settings=self._state.settings,
             model_context=self.binder.session.engine.config.ctx,
-            meter=RequestMeter(self.binder, params),
+            meter=RequestMeter(self.binder, params, provenance_messages=provenance_messages),
             remembered=remembered,
             overflow=overflow,
         )
