@@ -138,6 +138,16 @@ def _visible_calls(turn: ModelTurnHistoryItem, excluded: set[str]) -> list[tuple
     ]
 
 
+def _json_safe_content(value: object) -> object:
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return {"type": "bytes", "bytes": len(value)}
+    if isinstance(value, Mapping):
+        return {key: _json_safe_content(child) for key, child in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, str):
+        return [_json_safe_content(child) for child in value]
+    return deepcopy(value)
+
+
 def _public_result(
     result: ToolResultPart,
     message_index: int,
@@ -149,7 +159,7 @@ def _public_result(
     return PublicToolResult(
         result.tool_call_id,
         tool_name,
-        deepcopy(result.content),
+        _json_safe_content(result.content),
         failed,
         message_index,
         part_index,
@@ -165,7 +175,7 @@ def _public_model_turn(turn: ModelTurnHistoryItem) -> PublicModelTurn | None:
     content = tuple(
         PublicText(part.content)
         if isinstance(part, TextPart)
-        else PublicToolCall(part.tool_call_id, part.tool_name, deepcopy(part.args), index)
+        else PublicToolCall(part.tool_call_id, part.tool_name, _json_safe_content(part.args), index)
         if isinstance(part, ToolCallPart) and part.tool_call_id not in excluded
         else None
         for index, part in enumerate(turn.response.parts)

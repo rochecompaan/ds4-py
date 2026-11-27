@@ -141,6 +141,29 @@ def test_search_load_lists_unloaded_ids_and_read_modes_preserve_handles() -> Non
     assert blocks[1]["text"]
 
 
+def test_bytes_tool_results_are_metadata_only_across_recovery_tools() -> None:
+    messages = [
+        ModelResponse([ToolCallPart("read", {}, tool_call_id="bytes-call")], metadata={DS4_KEY: "bytes-turn"}),
+        ModelRequest(
+            [ToolReturnPart("read", b"\x00\x01\x02\x03", tool_call_id="bytes-call")],
+            metadata={DS4_KEY: "bytes-result"},
+        ),
+    ]
+    toolset = create_context_paging_toolset(is_enabled=lambda: True, history_source=lambda: messages)
+
+    calls = {
+        "search_history": {"query": "read"},
+        "load_history": {"historyIds": ["bytes-turn"]},
+        "read_context_output": {"historyId": "bytes-turn", "mode": "parts"},
+    }
+    for name, arguments in calls.items():
+        payload = _payload(_call(toolset, name, arguments))
+        encoded = json.dumps(payload, separators=(",", ":"))
+        assert '"type":"bytes"' in encoded or '\\"type\\":\\"bytes\\"' in encoded
+        assert '"bytes":4' in encoded or '\\"bytes\\":4' in encoded
+        assert "b'\\x00" not in encoded
+
+
 def test_model_incorrect_read_input_returns_guidance_instead_of_crashing() -> None:
     toolset = _toolset([PublicUser("user-1", 0, 0, ("needle",))])
 
