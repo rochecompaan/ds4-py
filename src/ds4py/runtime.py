@@ -719,7 +719,7 @@ class AgentRuntime:
             if isinstance(owner, RollingWindow):
                 owner.restore_state(
                     snapshot.messages,
-                    frontier if case.use_request_view else None,
+                    frontier if case.use_request_view and outcome.get("restore_path") == "kv" else None,
                     restore_boundary="switched",
                 )
             self._messages = list(snapshot.messages)

@@ -373,6 +373,39 @@ def test_ineligible_view_restores_render_full_canonical_history(tmp_path: Path, 
     asyncio.run(scenario())
 
 
+def test_rejected_exact_view_falls_back_without_frontier_or_view_notes(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        record, store, canonical, _tokens = await save_paged(tmp_path)
+        encoded = record.to_dict()
+        encoded["tokens_sha256"] = "0" * 64
+        (store.session_dir(record.session_id) / "save.json").write_text(json.dumps(encoded))
+
+        with runtime_engine() as engine:
+            runtime = AgentRuntime(
+                make_model(engine),
+                tmp_path / "project",
+                store=store,
+                clock=fixed_clock,
+                context=ContextComposition.rolling(token_budget=16000),
+            )
+            try:
+                await runtime.switch(record.session_id)
+                owner = runtime.model.context_owner
+                assert isinstance(owner, RollingWindow)
+                assert list(runtime.messages) == canonical
+                assert runtime.model.session.transcript.tokens == ()
+                assert runtime.model.binder.request_view() == ()
+                assert owner._state.selection is None
+                assert not any(
+                    segment.kind == "system_note" or segment.kind.startswith("system_note:")
+                    for segment in runtime.model.binder.export_segments()
+                )
+            finally:
+                await runtime.close()
+
+    asyncio.run(scenario())
+
+
 def test_malformed_view_is_atomic_for_exact_restore_and_ignored_for_render(tmp_path: Path) -> None:
     async def scenario() -> None:
         record, store, canonical, _tokens = await save_paged(tmp_path)

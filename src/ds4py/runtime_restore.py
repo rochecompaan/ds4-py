@@ -200,6 +200,8 @@ def restore_snapshot(  # noqa: PLR0913 - Restoration needs the complete saved ex
         if notes is not None:
             notes.restore_from_segments(session.transcript.segments)
     else:
+        if use_request_view:
+            note_segments = ()
         if any(
             (segment.kind == "system_note" or segment.kind.startswith("system_note:")) and segment.text is None
             for segment in note_segments
