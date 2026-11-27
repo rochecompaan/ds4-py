@@ -115,44 +115,69 @@ def _call_value(part: PublicToolCall) -> dict[str, object]:
     }
 
 
+def _user_content_value(item: PublicUser) -> object:
+    if item.content_is_list or len(item.content) != 1:
+        return list(item.content)
+    return item.content[0]
+
+
 def public_item_value(item: PublicHistoryItem) -> dict[str, object]:
     """Convert the public DTO to stable JSON-shaped values, not Pydantic internals."""
     if isinstance(item, PublicUser):
-        content: object = item.content[0] if len(item.content) == 1 else list(item.content)
         return {
-            "kind": "user",
             "id": item.history_id,
+            "kind": "user",
             "sequence": item.sequence,
-            "userMessage": {"role": "user", "content": content},
+            "timestamp": item.timestamp,
+            "userMessage": {
+                "role": "user",
+                "content": _user_content_value(item),
+                "timestamp": item.message_timestamp,
+            },
         }
-    return {
-        "kind": "modelTurn",
+    tool_results = []
+    for result in item.tool_results:
+        value: dict[str, object] = {
+            "role": "toolResult",
+            "toolCallId": result.tool_call_id,
+            "toolName": result.tool_name,
+            "content": result.content,
+            "isError": result.failed,
+            "timestamp": result.timestamp,
+        }
+        if result.nested_calls is not None:
+            value["nestedCalls"] = result.nested_calls
+        if result.details is not None:
+            value["details"] = result.details
+        tool_results.append(value)
+    value = {
         "id": item.history_id,
+        "kind": "modelTurn",
         "sequence": item.sequence,
+        "timestamp": item.timestamp,
         "assistantMessage": {
             "role": "assistant",
+            "api": item.assistant.api,
+            "provider": item.assistant.provider,
+            "model": item.assistant.model,
             "content": [
                 None if part is None else _text_value(part) if isinstance(part, PublicText) else _call_value(part)
                 for part in item.content
             ],
+            "usage": item.assistant.usage,
+            "stopReason": item.assistant.stop_reason,
+            "timestamp": item.assistant.timestamp,
         },
-        "toolResults": [
-            {
-                "role": "toolResult",
-                "toolCallId": result.tool_call_id,
-                "toolName": result.tool_name,
-                "content": result.content,
-                "isError": result.failed,
-            }
-            for result in item.tool_results
-        ],
+        "toolResults": tool_results,
         "metadata": {
             "tools": list(item.tools),
             "files": list(item.files),
             "failed": item.failed,
-            "interruptedByRestore": item.interrupted_by_restore,
         },
     }
+    if item.interrupted_by_restore:
+        value["interruptedByRestore"] = True
+    return value
 
 
 def _escape_key(key: str) -> str:
@@ -226,8 +251,7 @@ def history_parts(item: PublicHistoryItem) -> list[HistoryPart]:
             parts.append(HistoryPart(path, content))
 
     if isinstance(item, PublicUser):
-        content: object = item.content[0] if len(item.content) == 1 else list(item.content)
-        add_content(content, "/userMessage/content")
+        add_content(_user_content_value(item), "/userMessage/content")
     else:
         content = [
             None if part is None else _text_value(part) if isinstance(part, PublicText) else _call_value(part)

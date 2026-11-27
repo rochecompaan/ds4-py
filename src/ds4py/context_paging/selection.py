@@ -8,9 +8,10 @@ from dataclasses import dataclass
 from itertools import pairwise
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
-from pydantic_ai.messages import ModelRequest, ToolReturnPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 
 from ds4py.context_paging.history import (
+    HistoryExchange,
     HistoryItem,
     HistoryProjection,
     ModelTurnHistoryItem,
@@ -167,6 +168,83 @@ def _item_messages(item: HistoryItem) -> tuple[ModelMessage, ...]:
 
 def _eligible(item: HistoryItem) -> bool:
     return isinstance(item, UserHistoryItem) or not (item.response_failed or item.interrupted_by_restore)
+
+
+def _opaque_raw_item(message: ModelMessage, index: int) -> HistoryItem:
+    if isinstance(message, ModelRequest):
+        return UserHistoryItem("", index, message, index, "")
+    return ModelTurnHistoryItem("", index, message, index, (), (), (), None)
+
+
+def _raw_turn(messages: Sequence[ModelMessage], start: int, end: int) -> ModelTurnHistoryItem:
+    response = messages[start]
+    if not isinstance(response, ModelResponse):
+        raise TypeError("A raw fallback turn must start with a response.")
+    result_messages = tuple(cast("ModelRequest", message) for message in messages[start + 1 : end])
+    exchanges: list[HistoryExchange] = []
+    for call_index, call in enumerate(response.parts):
+        if not isinstance(call, ToolCallPart):
+            continue
+        for message_offset, message in enumerate(result_messages):
+            for part_index, result in enumerate(message.parts):
+                if isinstance(result, ToolReturnPart) and result.tool_call_id == call.tool_call_id:
+                    exchanges.append(HistoryExchange(call, call_index, result, start + 1 + message_offset, part_index))
+    return ModelTurnHistoryItem(
+        "",
+        start,
+        response,
+        start,
+        result_messages,
+        tuple(range(start + 1, end)),
+        tuple(exchanges),
+        None,
+    )
+
+
+def _raw_fallback(history: HistoryProjection) -> tuple[HistoryProjection, _Grouped]:
+    messages = history.canonical_messages
+    active_index = next(
+        (
+            index
+            for index in range(len(messages) - 1, -1, -1)
+            if isinstance(messages[index], ModelRequest)
+            and any(isinstance(part, UserPromptPart) for part in messages[index].parts)
+        ),
+        None,
+    )
+    items: list[HistoryItem] = []
+    active_request: UserHistoryItem | None = None
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        if index == active_index and isinstance(message, ModelRequest):
+            active_request = UserHistoryItem("", index, message, index, "")
+            items.append(active_request)
+            index += 1
+            continue
+        if isinstance(message, ModelResponse):
+            end = index + 1
+            while end < len(messages):
+                following = messages[end]
+                if not isinstance(following, ModelRequest) or not any(
+                    isinstance(part, ToolReturnPart) for part in following.parts
+                ):
+                    break
+                end += 1
+            items.append(_raw_turn(messages, index, end))
+            index = end
+            continue
+        items.append(_opaque_raw_item(message, index))
+        index += 1
+    active_position = items.index(active_request) if active_request is not None else len(items)
+    grouped = _Grouped(
+        tuple((item,) for item in items[:active_position]),
+        (),
+        active_request,
+        tuple(item for item in items[active_position + 1 :] if isinstance(item, ModelTurnHistoryItem)),
+        (),
+    )
+    return HistoryProjection(messages, tuple(items)), grouped
 
 
 def _group(history: HistoryProjection) -> _Grouped:
@@ -610,6 +688,9 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
         )
 
     if history.canonical_messages and not history.items:
+        # Public recovery and keyed frontiers remain empty during raw fallback.
+        history, raw_grouped = _raw_fallback(history)
+        raw_view = _view(raw_grouped)
         return fallback("raw-history-unavailable")
     view = raw_view
     if remembered is not None:

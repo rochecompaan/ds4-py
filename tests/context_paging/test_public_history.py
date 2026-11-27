@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -12,10 +13,18 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 
-from ds4py.context_paging.history import PAGING_TOOL_NAMES, project_history
-from ds4py.context_paging.public_history import PublicModelTurn, PublicText, PublicToolCall, project_public_history
+from ds4py.context_paging.history import PAGING_TOOL_NAMES, HistoryProjection, UserHistoryItem, project_history
+from ds4py.context_paging.public_history import (
+    PublicModelTurn,
+    PublicText,
+    PublicToolCall,
+    PublicUser,
+    project_public_history,
+)
+from ds4py.context_paging.recovery_parts import public_item_value
 from ds4py.message_metadata import DS4_KEY
 
 if TYPE_CHECKING:
@@ -43,6 +52,33 @@ def _public_turn(messages: tuple[ModelMessage, ...]) -> PublicModelTurn:
     item = public[0]
     assert isinstance(item, PublicModelTurn)
     return item
+
+
+def test_multipart_user_text_and_image_preserve_baseline_blocks() -> None:
+    request = ModelRequest(
+        [
+            UserPromptPart(
+                ["Inspect this", BinaryContent(b"IMAGEDATA", media_type="image/png")],
+            )
+        ],
+        metadata={DS4_KEY: "user-image"},
+    )
+
+    history = HistoryProjection((request,), (UserHistoryItem("user-image", 0, request, 0, ""),))
+    public = project_public_history(history)
+
+    assert len(public) == 1
+    item = public[0]
+    assert isinstance(item, PublicUser)
+    assert item.content == (
+        {"type": "text", "text": "Inspect this"},
+        {"type": "image", "data": "SU1BR0VEQVRB", "mimeType": "image/png"},
+    )
+    assert public_item_value(item)["userMessage"] == {
+        "role": "user",
+        "content": list(item.content),
+        "timestamp": item.message_timestamp,
+    }
 
 
 def test_public_content_preserves_original_indices_and_removes_provider_private_values() -> None:
@@ -195,7 +231,7 @@ def test_malformed_mixed_or_absent_nested_provenance_stays_public(metadata: obje
     turn = _public_turn(messages)
 
     assert isinstance(turn.content[0], PublicToolCall)
-    assert turn.tool_results[0].content == "result for wrapper"
+    assert turn.tool_results[0].content == [{"type": "text", "text": "result for wrapper"}]
 
 
 @pytest.mark.parametrize("outcome", ["failed", "denied", "interrupted"])
@@ -215,4 +251,4 @@ def test_retry_prompt_is_a_public_failure() -> None:
     turn = _public_turn((response, retry))
 
     assert turn.failed is True
-    assert turn.tool_results[0].content == "Retry prompt: correct input"
+    assert turn.tool_results[0].content == [{"type": "text", "text": "Retry prompt: correct input"}]

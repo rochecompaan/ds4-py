@@ -9,5 +9,6 @@ DS4_CONTEXT_PAGING = "ds4.context_paging"
 DS4_VIEW_OF = "ds4.view_of"
 DS4_PAGING_INPUT_TOKENS = "ds4.paging_input_tokens"
 DS4_REQUEST_SYNC_COUNT = "ds4.request_sync_count"
+DS4_TIMESTAMP = "ds4.timestamp"
 
 type PagingMarker = Literal["notice", "recovery"]

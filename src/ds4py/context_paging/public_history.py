@@ -1,10 +1,17 @@
 """Public, provider-independent DTOs for paged history and recovery."""
 
+from __future__ import annotations
+
+import base64
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from pydantic_ai.messages import (
+    BinaryContent,
+    ModelRequest,
+    ModelResponse,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
@@ -19,6 +26,10 @@ from ds4py.context_paging.history import (
     ToolResultPart,
     UserHistoryItem,
 )
+from ds4py.message_metadata import DS4_TIMESTAMP
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 _FILE_ARGUMENT_KEYS = {"path", "file", "files", "filepath", "file_path"}
 _NESTED_STATUSES = {"ok", "error", "unfinished"}
@@ -45,6 +56,9 @@ class PublicToolResult:
     failed: bool
     message_index: int
     part_index: int
+    timestamp: int = 0
+    nested_calls: object = None
+    details: object = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +66,31 @@ class PublicUser:
     history_id: str
     sequence: int
     message_index: int
-    content: tuple[str, ...]
+    content: tuple[object, ...]
+    timestamp: str = ""
+    message_timestamp: int = 0
+    content_is_list: bool = False
+
+
+def _empty_usage() -> dict[str, object]:
+    return {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0},
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class PublicAssistantDetails:
+    api: str = "openai-completions"
+    provider: str = ""
+    model: str = ""
+    usage: dict[str, object] = field(default_factory=_empty_usage)
+    stop_reason: str = "stop"
+    timestamp: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +104,8 @@ class PublicModelTurn:
     files: tuple[str, ...]
     failed: bool
     interrupted_by_restore: bool
+    timestamp: str = ""
+    assistant: PublicAssistantDetails = field(default_factory=PublicAssistantDetails)
 
 
 type PublicHistoryItem = PublicUser | PublicModelTurn
@@ -148,6 +188,62 @@ def _json_safe_content(value: object) -> object:
     return deepcopy(value)
 
 
+def _milliseconds(value: datetime | None) -> int:
+    return int(value.timestamp() * 1000) if value is not None else 0
+
+
+def _source_timestamp(message: ModelRequest | ModelResponse) -> str:
+    metadata = message.metadata
+    if isinstance(metadata, Mapping) and isinstance(metadata.get(DS4_TIMESTAMP), str):
+        return str(metadata[DS4_TIMESTAMP])
+    return message.timestamp.isoformat(timespec="milliseconds").replace("+00:00", "Z") if message.timestamp else ""
+
+
+def _public_tool_content(content: object) -> object:
+    safe = _json_safe_content(content)
+    if isinstance(safe, str):
+        return [{"type": "text", "text": safe}]
+    if isinstance(safe, Sequence) and not isinstance(safe, (bytes, bytearray)):
+        return [{"type": "text", "text": child} if isinstance(child, str) else child for child in safe]
+    return safe
+
+
+def _assistant_details(response: ModelResponse) -> PublicAssistantDetails:
+    usage = response.usage
+    finish_reason = response.finish_reason
+    stop_reason = {
+        "stop": "stop",
+        "tool_call": "toolUse",
+        "length": "length",
+    }.get(finish_reason, "aborted" if response.state == "incomplete" else "error")
+    return PublicAssistantDetails(
+        provider=response.provider_name or "",
+        model=response.model_name or "",
+        usage={
+            "input": usage.input_tokens or 0,
+            "output": usage.output_tokens or 0,
+            "cacheRead": usage.cache_read_tokens or 0,
+            "cacheWrite": usage.cache_write_tokens or 0,
+            "totalTokens": usage.total_tokens or 0,
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0},
+        },
+        stop_reason=stop_reason,
+        timestamp=_milliseconds(response.timestamp),
+    )
+
+
+def _user_block(content: object) -> object:
+    if isinstance(content, str):
+        return {"type": "text", "text": content}
+    if isinstance(content, BinaryContent) and content.media_type.startswith("image/"):
+        return {
+            "type": "image",
+            "data": base64.b64encode(content.data).decode("ascii"),
+            "mimeType": content.media_type,
+        }
+    return _json_safe_content(content)
+
+
 def _public_result(
     result: ToolResultPart,
     message_index: int,
@@ -156,13 +252,17 @@ def _public_result(
 ) -> PublicToolResult:
     failed = isinstance(result, RetryPromptPart) or (isinstance(result, ToolReturnPart) and result.outcome != "success")
     tool_name = result.tool_name or call_names.get(result.tool_call_id, "")
+    metadata = getattr(result, "metadata", None)
     return PublicToolResult(
         result.tool_call_id,
         tool_name,
-        _json_safe_content(result.content),
+        _public_tool_content(result.content),
         failed,
         message_index,
         part_index,
+        _milliseconds(result.timestamp),
+        deepcopy(metadata.get("nestedCalls")) if isinstance(metadata, Mapping) else None,
+        deepcopy(metadata.get("details")) if isinstance(metadata, Mapping) else None,
     )
 
 
@@ -201,19 +301,30 @@ def _public_model_turn(turn: ModelTurnHistoryItem) -> PublicModelTurn | None:
         tuple(files),
         failed,
         turn.interrupted_by_restore,
+        _source_timestamp(turn.response),
+        _assistant_details(turn.response),
     )
 
 
 def _public_user(item: UserHistoryItem) -> PublicUser:
+    parts = [part for part in item.message.parts if isinstance(part, UserPromptPart)]
+    content_is_list = len(parts) != 1 or not isinstance(parts[0].content, str)
+    content: list[object] = []
+    for part in parts:
+        if isinstance(part.content, str) and not content_is_list:
+            content.append(part.content)
+        elif isinstance(part.content, str):
+            content.append(_user_block(part.content))
+        else:
+            content.extend(_user_block(child) for child in part.content)
     return PublicUser(
         item.history_id,
         item.sequence,
         item.message_index,
-        tuple(
-            part.content
-            for part in item.message.parts
-            if isinstance(part, UserPromptPart) and isinstance(part.content, str)
-        ),
+        tuple(content),
+        _source_timestamp(item.message),
+        _milliseconds(parts[0].timestamp) if parts else _milliseconds(item.message.timestamp),
+        content_is_list,
     )
 
 

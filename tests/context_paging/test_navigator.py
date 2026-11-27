@@ -1,13 +1,109 @@
+import json
+from pathlib import Path
+from typing import Any
+
 import pytest
 
+from ds4py.context_paging.history import PAGING_TOOL_NAMES
 from ds4py.context_paging.navigator import HistoryNavigator, HistoryNavigatorError
 from ds4py.context_paging.public_history import (
+    PublicAssistantDetails,
     PublicModelTurn,
     PublicText,
     PublicToolCall,
     PublicToolResult,
     PublicUser,
 )
+from ds4py.context_paging.recovery_parts import public_item_value
+
+FIXTURES = json.loads((Path(__file__).parents[1] / "fixtures/context_paging/navigator.json").read_text())["fixtures"]
+
+
+def _fixture_item(value: dict[str, Any]) -> PublicUser | PublicModelTurn | None:
+    if value["kind"] == "user":
+        message = value["userMessage"]
+        content = message["content"]
+        return PublicUser(
+            value["id"],
+            value["sequence"],
+            0,
+            (content,) if isinstance(content, str) else tuple(content),
+            value["timestamp"],
+            message["timestamp"],
+            not isinstance(content, str),
+        )
+    if value["metadata"]["tools"] and set(value["metadata"]["tools"]) <= set(PAGING_TOOL_NAMES):
+        return None
+    assistant = value["assistantMessage"]
+    content = tuple(
+        None
+        if part is None
+        else PublicText(part["text"])
+        if part["type"] == "text"
+        else PublicToolCall(part["id"], part["name"], part["arguments"], index)
+        if part["type"] == "toolCall"
+        else None
+        for index, part in enumerate(assistant["content"])
+    )
+    results = tuple(
+        PublicToolResult(
+            result["toolCallId"],
+            result["toolName"],
+            result["content"],
+            result["isError"],
+            1,
+            index,
+            result["timestamp"],
+            result.get("nestedCalls"),
+            result.get("details"),
+        )
+        for index, result in enumerate(value["toolResults"])
+    )
+    return PublicModelTurn(
+        value["id"],
+        value["sequence"],
+        0,
+        content,
+        results,
+        tuple(value["metadata"]["tools"]),
+        tuple(value["metadata"]["files"]),
+        value["metadata"]["failed"],
+        value.get("interruptedByRestore", False),
+        value["timestamp"],
+        PublicAssistantDetails(
+            api=assistant["api"],
+            provider=assistant["provider"],
+            model=assistant["model"],
+            usage=assistant["usage"],
+            stop_reason=assistant["stopReason"],
+            timestamp=assistant["timestamp"],
+        ),
+    )
+
+
+def _navigate(navigator: HistoryNavigator, action: dict[str, Any]) -> list[Any]:
+    if action["type"] == "load":
+        return [public_item_value(item) for item in navigator.load(action["input"])]
+    operation = navigator.search if action["type"] == "search" else navigator.browse
+    return operation(action["input"])
+
+
+@pytest.mark.parametrize("fixture", FIXTURES, ids=lambda fixture: fixture["id"])
+def test_generated_navigator_contract(fixture: dict[str, Any]) -> None:
+    items = [item for value in fixture["input"]["items"] if (item := _fixture_item(value)) is not None]
+    navigator = HistoryNavigator(items)
+    action = fixture["input"]["action"]
+    if "error" in fixture["expected"]:
+        with pytest.raises(HistoryNavigatorError) as caught:
+            _navigate(navigator, action)
+        error = caught.value
+        assert fixture["expected"]["error"] == {
+            "name": "HistoryNavigatorError",
+            "code": error.code,
+            "message": str(error),
+        }
+    else:
+        assert _navigate(navigator, action) == fixture["expected"]["value"]
 
 
 def _items() -> list[PublicUser | PublicModelTurn]:

@@ -128,9 +128,15 @@ def _assistant_values(item: PublicModelTurn) -> list[object]:
     return values
 
 
+def _user_content(item: PublicUser) -> object:
+    if item.content_is_list or len(item.content) != 1:
+        return list(item.content)
+    return item.content[0]
+
+
 def _item_text(item: PublicHistoryItem) -> str:
     if isinstance(item, PublicUser):
-        return _content_text(item.content[0] if len(item.content) == 1 else list(item.content))
+        return _content_text(_user_content(item))
     assistant = _assistant_values(item)
     calls = [part for part in item.content if part is not None and not isinstance(part, PublicText)]
     file_segments = [segment for file in item.files for segment in re.split(r"[\\/]", file)]
@@ -146,13 +152,7 @@ def _item_text(item: PublicHistoryItem) -> str:
 
 
 def _preview(item: PublicHistoryItem) -> str:
-    content: object = (
-        item.content[0]
-        if isinstance(item, PublicUser) and len(item.content) == 1
-        else list(item.content)
-        if isinstance(item, PublicUser)
-        else _assistant_values(item)
-    )
+    content: object = _user_content(item) if isinstance(item, PublicUser) else _assistant_values(item)
     compact = " ".join(_content_text(content).split())
     return utf16_slice(compact, 0, 160)
 
@@ -174,8 +174,9 @@ def _excerpt(text: str, match_start: int, match_end: int) -> str:
 def _search_preview(text: str, query_terms: Sequence[str]) -> str | None:
     compact = " ".join(text.split())
     for term in query_terms:
-        match = re.search(re.escape(term), compact, re.IGNORECASE)
-        if match is not None:
+        matches = list(re.finditer(re.escape(term), compact, re.IGNORECASE))
+        if matches:
+            match = matches[-1]
             return _excerpt(compact, match.start(), match.end())
     return None
 
@@ -237,7 +238,7 @@ class HistoryNavigator:
             "historyId": item.history_id,
             "sequence": item.sequence,
             "kind": "user" if isinstance(item, PublicUser) else "modelTurn",
-            "timestamp": "",
+            "timestamp": item.timestamp,
             "preview": _preview(item),
             "tools": list(item.tools) if isinstance(item, PublicModelTurn) else [],
             "files": list(item.files) if isinstance(item, PublicModelTurn) else [],

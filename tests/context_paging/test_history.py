@@ -1,9 +1,12 @@
+import base64
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -13,10 +16,12 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.usage import RequestUsage
 
 from ds4py.context_paging.history import HistoryProjectionError, ModelTurnHistoryItem, project_history
 from ds4py.context_paging.public_history import PublicModelTurn, project_public_history
-from ds4py.message_metadata import DS4_KEY
+from ds4py.context_paging.recovery_parts import public_item_value
+from ds4py.message_metadata import DS4_KEY, DS4_TIMESTAMP
 
 FIXTURES = json.loads((Path(__file__).parents[1] / "fixtures/context_paging/history.json").read_text())["fixtures"]
 
@@ -41,18 +46,32 @@ def _response_content(block: dict[str, Any]) -> object:
     return object()
 
 
+def _timestamp(milliseconds: int) -> datetime:
+    return datetime.fromtimestamp(milliseconds / 1000, UTC)
+
+
+def _user_content(content: object) -> object:
+    if isinstance(content, str):
+        return content
+    return [
+        part["text"]
+        if part["type"] == "text"
+        else BinaryContent(base64.b64decode(part["data"]), media_type=part["mimeType"])
+        for part in cast("list[dict[str, Any]]", content)
+    ]
+
+
 def _message(entry: dict[str, Any]) -> ModelRequest | ModelResponse:
     raw = entry["message"]
     role = raw["role"]
-    metadata = {DS4_KEY: entry["id"]}
+    metadata = {DS4_KEY: entry["id"], DS4_TIMESTAMP: entry["timestamp"]}
+    timestamp = _timestamp(raw["timestamp"])
     if role == "user":
-        content = raw["content"]
-        text = (
-            content
-            if isinstance(content, str)
-            else "\n".join(part["text"] for part in content if part["type"] == "text")
+        return ModelRequest(
+            [UserPromptPart(cast("Any", _user_content(raw["content"])), timestamp=timestamp)],
+            metadata=metadata,
+            timestamp=timestamp,
         )
-        return ModelRequest([UserPromptPart(text)], metadata=metadata)
     if role == "assistant":
         parts = [_response_content(block) for block in raw["content"]]
         stop_reason = raw["stopReason"]
@@ -63,27 +82,40 @@ def _message(entry: dict[str, Any]) -> ModelRequest | ModelResponse:
             "aborted": "error",
             "error": "error",
         }[stop_reason]
+        usage = raw["usage"]
         return ModelResponse(
             cast("Any", parts),
             metadata=metadata,
             finish_reason=cast("Any", finish_reason),
             state="incomplete" if stop_reason in {"aborted", "length"} else "complete",
+            timestamp=timestamp,
+            provider_name=raw["provider"],
+            model_name=raw["model"],
+            usage=RequestUsage(
+                input_tokens=usage["input"],
+                output_tokens=usage["output"],
+                cache_read_tokens=usage["cacheRead"],
+                cache_write_tokens=usage["cacheWrite"],
+            ),
         )
     if role == "toolResult":
-        text = "\n".join(part.get("text", "") for part in raw["content"])
+        content = [part.get("text", "") for part in raw["content"]]
+        text = "\n".join(content)
         call_id = raw["toolCallId"]
         if text.startswith("Retry prompt:"):
-            part: object = RetryPromptPart(text, tool_name=raw["toolName"], tool_call_id=call_id)
+            part: object = RetryPromptPart(text, tool_name=raw["toolName"], tool_call_id=call_id, timestamp=timestamp)
         else:
             outcome = "denied" if "denied" in text.lower() else "failed" if raw["isError"] else "success"
+            result_metadata = {key: raw[key] for key in ("nestedCalls", "details") if key in raw}
             part = ToolReturnPart(
                 raw["toolName"],
-                text,
+                content,
                 tool_call_id=call_id,
                 outcome=cast("Any", outcome),
-                metadata={"nestedCalls": raw["nestedCalls"]} if "nestedCalls" in raw else None,
+                metadata=result_metadata or None,
+                timestamp=timestamp,
             )
-        return ModelRequest([cast("Any", part)], metadata=metadata)
+        return ModelRequest([cast("Any", part)], metadata=metadata, timestamp=timestamp)
     raise AssertionError(f"unsupported fixture role {role}")
 
 
@@ -107,6 +139,7 @@ def test_generated_history_contract(fixture: dict[str, Any]) -> None:
     projection = project_history(messages, restore_boundary=cast("Any", restore_boundary))
     public = project_public_history(projection)
     expected_public = expected["public"]
+    assert [public_item_value(item) for item in public] == [item for item in expected_public if item is not None]
     assert [item.history_id for item in public] == [item["id"] for item in expected_public if item is not None]
     assert [item.failed for item in public if isinstance(item, PublicModelTurn)] == [
         item["metadata"]["failed"] for item in expected_public if item is not None and item["kind"] == "modelTurn"

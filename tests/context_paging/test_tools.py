@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -9,6 +10,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.usage import RunUsage
+from test_navigator import _fixture_item
 
 from ds4py.context_paging.public_history import (
     PublicHistoryItem,
@@ -20,6 +22,8 @@ from ds4py.context_paging.public_history import (
 from ds4py.context_paging.tools import create_context_paging_toolset
 from ds4py.errors import EngineError
 from ds4py.message_metadata import DS4_KEY
+
+FIXTURES = json.loads((Path(__file__).parents[1] / "fixtures/context_paging/recovery.json").read_text())["fixtures"]
 
 
 def _call(toolset: FunctionToolset[Any], name: str, arguments: dict[str, Any]) -> Any:
@@ -44,6 +48,25 @@ def _payload(result: object) -> Any:
 
 def _toolset(items: Sequence[PublicHistoryItem], *, enabled: Callable[[], bool] = lambda: True) -> FunctionToolset[Any]:
     return create_context_paging_toolset(is_enabled=enabled, public_items=lambda: items)
+
+
+@pytest.mark.parametrize("fixture", FIXTURES, ids=lambda fixture: fixture["id"])
+def test_generated_recovery_contract(fixture: dict[str, Any]) -> None:
+    items = [item for value in fixture["input"]["items"] if (item := _fixture_item(value)) is not None]
+    toolset = _toolset(items)
+    expected = fixture["expected"]
+    if "value" in expected and "ds4Error" in expected["value"]:
+        with pytest.raises(EngineError, match=expected["value"]["ds4Error"]["message"]):
+            _call(toolset, fixture["input"]["tool"], fixture["input"]["params"])
+        return
+
+    result = _value(_call(toolset, fixture["input"]["tool"], fixture["input"]["params"]))
+    if "error" in expected:
+        assert result == {
+            "content": [{"type": "text", "text": f"Recovery input error: {expected['error']['message']}"}]
+        }
+    else:
+        assert result == expected["value"]
 
 
 def test_real_tool_schemas_are_strict_and_use_camel_case_aliases() -> None:
