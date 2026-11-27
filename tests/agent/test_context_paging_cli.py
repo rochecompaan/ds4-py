@@ -49,6 +49,32 @@ def test_rolling_preflight_reserves_budget_while_compaction_keeps_ctx(tmp_path: 
         assert compaction.options.ctx == 10000
 
 
+@pytest.mark.parametrize(
+    ("trim_arguments", "expected_explicit"),
+    [([], False), (["--context-trim-to", "1"], True)],
+    ids=["implicit", "explicit"],
+)
+def test_rolling_preflight_preserves_trim_provenance(
+    tmp_path: Path, trim_arguments: list[str], expected_explicit: bool
+) -> None:
+    extension = RecordingExtension()
+    args = agent_cli.parser(extension).parse_args(
+        ["--context-strategy", "rolling", "--context-token-budget", "1", *trim_arguments]
+    )
+
+    with agent_cli.open_runtime(args, tmp_path, extension=extension) as runtime:
+        owner = runtime.model.context_owner
+        assert isinstance(owner, RollingWindow)
+        assert owner._base_settings.trim_to == 1
+        assert owner._base_settings.trim_to_explicit is expected_explicit
+        warnings: list[SessionEvent] = []
+        unsubscribe = runtime.on_event(warnings.append, kinds={"context_paging_warning"})
+        runtime._refresh_context_paging()
+        unsubscribe()
+
+    assert len(warnings) == int(expected_explicit)
+
+
 def test_initially_disabled_rolling_still_reserves_the_smaller_window(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

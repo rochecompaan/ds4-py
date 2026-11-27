@@ -177,7 +177,7 @@ def open_runtime(
                 else ContextComposition.rolling(
                     enabled=rolling_settings.enabled,
                     token_budget=rolling_settings.token_budget,
-                    trim_to=rolling_settings.trim_to,
+                    trim_to=rolling_settings.trim_to if rolling_settings.trim_to_explicit else None,
                 )
             ),
             project_trusted=args.trust_project_settings,
