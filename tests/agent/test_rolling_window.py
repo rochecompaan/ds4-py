@@ -5,12 +5,23 @@ from __future__ import annotations
 import asyncio
 import json
 from copy import deepcopy
+from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast, override
 
 import pytest
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.tools import RunContext
@@ -198,6 +209,35 @@ def test_real_selection_retains_canonical_history_and_returns_the_measured_view(
             assert payload["references"][0]["historyId"] == "old-user"
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("content", [datetime(2026, 11, 27, tzinfo=UTC), Decimal("1.5")])
+def test_real_selection_accepts_direct_non_json_tool_results(content: object) -> None:
+    with fake_engine() as engine:
+        model = make_model(engine.session())
+        owner = RollingWindow(
+            model.binder,
+            disabled_owner=LLMCompaction(model.binder),
+            token_budget=1200,
+            trim_to=600,
+        )
+        canonical: list[ModelMessage] = [
+            ModelResponse(
+                [ToolCallPart("read", {}, tool_call_id="value-call")],
+                metadata={DS4_KEY: "value-turn"},
+            ),
+            ModelRequest(
+                [ToolReturnPart("read", content, tool_call_id="value-call")],
+                metadata={DS4_KEY: "value-result"},
+            ),
+            user("current request", "current-user"),
+        ]
+        ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=canonical)
+
+        asyncio.run(owner.before_model_request(ctx, request_context(model, list(canonical))))
+        actual = owner.request_messages([], ctx)
+
+        assert actual[-1] is canonical[-1]
 
 
 def test_agent_adopts_canonical_history_and_response_not_view_only_notices() -> None:
