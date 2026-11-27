@@ -231,19 +231,36 @@ def test_non_image_binary_tool_results_are_metadata_only_across_recovery_tools(n
 
 
 @pytest.mark.parametrize(
-    ("content", "expected_type", "expected_reference"),
+    ("content", "expected_type", "expected_reference", "expected_mime"),
     [
-        (ImageUrl("https://example.test/shot.png"), "image", "https://example.test/shot.png"),
-        (AudioUrl("https://example.test/sound.mp3"), "audio", "https://example.test/sound.mp3"),
-        (DocumentUrl("https://example.test/doc.pdf"), "document", "https://example.test/doc.pdf"),
-        (VideoUrl("https://example.test/movie.mp4"), "video", "https://example.test/movie.mp4"),
-        (UploadedFile("file-123", provider_name="openai", media_type="application/pdf"), "file", "file-123"),
+        (ImageUrl("https://example.test/shot.png"), "image", "https://example.test/shot.png", "image/png"),
+        (AudioUrl("https://example.test/sound.mp3"), "audio", "https://example.test/sound.mp3", "audio/mpeg"),
+        (DocumentUrl("https://example.test/doc.pdf"), "document", "https://example.test/doc.pdf", "application/pdf"),
+        (VideoUrl("https://example.test/movie.mp4"), "video", "https://example.test/movie.mp4", "video/mp4"),
+        (
+            UploadedFile("file-123", provider_name="openai", media_type="application/pdf"),
+            "file",
+            "file-123",
+            "application/pdf",
+        ),
+        (
+            ImageUrl("https://cdn.example.test/download?id=42"),
+            "image",
+            "https://cdn.example.test/download?id=42",
+            "application/octet-stream",
+        ),
+        (
+            DocumentUrl("https://cdn.example.test/files/abc"),
+            "document",
+            "https://cdn.example.test/files/abc",
+            "application/octet-stream",
+        ),
     ],
-    ids=["image-url", "audio-url", "document-url", "video-url", "uploaded-file"],
+    ids=["image-url", "audio-url", "document-url", "video-url", "uploaded-file", "image-cdn", "document-cdn"],
 )
 @pytest.mark.parametrize("nested", [False, True], ids=["direct", "nested"])
 def test_multimodal_tool_results_are_metadata_only_across_recovery_tools(
-    content: object, expected_type: str, expected_reference: str, nested: bool
+    content: object, expected_type: str, expected_reference: str, expected_mime: str, nested: bool
 ) -> None:
     wrapped = {"attachment": [content]} if nested else content
     messages = [
@@ -267,6 +284,7 @@ def test_multimodal_tool_results_are_metadata_only_across_recovery_tools(
     encoded = json.dumps([searched, loaded, parts, page], separators=(",", ":"))
     assert f'"type":"{expected_type}"' in encoded or f'\\"type\\":\\"{expected_type}\\"' in encoded
     assert expected_reference in encoded
+    assert expected_mime in encoded
     assert type(content).__name__ not in encoded
     if isinstance(content, ImageUrl):
         assert loaded["items"][0]["deferred"] is True

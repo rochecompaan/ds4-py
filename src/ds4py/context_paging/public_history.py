@@ -183,7 +183,12 @@ def _visible_calls(turn: ModelTurnHistoryItem, excluded: set[str]) -> list[tuple
 
 
 def _url_content(value: ImageUrl | AudioUrl | DocumentUrl | VideoUrl) -> dict[str, object]:
-    mime_type = value.media_type or "application/octet-stream"
+    try:
+        inferred_mime = value.media_type
+    except ValueError:
+        # pydantic-ai raises lazily when a hosted URL has no recognizable extension.
+        inferred_mime = None
+    mime_type = inferred_mime or "application/octet-stream"
     if value.url.lower().startswith("data:"):
         return {
             "type": "image" if isinstance(value, ImageUrl) else "bytes",

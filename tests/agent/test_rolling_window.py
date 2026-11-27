@@ -13,6 +13,8 @@ from typing import Any, cast, override
 
 import pytest
 from pydantic_ai.messages import (
+    DocumentUrl,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -211,8 +213,17 @@ def test_real_selection_retains_canonical_history_and_returns_the_measured_view(
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("content", [datetime(2026, 11, 27, tzinfo=UTC), Decimal("1.5")])
-def test_real_selection_accepts_direct_non_json_tool_results(content: object) -> None:
+@pytest.mark.parametrize(
+    "content",
+    [
+        datetime(2026, 11, 27, tzinfo=UTC),
+        Decimal("1.5"),
+        ImageUrl("https://cdn.example.test/download?id=42"),
+        DocumentUrl("https://cdn.example.test/files/abc"),
+    ],
+    ids=["datetime", "decimal", "image-cdn", "document-cdn"],
+)
+def test_real_selection_accepts_direct_dynamic_tool_results(content: object) -> None:
     with fake_engine() as engine:
         model = make_model(engine.session())
         owner = RollingWindow(
