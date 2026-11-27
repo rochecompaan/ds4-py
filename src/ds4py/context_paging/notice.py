@@ -2,9 +2,10 @@
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic_ai.messages import ModelRequest, SystemPromptPart
+from pydantic_ai.messages import ModelRequest, UserPromptPart
 
 from ds4py.context_paging.public_history import PublicHistoryItem, PublicModelTurn, PublicText, PublicUser
 from ds4py.context_paging.text_units import clip_utf16, utf16_length
@@ -36,7 +37,7 @@ class PagingNotice:
 
     def as_message(self) -> ModelRequest:
         return ModelRequest(
-            [SystemPromptPart(self.content)],
+            [UserPromptPart(self.content, timestamp=datetime.fromtimestamp(0, UTC))],
             metadata={DS4_KEY: NOTICE_VIEW_KEY, DS4_CONTEXT_PAGING: "notice"},
         )
 

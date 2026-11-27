@@ -12,7 +12,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -289,7 +288,7 @@ def test_active_partial_restore_completes_later_and_extends_loaded_view(tmp_path
                 assert isinstance(notice, ModelRequest)
                 assert (notice.metadata or {}).get(DS4_CONTEXT_PAGING) == "notice"
                 notice_part = notice.parts[0]
-                assert isinstance(notice_part, SystemPromptPart)
+                assert isinstance(notice_part, UserPromptPart)
                 notice_text = notice_part.content
                 assert "old-response" in notice_text
                 assert "old-call" in notice_text

@@ -6,7 +6,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -48,7 +47,7 @@ class AdditiveMeter:
             metadata = message.metadata or {}
             if metadata.get(DS4_CONTEXT_PAGING) == "notice":
                 part = message.parts[0]
-                assert isinstance(part, SystemPromptPart)
+                assert isinstance(part, UserPromptPart)
                 notice_tokens = len(part.content) // 4 if self.dynamic_notice else self.notice_cost
                 costs.append(notice_tokens)
             elif metadata.get(DS4_CONTEXT_PAGING) == "recovery":

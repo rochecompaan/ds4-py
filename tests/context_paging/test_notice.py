@@ -1,7 +1,12 @@
 import json
+from pathlib import Path
+from typing import Any
 
-from pydantic_ai.messages import SystemPromptPart
+import pytest
+from pydantic_ai.messages import SystemPromptPart, UserPromptPart
+from test_history import _messages
 
+from ds4py.context_paging.history import project_history
 from ds4py.context_paging.notice import (
     ENTRY_CHARACTERS,
     MINIMUM_CLIPPED_CHARACTERS,
@@ -15,6 +20,9 @@ from ds4py.context_paging.notice import (
     conversation_character_limit,
     paging_notice_key,
 )
+from ds4py.context_paging.public_history import project_public_history
+
+FIXTURES = json.loads((Path(__file__).parents[1] / "fixtures/context_paging/notice.json").read_text())["fixtures"]
 
 
 def _user(turn: int, text: str | None = None) -> PublicUser:
@@ -40,6 +48,40 @@ def _conversation(turns: int) -> EvictedConversation:
     for turn in range(1, turns + 1):
         conversation.add_turn([_user(turn), _reply(turn)])
     return conversation
+
+
+def _fixture_notice_value(fixture: dict[str, Any]) -> dict[str, object]:
+    conversation = EvictedConversation()
+    turn: list[Any] = []
+    for item in project_public_history(project_history(_messages(fixture))):
+        if isinstance(item, PublicUser) and turn:
+            conversation.add_turn(turn)
+            turn = []
+        turn.append(item)
+    if turn:
+        conversation.add_turn(turn)
+    recent = next(
+        entry["id"] for entry in reversed(fixture["input"]["entries"]) if entry["message"]["role"] == "assistant"
+    )
+    options = {"max_characters": fixture["input"]["maxCharacters"]} if "maxCharacters" in fixture["input"] else {}
+    notice = build_paging_notice(
+        fixture["input"]["effectiveBudgetTokens"],
+        recent,
+        conversation=conversation,
+        **options,
+    )
+    part = notice.as_message().parts[0]
+    assert isinstance(part, (SystemPromptPart, UserPromptPart))
+    return {
+        "role": "user" if isinstance(part, UserPromptPart) else "system",
+        "content": part.content,
+        "timestamp": int(part.timestamp.timestamp() * 1000),
+    }
+
+
+@pytest.mark.parametrize("fixture", FIXTURES, ids=lambda fixture: fixture["id"])
+def test_generated_notice_contract(fixture: dict[str, Any]) -> None:
+    assert _fixture_notice_value(fixture) == fixture["expected"]["value"]
 
 
 def test_only_newest_three_evicted_turn_replies_are_retained() -> None:
@@ -146,5 +188,5 @@ def test_notice_identity_and_message_metadata_are_stable() -> None:
     assert first == second
     assert first.key == paging_notice_key("r1", None)
     assert message.metadata == {"ds4.key": "context-paging-notice", "ds4.context_paging": "notice"}
-    assert isinstance(message.parts[0], SystemPromptPart)
+    assert isinstance(message.parts[0], UserPromptPart)
     assert message.parts[0].content == first.content

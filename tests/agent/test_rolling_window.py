@@ -183,7 +183,7 @@ def test_real_selection_retains_canonical_history_and_returns_the_measured_view(
             assert canonical[0] not in actual
             assert canonical[1] not in actual
             assert isinstance(actual[0], ModelRequest)
-            assert isinstance(actual[0].parts[0], SystemPromptPart)
+            assert isinstance(actual[0].parts[0], UserPromptPart)
             assert actual[0].metadata == {
                 DS4_KEY: "context-paging-notice",
                 DS4_CONTEXT_PAGING: "notice",
