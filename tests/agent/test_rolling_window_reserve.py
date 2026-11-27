@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from dataclasses import replace
+from typing import Any, cast
 
 import pytest
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
@@ -159,6 +160,64 @@ def test_reserve_rebinds_a_smaller_view_and_continues_the_same_response(note_mod
                 if segment.kind == "system_note" or segment.kind.startswith("system_note:")
             ]
             assert followup_note_kinds == note_kinds
+
+    asyncio.run(scenario())
+
+
+def test_strict_reserve_fit_measures_the_installed_open_transcript() -> None:
+    async def scenario() -> None:
+        with fake_engine(family="qwen", script=sequential_text("ab")) as engine:
+            session = engine.session()
+            engine.config = replace(engine.config, ctx=32768)
+            model = make_model(session)
+            owner = RollingWindow(
+                model.binder,
+                disabled_owner=LLMCompaction(model.binder),
+                token_budget=16000,
+                trim_to=15800,
+            )
+            model.context_owner = owner
+            canonical = [
+                user("old " * 500, "old-user"),
+                ModelResponse([TextPart("old answer " * 500)], metadata={DS4_KEY: "old-response"}),
+                user("active request", "active-user"),
+            ]
+            before = deepcopy(canonical)
+            ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=canonical)
+            params = ModelRequestParameters()
+            await owner.before_model_request(
+                ctx,
+                ModelRequestContext(
+                    model=model,
+                    messages=canonical,
+                    model_settings=None,
+                    model_request_parameters=params,
+                ),
+            )
+            make_room = owner.make_room
+            recovered_lengths: list[int] = []
+
+            async def recover_at_boundary(messages: list[Any], request: Any) -> Any:
+                result = await make_room(messages, request)
+                recovered_lengths.append(len(session.transcript))
+                engine.config = replace(engine.config, ctx=len(session.transcript) + 1)
+                return result
+
+            cast("Any", owner).make_room = recover_at_boundary
+            async with model.request_stream(canonical, None, params, run_context=ctx) as stream:
+                prompt_length = len(session.transcript)
+                prefix = len(PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens))
+                session._worker.call(
+                    lambda _engine, native: setattr(native, "_ctx", prompt_length + prefix + 3)
+                ).result()
+                async for _ in stream:
+                    pass
+                response = stream.get()
+
+            assert "".join(part.content for part in response.parts if isinstance(part, TextPart)) == "ab"
+            assert recovered_lengths
+            assert engine.config.ctx == recovered_lengths[-1] + 1
+            assert canonical == before
 
     asyncio.run(scenario())
 

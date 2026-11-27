@@ -78,7 +78,13 @@ class ReserveSettlement:
             messages = await self._recover(event)
             if self._reconciled():
                 return
-            projected = self._binder.project_request(messages, bound=True)
+            # Strict owners installed the exact open continuation. Reprojecting it as
+            # a fresh request would append a second assistant prefix.
+            projected = (
+                len(self._session.transcript)
+                if self._owner is not None and self._owner.reserve_operations
+                else self._binder.project_request(messages, bound=True)
+            )
             fits = self._binder.reserve_overflow(projected) <= 0
         except BaseException:
             self.settle(event)
