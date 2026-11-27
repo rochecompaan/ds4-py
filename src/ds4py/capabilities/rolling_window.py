@@ -349,6 +349,7 @@ class RollingWindow(ContextStrategy):
             self.binder.adopt_rendered_view(selected.candidate_messages)
         state.selection = selected.state
         state.request_view = selected.candidate_messages
+        state.request_input_tokens = selected.measurement.total_tokens
         messages[:] = selected.candidate_messages
         return RoomResult(made_room=True)
 

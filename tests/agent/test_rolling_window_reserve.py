@@ -94,6 +94,8 @@ def test_reserve_rebinds_a_smaller_view_and_continues_the_same_response() -> Non
                 ),
             )
             assert owner.request_messages(canonical, ctx) == canonical
+            initial_input = owner.statistics_state().input_tokens
+            assert initial_input is not None
 
             async with model.request_stream(canonical, None, params, run_context=ctx) as stream:
                 prompt_length = len(session.transcript)
@@ -107,15 +109,22 @@ def test_reserve_rebinds_a_smaller_view_and_continues_the_same_response() -> Non
                 response = stream.get()
 
             assert "".join(part.content for part in response.parts if isinstance(part, TextPart)) == "ab"
+            view = owner.request_messages([], ctx)
+            reserve_projection = model.binder.project_request_view(
+                canonical_messages=canonical,
+                candidate_messages=view,
+                params=params,
+            )
             exact = owner.statistics_state().input_tokens
             assert exact is not None
+            assert exact == reserve_projection.total_tokens
+            assert exact < initial_input
             assert response.metadata is not None
             assert response.metadata[DS4_PAGING_INPUT_TOKENS] == exact
             assert response.metadata[DS4_REQUEST_SYNC_COUNT] > 1
             assert read_request_input(response) == InputTokenReading("exact", exact)
             assert len(session.transcript) < prompt_length
             assert canonical == before
-            view = owner.request_messages([], ctx)
             assert view[-1] is canonical[-1]
             assert canonical[0] not in view and canonical[1] not in view
             assert view[0].metadata is not None
