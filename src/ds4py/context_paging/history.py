@@ -20,6 +20,7 @@ from ds4py.message_metadata import DS4_KEY
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from collections.abc import Set as AbstractSet
 
     from ds4py.binding_provenance import PreparedRequestViewProvenance
     from ds4py.context_paging.selection import ContextCutFrontier
@@ -148,6 +149,7 @@ def _project_model_turn(
     index: int,
     sequence: int,
     restore_boundary: RestoreBoundary | None,
+    restore_ids: AbstractSet[str],
 ) -> tuple[ModelTurnHistoryItem, int]:
     response = messages[index]
     if not isinstance(response, ModelResponse):
@@ -186,8 +188,11 @@ def _project_model_turn(
         for part_index, call in calls
     )
     incomplete = len(seen) != len(expected)
+    response_id = _history_id(response)
     interrupted_by_restore = (
-        incomplete and not _response_interrupted(response) and restore_boundary in ("switched", "forked")
+        incomplete
+        and not _response_interrupted(response)
+        and (restore_boundary in ("switched", "forked") or response_id in restore_ids)
     )
     omit_from_public = False
     if incomplete and not _response_interrupted(response) and not interrupted_by_restore:
@@ -196,7 +201,7 @@ def _project_model_turn(
         omit_from_public = True
 
     item = ModelTurnHistoryItem(
-        _history_id(response),
+        response_id,
         sequence,
         response,
         index,
@@ -214,6 +219,7 @@ def project_history(
     messages: Sequence[ModelMessage],
     *,
     restore_boundary: RestoreBoundary | None = None,
+    restore_ids: AbstractSet[str] = frozenset(),
 ) -> HistoryProjection:
     """Validate canonical exchanges without mutating or synthesizing messages."""
 
@@ -223,7 +229,7 @@ def project_history(
     while index < len(canonical):
         message = canonical[index]
         if isinstance(message, ModelResponse):
-            item, index = _project_model_turn(canonical, index, len(items), restore_boundary)
+            item, index = _project_model_turn(canonical, index, len(items), restore_boundary, restore_ids)
             items.append(item)
             continue
         if _is_result_message(message):

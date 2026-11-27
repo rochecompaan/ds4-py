@@ -717,7 +717,11 @@ class AgentRuntime:
                 raise
             outcome.update(result)
             if isinstance(owner, RollingWindow):
-                owner.restore_state(snapshot.messages, frontier if case.use_request_view else None)
+                owner.restore_state(
+                    snapshot.messages,
+                    frontier if case.use_request_view else None,
+                    restore_boundary="switched",
+                )
             self._messages = list(snapshot.messages)
             self._title = record.title
             self._created_at = record.created_at

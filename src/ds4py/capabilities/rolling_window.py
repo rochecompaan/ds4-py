@@ -12,7 +12,7 @@ from ds4py.binding_plan import request_instructions
 from ds4py.binding_provenance import ensure_message_keys
 from ds4py.capabilities.context import TOOL_RESULT_DOES_NOT_FIT, ContextRequest, ContextStrategy, RoomResult
 from ds4py.capabilities.rolling_window_session import RollingWindowSession
-from ds4py.context_paging.history import PAGING_TOOL_NAMES, project_history
+from ds4py.context_paging.history import PAGING_TOOL_NAMES, ModelTurnHistoryItem, project_history
 from ds4py.context_paging.meter import RequestMeter
 from ds4py.context_paging.selection import (
     ContextCutFrontier,
@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 
     from ds4py.binding import MessageBinder
     from ds4py.capabilities.compaction import LLMCompaction
+    from ds4py.context_paging.history import RestoreBoundary
 
 
 @dataclass(slots=True)
@@ -78,7 +79,10 @@ class RollingWindow(ContextStrategy):
         self.disabled_owner = disabled_owner
         self._tools: FunctionToolset[object] = create_context_paging_toolset(
             is_enabled=lambda: self._state.settings.enabled,
-            history_source=lambda: self._state.canonical_messages,
+            history_source=lambda: project_history(
+                self._state.canonical_messages,
+                restore_ids=self._state.restore_ids,
+            ),
         )
         self._initial_settings = settings
         self._base_settings = settings
@@ -132,7 +136,7 @@ class RollingWindow(ContextStrategy):
         state.request_input_tokens = None
         self.reset_accounting()
         state.navigation.clear()
-        state.restore_ids.clear()
+        self._classify_restore_interruptions("forked")
         state.request_view = self.binder.request_view()
         if not state.canonical_messages or not state.request_view:
             state.selection = None
@@ -150,6 +154,8 @@ class RollingWindow(ContextStrategy):
         self,
         canonical_messages: Sequence[ModelMessage],
         frontier: ContextCutFrontier | None = None,
+        *,
+        restore_boundary: RestoreBoundary | None = None,
     ) -> None:
         """Adopt validated canonical identity and the binder's freshly restored view."""
         state = self._state
@@ -161,7 +167,16 @@ class RollingWindow(ContextStrategy):
         state.request_view = self.binder.request_view()
         self.reset_accounting()
         state.navigation.clear()
-        state.restore_ids.clear()
+        self._classify_restore_interruptions(restore_boundary)
+
+    def _classify_restore_interruptions(self, boundary: RestoreBoundary | None) -> None:
+        state = self._state
+        projected = project_history(state.canonical_messages, restore_boundary=boundary)
+        state.restore_ids = {
+            item.history_id
+            for item in projected.items
+            if isinstance(item, ModelTurnHistoryItem) and item.interrupted_by_restore
+        }
 
     @override
     def get_toolset(self) -> FunctionToolset[object]:
@@ -295,7 +310,7 @@ class RollingWindow(ContextStrategy):
         overflow: OverflowMode = "normal",
     ) -> SelectionResult:
         return select_view(
-            project_history(messages),
+            project_history(messages, restore_ids=self._state.restore_ids),
             settings=self._state.settings,
             model_context=self.binder.session.engine.config.ctx,
             meter=RequestMeter(self.binder, params),

@@ -28,7 +28,8 @@ from test_restore import fixed_clock, make_model, project_dir, scripted_rounds
 from ds4py.binding_provenance import prepare_request_view_provenance
 from ds4py.capabilities.context import ContextComposition
 from ds4py.capabilities.rolling_window import RollingWindow
-from ds4py.context_paging.history import derive_frontier
+from ds4py.context_paging.history import HistoryProjectionError, derive_frontier, project_history
+from ds4py.context_paging.public_history import PublicModelTurn, project_public_history
 from ds4py.errors import StoreError
 from ds4py.message_metadata import DS4_CONTEXT_PAGING, DS4_KEY, DS4_VIEW_OF
 from ds4py.runtime import AgentRuntime
@@ -87,6 +88,65 @@ def test_whole_turn_omissions_derive_the_last_completed_turn() -> None:
     assert frontier is not None
     assert frontier.kind == "completedTurn"
     assert frontier.last_evicted.history_id == "r2"
+
+
+@pytest.mark.parametrize("continuation", ["switch", "fork"])
+def test_saved_incomplete_exchange_continues_as_interrupted(tmp_path: Path, continuation: str) -> None:
+    async def scenario() -> None:
+        with runtime_engine() as engine:
+            store = SessionStore(tmp_path / "home")
+            runtime = AgentRuntime(
+                make_model(engine),
+                project_dir(tmp_path),
+                store=store,
+                clock=fixed_clock,
+                context=ContextComposition.rolling(token_budget=16000),
+            )
+            try:
+                runtime._messages = [response("", "interrupted-turn", "unfinished-call")]
+                runtime.model.binder.prepare_model_request(runtime._messages, ModelRequestParameters())
+                record = await runtime.save()
+                await runtime.new()
+                await runtime.switch(record.session_id)
+                if continuation == "fork":
+                    await runtime.fork()
+                runtime._messages.append(user("next request", "next-user"))
+                owner = runtime.model.context_owner
+                assert isinstance(owner, RollingWindow)
+                ctx = RunContext(deps=None, model=runtime.model, usage=RunUsage(), messages=runtime._messages)
+                params = ModelRequestParameters()
+                await owner.before_model_request(
+                    ctx,
+                    ModelRequestContext(
+                        model=runtime.model,
+                        messages=runtime._messages,
+                        model_settings=None,
+                        model_request_parameters=params,
+                    ),
+                )
+                projected = project_history(runtime.messages, restore_ids=owner._state.restore_ids)
+                turns = [item for item in project_public_history(projected) if isinstance(item, PublicModelTurn)]
+                assert [turn.history_id for turn in turns] == ["interrupted-turn"]
+                assert turns[0].interrupted_by_restore
+                assert owner._state.restore_ids == {"interrupted-turn"}
+
+                runtime._messages.extend(
+                    [response("", "new-incomplete-turn", "new-call"), user("later request", "later-user")]
+                )
+                with pytest.raises(HistoryProjectionError, match="INCOMPLETE_TOOL_RESULTS"):
+                    await owner.before_model_request(
+                        ctx,
+                        ModelRequestContext(
+                            model=runtime.model,
+                            messages=runtime._messages,
+                            model_settings=None,
+                            model_request_parameters=params,
+                        ),
+                    )
+            finally:
+                await runtime.close()
+
+    asyncio.run(scenario())
 
 
 def test_active_partial_turn_derives_user_anchor_and_last_evicted_exchange() -> None:
