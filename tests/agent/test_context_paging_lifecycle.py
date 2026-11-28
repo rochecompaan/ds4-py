@@ -21,8 +21,6 @@ from ds4py.store import SessionStore
 
 def marked(owner: RollingWindow) -> None:
     owner._state.selection = SelectionState(ContextCutFrontier("partialTurn", ContextCutKey("old"), "user"), None)
-    owner._state.accounting["requests"] = 4
-    owner._state.navigation["page"] = 2
     owner._state.restore_ids.add("interrupted")
 
 
@@ -44,8 +42,6 @@ def test_new_clears_session_state_and_status_reinitializes(tmp_path: Path) -> No
             await runtime.new()
             assert owner.enabled
             assert owner._state.selection is None
-            assert owner._state.accounting == {}
-            assert owner._state.navigation == {}
             assert owner._state.restore_ids == set()
             statuses = [
                 event for event in events if event.kind == "status" and event.payload["key"] == "context-paging"
@@ -124,7 +120,6 @@ def test_compaction_and_model_changed_reset_only_their_documented_state(tmp_path
             marked(owner)
             selection = owner._state.selection
             runtime.model.session.emit("before_compact", reason="manual", old_tokens=10)
-            assert owner._state.accounting == {}
             assert owner._state.selection is selection
             runtime.model.session.emit("compaction_finished", reason="manual", outcome="cancelled")
             assert owner._state.selection is selection
@@ -139,7 +134,6 @@ def test_compaction_and_model_changed_reset_only_their_documented_state(tmp_path
             runtime.model.session.emit("model_changed", model_id=9)
             assert not owner.enabled
             assert owner._state.selection is None
-            assert owner._state.accounting == {}
         finally:
             asyncio.run(runtime.close())
 

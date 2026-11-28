@@ -33,7 +33,6 @@ def runtime_for(path: Path, *, rolling: bool = True) -> tuple[Any, AgentRuntime,
 
 def marked(owner: RollingWindow) -> None:
     owner._state.selection = SelectionState(ContextCutFrontier("completedTurn", ContextCutKey("old")), None)
-    owner._state.accounting["requests"] = 3
 
 
 def test_status_repeated_choices_and_invalid_arguments_preserve_state(tmp_path: Path) -> None:
@@ -47,26 +46,21 @@ def test_status_repeated_choices_and_invalid_arguments_preserve_state(tmp_path: 
         assert await registry.execute("/context-paging status") == "paging on"
         marked(owner)
         selection = owner._state.selection
-        accounting = owner._state.accounting.copy()
         assert await registry.execute("/context-paging on") == "paging on"
         assert owner._state.selection is selection
-        assert owner._state.accounting == accounting
 
         with pytest.raises(CommandError, match="usage: /context-paging"):
             await registry.execute("/context-paging invalid")
         with pytest.raises(CommandError, match="usage: /context-paging"):
             await registry.execute("/context-paging on now")
         assert owner._state.selection is selection
-        assert owner._state.accounting == accounting
 
         assert await registry.execute("/context-paging off") == "paging off"
         assert not owner.enabled
         assert owner._state.selection is None
-        assert owner._state.accounting == {}
         marked(owner)
         assert await registry.execute("/context-paging off") == "paging off"
         assert owner._state.selection is not None
-        assert owner._state.accounting == {"requests": 3}
 
     try:
         asyncio.run(scenario())

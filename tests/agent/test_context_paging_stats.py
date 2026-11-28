@@ -44,12 +44,8 @@ def test_live_exact_input_and_repeated_stats_preserve_all_owner_state(tmp_path: 
                 assert read_request_input(saved_response) == InputTokenReading("exact", exact)
 
                 cast("Any", owner._state).selection = "marked selection"
-                owner._state.accounting.update(prefilled=1, cached=2, generated=3)
-                owner._state.navigation.update(turns=4)
                 before = (
                     owner._state.selection,
-                    dict(owner._state.accounting),
-                    dict(owner._state.navigation),
                     owner._state.settings,
                     tuple(model.session.transcript.tokens),
                     list(runtime.messages),
@@ -72,8 +68,6 @@ def test_live_exact_input_and_repeated_stats_preserve_all_owner_state(tmp_path: 
                 assert f"({exact / 16_000 * 100:.1f}% used)" in first
                 after = (
                     owner._state.selection,
-                    dict(owner._state.accounting),
-                    dict(owner._state.navigation),
                     owner._state.settings,
                     tuple(model.session.transcript.tokens),
                     list(runtime.messages),

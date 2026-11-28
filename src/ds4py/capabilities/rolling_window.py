@@ -49,8 +49,6 @@ class _RollingState:
     canonical_messages: tuple[ModelMessage, ...] = ()
     request_params: ModelRequestParameters | None = None
     request_input_tokens: int | None = None
-    accounting: dict[str, int] = field(default_factory=dict)
-    navigation: dict[str, int] = field(default_factory=dict)
     restore_ids: set[str] = field(default_factory=set)
 
 
@@ -113,9 +111,6 @@ class RollingWindow(ContextStrategy):
     def reset_cut(self) -> None:
         self._state.selection = None
 
-    def reset_accounting(self) -> None:
-        self._state.accounting.clear()
-
     def statistics_state(self) -> RollingWindowStatisticsState:
         """Copy only the live values needed by the read-only report."""
         state = self._state
@@ -131,15 +126,13 @@ class RollingWindow(ContextStrategy):
         self._state.canonical_messages = tuple(canonical_messages)
 
     def reset_after_fork(self) -> None:
-        """Retain canonical identity and KV while resetting per-session policy accounting."""
+        """Retain canonical identity and KV while resetting per-session policy state."""
         from ds4py.binding_provenance import prepare_request_view_provenance  # noqa: PLC0415 - Restore-only validation path.
         from ds4py.context_paging.history import derive_frontier  # noqa: PLC0415 - Avoid the history/selection cycle.
 
         state = self._state
         state.settings = self._base_settings
         state.request_input_tokens = None
-        self.reset_accounting()
-        state.navigation.clear()
         self._classify_restore_interruptions("forked")
         state.request_view = self.binder.request_view()
         if not state.canonical_messages or not state.request_view:
@@ -169,8 +162,6 @@ class RollingWindow(ContextStrategy):
         state.request_params = None
         state.request_input_tokens = None
         state.request_view = self.binder.request_view()
-        self.reset_accounting()
-        state.navigation.clear()
         self._classify_restore_interruptions(restore_boundary)
 
     def _classify_restore_interruptions(self, boundary: RestoreBoundary | None) -> None:

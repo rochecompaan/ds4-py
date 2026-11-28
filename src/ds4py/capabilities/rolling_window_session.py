@@ -91,7 +91,6 @@ class RollingWindowSession:
                 state = self.owner._state
                 state.settings = replace(state.settings, enabled=enabled)
                 self.owner.reset_cut()
-                self.owner.reset_accounting()
                 self.publish_status()
         return "paging on" if self.owner.enabled else "paging off"
 
@@ -111,17 +110,12 @@ class RollingWindowSession:
                 self.publish_status()
                 self.warn_for_trim(self.owner._base_settings)
             return
-        if event.kind == "before_compact":
-            if event.payload.get("reason") == "manual":
-                self.owner.reset_accounting()
-            return
         if event.kind == "compacted":
             if event.payload.get("reason") == "manual":
                 self.owner.reset_cut()
             return
         if event.kind == "model_changed":
             self.owner.reset_cut()
-            self.owner.reset_accounting()
             return
         if event.kind == "forked":
             self.owner.reset_after_fork()
