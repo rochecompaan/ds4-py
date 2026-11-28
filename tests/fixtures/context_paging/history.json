@@ -1,0 +1,3181 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "history-aborted-retained-with-failure",
+      "input": {
+        "entries": [
+          {
+            "type": "message",
+            "id": "turn-aborted",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-1",
+                  "name": "read",
+                  "arguments": {}
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-2",
+                  "name": "read",
+                  "arguments": {}
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "aborted",
+              "timestamp": 1
+            }
+          },
+          {
+            "type": "message",
+            "id": "result-1",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "call-1",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "partial"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          },
+          {
+            "type": "message",
+            "id": "user-next",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "user",
+              "content": "continue",
+              "timestamp": 0
+            }
+          }
+        ],
+        "options": {}
+      },
+      "expected": {
+        "projection": {
+          "value": [
+            {
+              "id": "turn-aborted",
+              "kind": "modelTurn",
+              "sequence": 0,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "call-1",
+                    "name": "read",
+                    "arguments": {}
+                  },
+                  {
+                    "type": "toolCall",
+                    "id": "call-2",
+                    "name": "read",
+                    "arguments": {}
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "aborted",
+                "timestamp": 1
+              },
+              "toolResults": [
+                {
+                  "role": "toolResult",
+                  "toolCallId": "call-1",
+                  "toolName": "read",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "partial"
+                    }
+                  ],
+                  "isError": false,
+                  "timestamp": 2
+                }
+              ],
+              "metadata": {
+                "tools": [
+                  "read",
+                  "read"
+                ],
+                "files": [],
+                "failed": true
+              }
+            },
+            {
+              "id": "user-next",
+              "kind": "user",
+              "sequence": 1,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "userMessage": {
+                "role": "user",
+                "content": "continue",
+                "timestamp": 0
+              }
+            }
+          ]
+        },
+        "public": [
+          {
+            "id": "turn-aborted",
+            "kind": "modelTurn",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-1",
+                  "name": "read",
+                  "arguments": {}
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-2",
+                  "name": "read",
+                  "arguments": {}
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "aborted",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-1",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "partial"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read",
+                "read"
+              ],
+              "files": [],
+              "failed": true
+            }
+          },
+          {
+            "id": "user-next",
+            "kind": "user",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "continue",
+              "timestamp": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "history-complete-exchange",
+      "input": {
+        "entries": [
+          {
+            "type": "message",
+            "id": "user-1",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "user",
+              "content": "inspect source",
+              "timestamp": 0
+            }
+          },
+          {
+            "type": "message",
+            "id": "turn-1",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-1",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/a.ts"
+                  }
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-2",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/b.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            }
+          },
+          {
+            "type": "message",
+            "id": "result-2",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "call-2",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "second"
+                }
+              ],
+              "isError": true,
+              "timestamp": 2
+            }
+          },
+          {
+            "type": "message",
+            "id": "result-1",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "call-1",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "first"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          }
+        ],
+        "options": {}
+      },
+      "expected": {
+        "projection": {
+          "value": [
+            {
+              "id": "user-1",
+              "kind": "user",
+              "sequence": 0,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "userMessage": {
+                "role": "user",
+                "content": "inspect source",
+                "timestamp": 0
+              }
+            },
+            {
+              "id": "turn-1",
+              "kind": "modelTurn",
+              "sequence": 1,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "call-1",
+                    "name": "read",
+                    "arguments": {
+                      "path": "src/a.ts"
+                    }
+                  },
+                  {
+                    "type": "toolCall",
+                    "id": "call-2",
+                    "name": "read",
+                    "arguments": {
+                      "path": "src/b.ts"
+                    }
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "toolUse",
+                "timestamp": 1
+              },
+              "toolResults": [
+                {
+                  "role": "toolResult",
+                  "toolCallId": "call-2",
+                  "toolName": "read",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "second"
+                    }
+                  ],
+                  "isError": true,
+                  "timestamp": 2
+                },
+                {
+                  "role": "toolResult",
+                  "toolCallId": "call-1",
+                  "toolName": "read",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "first"
+                    }
+                  ],
+                  "isError": false,
+                  "timestamp": 2
+                }
+              ],
+              "metadata": {
+                "tools": [
+                  "read",
+                  "read"
+                ],
+                "files": [
+                  "src/a.ts",
+                  "src/b.ts"
+                ],
+                "failed": true
+              }
+            }
+          ]
+        },
+        "public": [
+          {
+            "id": "user-1",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "inspect source",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-1",
+            "kind": "modelTurn",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-1",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/a.ts"
+                  }
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-2",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/b.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-2",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "second"
+                  }
+                ],
+                "isError": true,
+                "timestamp": 2
+              },
+              {
+                "role": "toolResult",
+                "toolCallId": "call-1",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "first"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read",
+                "read"
+              ],
+              "files": [
+                "src/a.ts",
+                "src/b.ts"
+              ],
+              "failed": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "history-denied-and-retry-failures",
+      "input": {
+        "entries": [
+          {
+            "type": "message",
+            "id": "turn-failures",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "denied",
+                  "name": "bash",
+                  "arguments": {}
+                },
+                {
+                  "type": "toolCall",
+                  "id": "retry",
+                  "name": "read",
+                  "arguments": {}
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            }
+          },
+          {
+            "type": "message",
+            "id": "result-denied",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "denied",
+              "toolName": "bash",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Tool execution denied"
+                }
+              ],
+              "isError": true,
+              "timestamp": 2
+            }
+          },
+          {
+            "type": "message",
+            "id": "result-retry",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "retry",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Retry prompt: correct the input"
+                }
+              ],
+              "isError": true,
+              "timestamp": 2
+            }
+          }
+        ],
+        "options": {}
+      },
+      "expected": {
+        "projection": {
+          "value": [
+            {
+              "id": "turn-failures",
+              "kind": "modelTurn",
+              "sequence": 0,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "denied",
+                    "name": "bash",
+                    "arguments": {}
+                  },
+                  {
+                    "type": "toolCall",
+                    "id": "retry",
+                    "name": "read",
+                    "arguments": {}
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "toolUse",
+                "timestamp": 1
+              },
+              "toolResults": [
+                {
+                  "role": "toolResult",
+                  "toolCallId": "denied",
+                  "toolName": "bash",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Tool execution denied"
+                    }
+                  ],
+                  "isError": true,
+                  "timestamp": 2
+                },
+                {
+                  "role": "toolResult",
+                  "toolCallId": "retry",
+                  "toolName": "read",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Retry prompt: correct the input"
+                    }
+                  ],
+                  "isError": true,
+                  "timestamp": 2
+                }
+              ],
+              "metadata": {
+                "tools": [
+                  "bash",
+                  "read"
+                ],
+                "files": [],
+                "failed": true
+              }
+            }
+          ]
+        },
+        "public": [
+          {
+            "id": "turn-failures",
+            "kind": "modelTurn",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "denied",
+                  "name": "bash",
+                  "arguments": {}
+                },
+                {
+                  "type": "toolCall",
+                  "id": "retry",
+                  "name": "read",
+                  "arguments": {}
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "denied",
+                "toolName": "bash",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Tool execution denied"
+                  }
+                ],
+                "isError": true,
+                "timestamp": 2
+              },
+              {
+                "role": "toolResult",
+                "toolCallId": "retry",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Retry prompt: correct the input"
+                  }
+                ],
+                "isError": true,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "bash",
+                "read"
+              ],
+              "files": [],
+              "failed": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "history-duplicate-result-rejected",
+      "input": {
+        "entries": [
+          {
+            "type": "message",
+            "id": "turn-1",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-1",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/turn-1.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            }
+          },
+          {
+            "type": "message",
+            "id": "result-1",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "call-1",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "first"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          },
+          {
+            "type": "message",
+            "id": "result-2",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "call-1",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "second"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          }
+        ],
+        "options": {}
+      },
+      "expected": {
+        "projection": {
+          "error": {
+            "name": "HistoryProjectionError",
+            "code": "DUPLICATE_TOOL_RESULT",
+            "message": "DUPLICATE_TOOL_RESULT"
+          }
+        }
+      }
+    },
+    {
+      "id": "history-error-retained-with-failure",
+      "input": {
+        "entries": [
+          {
+            "type": "message",
+            "id": "turn-error",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-1",
+                  "name": "read",
+                  "arguments": {}
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-2",
+                  "name": "read",
+                  "arguments": {}
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "error",
+              "timestamp": 1
+            }
+          },
+          {
+            "type": "message",
+            "id": "result-1",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "call-1",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "partial"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          },
+          {
+            "type": "message",
+            "id": "user-next",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "user",
+              "content": "continue",
+              "timestamp": 0
+            }
+          }
+        ],
+        "options": {}
+      },
+      "expected": {
+        "projection": {
+          "value": [
+            {
+              "id": "turn-error",
+              "kind": "modelTurn",
+              "sequence": 0,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "call-1",
+                    "name": "read",
+                    "arguments": {}
+                  },
+                  {
+                    "type": "toolCall",
+                    "id": "call-2",
+                    "name": "read",
+                    "arguments": {}
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "error",
+                "timestamp": 1
+              },
+              "toolResults": [
+                {
+                  "role": "toolResult",
+                  "toolCallId": "call-1",
+                  "toolName": "read",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "partial"
+                    }
+                  ],
+                  "isError": false,
+                  "timestamp": 2
+                }
+              ],
+              "metadata": {
+                "tools": [
+                  "read",
+                  "read"
+                ],
+                "files": [],
+                "failed": true
+              }
+            },
+            {
+              "id": "user-next",
+              "kind": "user",
+              "sequence": 1,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "userMessage": {
+                "role": "user",
+                "content": "continue",
+                "timestamp": 0
+              }
+            }
+          ]
+        },
+        "public": [
+          {
+            "id": "turn-error",
+            "kind": "modelTurn",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-1",
+                  "name": "read",
+                  "arguments": {}
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-2",
+                  "name": "read",
+                  "arguments": {}
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "error",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-1",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "partial"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read",
+                "read"
+              ],
+              "files": [],
+              "failed": true
+            }
+          },
+          {
+            "id": "user-next",
+            "kind": "user",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "continue",
+              "timestamp": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "history-length-capped-is-not-failure",
+      "input": {
+        "entries": [
+          {
+            "type": "message",
+            "id": "turn-length",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "truncated"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "length",
+              "timestamp": 1
+            }
+          }
+        ],
+        "options": {}
+      },
+      "expected": {
+        "projection": {
+          "value": [
+            {
+              "id": "turn-length",
+              "kind": "modelTurn",
+              "sequence": 0,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "truncated"
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "length",
+                "timestamp": 1
+              },
+              "toolResults": [],
+              "metadata": {
+                "tools": [],
+                "files": [],
+                "failed": false
+              }
+            }
+          ]
+        },
+        "public": [
+          {
+            "id": "turn-length",
+            "kind": "modelTurn",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "truncated"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "length",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "history-mismatched-result-rejected",
+      "input": {
+        "entries": [
+          {
+            "type": "message",
+            "id": "turn-1",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-1",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/turn-1.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            }
+          },
+          {
+            "type": "message",
+            "id": "result-1",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "other",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "wrong"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          }
+        ],
+        "options": {}
+      },
+      "expected": {
+        "projection": {
+          "error": {
+            "name": "HistoryProjectionError",
+            "code": "MISMATCHED_TOOL_RESULT",
+            "message": "MISMATCHED_TOOL_RESULT"
+          }
+        }
+      }
+    },
+    {
+      "id": "history-nested-paging-wrapper-mixed-turn",
+      "input": {
+        "entries": [
+          {
+            "type": "message",
+            "id": "turn-wrapper",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "thinking",
+                  "thinking": "private"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "wrapper-call",
+                  "name": "codemode",
+                  "arguments": {
+                    "code": "hiddenScript()"
+                  }
+                },
+                {
+                  "type": "text",
+                  "text": "Public decision"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "ordinary-call",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/app.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            }
+          },
+          {
+            "type": "message",
+            "id": "result-wrapper",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "wrapper-call",
+              "toolName": "codemode",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hidden-wrapper"
+                }
+              ],
+              "isError": true,
+              "timestamp": 2,
+              "nestedCalls": {
+                "complete": true,
+                "calls": [
+                  {
+                    "id": "n1",
+                    "name": "load_history",
+                    "status": "ok"
+                  }
+                ]
+              },
+              "details": {
+                "nestedCalls": {
+                  "complete": true,
+                  "calls": [
+                    {
+                      "id": "n1",
+                      "name": "load_history",
+                      "status": "ok"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "type": "message",
+            "id": "result-ordinary",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "ordinary-call",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "ordinary-evidence"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          }
+        ],
+        "options": {}
+      },
+      "expected": {
+        "projection": {
+          "value": [
+            {
+              "id": "turn-wrapper",
+              "kind": "modelTurn",
+              "sequence": 0,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "thinking",
+                    "thinking": "private"
+                  },
+                  {
+                    "type": "toolCall",
+                    "id": "wrapper-call",
+                    "name": "codemode",
+                    "arguments": {
+                      "code": "hiddenScript()"
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": "Public decision"
+                  },
+                  {
+                    "type": "toolCall",
+                    "id": "ordinary-call",
+                    "name": "read",
+                    "arguments": {
+                      "path": "src/app.ts"
+                    }
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "toolUse",
+                "timestamp": 1
+              },
+              "toolResults": [
+                {
+                  "role": "toolResult",
+                  "toolCallId": "wrapper-call",
+                  "toolName": "codemode",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hidden-wrapper"
+                    }
+                  ],
+                  "isError": true,
+                  "timestamp": 2,
+                  "nestedCalls": {
+                    "complete": true,
+                    "calls": [
+                      {
+                        "id": "n1",
+                        "name": "load_history",
+                        "status": "ok"
+                      }
+                    ]
+                  },
+                  "details": {
+                    "nestedCalls": {
+                      "complete": true,
+                      "calls": [
+                        {
+                          "id": "n1",
+                          "name": "load_history",
+                          "status": "ok"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "role": "toolResult",
+                  "toolCallId": "ordinary-call",
+                  "toolName": "read",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "ordinary-evidence"
+                    }
+                  ],
+                  "isError": false,
+                  "timestamp": 2
+                }
+              ],
+              "metadata": {
+                "tools": [
+                  "codemode",
+                  "read"
+                ],
+                "files": [
+                  "src/app.ts"
+                ],
+                "failed": true
+              }
+            }
+          ]
+        },
+        "public": [
+          {
+            "id": "turn-wrapper",
+            "kind": "modelTurn",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                null,
+                null,
+                {
+                  "type": "text",
+                  "text": "Public decision"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "ordinary-call",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/app.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "ordinary-call",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ordinary-evidence"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "src/app.ts"
+              ],
+              "failed": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "history-nested-wrapper-absent-retained",
+      "input": {
+        "entries": [
+          {
+            "type": "message",
+            "id": "turn-wrapper",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "thinking",
+                  "thinking": "private"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "wrapper-call",
+                  "name": "codemode",
+                  "arguments": {
+                    "code": "hiddenScript()"
+                  }
+                },
+                {
+                  "type": "text",
+                  "text": "Public decision"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            }
+          },
+          {
+            "type": "message",
+            "id": "result-wrapper",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "wrapper-call",
+              "toolName": "codemode",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hidden-wrapper"
+                }
+              ],
+              "isError": true,
+              "timestamp": 2,
+              "details": {
+                "nestedCalls": {
+                  "complete": true,
+                  "calls": [
+                    {
+                      "id": "n1",
+                      "name": "load_history",
+                      "status": "ok"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "options": {}
+      },
+      "expected": {
+        "projection": {
+          "value": [
+            {
+              "id": "turn-wrapper",
+              "kind": "modelTurn",
+              "sequence": 0,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "thinking",
+                    "thinking": "private"
+                  },
+                  {
+                    "type": "toolCall",
+                    "id": "wrapper-call",
+                    "name": "codemode",
+                    "arguments": {
+                      "code": "hiddenScript()"
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": "Public decision"
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "toolUse",
+                "timestamp": 1
+              },
+              "toolResults": [
+                {
+                  "role": "toolResult",
+                  "toolCallId": "wrapper-call",
+                  "toolName": "codemode",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hidden-wrapper"
+                    }
+                  ],
+                  "isError": true,
+                  "timestamp": 2,
+                  "details": {
+                    "nestedCalls": {
+                      "complete": true,
+                      "calls": [
+                        {
+                          "id": "n1",
+                          "name": "load_history",
+                          "status": "ok"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ],
+              "metadata": {
+                "tools": [
+                  "codemode"
+                ],
+                "files": [],
+                "failed": true
+              }
+            }
+          ]
+        },
+        "public": [
+          {
+            "id": "turn-wrapper",
+            "kind": "modelTurn",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                null,
+                {
+                  "type": "toolCall",
+                  "id": "wrapper-call",
+                  "name": "codemode",
+                  "arguments": {
+                    "code": "hiddenScript()"
+                  }
+                },
+                {
+                  "type": "text",
+                  "text": "Public decision"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "wrapper-call",
+                "toolName": "codemode",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hidden-wrapper"
+                  }
+                ],
+                "isError": true,
+                "timestamp": 2,
+                "details": {
+                  "nestedCalls": {
+                    "complete": true,
+                    "calls": [
+                      {
+                        "id": "n1",
+                        "name": "load_history",
+                        "status": "ok"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "codemode"
+              ],
+              "files": [],
+              "failed": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "history-nested-wrapper-malformed-retained",
+      "input": {
+        "entries": [
+          {
+            "type": "message",
+            "id": "turn-wrapper",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "thinking",
+                  "thinking": "private"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "wrapper-call",
+                  "name": "codemode",
+                  "arguments": {
+                    "code": "hiddenScript()"
+                  }
+                },
+                {
+                  "type": "text",
+                  "text": "Public decision"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            }
+          },
+          {
+            "type": "message",
+            "id": "result-wrapper",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "wrapper-call",
+              "toolName": "codemode",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hidden-wrapper"
+                }
+              ],
+              "isError": true,
+              "timestamp": 2,
+              "nestedCalls": {
+                "complete": false,
+                "calls": [
+                  {
+                    "id": "n1",
+                    "name": "load_history",
+                    "status": "ok"
+                  }
+                ]
+              },
+              "details": {
+                "nestedCalls": {
+                  "complete": true,
+                  "calls": [
+                    {
+                      "id": "n1",
+                      "name": "load_history",
+                      "status": "ok"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "options": {}
+      },
+      "expected": {
+        "projection": {
+          "value": [
+            {
+              "id": "turn-wrapper",
+              "kind": "modelTurn",
+              "sequence": 0,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "thinking",
+                    "thinking": "private"
+                  },
+                  {
+                    "type": "toolCall",
+                    "id": "wrapper-call",
+                    "name": "codemode",
+                    "arguments": {
+                      "code": "hiddenScript()"
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": "Public decision"
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "toolUse",
+                "timestamp": 1
+              },
+              "toolResults": [
+                {
+                  "role": "toolResult",
+                  "toolCallId": "wrapper-call",
+                  "toolName": "codemode",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hidden-wrapper"
+                    }
+                  ],
+                  "isError": true,
+                  "timestamp": 2,
+                  "nestedCalls": {
+                    "complete": false,
+                    "calls": [
+                      {
+                        "id": "n1",
+                        "name": "load_history",
+                        "status": "ok"
+                      }
+                    ]
+                  },
+                  "details": {
+                    "nestedCalls": {
+                      "complete": true,
+                      "calls": [
+                        {
+                          "id": "n1",
+                          "name": "load_history",
+                          "status": "ok"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ],
+              "metadata": {
+                "tools": [
+                  "codemode"
+                ],
+                "files": [],
+                "failed": true
+              }
+            }
+          ]
+        },
+        "public": [
+          {
+            "id": "turn-wrapper",
+            "kind": "modelTurn",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                null,
+                {
+                  "type": "toolCall",
+                  "id": "wrapper-call",
+                  "name": "codemode",
+                  "arguments": {
+                    "code": "hiddenScript()"
+                  }
+                },
+                {
+                  "type": "text",
+                  "text": "Public decision"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "wrapper-call",
+                "toolName": "codemode",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hidden-wrapper"
+                  }
+                ],
+                "isError": true,
+                "timestamp": 2,
+                "nestedCalls": {
+                  "complete": false,
+                  "calls": [
+                    {
+                      "id": "n1",
+                      "name": "load_history",
+                      "status": "ok"
+                    }
+                  ]
+                },
+                "details": {
+                  "nestedCalls": {
+                    "complete": true,
+                    "calls": [
+                      {
+                        "id": "n1",
+                        "name": "load_history",
+                        "status": "ok"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "codemode"
+              ],
+              "files": [],
+              "failed": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "history-newest-incomplete-tail-omitted",
+      "input": {
+        "entries": [
+          {
+            "type": "message",
+            "id": "user-1",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "user",
+              "content": "first",
+              "timestamp": 0
+            }
+          },
+          {
+            "type": "message",
+            "id": "turn-1",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "answer"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1
+            }
+          },
+          {
+            "type": "message",
+            "id": "user-2",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "user",
+              "content": "second",
+              "timestamp": 0
+            }
+          },
+          {
+            "type": "message",
+            "id": "turn-2",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-turn-2",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/turn-2.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            }
+          }
+        ],
+        "options": {}
+      },
+      "expected": {
+        "projection": {
+          "value": [
+            {
+              "id": "user-1",
+              "kind": "user",
+              "sequence": 0,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "userMessage": {
+                "role": "user",
+                "content": "first",
+                "timestamp": 0
+              }
+            },
+            {
+              "id": "turn-1",
+              "kind": "modelTurn",
+              "sequence": 1,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "answer"
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "stop",
+                "timestamp": 1
+              },
+              "toolResults": [],
+              "metadata": {
+                "tools": [],
+                "files": [],
+                "failed": false
+              }
+            },
+            {
+              "id": "user-2",
+              "kind": "user",
+              "sequence": 2,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "userMessage": {
+                "role": "user",
+                "content": "second",
+                "timestamp": 0
+              }
+            }
+          ]
+        },
+        "public": [
+          {
+            "id": "user-1",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "first",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-1",
+            "kind": "modelTurn",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "answer"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "user-2",
+            "kind": "user",
+            "sequence": 2,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "second",
+              "timestamp": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "history-older-incomplete-rejected",
+      "input": {
+        "entries": [
+          {
+            "type": "message",
+            "id": "turn-1",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-turn-1",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/turn-1.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            }
+          },
+          {
+            "type": "message",
+            "id": "user-2",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "user",
+              "content": "continue",
+              "timestamp": 0
+            }
+          }
+        ],
+        "options": {}
+      },
+      "expected": {
+        "projection": {
+          "error": {
+            "name": "HistoryProjectionError",
+            "code": "INCOMPLETE_TOOL_RESULTS",
+            "message": "INCOMPLETE_TOOL_RESULTS"
+          }
+        }
+      }
+    },
+    {
+      "id": "history-orphan-result-rejected",
+      "input": {
+        "entries": [
+          {
+            "type": "message",
+            "id": "result-1",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "missing",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "orphan"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          }
+        ],
+        "options": {}
+      },
+      "expected": {
+        "projection": {
+          "error": {
+            "name": "HistoryProjectionError",
+            "code": "ORPHAN_TOOL_RESULT",
+            "message": "ORPHAN_TOOL_RESULT"
+          }
+        }
+      }
+    },
+    {
+      "id": "history-paging-only-turn-excluded",
+      "input": {
+        "entries": [
+          {
+            "type": "message",
+            "id": "turn-paging",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "paging-call",
+                  "name": "search_history",
+                  "arguments": {
+                    "path": "src/turn-paging.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            }
+          },
+          {
+            "type": "message",
+            "id": "result-paging",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "paging-call",
+              "toolName": "search_history",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hidden"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          }
+        ],
+        "options": {}
+      },
+      "expected": {
+        "projection": {
+          "value": [
+            {
+              "id": "turn-paging",
+              "kind": "modelTurn",
+              "sequence": 0,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "paging-call",
+                    "name": "search_history",
+                    "arguments": {
+                      "path": "src/turn-paging.ts"
+                    }
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "toolUse",
+                "timestamp": 1
+              },
+              "toolResults": [
+                {
+                  "role": "toolResult",
+                  "toolCallId": "paging-call",
+                  "toolName": "search_history",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hidden"
+                    }
+                  ],
+                  "isError": false,
+                  "timestamp": 2
+                }
+              ],
+              "metadata": {
+                "tools": [
+                  "search_history"
+                ],
+                "files": [
+                  "src/turn-paging.ts"
+                ],
+                "failed": false
+              }
+            }
+          ]
+        },
+        "public": [
+          null
+        ]
+      }
+    },
+    {
+      "id": "history-public-privacy-and-original-indices",
+      "input": {
+        "entries": [
+          {
+            "type": "message",
+            "id": "turn-privacy",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "thinking",
+                  "thinking": "private-reasoning",
+                  "thinkingSignature": "private-signature"
+                },
+                {
+                  "type": "text",
+                  "text": "Public answer",
+                  "textSignature": "private-text-signature"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "ordinary",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/public.ts",
+                    "thinking": "application-owned"
+                  },
+                  "thoughtSignature": "private-tool-signature"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "paging",
+                  "name": "load_history",
+                  "arguments": {
+                    "hidden": "paging-argument"
+                  }
+                },
+                {
+                  "type": "futurePrivateBlock",
+                  "payload": "private-unknown"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            }
+          },
+          {
+            "type": "message",
+            "id": "result-ordinary",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "ordinary",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Public result"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          },
+          {
+            "type": "message",
+            "id": "result-paging",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "paging",
+              "toolName": "load_history",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Hidden paging result"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          }
+        ],
+        "options": {}
+      },
+      "expected": {
+        "projection": {
+          "value": [
+            {
+              "id": "turn-privacy",
+              "kind": "modelTurn",
+              "sequence": 0,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "thinking",
+                    "thinking": "private-reasoning",
+                    "thinkingSignature": "private-signature"
+                  },
+                  {
+                    "type": "text",
+                    "text": "Public answer",
+                    "textSignature": "private-text-signature"
+                  },
+                  {
+                    "type": "toolCall",
+                    "id": "ordinary",
+                    "name": "read",
+                    "arguments": {
+                      "path": "src/public.ts",
+                      "thinking": "application-owned"
+                    },
+                    "thoughtSignature": "private-tool-signature"
+                  },
+                  {
+                    "type": "toolCall",
+                    "id": "paging",
+                    "name": "load_history",
+                    "arguments": {
+                      "hidden": "paging-argument"
+                    }
+                  },
+                  {
+                    "type": "futurePrivateBlock",
+                    "payload": "private-unknown"
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "toolUse",
+                "timestamp": 1
+              },
+              "toolResults": [
+                {
+                  "role": "toolResult",
+                  "toolCallId": "ordinary",
+                  "toolName": "read",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Public result"
+                    }
+                  ],
+                  "isError": false,
+                  "timestamp": 2
+                },
+                {
+                  "role": "toolResult",
+                  "toolCallId": "paging",
+                  "toolName": "load_history",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Hidden paging result"
+                    }
+                  ],
+                  "isError": false,
+                  "timestamp": 2
+                }
+              ],
+              "metadata": {
+                "tools": [
+                  "read",
+                  "load_history"
+                ],
+                "files": [
+                  "src/public.ts"
+                ],
+                "failed": false
+              }
+            }
+          ]
+        },
+        "public": [
+          {
+            "id": "turn-privacy",
+            "kind": "modelTurn",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                null,
+                {
+                  "type": "text",
+                  "text": "Public answer"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "ordinary",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/public.ts",
+                    "thinking": "application-owned"
+                  }
+                },
+                null,
+                null
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "ordinary",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Public result"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "src/public.ts"
+              ],
+              "failed": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "history-restore-incomplete-retained",
+      "input": {
+        "entries": [
+          {
+            "type": "message",
+            "id": "turn-restored",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-1",
+                  "name": "read",
+                  "arguments": {}
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-2",
+                  "name": "read",
+                  "arguments": {}
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            }
+          },
+          {
+            "type": "message",
+            "id": "result-1",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "toolResult",
+              "toolCallId": "call-1",
+              "toolName": "read",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "partial"
+                }
+              ],
+              "isError": false,
+              "timestamp": 2
+            }
+          },
+          {
+            "type": "message",
+            "id": "user-next",
+            "parentId": null,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "message": {
+              "role": "user",
+              "content": "continue",
+              "timestamp": 0
+            }
+          }
+        ],
+        "options": {
+          "recoverIncomplete": true
+        }
+      },
+      "expected": {
+        "projection": {
+          "value": [
+            {
+              "id": "turn-restored",
+              "kind": "modelTurn",
+              "sequence": 0,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "assistantMessage": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "fixture",
+                "model": "fixture",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "call-1",
+                    "name": "read",
+                    "arguments": {}
+                  },
+                  {
+                    "type": "toolCall",
+                    "id": "call-2",
+                    "name": "read",
+                    "arguments": {}
+                  }
+                ],
+                "usage": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 0,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "toolUse",
+                "timestamp": 1
+              },
+              "toolResults": [
+                {
+                  "role": "toolResult",
+                  "toolCallId": "call-1",
+                  "toolName": "read",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "partial"
+                    }
+                  ],
+                  "isError": false,
+                  "timestamp": 2
+                }
+              ],
+              "metadata": {
+                "tools": [
+                  "read",
+                  "read"
+                ],
+                "files": [],
+                "failed": true
+              },
+              "interruptedByRestore": true
+            },
+            {
+              "id": "user-next",
+              "kind": "user",
+              "sequence": 1,
+              "timestamp": "2026-10-19T00:00:00.000Z",
+              "userMessage": {
+                "role": "user",
+                "content": "continue",
+                "timestamp": 0
+              }
+            }
+          ]
+        },
+        "public": [
+          {
+            "id": "turn-restored",
+            "kind": "modelTurn",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-1",
+                  "name": "read",
+                  "arguments": {}
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-2",
+                  "name": "read",
+                  "arguments": {}
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-1",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "partial"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read",
+                "read"
+              ],
+              "files": [],
+              "failed": true
+            },
+            "interruptedByRestore": true
+          },
+          {
+            "id": "user-next",
+            "kind": "user",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "continue",
+              "timestamp": 0
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -36,6 +36,7 @@ from pydantic_ai_harness.step_persistence import (
 from ds4py.agent import QuestionAnswerer, build_agent_components
 from ds4py.async_session import await_retained, drain_operation
 from ds4py.capabilities.context import ContextComposition
+from ds4py.capabilities.rolling_window import RollingWindow
 from ds4py.capabilities.run_record import DS4RunRecord
 from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.errors import EngineError, StoreError
@@ -52,20 +53,14 @@ if TYPE_CHECKING:
     from ds4py.engine.prefix import PrefixTurn
     from ds4py.engine.session import Session
     from ds4py.model import DS4Model
-from ds4py.runtime_restore import (
-    RestorePlan,
-    RestoreResult,
-    plan_restore,
-    restore_snapshot,
-    validate_restore_snapshot,
-)
+from ds4py.runtime_persistence import build_save_record, build_save_snapshot, validate_save_messages
+from ds4py.runtime_restore import RestoreResult, plan_restore, prepare_restore_case, restore_snapshot
 from ds4py.store import (
     KV_HEADER,
     KV_MAGIC,
     KV_VERSION,
     SaveRecord,
     SessionStore,
-    token_digest,
 )
 
 _PLACEHOLDER_HEADER = KV_HEADER.pack(KV_MAGIC, KV_VERSION, 0)
@@ -195,6 +190,7 @@ class AgentRuntime:
         question_answerer: QuestionAnswerer | None = None,
         request_limit: int = 50,
         context: ContextComposition | None = None,
+        project_trusted: bool = False,
         before_identity_change: Callable[[], None] | None = None,
         after_identity_change: Callable[[], None] | None = None,
     ) -> None:
@@ -244,6 +240,13 @@ class AgentRuntime:
             self._on_engine_event,
             kinds={"Interrupted", "Stopped", "trace_error"},
         )
+        owner = self.model.context_owner
+        if isinstance(owner, RollingWindow):
+            owner.initialize(
+                project_dir=self.project_dir,
+                store_root=self.store.root,
+                project_trusted=project_trusted,
+            )
 
     @property
     def messages(self) -> list[ModelMessage]:
@@ -386,6 +389,9 @@ class AgentRuntime:
             self._messages = self.model.binder.adopt_failed(messages)
         else:
             self._messages = self.model.binder.adopt(messages)
+        owner = self.model.context_owner
+        if isinstance(owner, RollingWindow):
+            owner.adopt_history(self._messages)
         if snapshot is None:
             snapshot = await self._latest(run_id)
         if snapshot is not None:
@@ -505,6 +511,33 @@ class AgentRuntime:
         if activity is not None and activity.kind != "close":
             self._cancel_activity(activity)
 
+    def _refresh_context_paging(self) -> None:
+        """Replay current status and any undelivered initial warning to a newly subscribed frontend."""
+        owner = self.model.context_owner
+        if isinstance(owner, RollingWindow):
+            owner._session_controller.refresh()
+
+    def context_paging(self, action: str | None = None) -> str:
+        """Inspect or change RollingWindow policy while the runtime is idle."""
+        if (reason := self._rejection()) is not None:
+            raise EngineError(reason)
+        owner = self.model.context_owner
+        if not isinstance(owner, RollingWindow):
+            raise EngineError("context paging is unavailable for the selected context owner")
+        return owner.command(action)
+
+    async def context_paging_stats(self) -> object:
+        """Collect read-only statistics through the current session's public store API."""
+        if (reason := self._rejection()) is not None:
+            raise EngineError(reason)
+        owner = self.model.context_owner
+        if not isinstance(owner, RollingWindow):
+            raise EngineError("context paging is unavailable for the selected context owner")
+        return await owner._session_controller.statistics(
+            store=self._holder().current,
+            session_dir=self.store.session_dir(self.session_id),
+        )
+
     def set_hints(self, enabled: bool) -> None:
         """Change the system-note setting used by the next request."""
         self._require_open()
@@ -540,6 +573,12 @@ class AgentRuntime:
         await self._stop_active()
         session_id = self._session.id
         session_dir = self.store.session_dir(session_id)
+        request_view = (
+            self.model.binder.request_view()
+            if isinstance(self.model.context_owner, RollingWindow) and self.model.context_owner.enabled
+            else None
+        )
+        validate_save_messages(self._messages, () if request_view is None else request_view)
         tokens = list(self._session.transcript.tokens)
         if not tokens:
             raise StoreError("cannot save a session with an empty transcript")
@@ -566,13 +605,7 @@ class AgentRuntime:
                     f"the native payload covers {written.get('tokens')} tokens, the transcript has {len(tokens)}"
                 )
 
-        snapshot = ContinuableSnapshot(
-            run_id=run_id,
-            step_index=0,
-            messages=deepcopy(list(self._messages)),
-            conversation_id=session_id,
-            agent_name="ds4py",
-        )
+        snapshot = build_save_snapshot(run_id=run_id, session_id=session_id, messages=self._messages)
         await holder.current.register_run(
             StepRunRecord(
                 run_id=run_id,
@@ -583,11 +616,9 @@ class AgentRuntime:
         await holder.current.save_snapshot(snapshot)
 
         info = self._session.engine.info
-        record = SaveRecord(
+        record = build_save_record(
+            snapshot=snapshot,
             session_id=session_id,
-            conversation_id=session_id,
-            run_id=run_id,
-            step_index=snapshot.step_index,
             model_id=info.model_id,
             quant_bits=info.routed_quant_bits,
             ctx=self._session.engine.config.ctx,
@@ -595,9 +626,9 @@ class AgentRuntime:
             created_at=self._created_at,
             last_used=self._timestamp(),
             payload_bytes=payload_bytes,
-            tokens=len(tokens),
-            tokens_sha256=token_digest(tokens),
+            tokens=tokens,
             segments=self.model.binder.export_segments(),
+            request_view=request_view,
         )
         self.store.write_record_atomic(session_dir / "save.json", record)
         if not payloads_supported:
@@ -623,6 +654,9 @@ class AgentRuntime:
         """Leave the committed target empty, never paired with old native state."""
         self._session.reconcile_round(0)
         self.model.binder.forget()
+        owner = self.model.context_owner
+        if isinstance(owner, RollingWindow):
+            owner.restore_state(snapshot.messages)
         if self._notes is not None:
             self._notes.sync_from_segments(())
         self._messages = list(snapshot.messages)
@@ -651,14 +685,17 @@ class AgentRuntime:
                 f"step {record.step_index}, which is missing"
             )
         plan = plan_restore(record, session_dir, self.store)
-        validate_restore_snapshot(
+        owner = self.model.context_owner
+        case, frontier = prepare_restore_case(
             binder=self.model.binder,
             snapshot=snapshot,
             record=record,
             session_dir=session_dir,
+            plan=plan,
+            rolling_enabled=isinstance(owner, RollingWindow) and owner.enabled,
+            payload_support=self._session.file_payloads_supported,
         )
-        if plan.path == "kv" and not self._session.file_payloads_supported():
-            plan = RestorePlan("render", None, "the live engine does not support file payloads")
+        plan = case.plan
         if self._identity_hooks_configured:
             self._before_identity()
         elif self._record is not None:
@@ -677,11 +714,19 @@ class AgentRuntime:
                     snapshot=snapshot,
                     plan=plan,
                     session_dir=session_dir,
+                    use_request_view=case.use_request_view,
+                    ignore_view_segments=case.ignore_view_segments,
                 )
             except BaseException:
                 self._abort_restore(snapshot, record)
                 raise
             outcome.update(result)
+            if isinstance(owner, RollingWindow):
+                owner.restore_state(
+                    snapshot.messages,
+                    frontier if case.use_request_view and outcome.get("restore_path") == "kv" else None,
+                    restore_boundary="switched",
+                )
             self._messages = list(snapshot.messages)
             self._title = record.title
             self._created_at = record.created_at
@@ -724,6 +769,9 @@ class AgentRuntime:
         self._status = "idle"
         self._created_at = self._timestamp()
         self.model.binder.forget()
+        owner = self.model.context_owner
+        if isinstance(owner, RollingWindow):
+            owner.restore_state(())
         if self._record is not None:
             self._record.relocate(self.store.session_dir(session_id) / "events.jsonl")
         if self._notes is not None:

@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "4409e5e4ffa0b626c11e72afe666f0b6e55a0e5f",
+  "generatorCommand": "node scripts/generate_context_paging_fixtures.mjs /tmp/pi-context-paging-4409e5e",
+  "files": [
+    "history.json",
+    "navigator.json",
+    "notice.json",
+    "recovery.json",
+    "selection.json",
+    "settings.json"
+  ],
+  "coverage": [
+    {
+      "contract": "settings precedence and safe-integer boundaries",
+      "fixtures": [
+        "settings-above-safe-integer-rejected",
+        "settings-adaptive-1",
+        "settings-adaptive-9007199254740988",
+        "settings-adaptive-9007199254740991",
+        "settings-defaults",
+        "settings-global-target-survives-lower-project-budget",
+        "settings-invalid-global-uses-adaptive-target",
+        "settings-invalid-project-falls-through",
+        "settings-maximum-safe-integer-accepted",
+        "settings-non-integer-rejected",
+        "settings-trusted-project-precedence",
+        "settings-untrusted-project-ignored"
+      ],
+      "sourceTests": [
+        "tests/settings.test.ts"
+      ]
+    },
+    {
+      "contract": "exchange projection, privacy, exclusions, interruptions, and failure shapes",
+      "fixtures": [
+        "history-aborted-retained-with-failure",
+        "history-complete-exchange",
+        "history-denied-and-retry-failures",
+        "history-duplicate-result-rejected",
+        "history-error-retained-with-failure",
+        "history-length-capped-is-not-failure",
+        "history-mismatched-result-rejected",
+        "history-nested-paging-wrapper-mixed-turn",
+        "history-nested-wrapper-absent-retained",
+        "history-nested-wrapper-malformed-retained",
+        "history-newest-incomplete-tail-omitted",
+        "history-older-incomplete-rejected",
+        "history-orphan-result-rejected",
+        "history-paging-only-turn-excluded",
+        "history-public-privacy-and-original-indices",
+        "history-restore-incomplete-retained"
+      ],
+      "sourceTests": [
+        "tests/history.test.ts",
+        "tests/public-history.test.ts",
+        "tests/nested-paging-exclusion.test.ts"
+      ]
+    },
+    {
+      "contract": "stable, partial, keyless, fallback, model-capped, and protected additive-cost selection",
+      "fixtures": [
+        "selection-fallback-without-raw-history",
+        "selection-keyless-backward-snap",
+        "selection-model-capped-target",
+        "selection-partial-active-turn",
+        "selection-protected-overflow",
+        "selection-protected-recovery",
+        "selection-stable-completed-turn"
+      ],
+      "sourceTests": [
+        "tests/context-cut.test.ts",
+        "tests/context-policy.test.ts",
+        "tests/fixtures/context-cut.ts"
+      ]
+    },
+    {
+      "contract": "notice conversation selection, clipping, handles, and effective-budget caps",
+      "fixtures": [
+        "notice-low-effective-budget-cap",
+        "notice-minimum-useful-clip",
+        "notice-newest-three-replies",
+        "notice-utf16-clipping-and-handles"
+      ],
+      "sourceTests": [
+        "tests/conversation-notice.test.ts"
+      ]
+    },
+    {
+      "contract": "search, browse, load ordering, filters, and exclusions",
+      "fixtures": [
+        "navigator-browse-around-stride",
+        "navigator-browse-forward-sequence",
+        "navigator-browse-unanchored-backward",
+        "navigator-load-requested-order",
+        "navigator-paging-turn-excluded",
+        "navigator-search-filters",
+        "navigator-search-ranking",
+        "navigator-search-unicode",
+        "navigator-unknown-load-is-atomic"
+      ],
+      "sourceTests": [
+        "tests/navigator.test.ts",
+        "tests/navigator-previews.test.ts"
+      ]
+    },
+    {
+      "contract": "reply byte limits, deferred parts, UTF-16 selectors, image metadata/deferral, and the M5 error",
+      "fixtures": [
+        "recovery-assistant-selector-default",
+        "recovery-byte-budget-and-continuation",
+        "recovery-deferred-part-descriptions",
+        "recovery-exact-json-part",
+        "recovery-image-mode-m5-error",
+        "recovery-image-text-is-metadata-only",
+        "recovery-load-smallest-first-and-defer",
+        "recovery-private-part-error",
+        "recovery-small-image-load-always-defers",
+        "recovery-tool-result-selector-default",
+        "recovery-utf16-page-boundary"
+      ],
+      "sourceTests": [
+        "tests/bounded-recovery.test.ts",
+        "tests/read-back.test.ts",
+        "tests/recovery-parts.test.ts",
+        "tests/output-pages.test.ts"
+      ]
+    }
+  ]
+}

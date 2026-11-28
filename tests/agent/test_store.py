@@ -4,9 +4,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic_ai.messages import ModelRequest, SystemPromptPart, UserPromptPart
 
 from ds4py._native.protocol import EngineInfo
 from ds4py.errors import StoreError
+from ds4py.message_metadata import DS4_CONTEXT_PAGING, DS4_KEY, DS4_VIEW_OF
 from ds4py.store import (
     KV_HEADER,
     KV_MAGIC,
@@ -95,6 +97,43 @@ def test_save_record_round_trip_preserves_every_field(tmp_path: Path) -> None:
     store.write_record_atomic(path, original)
 
     assert store.read_record(path) == original
+
+
+def test_v1_records_load_without_a_view_and_new_records_write_v2() -> None:
+    legacy = record(version=1)
+    encoded = legacy.to_dict()
+    assert "request_view" not in encoded
+
+    assert SaveRecord.from_dict(encoded) == legacy
+    assert record().version == 2
+    assert "request_view" not in record(request_view=()).to_dict()
+
+
+def test_v2_request_view_round_trips_paging_provenance() -> None:
+    view = (
+        ModelRequest(
+            [SystemPromptPart("Earlier turns are available.")],
+            metadata={DS4_KEY: "notice", DS4_CONTEXT_PAGING: "notice"},
+        ),
+        ModelRequest(
+            [UserPromptPart("replacement")],
+            metadata={DS4_KEY: "replacement", DS4_CONTEXT_PAGING: "recovery", DS4_VIEW_OF: "canonical"},
+        ),
+    )
+    original = record(request_view=view)
+
+    restored = SaveRecord.from_dict(original.to_dict())
+
+    assert restored == original
+    assert restored.request_view == view
+
+
+def test_v1_records_reject_a_request_view() -> None:
+    encoded = record(version=1).to_dict()
+    encoded["request_view"] = []
+
+    with pytest.raises(ValueError, match=r"v1.*request_view"):
+        SaveRecord.from_dict(encoded)
 
 
 def test_save_record_from_dict_preserves_all_segment_provenance() -> None:

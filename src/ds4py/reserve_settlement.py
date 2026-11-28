@@ -75,10 +75,12 @@ class ReserveSettlement:
     async def recover(self, event: ReserveReached) -> None:
         """Resume only when the recovered request fits the configured context."""
         try:
-            messages = await self._recover(event)
+            messages, strict = await self._recover(event)
             if self._reconciled():
                 return
-            projected = self._binder.project_request(messages, bound=True)
+            # Strict owners installed the exact open continuation. Reprojecting it as
+            # a fresh request would append a second assistant prefix.
+            projected = len(self._session.transcript) if strict else self._binder.project_request(messages, bound=True)
             fits = self._binder.reserve_overflow(projected) <= 0
         except BaseException:
             self.settle(event)
@@ -93,7 +95,7 @@ class ReserveSettlement:
         if not self._reconciled():
             event.fail()
 
-    async def _recover(self, event: ReserveReached) -> list[ModelMessage]:
+    async def _recover(self, event: ReserveReached) -> tuple[list[ModelMessage], bool]:
         """Run the selected owner and account for its work in one unit."""
         owner = self._owner
         if owner is None:
@@ -117,7 +119,7 @@ class ReserveSettlement:
                     raise
                 if self._observe_moved_tail():
                     attempt.report_legacy(room.generated_tokens)
-                return messages
+                return messages, strict
         finally:
             unsubscribe()
 

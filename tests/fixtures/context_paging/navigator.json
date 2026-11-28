@@ -1,0 +1,2019 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "navigator-browse-around-stride",
+      "input": {
+        "items": [
+          {
+            "id": "user-1",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "Please find the needle",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-content",
+            "kind": "modelTurn",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "needle needle"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "turn-read",
+            "kind": "modelTurn",
+            "sequence": 2,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "other"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-read",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/nested/needle.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 2
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-read",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "needle result"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "src/nested/needle.ts"
+              ],
+              "failed": true
+            }
+          },
+          {
+            "id": "turn-paging",
+            "kind": "modelTurn",
+            "sequence": 3,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "paging",
+                  "name": "read_context_output",
+                  "arguments": {}
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 3
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [
+                "read_context_output"
+              ],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "user-unicode",
+            "kind": "user",
+            "sequence": 4,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "请分页显示历史记录",
+              "timestamp": 4
+            }
+          }
+        ],
+        "action": {
+          "type": "browse",
+          "input": {
+            "historyId": "turn-read",
+            "direction": "around",
+            "count": 3,
+            "stride": 2
+          }
+        }
+      },
+      "expected": {
+        "value": [
+          {
+            "historyId": "user-1",
+            "sequence": 0,
+            "kind": "user",
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "preview": "Please find the needle",
+            "tools": [],
+            "files": [],
+            "failed": false,
+            "previousHistoryId": null,
+            "nextHistoryId": "turn-content"
+          },
+          {
+            "historyId": "turn-read",
+            "sequence": 2,
+            "kind": "modelTurn",
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "preview": "other {\"type\":\"toolCall\",\"id\":\"call-read\",\"name\":\"read\",\"arguments\":{\"path\":\"src/nested/needle.ts\"}}",
+            "tools": [
+              "read"
+            ],
+            "files": [
+              "src/nested/needle.ts"
+            ],
+            "failed": true,
+            "previousHistoryId": "turn-content",
+            "nextHistoryId": "user-unicode"
+          }
+        ]
+      }
+    },
+    {
+      "id": "navigator-browse-forward-sequence",
+      "input": {
+        "items": [
+          {
+            "id": "user-1",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "Please find the needle",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-content",
+            "kind": "modelTurn",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "needle needle"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "turn-read",
+            "kind": "modelTurn",
+            "sequence": 2,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "other"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-read",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/nested/needle.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 2
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-read",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "needle result"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "src/nested/needle.ts"
+              ],
+              "failed": true
+            }
+          },
+          {
+            "id": "turn-paging",
+            "kind": "modelTurn",
+            "sequence": 3,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "paging",
+                  "name": "read_context_output",
+                  "arguments": {}
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 3
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [
+                "read_context_output"
+              ],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "user-unicode",
+            "kind": "user",
+            "sequence": 4,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "请分页显示历史记录",
+              "timestamp": 4
+            }
+          }
+        ],
+        "action": {
+          "type": "browse",
+          "input": {
+            "sequence": 1,
+            "direction": "forward",
+            "count": 2
+          }
+        }
+      },
+      "expected": {
+        "value": [
+          {
+            "historyId": "turn-read",
+            "sequence": 2,
+            "kind": "modelTurn",
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "preview": "other {\"type\":\"toolCall\",\"id\":\"call-read\",\"name\":\"read\",\"arguments\":{\"path\":\"src/nested/needle.ts\"}}",
+            "tools": [
+              "read"
+            ],
+            "files": [
+              "src/nested/needle.ts"
+            ],
+            "failed": true,
+            "previousHistoryId": "turn-content",
+            "nextHistoryId": "user-unicode"
+          },
+          {
+            "historyId": "user-unicode",
+            "sequence": 3,
+            "kind": "user",
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "preview": "请分页显示历史记录",
+            "tools": [],
+            "files": [],
+            "failed": false,
+            "previousHistoryId": "turn-read",
+            "nextHistoryId": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "navigator-browse-unanchored-backward",
+      "input": {
+        "items": [
+          {
+            "id": "user-1",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "Please find the needle",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-content",
+            "kind": "modelTurn",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "needle needle"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "turn-read",
+            "kind": "modelTurn",
+            "sequence": 2,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "other"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-read",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/nested/needle.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 2
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-read",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "needle result"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "src/nested/needle.ts"
+              ],
+              "failed": true
+            }
+          },
+          {
+            "id": "turn-paging",
+            "kind": "modelTurn",
+            "sequence": 3,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "paging",
+                  "name": "read_context_output",
+                  "arguments": {}
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 3
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [
+                "read_context_output"
+              ],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "user-unicode",
+            "kind": "user",
+            "sequence": 4,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "请分页显示历史记录",
+              "timestamp": 4
+            }
+          }
+        ],
+        "action": {
+          "type": "browse",
+          "input": {
+            "direction": "backward",
+            "count": 3
+          }
+        }
+      },
+      "expected": {
+        "value": [
+          {
+            "historyId": "user-unicode",
+            "sequence": 3,
+            "kind": "user",
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "preview": "请分页显示历史记录",
+            "tools": [],
+            "files": [],
+            "failed": false,
+            "previousHistoryId": "turn-read",
+            "nextHistoryId": null
+          },
+          {
+            "historyId": "turn-read",
+            "sequence": 2,
+            "kind": "modelTurn",
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "preview": "other {\"type\":\"toolCall\",\"id\":\"call-read\",\"name\":\"read\",\"arguments\":{\"path\":\"src/nested/needle.ts\"}}",
+            "tools": [
+              "read"
+            ],
+            "files": [
+              "src/nested/needle.ts"
+            ],
+            "failed": true,
+            "previousHistoryId": "turn-content",
+            "nextHistoryId": "user-unicode"
+          },
+          {
+            "historyId": "turn-content",
+            "sequence": 1,
+            "kind": "modelTurn",
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "preview": "needle needle",
+            "tools": [],
+            "files": [],
+            "failed": false,
+            "previousHistoryId": "user-1",
+            "nextHistoryId": "turn-read"
+          }
+        ]
+      }
+    },
+    {
+      "id": "navigator-load-requested-order",
+      "input": {
+        "items": [
+          {
+            "id": "user-1",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "Please find the needle",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-content",
+            "kind": "modelTurn",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "needle needle"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "turn-read",
+            "kind": "modelTurn",
+            "sequence": 2,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "other"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-read",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/nested/needle.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 2
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-read",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "needle result"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "src/nested/needle.ts"
+              ],
+              "failed": true
+            }
+          },
+          {
+            "id": "turn-paging",
+            "kind": "modelTurn",
+            "sequence": 3,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "paging",
+                  "name": "read_context_output",
+                  "arguments": {}
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 3
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [
+                "read_context_output"
+              ],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "user-unicode",
+            "kind": "user",
+            "sequence": 4,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "请分页显示历史记录",
+              "timestamp": 4
+            }
+          }
+        ],
+        "action": {
+          "type": "load",
+          "input": [
+            "turn-read",
+            "user-1"
+          ]
+        }
+      },
+      "expected": {
+        "value": [
+          {
+            "id": "turn-read",
+            "kind": "modelTurn",
+            "sequence": 2,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "other"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-read",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/nested/needle.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 2
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-read",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "needle result"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "src/nested/needle.ts"
+              ],
+              "failed": true
+            }
+          },
+          {
+            "id": "user-1",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "Please find the needle",
+              "timestamp": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "navigator-paging-turn-excluded",
+      "input": {
+        "items": [
+          {
+            "id": "user-1",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "Please find the needle",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-content",
+            "kind": "modelTurn",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "needle needle"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "turn-read",
+            "kind": "modelTurn",
+            "sequence": 2,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "other"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-read",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/nested/needle.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 2
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-read",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "needle result"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "src/nested/needle.ts"
+              ],
+              "failed": true
+            }
+          },
+          {
+            "id": "turn-paging",
+            "kind": "modelTurn",
+            "sequence": 3,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "paging",
+                  "name": "read_context_output",
+                  "arguments": {}
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 3
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [
+                "read_context_output"
+              ],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "user-unicode",
+            "kind": "user",
+            "sequence": 4,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "请分页显示历史记录",
+              "timestamp": 4
+            }
+          }
+        ],
+        "action": {
+          "type": "browse",
+          "input": {
+            "direction": "forward",
+            "count": 10
+          }
+        }
+      },
+      "expected": {
+        "value": [
+          {
+            "historyId": "user-1",
+            "sequence": 0,
+            "kind": "user",
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "preview": "Please find the needle",
+            "tools": [],
+            "files": [],
+            "failed": false,
+            "previousHistoryId": null,
+            "nextHistoryId": "turn-content"
+          },
+          {
+            "historyId": "turn-content",
+            "sequence": 1,
+            "kind": "modelTurn",
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "preview": "needle needle",
+            "tools": [],
+            "files": [],
+            "failed": false,
+            "previousHistoryId": "user-1",
+            "nextHistoryId": "turn-read"
+          },
+          {
+            "historyId": "turn-read",
+            "sequence": 2,
+            "kind": "modelTurn",
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "preview": "other {\"type\":\"toolCall\",\"id\":\"call-read\",\"name\":\"read\",\"arguments\":{\"path\":\"src/nested/needle.ts\"}}",
+            "tools": [
+              "read"
+            ],
+            "files": [
+              "src/nested/needle.ts"
+            ],
+            "failed": true,
+            "previousHistoryId": "turn-content",
+            "nextHistoryId": "user-unicode"
+          },
+          {
+            "historyId": "user-unicode",
+            "sequence": 3,
+            "kind": "user",
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "preview": "请分页显示历史记录",
+            "tools": [],
+            "files": [],
+            "failed": false,
+            "previousHistoryId": "turn-read",
+            "nextHistoryId": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "navigator-search-filters",
+      "input": {
+        "items": [
+          {
+            "id": "user-1",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "Please find the needle",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-content",
+            "kind": "modelTurn",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "needle needle"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "turn-read",
+            "kind": "modelTurn",
+            "sequence": 2,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "other"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-read",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/nested/needle.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 2
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-read",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "needle result"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "src/nested/needle.ts"
+              ],
+              "failed": true
+            }
+          },
+          {
+            "id": "turn-paging",
+            "kind": "modelTurn",
+            "sequence": 3,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "paging",
+                  "name": "read_context_output",
+                  "arguments": {}
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 3
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [
+                "read_context_output"
+              ],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "user-unicode",
+            "kind": "user",
+            "sequence": 4,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "请分页显示历史记录",
+              "timestamp": 4
+            }
+          }
+        ],
+        "action": {
+          "type": "search",
+          "input": {
+            "query": "needle",
+            "files": [
+              "src/nested/needle.ts"
+            ],
+            "tools": [
+              "read"
+            ],
+            "failed": true,
+            "limit": 5
+          }
+        }
+      },
+      "expected": {
+        "value": [
+          {
+            "historyId": "turn-read",
+            "sequence": 2,
+            "kind": "modelTurn",
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "preview": "…-read\",\"name\":\"read\",\"arguments\":{\"path\":\"src/nested/needle.ts\"}} read {\"path\":\"src/nested/needle.ts\"} needle result src/nested/needle.ts src nested needle.ts",
+            "tools": [
+              "read"
+            ],
+            "files": [
+              "src/nested/needle.ts"
+            ],
+            "failed": true,
+            "previousHistoryId": "turn-content",
+            "nextHistoryId": "user-unicode"
+          }
+        ]
+      }
+    },
+    {
+      "id": "navigator-search-ranking",
+      "input": {
+        "items": [
+          {
+            "id": "user-1",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "Please find the needle",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-content",
+            "kind": "modelTurn",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "needle needle"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "turn-read",
+            "kind": "modelTurn",
+            "sequence": 2,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "other"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-read",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/nested/needle.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 2
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-read",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "needle result"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "src/nested/needle.ts"
+              ],
+              "failed": true
+            }
+          },
+          {
+            "id": "turn-paging",
+            "kind": "modelTurn",
+            "sequence": 3,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "paging",
+                  "name": "read_context_output",
+                  "arguments": {}
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 3
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [
+                "read_context_output"
+              ],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "user-unicode",
+            "kind": "user",
+            "sequence": 4,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "请分页显示历史记录",
+              "timestamp": 4
+            }
+          }
+        ],
+        "action": {
+          "type": "search",
+          "input": {
+            "query": "NEEDLE"
+          }
+        }
+      },
+      "expected": {
+        "value": [
+          {
+            "historyId": "turn-content",
+            "sequence": 1,
+            "kind": "modelTurn",
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "preview": "needle needle",
+            "tools": [],
+            "files": [],
+            "failed": false,
+            "previousHistoryId": "user-1",
+            "nextHistoryId": "turn-read"
+          },
+          {
+            "historyId": "user-1",
+            "sequence": 0,
+            "kind": "user",
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "preview": "Please find the needle",
+            "tools": [],
+            "files": [],
+            "failed": false,
+            "previousHistoryId": null,
+            "nextHistoryId": "turn-content"
+          },
+          {
+            "historyId": "turn-read",
+            "sequence": 2,
+            "kind": "modelTurn",
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "preview": "…-read\",\"name\":\"read\",\"arguments\":{\"path\":\"src/nested/needle.ts\"}} read {\"path\":\"src/nested/needle.ts\"} needle result src/nested/needle.ts src nested needle.ts",
+            "tools": [
+              "read"
+            ],
+            "files": [
+              "src/nested/needle.ts"
+            ],
+            "failed": true,
+            "previousHistoryId": "turn-content",
+            "nextHistoryId": "user-unicode"
+          }
+        ]
+      }
+    },
+    {
+      "id": "navigator-search-unicode",
+      "input": {
+        "items": [
+          {
+            "id": "user-1",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "Please find the needle",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-content",
+            "kind": "modelTurn",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "needle needle"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "turn-read",
+            "kind": "modelTurn",
+            "sequence": 2,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "other"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-read",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/nested/needle.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 2
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-read",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "needle result"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "src/nested/needle.ts"
+              ],
+              "failed": true
+            }
+          },
+          {
+            "id": "turn-paging",
+            "kind": "modelTurn",
+            "sequence": 3,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "paging",
+                  "name": "read_context_output",
+                  "arguments": {}
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 3
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [
+                "read_context_output"
+              ],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "user-unicode",
+            "kind": "user",
+            "sequence": 4,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "请分页显示历史记录",
+              "timestamp": 4
+            }
+          }
+        ],
+        "action": {
+          "type": "search",
+          "input": {
+            "query": "分页"
+          }
+        }
+      },
+      "expected": {
+        "value": [
+          {
+            "historyId": "user-unicode",
+            "sequence": 3,
+            "kind": "user",
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "preview": "请分页显示历史记录",
+            "tools": [],
+            "files": [],
+            "failed": false,
+            "previousHistoryId": "turn-read",
+            "nextHistoryId": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "navigator-unknown-load-is-atomic",
+      "input": {
+        "items": [
+          {
+            "id": "user-1",
+            "kind": "user",
+            "sequence": 0,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "Please find the needle",
+              "timestamp": 0
+            }
+          },
+          {
+            "id": "turn-content",
+            "kind": "modelTurn",
+            "sequence": 1,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "needle needle"
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "turn-read",
+            "kind": "modelTurn",
+            "sequence": 2,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "other"
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-read",
+                  "name": "read",
+                  "arguments": {
+                    "path": "src/nested/needle.ts"
+                  }
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 2
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call-read",
+                "toolName": "read",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "needle result"
+                  }
+                ],
+                "isError": false,
+                "timestamp": 2
+              }
+            ],
+            "metadata": {
+              "tools": [
+                "read"
+              ],
+              "files": [
+                "src/nested/needle.ts"
+              ],
+              "failed": true
+            }
+          },
+          {
+            "id": "turn-paging",
+            "kind": "modelTurn",
+            "sequence": 3,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "assistantMessage": {
+              "role": "assistant",
+              "api": "openai-completions",
+              "provider": "fixture",
+              "model": "fixture",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "paging",
+                  "name": "read_context_output",
+                  "arguments": {}
+                }
+              ],
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 3
+            },
+            "toolResults": [],
+            "metadata": {
+              "tools": [
+                "read_context_output"
+              ],
+              "files": [],
+              "failed": false
+            }
+          },
+          {
+            "id": "user-unicode",
+            "kind": "user",
+            "sequence": 4,
+            "timestamp": "2026-10-19T00:00:00.000Z",
+            "userMessage": {
+              "role": "user",
+              "content": "请分页显示历史记录",
+              "timestamp": 4
+            }
+          }
+        ],
+        "action": {
+          "type": "load",
+          "input": [
+            "user-1",
+            "missing"
+          ]
+        }
+      },
+      "expected": {
+        "error": {
+          "name": "HistoryNavigatorError",
+          "code": "UNKNOWN_HISTORY_ID",
+          "message": "Unknown history ID missing"
+        }
+      }
+    }
+  ]
+}

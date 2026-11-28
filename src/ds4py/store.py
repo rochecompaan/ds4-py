@@ -23,12 +23,14 @@ from ds4py._json import is_string_key_mapping
 from ds4py.errors import StoreError
 
 if TYPE_CHECKING:
+    from pydantic_ai.messages import ModelMessage
+
     from ds4py._native.protocol import EngineInfo
 
 KV_HEADER = struct.Struct(">8sIQ")
 KV_MAGIC = b"DS4PYKV\0"
 KV_VERSION = 1
-SAVE_FORMAT_VERSION = 1
+SAVE_FORMAT_VERSION = 2
 _KV_FILE = "session.kv"
 _SAVE_FILE = "save.json"
 _MAX_UINT32 = 2**32 - 1
@@ -156,12 +158,22 @@ class SaveRecord:
     tokens: int
     tokens_sha256: str
     segments: tuple[SegmentProvenance, ...]
+    request_view: tuple[ModelMessage, ...] | None = None
     version: int = SAVE_FORMAT_VERSION
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "version", _integer(self.version, "version"))
-        if self.version != SAVE_FORMAT_VERSION:
+        if self.version not in (1, SAVE_FORMAT_VERSION):
             raise ValueError(f"unsupported save record version {self.version}")
+        if self.version == 1 and self.request_view is not None:
+            raise ValueError("v1 save records must not contain request_view")
+        if self.request_view is not None:
+            from pydantic_ai.messages import ModelRequest, ModelResponse  # noqa: PLC0415 - Keep the optional harness lazy at import time.
+
+            view = tuple(self.request_view)
+            if not all(isinstance(message, (ModelRequest, ModelResponse)) for message in view):
+                raise ValueError("request_view must contain model messages")
+            object.__setattr__(self, "request_view", view or None)
         for name in (
             "session_id",
             "conversation_id",
@@ -211,7 +223,7 @@ class SaveRecord:
 
     def to_dict(self) -> dict[str, object]:
         self._check_coverage()
-        return {
+        data: dict[str, object] = {
             "version": self.version,
             "session_id": self.session_id,
             "conversation_id": self.conversation_id,
@@ -228,6 +240,13 @@ class SaveRecord:
             "tokens_sha256": self.tokens_sha256,
             "segments": [segment.to_dict() for segment in self.segments],
         }
+        if self.request_view is not None:
+            from pydantic_ai.messages import ModelMessagesTypeAdapter  # noqa: PLC0415 - Keep the optional harness lazy at import time.
+
+            data["request_view"] = ModelMessagesTypeAdapter.dump_python(
+                list(self.request_view), mode="json", warnings=False
+            )
+        return data
 
     @classmethod
     def from_dict(cls, data: Mapping[str, object]) -> SaveRecord:
@@ -256,6 +275,15 @@ class SaveRecord:
         raw_segments = data["segments"]
         if not isinstance(raw_segments, (list, tuple)):
             raise ValueError("segments must be a list")
+        raw_view = data.get("request_view")
+        if raw_view is None:
+            request_view = None
+        else:
+            from pydantic_ai.messages import ModelMessagesTypeAdapter  # noqa: PLC0415 - Keep the optional harness lazy at import time.
+
+            if not isinstance(raw_view, (list, tuple)):
+                raise ValueError("request_view must be a list")
+            request_view = tuple(ModelMessagesTypeAdapter.validate_python(list(raw_view)))
         return cls(
             version=_integer(data["version"], "version"),
             session_id=_string(data["session_id"], "session_id"),
@@ -272,6 +300,7 @@ class SaveRecord:
             tokens=_nonnegative(data["tokens"], "tokens"),
             tokens_sha256=_string(data["tokens_sha256"], "tokens_sha256"),
             segments=tuple(SegmentProvenance.from_dict(_mapping(item, "segment")) for item in raw_segments),
+            request_view=request_view,
         )
 
 

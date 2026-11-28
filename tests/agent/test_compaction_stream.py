@@ -21,11 +21,13 @@ from ds4py.capabilities.compaction import LLMCompaction
 from ds4py.capabilities.compaction_tail import plan_tail
 from ds4py.capabilities.context import ContextRequest, ContextStrategy, RoomResult
 from ds4py.compaction_commit import commit_compaction
+from ds4py.context_paging.stats import InputTokenReading, read_request_input
 from ds4py.engine.events import SummaryToken, Synced
 from ds4py.engine.lifecycle import SessionEvent
 from ds4py.engine.stream import RoundStream
 from ds4py.engine.transcript import Segment, TranscriptReplacement
 from ds4py.errors import EngineError
+from ds4py.message_metadata import DS4_REQUEST_SYNC_COUNT
 from ds4py.model import DS4Model
 
 TOOL = "<tool_call>\n<function=read>\n<parameter=path>\n/tmp/x\n</parameter>\n</function>\n</tool_call>"
@@ -170,6 +172,10 @@ def test_reserve_compaction_continues_same_response(
             assert response.usage.input_tokens == sum(s.prefilled for s in syncs[1:])
             assert response.usage.cache_read_tokens == sum(s.plan.reused for s in syncs[1:])
             assert len(syncs) == 4
+            # Setup and reserve-replacement syncs are not response-dispatched;
+            # the initial and resumed request syncs are.
+            assert response.metadata[DS4_REQUEST_SYNC_COUNT] == 2
+            assert read_request_input(response) == InputTokenReading("unavailable", None)
             assert syncs[-1].prefilled == 0
             assert syncs[-1].pos == len(committed[0])
             segments = session.transcript.segments

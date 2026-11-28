@@ -1,0 +1,234 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "settings-above-safe-integer-rejected",
+      "input": {
+        "globalSettings": {
+          "contextPaging": {
+            "tokenBudget": 9007199254740992,
+            "trimToTokens": 9007199254740992
+          }
+        },
+        "projectTrusted": false
+      },
+      "expected": {
+        "value": {
+          "enabled": true,
+          "tokenBudget": 128000,
+          "trimToTokens": 80000,
+          "trimToTokensExplicit": false
+        }
+      }
+    },
+    {
+      "id": "settings-adaptive-1",
+      "input": {
+        "tokenBudget": 1
+      },
+      "expected": {
+        "value": 1
+      }
+    },
+    {
+      "id": "settings-adaptive-9007199254740988",
+      "input": {
+        "tokenBudget": 9007199254740988
+      },
+      "expected": {
+        "value": 5629499534213117
+      }
+    },
+    {
+      "id": "settings-adaptive-9007199254740991",
+      "input": {
+        "tokenBudget": 9007199254740991
+      },
+      "expected": {
+        "value": 5629499534213119
+      }
+    },
+    {
+      "id": "settings-defaults",
+      "input": {
+        "globalSettings": {},
+        "projectTrusted": false
+      },
+      "expected": {
+        "value": {
+          "enabled": true,
+          "tokenBudget": 128000,
+          "trimToTokens": 80000,
+          "trimToTokensExplicit": false
+        }
+      }
+    },
+    {
+      "id": "settings-global-target-survives-lower-project-budget",
+      "input": {
+        "globalSettings": {
+          "contextPaging": {
+            "tokenBudget": 128000,
+            "trimToTokens": 80000
+          }
+        },
+        "projectSettings": {
+          "contextPaging": {
+            "tokenBudget": 64000
+          }
+        },
+        "projectTrusted": true
+      },
+      "expected": {
+        "value": {
+          "enabled": true,
+          "tokenBudget": 64000,
+          "trimToTokens": 80000,
+          "trimToTokensExplicit": true
+        }
+      }
+    },
+    {
+      "id": "settings-invalid-global-uses-adaptive-target",
+      "input": {
+        "globalSettings": {
+          "contextPaging": {
+            "tokenBudget": 64000,
+            "trimToTokens": 0
+          }
+        },
+        "projectTrusted": false
+      },
+      "expected": {
+        "value": {
+          "enabled": true,
+          "tokenBudget": 64000,
+          "trimToTokens": 40000,
+          "trimToTokensExplicit": false
+        }
+      }
+    },
+    {
+      "id": "settings-invalid-project-falls-through",
+      "input": {
+        "globalSettings": {
+          "contextPaging": {
+            "tokenBudget": 64000,
+            "trimToTokens": 30000
+          }
+        },
+        "projectSettings": {
+          "contextPaging": {
+            "tokenBudget": 32000,
+            "trimToTokens": 9007199254740992
+          }
+        },
+        "projectTrusted": true
+      },
+      "expected": {
+        "value": {
+          "enabled": true,
+          "tokenBudget": 32000,
+          "trimToTokens": 30000,
+          "trimToTokensExplicit": true
+        }
+      }
+    },
+    {
+      "id": "settings-maximum-safe-integer-accepted",
+      "input": {
+        "globalSettings": {
+          "contextPaging": {
+            "tokenBudget": 9007199254740991,
+            "trimToTokens": 9007199254740991
+          }
+        },
+        "projectTrusted": false
+      },
+      "expected": {
+        "value": {
+          "enabled": true,
+          "tokenBudget": 9007199254740991,
+          "trimToTokens": 9007199254740991,
+          "trimToTokensExplicit": true
+        }
+      }
+    },
+    {
+      "id": "settings-non-integer-rejected",
+      "input": {
+        "globalSettings": {
+          "contextPaging": {
+            "tokenBudget": 64000.5,
+            "trimToTokens": 1.5
+          }
+        },
+        "projectTrusted": false
+      },
+      "expected": {
+        "value": {
+          "enabled": true,
+          "tokenBudget": 128000,
+          "trimToTokens": 80000,
+          "trimToTokensExplicit": false
+        }
+      }
+    },
+    {
+      "id": "settings-trusted-project-precedence",
+      "input": {
+        "globalSettings": {
+          "contextPaging": {
+            "enabled": false,
+            "tokenBudget": 128000,
+            "trimToTokens": 80000
+          }
+        },
+        "projectSettings": {
+          "contextPaging": {
+            "enabled": true,
+            "tokenBudget": 64000,
+            "trimToTokens": 40000
+          }
+        },
+        "projectTrusted": true
+      },
+      "expected": {
+        "value": {
+          "enabled": true,
+          "tokenBudget": 64000,
+          "trimToTokens": 40000,
+          "trimToTokensExplicit": true
+        }
+      }
+    },
+    {
+      "id": "settings-untrusted-project-ignored",
+      "input": {
+        "globalSettings": {
+          "contextPaging": {
+            "enabled": false,
+            "tokenBudget": 64000,
+            "trimToTokens": 30000
+          }
+        },
+        "projectSettings": {
+          "contextPaging": {
+            "enabled": true,
+            "tokenBudget": 128000,
+            "trimToTokens": 90000
+          }
+        },
+        "projectTrusted": false
+      },
+      "expected": {
+        "value": {
+          "enabled": false,
+          "tokenBudget": 64000,
+          "trimToTokens": 30000,
+          "trimToTokensExplicit": true
+        }
+      }
+    }
+  ]
+}

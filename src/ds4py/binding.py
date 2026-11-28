@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
 from functools import partial
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
@@ -24,6 +25,7 @@ from ds4py.binding_plan import (
     plan_transition,
     request_instructions,
 )
+from ds4py.binding_projection import build_request_projection
 from ds4py.binding_provenance import (
     BoundMessage,
     _content_hash,
@@ -38,6 +40,7 @@ from ds4py.engine.prompt import PromptBuilder
 from ds4py.engine.tool_prompt import ToolDefinition
 from ds4py.engine.transcript import TranscriptReplacement
 from ds4py.errors import EngineError
+from ds4py.message_metadata import DS4_KEY, DS4_SAMPLED, DS4_SOURCE
 from ds4py.message_rendering import MessageRenderer
 from ds4py.store import SegmentProvenance
 
@@ -47,6 +50,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestParameters
 
     from ds4py.binding_plan import BindingBoundary
+    from ds4py.binding_projection import RequestProjection
     from ds4py.binding_provenance import PreparedProvenance
     from ds4py.capabilities.system_notes import DS4SystemNotes
     from ds4py.engine.history import BindingTransaction
@@ -89,6 +93,15 @@ def _tool_digest(tools: Iterable[ToolDefinition]) -> str:
 RESPONSE_RESERVE = 1
 
 
+@dataclass(frozen=True, slots=True)
+class RenderedRequestView:
+    """A reserve replacement plus the exact plan to publish after installation."""
+
+    replacement: TranscriptReplacement
+    prepared: PreparedMessages
+    plan: BindingPlan
+
+
 class MessageBinder:
     """Longest-valid-prefix binding keyed by persistent message key and content hash.
 
@@ -123,6 +136,10 @@ class MessageBinder:
         self._signature = None
         self._restored = False
         self._restored_notes = {}
+
+    def request_view(self) -> tuple[ModelMessage, ...]:
+        """Return isolated copies of the exact last successfully bound request view."""
+        return tuple(deepcopy(message) for message in self._bound_messages)
 
     def restore_notes(self, segments: Sequence[SegmentProvenance]) -> None:
         """Schedule exact saved notes before the message keys that followed them."""
@@ -161,7 +178,7 @@ class MessageBinder:
         adopted = []
         for candidate in candidates:
             adopted_candidate = candidate
-            key = (candidate.metadata or {}).get("ds4.key")
+            key = (candidate.metadata or {}).get(DS4_KEY)
             index = bound.get(key) if key is not None else None
             if index is None and not key:
                 matches = recoverable.get(_key_recovery_hash(candidate), [])
@@ -170,10 +187,10 @@ class MessageBinder:
             if index is not None and _content_hash(candidate) != self._records[index].content_hash:
                 adopted_candidate = deepcopy(self._bound_messages[index])
             elif index is not None:
-                sampled = (self._bound_messages[index].metadata or {}).get("ds4.sampled")
+                sampled = (self._bound_messages[index].metadata or {}).get(DS4_SAMPLED)
                 if sampled is not None:
                     metadata = dict(adopted_candidate.metadata or {})
-                    metadata["ds4.sampled"] = deepcopy(sampled)
+                    metadata[DS4_SAMPLED] = deepcopy(sampled)
                     adopted_candidate.metadata = metadata
             adopted.append(adopted_candidate)
         keyed_messages(adopted, self._records)
@@ -184,7 +201,7 @@ class MessageBinder:
         bound_keys = {record.key for record in self._records}
         adopted = self.adopt(messages)
         bound_indices = [
-            index for index, message in enumerate(adopted) if (message.metadata or {}).get("ds4.key") in bound_keys
+            index for index, message in enumerate(adopted) if (message.metadata or {}).get(DS4_KEY) in bound_keys
         ]
         if not bound_indices:
             return []
@@ -201,7 +218,7 @@ class MessageBinder:
         changed = False
         for message in messages:
             matches: list[list[ModelMessage]] = []
-            if isinstance(message, ModelRequest) and not (message.metadata or {}).get("ds4.key"):
+            if isinstance(message, ModelRequest) and not (message.metadata or {}).get(DS4_KEY):
                 for start, first in enumerate(self._bound_messages):
                     if not isinstance(first, ModelRequest):
                         continue
@@ -522,6 +539,54 @@ class MessageBinder:
         plan = self._plan(prepared, config, self.note_provider, system_changed=self._system_changed(config))
         return plan.projected_tokens
 
+    def project_request_view(
+        self,
+        *,
+        canonical_messages: Sequence[ModelMessage],
+        candidate_messages: Sequence[ModelMessage],
+        params: ModelRequestParameters,
+    ) -> RequestProjection:
+        """Project only the candidate view through the exact scratch planner."""
+        prepared = self.prepare_messages(candidate_messages)
+        effective = request_instructions(prepared.targets, params)
+        config = self._configured_config(params.declared_tool_defs.values(), effective)
+        plan = self._plan(prepared, config, self.note_provider, system_changed=self._system_changed(config))
+        return build_request_projection(
+            engine=self.session.engine,
+            live_tokens=self.session.transcript.tokens,
+            canonical_messages=canonical_messages,
+            plan=plan,
+        )
+
+    def render_request_view(
+        self,
+        messages: Sequence[ModelMessage],
+        params: ModelRequestParameters,
+    ) -> RenderedRequestView:
+        """Render a replacement for reserve recovery without publishing a new request."""
+        prepared = self.prepare_messages(messages)
+        effective = request_instructions(prepared.targets, params)
+        config = self._configured_config(params.declared_tool_defs.values(), effective)
+        plan = self._plan(prepared, config, self.note_provider, system_changed=self._system_changed(config))
+        current = TranscriptReplacement(self.session.transcript.tokens, self.session.transcript.segments)
+        parts = [current.slice(0, plan.change.start), plan.initial.appends]
+        if plan.reset_chat:
+            scratch = ScratchSession(self.session.engine)
+            scratch.start_chat(plan.definitions, plan.instructions)
+            parts.append(TranscriptReplacement(scratch.transcript.tokens, scratch.transcript.segments))
+        parts.extend(boundary.appends for boundary in plan.boundaries)
+        replacement = TranscriptReplacement.concat(*parts)
+        sampled_start = self.session.open_assistant_start()
+        if sampled_start is not None:
+            prefix_start = next(
+                segment.start
+                for segment in current.segments
+                if segment.kind == "assistant_prefix" and segment.end == sampled_start and not segment.meta.get("key")
+            )
+            if plan.change.start <= prefix_start:
+                replacement = TranscriptReplacement.concat(replacement, current.slice(prefix_start))
+        return RenderedRequestView(replacement, prepared, plan)
+
     def reserve_overflow(self, projected_tokens: int) -> int:
         """Return the tokens the projection still needs to admit the response reserve.
 
@@ -534,7 +599,7 @@ class MessageBinder:
         key = _ensure_key(response)
         if response.metadata is None:
             raise AssertionError("_ensure_key must initialize metadata")
-        response.metadata["ds4.source"] = "sampled"
+        response.metadata[DS4_SOURCE] = "sampled"
         content_hash = _content_hash(response)
         segments = self.session.transcript.segments
         prefix_index = max(
@@ -547,7 +612,7 @@ class MessageBinder:
             if segment.kind in ("assistant", "eos")
         ]
         sampled_start = trailing[0].start if trailing else len(self.session.transcript)
-        response.metadata["ds4.sampled"] = {
+        response.metadata[DS4_SAMPLED] = {
             "content_hash": content_hash,
             "segments": [
                 {
@@ -570,6 +635,17 @@ class MessageBinder:
         else:
             self._records.append(record)
             self._bound_messages.append(deepcopy(response))
+
+    def adopt_rendered_view(self, rendered: RenderedRequestView) -> None:
+        """Publish the prepared plan after its replacement installs successfully."""
+        plan = rendered.plan
+        provider = self.note_provider
+        targets = rendered.prepared.targets
+        self._signature = plan.signature
+        self._restored = False
+        self._publish_boundary(plan.initial, provider, targets, plan)
+        for boundary in plan.boundaries:
+            self._publish_boundary(boundary, provider, targets, plan)
 
     def export_segments(self) -> tuple[SegmentProvenance, ...]:
         exported = []

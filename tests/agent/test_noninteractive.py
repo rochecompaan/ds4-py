@@ -405,6 +405,8 @@ def test_agent_cli_maps_engine_sampling_policy_history_and_workspace(
         "interactive": False,
         "question_answerer": None,
         "request_limit": 100,
+        "context": None,
+        "project_trusted": False,
         "before_identity_change": None,
         "after_identity_change": None,
     }

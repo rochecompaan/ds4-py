@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Never
 
 from prompt_toolkit.completion import Completion
 
+from ds4py.capabilities.rolling_window import RollingWindow
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
@@ -105,6 +107,27 @@ def _record(action: str, record: SaveRecord) -> str:
     return f"{action} {record.session_id} — {title} ({record.tokens} tokens)"
 
 
+def _install_context_paging_command(registry: SlashCommandRegistry, runtime: AgentRuntime) -> None:
+    model = getattr(runtime, "model", None)
+    if not isinstance(getattr(model, "context_owner", None), RollingWindow):
+        return
+
+    async def context_paging(*args: str) -> str:
+        if len(args) > 1 or (args and args[0] not in {"on", "off", "status", "stats"}):
+            _usage("/context-paging [on|off|status|stats]")
+        action = args[0] if args else None
+        if action == "stats":
+            return str(await runtime.context_paging_stats())
+        return runtime.context_paging(action)
+
+    registry.register(
+        "context-paging",
+        context_paging,
+        description="Inspect or toggle rolling context paging",
+        usage="/context-paging [on|off|status|stats]",
+    )
+
+
 def install_builtin_commands(
     registry: SlashCommandRegistry,
     runtime: AgentRuntime,
@@ -163,3 +186,4 @@ def install_builtin_commands(
         ("hints", hints, "Toggle programming hints", "/hints on|off"),
     ):
         registry.register(name, handler, description=description, usage=usage)
+    _install_context_paging_command(registry, runtime)

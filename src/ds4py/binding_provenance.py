@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, NotRequired, TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict, TypeIs, cast
 from uuid import uuid4
 
 from pydantic_ai.messages import (
@@ -29,11 +30,10 @@ from pydantic_ai.messages import (
 from ds4py._json import is_json_object, is_string_key_mapping
 from ds4py.engine.transcript import Segment, validate_segment_coverage
 from ds4py.errors import EngineError
+from ds4py.message_metadata import DS4_CONTEXT_PAGING, DS4_KEY, DS4_SOURCE, DS4_VIEW_OF, PagingMarker
 from ds4py.message_rendering import stable_text
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
-
     from pydantic_ai.messages import ModelMessage
 
     from ds4py._json import JsonValue
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 
 class _ProjectionPart(TypedDict, total=False):
     kind: str
-    content: str
+    content: object
     name: str
     args: dict[str, JsonValue]
     id: str
@@ -74,6 +74,23 @@ class PreparedProvenance:
     bound_messages: tuple[ModelMessage, ...]
 
 
+@dataclass(frozen=True)
+class RequestViewMessageProvenance:
+    """One validated request-view identity and its optional canonical target."""
+
+    view_key: str
+    canonical_key: str | None
+    marker: PagingMarker | None
+
+
+@dataclass(frozen=True)
+class PreparedRequestViewProvenance:
+    """Bound view state and its ordered, immutable canonical identity mapping."""
+
+    prepared: PreparedProvenance
+    messages: tuple[RequestViewMessageProvenance, ...]
+
+
 def _arguments(args: str | Mapping[str, JsonValue] | None) -> dict[str, JsonValue]:
     value: object = json.loads(args) if isinstance(args, str) else args
     if value is None:
@@ -86,6 +103,17 @@ def _arguments(args: str | Mapping[str, JsonValue] | None) -> dict[str, JsonValu
     return converted
 
 
+def _json_safe_content(value: object) -> object:
+    """Project restored media without embedding bytes in provenance JSON."""
+    if isinstance(value, bytes):
+        return {"sha256": hashlib.sha256(value).hexdigest()}
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe_content(child) for key, child in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_json_safe_content(child) for child in value]
+    return value
+
+
 def _projection(message: ModelMessage) -> _MessageProjection:
     dumped = ModelMessagesTypeAdapter.dump_python([message], warnings=False)[0]
     projected: _MessageProjection = {"kind": dumped["kind"], "parts": []}
@@ -94,7 +122,7 @@ def _projection(message: ModelMessage) -> _MessageProjection:
     for part in dumped["parts"]:
         kind = part["part_kind"]
         if kind in ("system-prompt", "instruction", "user-prompt", "text", "thinking"):
-            projected["parts"].append({"kind": kind, "content": part["content"]})
+            projected["parts"].append({"kind": kind, "content": _json_safe_content(part["content"])})
         elif kind == "tool-call":
             item: _ProjectionPart = {
                 "kind": kind,
@@ -104,7 +132,7 @@ def _projection(message: ModelMessage) -> _MessageProjection:
             }
             details = part.get("provider_details") or {}
             raw = details.get("ds4py.raw")
-            if (message.metadata or {}).get("ds4.source") == "sampled" and isinstance(raw, str):
+            if (message.metadata or {}).get(DS4_SOURCE) == "sampled" and isinstance(raw, str):
                 item["raw"] = raw
             projected["parts"].append(item)
         elif kind in {"tool-return", "retry-prompt"}:
@@ -112,7 +140,7 @@ def _projection(message: ModelMessage) -> _MessageProjection:
                 {
                     "kind": kind,
                     "name": part["tool_name"],
-                    "content": stable_text(part["content"]),
+                    "content": stable_text(_json_safe_content(part["content"])),
                     "id": part["tool_call_id"],
                 }
             )
@@ -135,14 +163,20 @@ def _digest(value: object) -> str:
 def _ensure_key(message: ModelMessage) -> str:
     """Return the message's stable key, assigning one when absent."""
     metadata = dict(message.metadata or {})
-    key = metadata.get("ds4.key")
+    key = metadata.get(DS4_KEY)
     if key is not None and not isinstance(key, str):
         raise TypeError("message ds4.key must be a string or None")
     if key is None or key == "":
         key = uuid4().hex
-        metadata["ds4.key"] = key
+        metadata[DS4_KEY] = key
     message.metadata = metadata
     return key
+
+
+def ensure_message_keys(messages: Sequence[ModelMessage]) -> None:
+    """Assign stable keys to canonical messages without rendering or native mutation."""
+    for message in messages:
+        _ensure_key(message)
 
 
 def keyed_messages(
@@ -160,11 +194,11 @@ def keyed_messages(
     keyed = []
     for index, message in enumerate(messages):
         content_hash = _content_hash(message)
-        key = (message.metadata or {}).get("ds4.key")
+        key = (message.metadata or {}).get(DS4_KEY)
         if key is None and index < len(records) and records[index].content_hash == content_hash:
             key = records[index].key
             metadata = dict(message.metadata or {})
-            metadata["ds4.key"] = key
+            metadata[DS4_KEY] = key
             message.metadata = metadata
         else:
             key = _ensure_key(message)
@@ -174,6 +208,11 @@ def keyed_messages(
 
 def _content_hash(message: ModelMessage) -> str:
     return _digest(_projection(message))
+
+
+def message_content_hash(message: ModelMessage) -> str:
+    """Return the canonical content hash without changing the message."""
+    return _content_hash(message)
 
 
 def _key_recovery_hash(message: ModelMessage) -> str:
@@ -204,6 +243,24 @@ def _validate(messages: Sequence[ModelMessage]) -> None:
                 raise EngineError(f"unsupported harness request part: {type(part).__name__}")
             if isinstance(message, ModelResponse) and not isinstance(part, (TextPart, ThinkingPart, ToolCallPart)):
                 raise EngineError(f"unsupported harness response part: {type(part).__name__}")
+
+
+def validate_messages(messages: Sequence[ModelMessage]) -> None:
+    """Validate supported parts and reject unsupported media at the model boundary."""
+    _validate(messages)
+
+
+def is_resident_message(message: ModelMessage) -> TypeIs[ModelRequest]:
+    """Classify the complete instruction prefix shared by projection and selection."""
+    return (
+        isinstance(message, ModelRequest)
+        and bool(message.parts)
+        and not any(isinstance(part, UserPromptPart) for part in message.parts)
+        and all(
+            isinstance(part, (SystemPromptPart, InstructionPart, InstructionBaselinePart, InstructionDeltaPart))
+            for part in message.parts
+        )
+    )
 
 
 def _installed_segment(provenance: SegmentProvenance) -> Segment:
@@ -289,7 +346,7 @@ def prepare_provenance(  # noqa: C901, PLR0912, PLR0915 - Restore validation cov
 
     positions: dict[str, int] = {}
     for index, message in enumerate(snapshot):
-        key = (message.metadata or {}).get("ds4.key")
+        key = (message.metadata or {}).get(DS4_KEY)
         if key is None:
             continue
         if key in positions:
@@ -318,3 +375,72 @@ def prepare_provenance(  # noqa: C901, PLR0912, PLR0915 - Restore validation cov
         records=tuple(records),
         bound_messages=tuple(deepcopy(message) for message in bound_messages),
     )
+
+
+def _canonical_identities(messages: Sequence[ModelMessage]) -> dict[str, tuple[ModelMessage, str]]:
+    validate_messages(messages)
+    identities: dict[str, tuple[ModelMessage, str]] = {}
+    for message in messages:
+        key = (message.metadata or {}).get(DS4_KEY)
+        if key is None:
+            continue
+        if not isinstance(key, str) or not key:
+            raise EngineError("canonical message keys must be non-empty strings")
+        if key in identities:
+            raise EngineError(f"canonical snapshot has duplicate message key {key!r}")
+        identities[key] = (message, message_content_hash(message))
+    return identities
+
+
+def validate_canonical_snapshot(messages: Sequence[ModelMessage]) -> None:
+    """Validate canonical schema, media, and stable key identity without token segments."""
+    _canonical_identities(messages)
+
+
+def _request_view_identity(
+    message: ModelMessage,
+    canonical: Mapping[str, tuple[ModelMessage, str]],
+) -> RequestViewMessageProvenance:
+    metadata = message.metadata or {}
+    key = metadata.get(DS4_KEY)
+    if not isinstance(key, str) or not key:
+        raise EngineError("request view message keys must be non-empty strings")
+
+    raw_marker = metadata.get(DS4_CONTEXT_PAGING)
+    if DS4_CONTEXT_PAGING in metadata and raw_marker not in ("notice", "recovery"):
+        raise EngineError(f"invalid paging marker {raw_marker!r}")
+    marker = cast("PagingMarker | None", raw_marker)
+    has_target = DS4_VIEW_OF in metadata
+    target = metadata.get(DS4_VIEW_OF)
+
+    if marker is not None and key in canonical:
+        raise EngineError(f"paging message {key!r} must have a fresh view key")
+    if marker == "notice":
+        if has_target:
+            raise EngineError("a paging notice must not have a canonical target")
+        return RequestViewMessageProvenance(key, None, marker)
+    if marker == "recovery":
+        if not isinstance(target, str) or not target or target not in canonical:
+            raise EngineError("a recovery view message target must name an existing canonical message")
+        return RequestViewMessageProvenance(key, target, marker)
+    if has_target:
+        raise EngineError("an unmarked view message must not have a canonical target")
+
+    identity = canonical.get(key)
+    if identity is None or identity[1] != message_content_hash(message):
+        raise EngineError("an unmarked view message must resolve to canonical content with the same key and hash")
+    return RequestViewMessageProvenance(key, key, None)
+
+
+def prepare_request_view_provenance(
+    *,
+    canonical_messages: Sequence[ModelMessage],
+    request_view: Sequence[ModelMessage],
+    segments: Sequence[Segment | SegmentProvenance],
+    loaded: int | None,
+) -> PreparedRequestViewProvenance:
+    """Validate a view against its token records and full canonical snapshot."""
+    canonical = _canonical_identities(canonical_messages)
+    prepared = prepare_provenance(request_view, segments, loaded=loaded)
+    identities = tuple(_request_view_identity(message, canonical) for message in request_view)
+    return PreparedRequestViewProvenance(prepared, identities)

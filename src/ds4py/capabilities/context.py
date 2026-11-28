@@ -16,12 +16,15 @@ from ds4py.summary_usage import summary_usage
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from pydantic_ai.messages import ModelMessage, ToolCallPart
+    from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.tools import RunContext, ToolDefinition
 
     from ds4py.binding import MessageBinder
+    from ds4py.capabilities.compaction import LLMCompaction
     from ds4py.engine.reserve import ReserveOperations
+
+type ContextOwnerFactory = Callable[[MessageBinder, LLMCompaction], ContextStrategy]
 
 TOOL_RESULT_DOES_NOT_FIT = "Tool error: tool result still does not fit"
 
@@ -47,7 +50,30 @@ class RoomResult:
 class ContextComposition:
     """Select one automatic owner; manual compaction remains available."""
 
-    owner: ContextStrategy | None = None
+    owner: ContextStrategy | ContextOwnerFactory | None = None
+
+    @classmethod
+    def rolling(
+        cls,
+        *,
+        enabled: bool | None = None,
+        token_budget: int | None = None,
+        trim_to: int | None = None,
+    ) -> ContextComposition:
+        """Compose RollingWindow through the default builder's owner factory."""
+
+        def build(binder: MessageBinder, compactor: LLMCompaction) -> ContextStrategy:
+            from ds4py.capabilities.rolling_window import RollingWindow  # noqa: PLC0415 - Avoid the owner/base-class import cycle.
+
+            return RollingWindow(
+                binder,
+                disabled_owner=compactor,
+                enabled=enabled,
+                token_budget=token_budget,
+                trim_to=trim_to,
+            )
+
+        return cls(owner=build)
 
 
 def usage_charge(ctx: RunContext[object]) -> Callable[[int], None]:
@@ -114,11 +140,22 @@ class ContextStrategy(AbstractCapability, ABC):
         results = [part for part in pending.parts if isinstance(part, ToolReturnPart)]
         self._reject_until_fit(results, room, needed)
 
+    def request_messages(
+        self, request_messages: list[ModelMessage], run_context: RunContext[object] | None
+    ) -> list[ModelMessage]:
+        """Materialize an ordinary request after harness normalization."""
+        del run_context
+        return request_messages
+
     def reserve_messages(
         self, request_messages: list[ModelMessage], run_context: RunContext[object] | None
     ) -> list[ModelMessage]:
         """Custom/view-only owners recover within the actual model request view."""
         return request_messages
+
+    def record_response(self, response: ModelResponse) -> None:
+        """Attach owner-specific request provenance to the final canonical response."""
+        del response
 
     def _tool_return_part(self, call: ToolCallPart, result: object) -> ToolReturnPart:
         content = result.return_value if isinstance(result, ToolReturn) else result
