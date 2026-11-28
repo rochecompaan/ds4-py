@@ -481,18 +481,19 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
     """Select a stable request view without mutating canonical history or live state."""
     limits = resolve_token_limits(settings, model_context)
     budget = limits.budget_tokens
+    request_limit = limits.request_limit
     warning = _warning(budget, limits.trim_to_tokens, explicit=limits.explicit_target_at_budget)
     raw_grouped = _group(history)
     raw_view = _view(raw_grouped)
     raw_measurement = _measure(history, meter, _candidate(raw_view, 0, None))
-    if raw_measurement.resident_tokens > budget:
+    if raw_measurement.resident_tokens > request_limit:
         resident = raw_measurement.resident_tokens
         raise _error(
             "RESIDENT_INPUT_TOO_LARGE",
-            f"Resident input estimate {resident} exceeds budget estimate {budget}.",
+            f"Resident input estimate {resident} exceeds request limit estimate {request_limit}.",
             resident,
             resident,
-            budget,
+            request_limit,
         )
     public_items = project_public_history(history)
     public_by_id = {item.history_id: item for item in public_items}
@@ -550,7 +551,7 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
         if protected is not None:
             floor_candidate.extend(_item_messages(protected))
         floor = _measure(history, meter, floor_candidate)
-        notice_characters = max(0, budget - floor.total_tokens) * 4
+        notice_characters = max(0, request_limit - floor.total_tokens) * 4
 
         def bounded_notice(
             history_id: str | None,
@@ -561,7 +562,7 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
             notice = build_paging_notice(budget, history_id, tool, conversation, notice_characters)
             candidate = _candidate(current_view, count, notice)
             measurement = _measure(history, meter, candidate)
-            if measurement.total_tokens > budget:
+            if measurement.total_tokens > request_limit:
                 header_only = build_paging_notice(budget, history_id, tool)
                 if header_only.content != notice.content:
                     notice = header_only
@@ -573,7 +574,7 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
             notice, candidate, measurement = bounded_notice(evicted_id, tool_reference, view, count)
             last_keyed = _Boundary(count, previous.frontier, notice, candidate, measurement)
 
-        if measurement.total_tokens <= budget and overflow != "recovery":
+        if measurement.total_tokens <= request_limit and overflow != "recovery":
             return _RunResult(
                 candidate,
                 measurement,
@@ -585,29 +586,29 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
             )
         if view.grouped.active_request is not None:
             active_only = _measure(history, meter, (view.grouped.active_request.message,))
-            if active_only.total_tokens > budget:
+            if active_only.total_tokens > request_limit:
                 estimated = active_only.total_tokens
                 raise _error(
                     "ACTIVE_REQUEST_TOO_LARGE",
-                    f"Resident plus active request estimate {estimated} exceeds budget estimate {budget}.",
+                    f"Resident plus active request estimate {estimated} exceeds request limit estimate {request_limit}.",
                     active_only.resident_tokens,
                     estimated,
-                    budget,
+                    request_limit,
                 )
 
-        while measurement.total_tokens > min(destination, budget) or (overflow == "recovery" and count == 0):
+        while measurement.total_tokens > min(destination, request_limit) or (overflow == "recovery" and count == 0):
             unit = view.units[count] if count < len(view.units) else None
             if unit is None or (protected is not None and unit.items == (protected,)):
-                if count == 0 and previous is not None and measurement.total_tokens > budget:
+                if count == 0 and previous is not None and measurement.total_tokens > request_limit:
                     notice, candidate, measurement = bounded_notice(evicted_id, tool_reference, view, count)
-                if measurement.total_tokens <= budget:
+                if measurement.total_tokens <= request_limit:
                     return _RunResult(candidate, measurement, "paged", notice, count, last_keyed, last_was_keyless)
                 if protected is not None:
                     if overflow != "recovery":
                         overflow_notice = protected_overflow_notice(budget)
                         overflow_candidate = _candidate(view, count, overflow_notice)
                         overflow_measurement = _measure(history, meter, overflow_candidate)
-                        if overflow_measurement.total_tokens <= limits.model_limit:
+                        if overflow_measurement.total_tokens <= limits.model_request_limit:
                             return _RunResult(
                                 overflow_candidate,
                                 overflow_measurement,
@@ -622,7 +623,7 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
                         recovery = recovery_notice()
                         recovery_candidate = _candidate(view, count, recovery, replacement)
                         recovery_measurement = _measure(history, meter, recovery_candidate)
-                        if recovery_measurement.total_tokens <= limits.model_limit:
+                        if recovery_measurement.total_tokens <= limits.model_request_limit:
                             return _RunResult(
                                 recovery_candidate,
                                 recovery_measurement,
@@ -644,10 +645,10 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
                 code = "ACTIVE_REQUEST_TOO_LARGE" if view.grouped.active_request else "RESIDENT_INPUT_TOO_LARGE"
                 raise _error(
                     code,
-                    f"Resident and retained request estimate {estimated} exceeds budget estimate {budget}.",
+                    f"Resident and retained request estimate {estimated} exceeds request limit estimate {request_limit}.",
                     measurement.resident_tokens,
                     estimated,
-                    budget,
+                    request_limit,
                 )
 
             count += 1
@@ -718,7 +719,7 @@ def select_view(  # noqa: C901, PLR0911, PLR0913, PLR0915 - The public FIFO sele
     if boundary is None:
         return fallback("keyless-no-key")
     if result.last_was_keyless:
-        if boundary.measurement.total_tokens > budget:
+        if boundary.measurement.total_tokens > request_limit:
             return fallback("keyless-snap-over-budget")
         state = remembered if boundary.count == 0 and remembered else SelectionState(boundary.frontier, boundary.notice)
         return SelectionResult(

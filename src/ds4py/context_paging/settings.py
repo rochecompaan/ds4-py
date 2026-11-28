@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeIs
 
+from ds4py.binding import RESPONSE_RESERVE
 from ds4py.errors import ContextSelectionError
 
 if TYPE_CHECKING:
@@ -46,7 +47,8 @@ class RollingWindowSettings:
 class ContextTokenLimits:
     budget_tokens: int
     trim_to_tokens: int
-    model_limit: int
+    model_request_limit: int
+    request_limit: int
     explicit_target_at_budget: bool = False
 
 
@@ -58,7 +60,7 @@ def default_trim_to(token_budget: int) -> int:
 
 
 def resolve_token_limits(settings: RollingWindowSettings, model_context: int) -> ContextTokenLimits:
-    """Cap configured limits by the model window using exact integer arithmetic."""
+    """Cap request limits by the model window while retaining the engine response reserve."""
 
     try:
         model_limit = _positive_safe_integer(model_context, "model_context")
@@ -76,12 +78,15 @@ def resolve_token_limits(settings: RollingWindowSettings, model_context: int) ->
             code = "INVALID_TRIM_TARGET"
             diagnostic = "The trim target must be a positive safe integer."
         raise ContextSelectionError(code, diagnostic) from error
+    model_request_limit = model_limit - RESPONSE_RESERVE
     budget = min(budget_value, model_limit)
+    request_limit = min(budget, model_request_limit)
     effective_target = budget if target >= budget_value else max(1, target * budget // budget_value)
     return ContextTokenLimits(
         budget,
         effective_target,
-        model_limit,
+        model_request_limit,
+        request_limit,
         settings.trim_to_explicit and target >= budget_value,
     )
 

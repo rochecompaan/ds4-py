@@ -129,6 +129,33 @@ def test_equality_and_values_between_target_and_budget_do_not_advance() -> None:
         assert keys(selected.candidate_messages) == ["u1", "r1"]
 
 
+def test_exact_model_context_request_pages_for_response_reserve() -> None:
+    selected = select(
+        [user("old-user", 40), response("old-response", 40), user("active", 10)],
+        budget=100,
+        target=50,
+        model=100,
+    )
+
+    assert selected.mode == "paged"
+    assert keys(selected.candidate_messages) == ["context-paging-notice", "active"]
+    assert selected.measurement.total_tokens == 25
+    assert selected.measurement.total_tokens + 1 <= 100
+
+
+def test_one_token_context_rejects_a_nonempty_request() -> None:
+    with pytest.raises(ContextSelectionError) as caught:
+        select(
+            [user("active", 1)],
+            budget=1,
+            target=1,
+            model=1,
+            meter=AdditiveMeter(resident=0),
+        )
+
+    assert caught.value.code == "ACTIVE_REQUEST_TOO_LARGE"
+
+
 def test_reserve_recovery_advances_a_remembered_view_at_its_target() -> None:
     messages = [
         user("evicted-user", 5),
