@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, cast, override
 
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolReturnPart
 
-from ds4py.binding import RESPONSE_RESERVE
 from ds4py.binding_plan import request_instructions
 from ds4py.binding_provenance import ensure_message_keys
 from ds4py.capabilities.context import TOOL_RESULT_DOES_NOT_FIT, ContextRequest, ContextStrategy, RoomResult
@@ -267,7 +266,8 @@ class RollingWindow(ContextStrategy):
             sampled_start = session.open_assistant_start()
             if sampled_start is not None:
                 sampled = len(session.transcript.tokens) - sampled_start
-                model_context = max(1, model_context - sampled - RESPONSE_RESERVE)
+                # Selection applies the response reserve once to this remaining window.
+                model_context = max(1, model_context - sampled)
         try:
             return self._select(messages, params, remembered, overflow=overflow, model_context=model_context)
         except ContextSelectionError as selection_error:

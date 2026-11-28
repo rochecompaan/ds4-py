@@ -22,6 +22,7 @@ from ds4py.capabilities.rolling_window import RollingWindow
 from ds4py.capabilities.system_notes import DS4SystemNotes
 from ds4py.context_paging.stats import InputTokenReading, read_request_input
 from ds4py.engine.prompt import PromptBuilder
+from ds4py.errors import ContextExhausted
 from ds4py.message_metadata import (
     DS4_CONTEXT_PAGING,
     DS4_KEY,
@@ -218,7 +219,7 @@ def test_reserve_selection_accounts_for_sampled_response_tokens(monkeypatch: pyt
 
                 monkeypatch.setattr(model.binder, "project_request", reject_fresh_projection)
                 result = await make_room(messages, request)
-                assert selection_contexts[-1] == engine.config.ctx - sampled - RESPONSE_RESERVE
+                assert selection_contexts[-1] == engine.config.ctx - sampled
                 return result
 
             cast("Any", owner).make_room = check_recovery_context
@@ -234,6 +235,80 @@ def test_reserve_selection_accounts_for_sampled_response_tokens(monkeypatch: pyt
 
             assert "".join(part.content for part in response.parts if isinstance(part, TextPart)) == "ab"
             assert canonical == before
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("headroom", [0, -1], ids=["exact-fit", "one-token-overflow"])
+def test_reserve_recovery_enforces_the_exact_remaining_window(headroom: int) -> None:
+    class BoundaryReached(Exception):
+        pass
+
+    async def scenario() -> None:
+        with fake_engine(family="qwen", script=sequential_text("ab")) as engine:
+            session = engine.session()
+            engine.config = replace(engine.config, ctx=32768)
+            model = make_model(session)
+            owner = RollingWindow(
+                model.binder,
+                disabled_owner=LLMCompaction(model.binder),
+                token_budget=16000,
+                trim_to=16000,
+            )
+            model.context_owner = owner
+            canonical: list[ModelRequest | ModelResponse] = [user("active request", "active-user")]
+            ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=canonical)
+            params = ModelRequestParameters()
+            await owner.before_model_request(
+                ctx,
+                ModelRequestContext(
+                    model=model,
+                    messages=canonical,
+                    model_settings=None,
+                    model_request_parameters=params,
+                ),
+            )
+            make_room = owner.make_room
+            recoveries = 0
+
+            async def recover_at_exact_boundary(messages: list[Any], request: Any) -> Any:
+                nonlocal recoveries
+                recoveries += 1
+                sampled_start = session.open_assistant_start()
+                assert sampled_start is not None
+                sampled = len(session.transcript.tokens) - sampled_start
+                view = owner._state.request_view
+                assert view is not None
+                projection = model.binder.project_request_view(
+                    canonical_messages=canonical,
+                    candidate_messages=view,
+                    params=params,
+                )
+                engine.config = replace(
+                    engine.config,
+                    ctx=projection.total_tokens + sampled + RESPONSE_RESERVE + headroom,
+                )
+                await make_room(messages, request)
+                assert projection.total_tokens + sampled + RESPONSE_RESERVE == engine.config.ctx
+                raise BoundaryReached
+
+            cast("Any", owner).make_room = recover_at_exact_boundary
+
+            async def stream_until_boundary() -> None:
+                async with model.request_stream(canonical, None, params, run_context=ctx) as stream:
+                    prompt_length = len(session.transcript)
+                    prefix = len(PromptBuilder(session.engine).assistant_prefix(session.transcript.tokens))
+                    session._worker.call(
+                        lambda _engine, native: setattr(native, "_ctx", prompt_length + prefix + 3)
+                    ).result()
+                    async for _ in stream:
+                        pass
+
+            expected_error = BoundaryReached if headroom == 0 else ContextExhausted
+            with pytest.raises(expected_error):
+                await stream_until_boundary()
+
+            assert recoveries == 1
 
     asyncio.run(scenario())
 
