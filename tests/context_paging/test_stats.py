@@ -48,7 +48,7 @@ def response(
     input_tokens: int | None = 2,
     cache_read: int | None = 3,
     cache_write: int | None = 4,
-    syncs: int | None = 1,
+    syncs: object = 1,
     exact: object = None,
 ) -> ModelResponse:
     metadata: dict[str, object] = {}
@@ -179,6 +179,14 @@ def test_real_store_rehydrates_media_deduplicates_and_skips_damaged_snapshots(tm
             InputTokenReading("unavailable", None),
         ),
         (
+            response("bool", input_tokens=2, cache_read=3, cache_write=4, syncs=True),
+            InputTokenReading("unavailable", None),
+        ),
+        (
+            response("float", input_tokens=2, cache_read=3, cache_write=4, syncs=1.0),
+            InputTokenReading("unavailable", None),
+        ),
+        (
             response("unknown", input_tokens=2, cache_read=3, cache_write=4, syncs=None),
             InputTokenReading("unavailable", None),
         ),
@@ -191,7 +199,17 @@ def test_real_store_rehydrates_media_deduplicates_and_skips_damaged_snapshots(tm
             InputTokenReading("unavailable", None),
         ),
     ],
-    ids=["exact-multi-sync", "old-single-sync", "zero", "multi-sync", "no-sync-count", "missing-counter", "bad-exact"],
+    ids=[
+        "exact-multi-sync",
+        "old-single-sync",
+        "zero",
+        "multi-sync",
+        "bool-sync-count",
+        "float-sync-count",
+        "no-sync-count",
+        "missing-counter",
+        "bad-exact",
+    ],
 )
 def test_request_input_provenance(saved: ModelResponse, expected: InputTokenReading) -> None:
     assert read_request_input(saved) == expected

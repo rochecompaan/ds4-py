@@ -154,7 +154,7 @@ def read_request_input(response: ModelResponse) -> InputTokenReading:
     if exact is not _MISSING:
         tokens = _counter(exact)
         return InputTokenReading("exact", tokens) if tokens is not None else InputTokenReading("unavailable", None)
-    if metadata.get(DS4_REQUEST_SYNC_COUNT) != 1:
+    if _counter(metadata.get(DS4_REQUEST_SYNC_COUNT)) != 1:
         return InputTokenReading("unavailable", None)
     counters = [
         _counter(getattr(response.usage, name, None))
